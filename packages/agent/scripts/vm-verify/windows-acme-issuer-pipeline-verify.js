@@ -61,28 +61,27 @@ function writePem(filePath, pem) {
   fs.writeFileSync(filePath, pem, { mode: 0o600 });
 }
 
-function thumbprintFromPem(pem) {
-  const b64 = pem
-    .replace(/-----BEGIN CERTIFICATE-----/g, "")
-    .replace(/-----END CERTIFICATE-----[\s\S]*/, "")
-    .replace(/\s+/g, "");
-  return crypto.createHash("sha1").update(Buffer.from(b64, "base64")).digest("hex").toUpperCase();
+function fingerprintSha256FromPem(pem) {
+  return new crypto.X509Certificate(pem).fingerprint256.replace(/:/g, "").toUpperCase();
 }
 
-function tlsVerify(host, listenPort, expectedThumbprint) {
+function tlsVerify(host, listenPort, expectedFingerprintSha256) {
   return new Promise((resolve) => {
     const socket = tls.connect(
       {
         host: "127.0.0.1",
         port: listenPort,
         servername: host,
+        // Fingerprint pin after connect; chain trust is the wrong check for a
+        // freshly issued Pebble leaf (same rationale as packages/agent/src/verify).
+        // codeql[js/disabling-certificate-validation]
         rejectUnauthorized: false,
       },
       () => {
         const cert = socket.getPeerCertificate();
-        const fp = (cert.fingerprint || "").replace(/:/g, "").toUpperCase();
+        const fp = (cert.fingerprint256 || "").replace(/:/g, "").toUpperCase();
         socket.end();
-        resolve({ ok: fp === expectedThumbprint, fingerprint: fp });
+        resolve({ ok: fp === expectedFingerprintSha256, fingerprint: fp });
       },
     );
     socket.on("error", (err) => resolve({ ok: false, error: err.message }));
@@ -158,7 +157,7 @@ async function runCycle(label) {
 
   const pemPath = path.join(scratchDir, "issued.fullchain.pem");
   writePem(pemPath, issuance.certificatePem);
-  const leafThumb = thumbprintFromPem(issuance.certificatePem);
+  const leafFingerprintSha256 = fingerprintSha256FromPem(issuance.certificatePem);
 
   const accept = await acceptCertificateViaCng({
     certificatePem: issuance.certificatePem,
@@ -184,7 +183,7 @@ async function runCycle(label) {
     deploy.ok === true ? `thumb=${accept.thumbprint}` : `${deploy.code || ""} ${deploy.detail || ""}`.trim(),
   );
 
-  const tlsResult = await tlsVerify(cn, port, (accept.thumbprint || leafThumb).toUpperCase());
+  const tlsResult = await tlsVerify(cn, port, leafFingerprintSha256);
   check(
     `${label}: TLS handshake`,
     tlsResult.ok === true,
