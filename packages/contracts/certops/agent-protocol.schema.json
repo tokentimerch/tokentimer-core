@@ -241,9 +241,9 @@
           "maxItems": 16,
           "items": {
             "type": "string",
-            "enum": ["renew", "deploy", "reload", "revoke", "noop", "protocol_smoke", "distribute-trust", "revoke-trust"]
+            "enum": ["renew", "deploy", "reload", "revoke", "noop", "continue-enrollment", "protocol_smoke", "distribute-trust", "revoke-trust", "adcs-preflight"]
           },
-          "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly. distribute-trust/revoke-trust are the two trust-anchor actions (ADR-0012 decisions 17/20i)."
+          "description": "Subset of job-payload.schema.json actions this agent build can execute, plus protocol_smoke for diagnostic-kind agents (ADR-0012 decision 7): a diagnostic agent must declare supportedActions: [\"protocol_smoke\"] to ever match a protocol_smoke job, since the claim query joins this array against certificate_jobs.operation directly. distribute-trust/revoke-trust are the two trust-anchor actions (ADR-0012 decisions 17/20i). adcs-preflight is the read-only AD CS issuer validation job (adcs-preflight-payload.schema.json, ADR-0014 decision 5)."
         },
         "supportedDnsProviders": {
           "type": "array",
@@ -278,7 +278,8 @@
         },
         "status": {
           "type": "string",
-          "enum": ["succeeded", "failed", "rejected", "blocked", "dry_run_complete", "orphaned_unknown_effect"]
+          "enum": ["succeeded", "failed", "rejected", "blocked", "dry_run_complete", "orphaned_unknown_effect", "awaiting_issuer"],
+          "description": "awaiting_issuer ends this job while its enrollment waits on the issuer, for example for CA-manager approval; a later continue-enrollment job picks it up (ADR-0014 decision 2). It is valid only with an enrollmentResult."
         },
         "rejectionReason": {
           "type": ["string", "null"],
@@ -294,9 +295,11 @@
             "key_export_requested",
             "clock_drift_suspected",
             "unexpected_job_type",
+            "issuer_not_allowlisted",
+            "enrollment_snapshot_mismatch",
             null
           ],
-          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule. unexpected_job_type (ADR-0012 decision 7) is reported by a diagnostic-kind agent offered anything other than protocol_smoke: there is no lease-release endpoint, so the only way to hand back a job it must not execute is a replay-bound rejected result naming why."
+          "description": "Populated when status is rejected/blocked due to agent-local policy or job-integrity/replay checks. Always reported as evidence too, per the 'operator sees policy conflicts, not silent failures' rule. unexpected_job_type (ADR-0012 decision 7) is reported by a diagnostic-kind agent offered anything other than protocol_smoke: there is no lease-release endpoint, so the only way to hand back a job it must not execute is a replay-bound rejected result naming why. issuer_not_allowlisted: no agent-local AD CS enrollment rule matches the CA, template, names and key algorithm together, so no CA was contacted. enrollment_snapshot_mismatch: a continuation's snapshot hash differs from the one the agent journaled for that enrollment (ADR-0014 decisions 3 and 4)."
         },
         "keyRotated": {
           "type": ["boolean", "null"],
@@ -323,8 +326,28 @@
         "trustResult": {
           "type": ["object", "null"],
           "description": "Typed trust-anchor result for a distribute-trust/revoke-trust job, absent (or null) for every other job family. Deliberately shape-only here: this envelope's scope is shape/enum/type checks, and the authoritative contract is trust-result-contract.schema.json, which the control plane validates at result ingestion before cross-checking the result against the signed job and touching the installation row. It is not $ref'd because the agent's vendored validator is compiled from this file alone and cannot resolve a sibling schema at build time; duplicating the trust contract's body here would create a second source of truth that could silently drift."
+        },
+        "enrollmentResult": {
+          "type": ["object", "null"],
+          "description": "Typed enrollment outcome for a job that carries an enrollment, absent (or null) otherwise. Shape-only here for the same reason as trustResult: the authoritative contract is enrollment-result-contract.schema.json, validated by the control plane at result ingestion."
+        },
+        "preflightResult": {
+          "type": ["object", "null"],
+          "description": "Typed result of an adcs-preflight job, absent (or null) otherwise. Shape-only here; the authoritative contract is adcs-preflight-result-contract.schema.json."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "awaiting_issuer" } }
+          },
+          "then": {
+            "required": ["enrollmentResult"],
+            "properties": { "enrollmentResult": { "type": "object" } }
+          }
+        }
+      ]
     },
     "evidenceBody": {
       "type": "object",

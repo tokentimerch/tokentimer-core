@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/enrollment-result-contract.schema.json",
+  "title": "CertOps Enrollment Result",
+  "description": "Typed enrollment outcome the agent reports in resultBody.enrollmentResult for every job that carries an enrollment (ADR-0014 decisions 2, 9 and 10). The control plane validates it at result ingestion, cross-checks enrollmentId and attempt against the signed job, and applies the state only as a forward transition, so a late or replayed report never moves an enrollment backwards. state is the control-plane enrollment state, not the agent's journal substate: after a submit that provably never reached the CA the agent's journal returns to prepared, but the report stays submitting with ADCS_CA_UNREACHABLE.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enrollmentId", "attempt", "state"],
+  "properties": {
+    "enrollmentId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "submitting",
+        "pending_issuance",
+        "submission_uncertain",
+        "issued",
+        "validation_deferred",
+        "validated",
+        "installing",
+        "installed",
+        "install_failed",
+        "denied",
+        "rejected_invalid",
+        "validation_expired",
+        "refused",
+        "abandoned",
+        "expired",
+        "cancelled"
+      ],
+      "description": "Every enrollment state except requested, which only the control plane sets. abandoned, expired and cancelled are reported by the continuation that frees the key after the control plane decided them."
+    },
+    "requestId": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "CA RequestId, a 32-bit unsigned integer read from the signed CMC pend token. Known from pending_issuance onwards."
+    },
+    "errorCode": {
+      "type": ["string", "null"],
+      "enum": [
+        "ADCS_TEMPLATE_UNSAFE",
+        "ADCS_CA_CONFIG_UNSAFE",
+        "ADCS_CA_KEY_UNPINNED",
+        "ADCS_CA_UNREACHABLE",
+        "ADCS_DISPOSITION_UNKNOWN",
+        "ADCS_CERTIFICATE_INVALID",
+        "ADCS_CA_KEY_CHANGED",
+        null
+      ]
+    },
+    "caHresult": {
+      "type": ["string", "null"],
+      "pattern": "^0x[0-9A-F]{8}$",
+      "description": "certreq exit HRESULT, shown raw to the operator. It names the reason for a denial; a signed CMC status decides the outcome."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "const": "pending_issuance" } }
+      },
+      "then": {
+        "required": ["requestId"],
+        "properties": { "requestId": { "type": "integer" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "const": "denied" } }
+      },
+      "then": {
+        "required": ["caHresult"],
+        "properties": { "caHresult": { "type": "string" } }
+      }
+    },
+    {
+      "if": {
+        "required": ["state"],
+        "properties": { "state": { "const": "rejected_invalid" } }
+      },
+      "then": {
+        "required": ["errorCode"],
+        "properties": {
+          "errorCode": {
+            "enum": ["ADCS_CERTIFICATE_INVALID", "ADCS_CA_KEY_CHANGED"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["errorCode"],
+        "properties": {
+          "errorCode": {
+            "enum": [
+              "ADCS_TEMPLATE_UNSAFE",
+              "ADCS_CA_CONFIG_UNSAFE",
+              "ADCS_CA_KEY_UNPINNED"
+            ]
+          }
+        }
+      },
+      "then": { "properties": { "state": { "const": "refused" } } }
+    },
+    {
+      "if": {
+        "required": ["errorCode"],
+        "properties": {
+          "errorCode": {
+            "enum": ["ADCS_CERTIFICATE_INVALID", "ADCS_CA_KEY_CHANGED"]
+          }
+        }
+      },
+      "then": { "properties": { "state": { "const": "rejected_invalid" } } }
+    },
+    {
+      "if": {
+        "required": ["errorCode"],
+        "properties": { "errorCode": { "const": "ADCS_CA_UNREACHABLE" } }
+      },
+      "then": { "properties": { "state": { "const": "submitting" } } }
+    },
+    {
+      "if": {
+        "required": ["errorCode"],
+        "properties": { "errorCode": { "const": "ADCS_DISPOSITION_UNKNOWN" } }
+      },
+      "then": {
+        "properties": { "state": { "const": "submission_uncertain" } }
+      }
+    }
+  ]
+}

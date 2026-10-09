@@ -3,9 +3,11 @@
 /**
  * Discriminated-union validator selecting between job-payload.schema.json
  * (certificate lifecycle actions), protocol-smoke-payload.schema.json (the
- * diagnostic-only protocol_smoke action), and trust-job-payload.schema.json
+ * diagnostic-only protocol_smoke action), trust-job-payload.schema.json
  * (distribute-trust/revoke-trust trust-anchor actions, ADR-0012 decision 4),
- * keyed on the payload's own "action" field (ADR-0012 decision 3).
+ * and adcs-preflight-payload.schema.json (read-only AD CS issuer validation,
+ * ADR-0014 decision 5), keyed on the payload's own "action" field (ADR-0012
+ * decision 3).
  *
  * WHY a discriminated union rather than one relaxed schema: job-payload.
  * schema.json requires certificateId/target/keyMode (all about certificate
@@ -47,6 +49,8 @@
 const JOB_PAYLOAD_SCHEMA = require("./job-payload.schema.json");
 const PROTOCOL_SMOKE_PAYLOAD_SCHEMA = require("./protocol-smoke-payload.schema.json");
 const TRUST_JOB_PAYLOAD_SCHEMA = require("./trust-job-payload.schema.json");
+const ADCS_PREFLIGHT_PAYLOAD_SCHEMA = require("./adcs-preflight-payload.schema.json");
+const ENROLLMENT_SNAPSHOT_SCHEMA = require("./enrollment-snapshot.schema.json");
 const SIGNED_DISPATCH_PAYLOAD_SCHEMA = require("./signed-dispatch-payload.schema.json");
 const SIGNED_DISPATCH_WIRE_V1_SCHEMA = require("./signed-dispatch-wire-v1.schema.json");
 const SIGNED_DISPATCH_WIRE_V2_SCHEMA = require("./signed-dispatch-wire-v2.schema.json");
@@ -61,8 +65,12 @@ const CERTIFICATE_ACTIONS = Object.freeze([
   "reload",
   "revoke",
   "noop",
+  "continue-enrollment",
 ]);
 const PROTOCOL_SMOKE_ACTION = "protocol_smoke";
+// Issuer-scoped, not certificate-scoped: preflight names a CA and template
+// and has no certificate, target or key custody, like a trust job.
+const ADCS_PREFLIGHT_ACTION = "adcs-preflight";
 // Trust-anchor actions from trust-job-payload.schema.json's own "action"
 // enum (ADR-0012 decisions 4 and 6). A trust job has no certificate,
 // keyMode, or renewal, so it is a third family here rather than a shape
@@ -97,6 +105,8 @@ function getAjv() {
   ajv.addSchema(JOB_PAYLOAD_SCHEMA);
   ajv.addSchema(PROTOCOL_SMOKE_PAYLOAD_SCHEMA);
   ajv.addSchema(TRUST_JOB_PAYLOAD_SCHEMA);
+  ajv.addSchema(ENROLLMENT_SNAPSHOT_SCHEMA);
+  ajv.addSchema(ADCS_PREFLIGHT_PAYLOAD_SCHEMA);
 
   ajvInstance = ajv;
   return ajvInstance;
@@ -125,6 +135,12 @@ function selectSchemaForAction(action) {
     return {
       schema: TRUST_JOB_PAYLOAD_SCHEMA,
       schemaId: TRUST_JOB_PAYLOAD_SCHEMA.$id,
+    };
+  }
+  if (action === ADCS_PREFLIGHT_ACTION) {
+    return {
+      schema: ADCS_PREFLIGHT_PAYLOAD_SCHEMA,
+      schemaId: ADCS_PREFLIGHT_PAYLOAD_SCHEMA.$id,
     };
   }
   return null;
@@ -156,7 +172,8 @@ function validateSignedJob(job) {
             typeof action === "string"
               ? `unrecognized action "${action}": matches neither the certificate ` +
                 `action family (${CERTIFICATE_ACTIONS.join(", ")}), "${PROTOCOL_SMOKE_ACTION}", ` +
-                `nor the trust-anchor action family (${TRUST_ANCHOR_ACTIONS.join(", ")})`
+                `the trust-anchor action family (${TRUST_ANCHOR_ACTIONS.join(", ")}), ` +
+                `nor "${ADCS_PREFLIGHT_ACTION}"`
               : "job.action is missing or not a string; cannot select a schema",
         },
       ],
@@ -184,6 +201,7 @@ module.exports = {
   CERTIFICATE_ACTIONS,
   PROTOCOL_SMOKE_ACTION,
   TRUST_ANCHOR_ACTIONS,
+  ADCS_PREFLIGHT_ACTION,
   selectSchemaForAction,
   validateSignedJob,
   _test: {
@@ -191,6 +209,8 @@ module.exports = {
     JOB_PAYLOAD_SCHEMA,
     PROTOCOL_SMOKE_PAYLOAD_SCHEMA,
     TRUST_JOB_PAYLOAD_SCHEMA,
+    ADCS_PREFLIGHT_PAYLOAD_SCHEMA,
+    ENROLLMENT_SNAPSHOT_SCHEMA,
     SIGNED_DISPATCH_PAYLOAD_SCHEMA,
     SIGNED_DISPATCH_WIRE_V1_SCHEMA,
     SIGNED_DISPATCH_WIRE_V2_SCHEMA,

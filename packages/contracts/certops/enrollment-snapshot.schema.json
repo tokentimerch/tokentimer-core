@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/certops/enrollment-snapshot.schema.json",
+  "title": "CertOps Enrollment Snapshot",
+  "description": "Issuer configuration frozen when an enrollment is created (ADR-0014 decision 3). The control plane stores the exact bytes on the enrollment and every job for it carries them in enrollment.snapshotB64, inside the signed payload. Editing an issuer or renewal profile never changes an existing snapshot; it only affects new enrollments. Public and non-secret: AD CS needs no stored credentials because the agent authenticates as its machine account.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "issuerId",
+    "issuerVersion",
+    "caConfig",
+    "caKeySha256",
+    "template",
+    "transport",
+    "authorizedDnsNames",
+    "keyAlgorithm",
+    "keySize",
+    "policyVersion",
+    "pollInterval",
+    "pendingTimeout",
+    "minimumRemainingValidity",
+    "requireLaterNotAfter"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "adcs",
+      "description": "Issuer kind. Only adcs is asynchronous today; another asynchronous kind would add its own branch here."
+    },
+    "issuerId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "issuerVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Issuer configuration version the snapshot was taken from. Approving a new CA key creates a new version."
+    },
+    "caConfig": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320,
+      "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\\\[A-Za-z0-9 ._()-]{1,64}$",
+      "description": "CA configuration string host\\CA Name. The agent passes it as a single argv element and re-checks it against its enrollment rules."
+    },
+    "caKeySha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 (hex) of the CA certificate's DER SubjectPublicKeyInfo, confirmed by the operator after preflight. Pinned by key so a CA certificate renewal that reuses the key needs no operator action (ADR-0014 decision 6)."
+    },
+    "template": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+      "description": "Template common name, not its display name."
+    },
+    "transport": {
+      "type": "string",
+      "const": "dcom"
+    },
+    "authorizedDnsNames": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "description": "Names the issued certificate may carry, as SANs or subject CN. Anything outside this list fails validation (ADR-0014 decision 6).",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 253,
+        "pattern": "^(\\*\\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+      }
+    },
+    "keyAlgorithm": {
+      "type": "string",
+      "enum": ["rsa", "ecdsa"]
+    },
+    "keySize": {
+      "type": "integer",
+      "description": "RSA bit length, or 256/384 for the EC curve, matching the job-payload keySize convention."
+    },
+    "policyVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "description": "Version of the renewal profile the snapshot was resolved from, recorded for evidence."
+    },
+    "pollInterval": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 86400,
+      "description": "Seconds between continuations while the enrollment is pending_issuance. Default 900."
+    },
+    "pendingTimeout": {
+      "type": "integer",
+      "minimum": 3600,
+      "maximum": 7776000,
+      "description": "Seconds after submission at which a pending enrollment moves to expired. Default 1209600 (14 days)."
+    },
+    "minimumRemainingValidity": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 31536000,
+      "description": "Seconds of validity an issued certificate must still have when validated; notAfter at or before now plus this value fails validation."
+    },
+    "requireLaterNotAfter": {
+      "type": "boolean",
+      "description": "When true, an issued certificate whose notAfter is not later than the installed certificate's fails validation."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "keyAlgorithm": { "const": "rsa" } } },
+      "then": { "properties": { "keySize": { "enum": [2048, 3072, 4096] } } }
+    },
+    {
+      "if": { "properties": { "keyAlgorithm": { "const": "ecdsa" } } },
+      "then": { "properties": { "keySize": { "enum": [256, 384] } } }
+    }
+  ]
+}

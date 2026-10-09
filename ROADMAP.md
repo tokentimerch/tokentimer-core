@@ -1,11 +1,11 @@
-# TokenTimer Core -- Roadmap
+﻿# TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-08 for the 0.17.3 release against main
-`429e5919584d1f707569d84658455f993d19e859`.
+Last reviewed: 2026-10-09 for the AD CS issuer contracts against main
+`91cc31d48322f63ae443676fc3657f4372e1b22e`.
 
 This page is the repository milestone index: what Core takes next, what must
-land before v1.0.0 so that release is a stable product, and what v1.0.0
-itself changes for compatibility. Customer-facing feature cards and voting
+land before v1.0.0 so that release is a stable product, what ships in 0.x
+without gating v1.0.0, and what v1.0.0 itself changes for compatibility. Customer-facing feature cards and voting
 live on the [public feature roadmap](https://tokentimer.featurebase.app/en/roadmap).
 Release history lives in [CHANGELOG.md](CHANGELOG.md). Owners, acceptance
 criteria, and evidence live in the linked GitHub issues.
@@ -23,7 +23,8 @@ controller, agent renewal, signed dispatch, Windows/IIS execution, and
 trust-anchor reconciliation have shipped. CertOps 0.17.0 groups
 certificates by fingerprint and separates lifecycle, management periods and
 observed locations; see [CHANGELOG.md](CHANGELOG.md)
-and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0.
+and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0,
+except the AD CS issuer, which does not gate v1.0.0.
 Airgap operator packages, proxy-agents, appliance connectors, and
 compliance reporting are not deliverables of this repository.
 
@@ -56,6 +57,20 @@ called stable while they are open.
   ([#232](https://github.com/tokentimerch/tokentimer-core/issues/232)).
   Correlation identifiers across API and workers; production error
   reporting with secret scrubbing.
+
+---
+
+## Alongside 0.x -- does not gate v1.0.0
+
+Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
+called stable while it is open.
+
+- **AD CS issuer for the Windows agent**
+  ([#321](https://github.com/tokentimerch/tokentimer-core/issues/321)).
+  Issue and renew IIS certificates from an enterprise AD CS CA, including
+  templates that need CA-manager approval. The key stays on the host and
+  the agent authenticates as its machine account. Not released until the
+  ADR-0014 release gate passes on real hosts.
 
 ---
 
