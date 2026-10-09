@@ -1,0 +1,655 @@
+# TokenTimer Helm Chart - ci-values-smoke-test.yaml
+# https://tokentimer.ch
+#
+# All resources deploy into the Helm release namespace (--namespace <ns>).
+# Only ServiceMonitor/PrometheusRule support a separate namespace override.
+#
+# Image tags default to Chart.appVersion (pinned per release), not :latest.
+# The mutable GHCR :latest tags are a convenience/dev channel only; a mid-promotion
+# failure can leave a mixed :latest set. For reproducible deploys, pin
+# image.digest from release-manifest.json on the GitHub Release (digest takes
+# precedence over tag via tokentimer.image).
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imageRegistry: "ghcr.io/tokentimerch"
+  imagePullSecrets: []
+
+# -- API Server ---------------------------------------------------------------
+api:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    registry: ""
+    repository: tokentimer-core-api
+    tag: "0.17.2"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""    # takes precedence over tag; pin from release-manifest.json for reproducible deploys (:latest is not the source of truth)
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 4000
+    nodePort: null
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: null
+
+  # maxUnavailable takes precedence over minAvailable; set only one.
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+
+  # /health checks DB connectivity: returns 200 when the database is reachable,
+  # 503 otherwise. The API process exits on connection-level DB errors, so
+  # liveness failures typically mean the process is already terminating.
+  # Set any probe to {} to disable it.
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # The startup probe gates liveness and readiness until the app is initialized.
+  # On first install the API waits up to 3 minutes for the CloudNativePG cluster
+  # to become reachable (waitForDatabase: 90 attempts x 2s), then runs migrations
+  # and admin bootstrap before listening. The budget here (10s + 40 x 5s = 210s)
+  # covers that full sequence. On subsequent restarts the DB responds immediately
+  # and the startup probe succeeds in seconds.
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 40
+
+  env: {}
+  # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
+  # (e.g. '{{ .Release.Name }}-overlay-env').
+  envFrom: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+
+# -- Dashboard (frontend) -----------------------------------------------------
+dashboard:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    registry: ""
+    repository: tokentimer-core-dashboard
+    tag: "0.17.2"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # Pod listener (unprivileged). Service port stays 80 -> targetPort http.
+  containerPort: 8080
+
+  service:
+    type: ClusterIP
+    port: 80
+    nodePort: null
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  env:
+    VITE_API_URL: ""
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- Worker CronJobs ----------------------------------------------------------
+worker:
+  image:
+    registry: ""
+    repository: tokentimer-core-worker
+    tag: "0.17.2"  # align with Chart.appVersion; release workflow updates this per tag
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # Extra env/volumes for all CronJobs.
+  # Precedence: workspace DB settings > env vars here > code defaults.
+  env: {}
+  # First-class tuning for the workers that raise and email operational incidents.
+  # These values take precedence over matching keys in worker.env.
+  operationalNotifications:
+    emailDailyCap: 10
+    degradedAttemptsThreshold: 5
+    autoSyncCriticalThreshold: 3
+  # Extra envFrom entries. configMapRef.name / secretRef.name support Helm tpl
+  # (e.g. '{{ .Release.Name }}-overlay-env').
+  envFrom: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  cronjobs:
+    # Alert Discovery -- scans tokens and queues expiry alerts
+    discovery:
+      enabled: true
+      schedule: "*/5 * * * *" # Every 5 min (:00, :05, :10, ...)
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Alert Delivery -- processes alert queue and sends notifications
+    delivery:
+      enabled: true
+      schedule: "1/5 * * * *" # 1 min after discovery (:01, :06, :11, ...)
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Weekly Digest -- sends weekly token-expiry summaries
+    weeklyDigest:
+      enabled: true
+      schedule: "0 9 * * 1"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 5
+      failedJobsHistoryLimit: 5
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Endpoint Check -- SSL certificate and health monitoring
+    endpointCheck:
+      enabled: true
+      schedule: "*/1 * * * *" # Every minute
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Auto Sync -- scheduled integration scans
+    autoSync:
+      enabled: true
+      schedule: "*/1 * * * *"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+
+    # CertOps maintenance -- lease reaper, stale-agent sweep, nonce and
+    # registration-replay sweeps, renewal scheduler. Without this cronjob,
+    # certops_agents.status is never demoted off 'active' when an agent
+    # stops heartbeating.
+    certops:
+      enabled: true
+      schedule: "*/1 * * * *"
+      concurrencyPolicy: Forbid
+      startingDeadlineSeconds: 300
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      backoffLimit: 1
+      activeDeadlineSeconds: null
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+# -- CertOps Kubernetes controller -------------------------------------------
+# The controller is independently opt-in. Observe is the default; provision
+# adds only cert-manager Certificate create/patch rights.
+certops:
+  controller:
+    enabled: true
+    mode: observe
+    # Leader election is not available yet, so exactly one replica is safe.
+    replicaCount: 1
+    # Cluster-wide RBAC (ClusterRole/ClusterRoleBinding) is the default. A
+    # non-empty watchNamespaces value is invalid while this is true. Set this
+    # to false to scope down to Role/RoleBinding in watchNamespaces (empty
+    # list then means the release namespace).
+    clusterWide: true
+    watchNamespaces: []
+    secretFallbackEnabled: false
+
+    image:
+      registry: ""
+      repository: tokentimer-core-k8s-controller
+      tag: "0.17.2"  # align with Chart.appVersion; release workflow updates this per tag
+      digest: ""
+      pullPolicy: IfNotPresent
+
+    # Controller configuration. These are required when enabled.
+    api:
+      url: "http://tokentimer-api:4000"
+      workspaceId: "550e8400-e29b-41d4-a716-446655440000"
+      clusterId: "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+    # Only an existing Secret reference is accepted. There is intentionally no
+    # raw API-token value field in this chart.
+    apiToken:
+      existingSecret: "certops-api-token"
+      key: token
+
+    healthPort: 8080
+    reconcileInterval: "30s"
+    shutdownTimeout: "10s"
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+# -- PostgreSQL ----------------------------------------------------------------
+postgresql:
+  cloudnative:
+    # CloudNativePG Cluster (operator required). More fields: deploy/helm/templates/postgresql-cluster.yaml
+    enabled: true
+    instances: 3
+    imageName: "ghcr.io/cloudnative-pg/postgresql:17"
+    primaryUpdateStrategy: unsupervised
+    enableSuperuserAccess: false
+    maxSyncReplicas: 2
+    minSyncReplicas: 1
+
+    storage:
+      size: 10Gi
+      storageClass: ""
+
+    maxConnections: "200"
+    sharedBuffers: "256MB"
+    workMem: "8MB"
+    maintenanceWorkMem: "128MB"
+    extraParameters:
+      ssl_min_protocol_version: "TLSv1.3"
+      ssl_ciphers: "HIGH:!aNULL:!MD5"
+    parameters: {}   # non-empty replaces maxConnections/shared_buffers/...
+    extraSpec: {}    # other Cluster spec keys (no duplicates)
+
+    pgHba:
+      - hostssl all all 0.0.0.0/0 md5
+      - hostnossl all all 0.0.0.0/0 reject
+
+    monitoring:
+      podMonitorEnabled: false
+
+    backup:
+      enabled: false
+      destinationPath: ""
+      retentionPolicy: "30d"
+      s3:
+        credentialsSecret: ""
+        region: ""
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+  # Credentials for CloudNativePG bootstrap and the app secret.
+  # Auto-generated if password is empty and no existingSecret is set.
+  # existingSecret must be type kubernetes.io/basic-auth (keys: username, password).
+  # When using existingSecret, also provide DB_PASSWORD to the app via config.existingSecret.
+  auth:
+    username: tokentimer
+    password: ""          # auto-generated if empty
+    database: tokentimer
+    existingSecret: ""
+
+  # External PostgreSQL (when cloudnative.enabled = false).
+  # existingSecret replaces all DB keys; must contain:
+  #   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSL
+  external:
+    enabled: false
+    host: ""
+    port: 5432
+    database: tokentimer
+    username: tokentimer
+    password: ""
+    existingSecret: ""
+    sslMode: require
+
+# -- Application Configuration ------------------------------------------------
+config:
+  # Session signing key. Auto-generated on first install if left empty.
+  sessionSecret: ""
+
+  # Replaces the chart-generated secret entirely.
+  # Must contain SESSION_SECRET; optionally DB_PASSWORD, ADMIN_PASSWORD,
+  # WEEKLY_DIGEST_RECIPIENT_KEY, etc.
+  existingSecret: ""
+
+  # Optional HMAC secret for digest skip keys; falls back to SESSION_SECRET.
+  # Rotating re-sends already claimed recipients this week. When existingSecret
+  # is set, put WEEKLY_DIGEST_RECIPIENT_KEY in that secret instead.
+  weeklyDigestRecipientKey: ""
+
+  # Admin Bootstrap (required for first startup)
+  adminEmail: ""          # required (unless existingSecret is set)
+  adminPassword: ""       # auto-generated if empty
+  adminName: "Administrator"
+  # Set to true to skip automatic admin creation (e.g. when users are managed via SSO).
+  disableAdminBootstrap: false
+  # Set to true to block manual workspace invites (POST /api/v1/workspaces/:id/members
+  # returns 403 MANUAL_INVITES_DISABLED) when users are provisioned exclusively through
+  # an external identity provider. Existing pending invitations are unaffected.
+  disableManualInvites: false
+  # Empty = unset = on. Set "false" only to 400 two-or-more contact_group_ids
+  # on 0.16.0. Does not make 0.15.0 write join tables. Do not mix 0.15.0 + 0.16.0.
+  contactGroupPluralWrites: ""
+  # Set to true to allow webhook alert/test destinations to resolve to private,
+  # loopback, or link-local IPs (including IPv4-mapped IPv6). Default false
+  # blocks these to prevent SSRF against internal infrastructure; only enable
+  # this if webhook targets intentionally live on a private network.
+  webhookAllowPrivateIps: false
+
+  # Extra allowed webhook destination hosts (comma-separated). Legacy alias,
+  # parsed and unioned together with webhookExtraProviderHosts (not a
+  # fallback -- if both are set, hosts from either are allowed); not a
+  # full-list override of the built-in provider allowlist (Slack,
+  # Discord, Teams, PagerDuty, Power Automate/Logic Apps).
+  webhookProviderHosts: ""
+  # Extra allowed webhook destination hosts (comma-separated). Unioned with
+  # webhookProviderHosts when both are set.
+  webhookExtraProviderHosts: ""
+  # Set to true to allow webhook alert/test destinations to any host,
+  # bypassing the friendly-provider allowlist entirely. Not recommended
+  # outside of trusted, fully self-hosted environments.
+  webhookAllowAllHosts: false
+
+  # Corporate proxy support for outbound HTTP(S) requests (fetch/undici
+  # and axios). See docs/CONFIGURATION.md.
+  useEnvProxy: false
+  # Name of an existing Kubernetes Secret (created outside this chart)
+  # containing HTTP_PROXY and HTTPS_PROXY keys. Proxy URLs commonly embed
+  # credentials (http://user:pass@proxy:3128), so there is intentionally no
+  # plaintext proxy URL value in this chart. Required when useEnvProxy=true
+  # (the chart fails the render otherwise); mounted via envFrom on the API
+  # Deployment and all worker CronJobs.
+  proxyExistingSecret: ""
+  # Comma-separated NO_PROXY overrides. Always combined with localhost,
+  # 127.0.0.1, ::1, the in-cluster API service hostname, and .svc/.cluster.local,
+  # so intra-cluster API calls never accidentally route through the proxy.
+  # Only emitted when useEnvProxy=true.
+  noProxy: ""
+
+  nodeEnv: "production"        # set to "development" for debug/testing
+  baseUrl: "http://localhost:8080"
+  apiUrl: "http://localhost:4000"
+
+  # Number of trusted reverse-proxy hops in front of the API. Affects how
+  # Express resolves req.ip and req.protocol (used by callback URL
+  # generation and rate-limit keys).
+  #   0 = no proxy in front of the API
+  #   1 = single ingress / reverse proxy
+  #   2 = LB -> ingress (default, matches typical K8s ingress + Service LB)
+  trustProxyHops: 2
+
+  # Fallback when workspace has no custom thresholds (workspace DB > env > code).
+  alertThresholds: "30,14,7,1,0"
+
+  # CertOps (certificate operations broker). Enabled by default; set to
+  # false to disable the /certops API surface and worker monitor bridge.
+  # Precedence: this value > System Settings DB > code default (disabled).
+  certopsEnabled: true
+
+  # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
+  # These wrap, at rest, the job-signing private keys and the agent
+  # registration-replay credentials. The API fails closed without them:
+  # agent registration and signed job dispatch throw
+  # CERTOPS_{SIGNING,REGISTRATION}_ENCRYPTION_KEY_MISSING.
+  # Left empty, the chart generates them and reuses the values already
+  # stored in the release Secret on every subsequent `helm upgrade`.
+  # Set them explicitly if you manage secrets externally or render with
+  # `helm template` (which cannot read back the existing Secret).
+  # Rotating either value makes the data it wrapped unreadable: signing
+  # keys must be re-issued and agents must re-register.
+  #   openssl rand -hex 32
+  certopsSigningEncryptionKey: ""
+  certopsRegistrationEncryptionKey: ""
+
+# -- SMTP (optional) ----------------------------------------------------------
+# Can also be configured after deployment via the admin System Settings UI.
+# Precedence: env vars here > System Settings DB (admin UI) > code defaults.
+# Env-set fields are locked (read-only) in the admin UI.
+# user/password are optional: leave both empty to send through an anonymous
+# (no-auth) relay authorized by source network; setting only one of the two
+# is treated as not configured. With no user, set fromEmail.
+# existingSecret replaces all SMTP keys; must contain:
+#   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, FROM_EMAIL, FROM_EMAIL_NAME
+smtp:
+  host: ""
+  port: ""
+  user: ""
+  password: ""
+  existingSecret: ""
+  fromEmail: ""
+  fromName: ""
+  # Force SSL (auto-detected for port 465 when unset).
+  secure: ""              # "true" | "false" | ""
+  # Require STARTTLS upgrade on plaintext ports.
+  requireTls: ""          # "true" | "false" | ""
+
+# -- Twilio WhatsApp (optional) -----------------------------------------------
+# Can also be configured after deployment via the admin System Settings UI.
+# Precedence: env vars here > System Settings DB (admin UI) > disabled.
+# existingSecret replaces Twilio credential/SID keys; must contain those TWILIO_*
+# keys (account SID, auth token, WhatsApp from, content SIDs). Limiter knobs
+# (webhookRateLimitWindowMs / webhookRateLimitMax) are ConfigMap first-class
+# keys and are not required in the existing secret.
+twilio:
+  accountSid: ""
+  authToken: ""
+  existingSecret: ""
+  whatsappFrom: ""
+  testContentSid: ""
+  alertContentSidExpires: ""
+  alertContentSidExpired: ""
+  alertContentSidEndpointDown: ""
+  alertContentSidEndpointRecovered: ""
+  weeklyDigestContentSid: ""
+  # Inbound StatusCallback limiter. Empty keeps code defaults (60s / 1200 in production).
+  webhookRateLimitWindowMs: ""
+  webhookRateLimitMax: ""
+
+# -- Monitoring ----------------------------------------------------------------
+monitoring:
+  metrics:
+    enabled: true
+    pushgatewayUrl: ""
+
+  serviceMonitor:
+    enabled: true
+    namespace: ""
+    interval: "30s"
+    scrapeTimeout: "10s"
+    labels: {}
+    metricRelabelings: []
+      # - action: replace
+      #   targetLabel: env
+      #   replacement: production
+      #   sourceLabels: ["namespace"]
+      #   regex: production
+
+  prometheusRules:
+    enabled: true
+    namespace: ""
+    labels: {}
+    groups: []
+    # See deploy/helm/examples/values-full-test.yaml for ready-to-use rule groups
+    # covering alert delivery, auto-sync failures, application errors, and security.
+
+# -- ServiceAccount ------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+# -- Network Policy ------------------------------------------------------------
+# Creates per-component policies (default-deny, api, dashboard, worker).
+# Set namespace names to allow inbound traffic from ingress controller and
+# Prometheus scraping; leave empty to skip those rules.
+networkPolicy:
+  enabled: true
+  ingressNamespace: ""      # e.g. "ingress-nginx"
+  monitoringNamespace: ""   # e.g. "monitoring"
+  # Destination CIDRs for outbound traffic from api and worker pods.
+  # Defaults allow all (0.0.0.0/0) to preserve out-of-the-box behaviour.
+  # Override to restrict outbound traffic to known endpoints (internal SMTP
+  # relay, allowlisted OAuth/SAML providers, webhook destinations, etc.).
+  # Set a list to empty ([]) to disable that protocol's egress entirely.
+  egress:
+    # SMTP egress (ports 25, 465, 587). Used by api and worker pods to send
+    # email alerts and digests.
+    smtpCidrs:
+      - 0.0.0.0/0
+    # HTTPS egress (port 443). Used by api for OAuth/SAML callbacks and
+    # external integrations, and by workers for outbound webhooks
+    # (Slack, Discord, Teams, Twilio).
+    httpsCidrs:
+      - 0.0.0.0/0
+    # Controller-only egress. When controllerApiCidrs is empty, the controller
+    # can reach only the in-chart API pods. Use explicit CIDRs for an external
+    # TokenTimer API endpoint; hostname rules are not valid NetworkPolicy rules.
+    controllerApiCidrs: []
+    controllerApiPort: 443
+    # Required when both networkPolicy and certops.controller are enabled.
+    # Kubernetes NetworkPolicy cannot safely express a kube-apiserver hostname,
+    # and some datapaths enforce this rule after Service DNAT. Discover the
+    # effective EndpointSlice/control-plane destinations for this cluster;
+    # never copy a Kind or another cluster's address as a universal value.
+    kubeApiServerCidrs: [172.18.0.3/32]
+    # Match the effective destination port, which may differ from Service 443.
+    kubeApiServerPort: 443
+    # Corporate proxy egress. Destination CIDRs the proxy configured via
+    # config.useEnvProxy lives on. Empty list (default) renders no proxy
+    # egress rule. Required (chart fails the render otherwise) when
+    # config.useEnvProxy=true and networkPolicy.enabled=true.
+    proxyCidrs: []
+    # Ports opened to proxyCidrs above. Defaults open BOTH 3128 and 8080 to
+    # every listed CIDR; narrow this list if your proxy only listens on one
+    # of them. Required (non-empty, each an integer 1-65535) under the same
+    # condition as proxyCidrs.
+    proxyPorts:
+      - 3128
+      - 8080
+
+# -- Pod Security (shared defaults) --------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

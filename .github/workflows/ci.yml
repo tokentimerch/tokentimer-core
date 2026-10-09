@@ -414,6 +414,102 @@ jobs:
       - name: Helm lint and template (all example values)
         run: bash scripts/helm-template-verify.sh
 
+    
+  helm_smoke_test:
+    name: Helm Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create Ephemeral Local Cluster
+        run: |
+          kind create cluster --name ephemeral-smoke-test-cluster --image kindest/node:v1.29.14
+          kubectl cluster-info --context kind-ephemeral-smoke-test-cluster
+      
+      - name: Install Prerequisite
+        run: | 
+          helm repo add cnpg https://cloudnative-pg.github.io/charts
+          helm repo update
+
+          kubectl apply -f https://raw.githubusercontent.com/prometheus-community/helm-charts/main/charts/kube-prometheus-stack/charts/crds/crds/crd-servicemonitors.yaml
+         
+          kubectl wait \
+            --for=condition=Established \
+            crd/servicemonitors.monitoring.coreos.com \
+            --timeout=30s
+
+          helm install cnpg-operator cnpg/cloudnative-pg --namespace cnpg-system --create-namespace --version 0.23.0 --wait
+
+      - name: Install TokenTimer
+        run: |
+
+         helm lint ./deploy/helm \
+          --set config.adminEmail=admin@example.com \
+          -f deploy/helm/ci/ci-values-smoke-test.yaml 
+
+          helm install tokentimer ./deploy/helm \
+           --version "$TT_VERSION" --namespace tokentimer --create-namespace \
+           -f deploy/helm/ci/ci-values-smoke-test.yaml \
+           --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
+           --set api.env.NODE_ENV=development \
+           --set config.adminEmail=admin@example.com
+
+      - name: Wait for workloads
+        run: |
+          kubectl rollout status deployment/tokentimer-api -n tokentimer --timeout=240s
+
+      - name: Smoke Test API Service
+        run: |
+          response=$(kubectl run smoke-test \
+            --image=curlimages/curl:8.12.1 \
+            --restart=Never \
+            -n tokentimer \
+            --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
+            --attach \
+            --quiet \
+            --command -- \
+            curl -sS --connect-timeout 5 --max-time 10 \
+            -w '\n%{http_code}\n' \
+            http://tokentimer-api:4000/health)
+
+          http_code=$(printf '%s\n' "$response" | tail -n 1)
+          body=$(printf '%s\n' "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+
+          if [ "$http_code" != "200" ]; then
+            echo "API returned HTTP $http_code"
+            exit 1
+          fi
+
+          if ! echo "$body" | grep -q '"status":"healthy"'; then
+            echo "API is not healthy"
+            exit 1
+          fi
+
+          echo "API health check passed"
+
+      - name: Diagnostics on Failure
+        if: failure()
+        run: |
+          kubectl get nodes -o wide || true
+          kubectl get all -A || true
+          kubectl get pods -n tokentimer -o wide || true
+          kubectl describe pods -n tokentimer || true
+          kubectl logs deployment/tokentimer-api \
+            -n tokentimer --all-containers=true --tail=100 || true
+          helm status tokentimer -n tokentimer || true
+          helm status kube-prom-stack -n monitoring || true
+          helm status cnpg-operator -n cnpg-system || true
+
+      - name: Delete Ephemeral Cluster
+        if: always()
+        run: kind delete cluster --name ephemeral-smoke-test-cluster
+
+
   compose_validation:
     name: Compose File Validation
     runs-on: ubuntu-latest
