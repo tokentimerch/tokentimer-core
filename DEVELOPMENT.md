@@ -190,15 +190,35 @@ kubectl cluster-info \
   --context kind-ephemeral-smoke-test-cluster
 ```
 
-Install the prerequisites required by the chart and its custom resources, using the same versions and commands as the CI workflow.
+Install the chart prerequisites (ServiceMonitor CRD and CloudNativePG operator), using the same versions and commands as the CI workflow:
 
-Install TokenTimer using the smoke-test values:
+```bash
+helm repo add cnpg https://cloudnative-pg.github.io/charts
+helm repo update
+
+kubectl apply -f https://raw.githubusercontent.com/prometheus-community/helm-charts/main/charts/kube-prometheus-stack/charts/crds/crds/crd-servicemonitors.yaml
+
+kubectl wait \
+  --for=condition=Established \
+  crd/servicemonitors.monitoring.coreos.com \
+  --timeout=30s
+
+helm install cnpg-operator cnpg/cloudnative-pg \
+  --namespace cnpg-system \
+  --create-namespace \
+  --version 0.23.0 \
+  --wait
+```
+
+Install TokenTimer using the smoke-test values. `config.adminEmail` is required by the chart even when the smoke-test values leave it empty:
 
 ```bash
 helm install tokentimer ./deploy/helm \
   --namespace tokentimer \
   --create-namespace \
-  -f deploy/helm/ci/ci-values-smoke-test.yaml
+  -f deploy/helm/ci/ci-values-smoke-test.yaml \
+  --set config.adminEmail=admin@example.com \
+  --set api.env.NODE_ENV=development
 ```
 
 Wait for the API deployment:
@@ -209,21 +229,40 @@ kubectl rollout status deployment/tokentimer-api \
   --timeout=240s
 ```
 
-Run the health check from inside the cluster. The test pod must use labels permitted by the API NetworkPolicy:
+Run the health check from inside the cluster. Use `--attach` so the command waits for the curl response. The test pod must use labels permitted by the API NetworkPolicy:
 
 ```bash
-kubectl run smoke-test \
+response=$(kubectl run smoke-test \
   --image=curlimages/curl:8.12.1 \
   --restart=Never \
   --namespace=tokentimer \
   --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
+  --attach \
+  --quiet \
   --command -- \
-  curl -sS --fail --connect-timeout 5 --max-time 10 \
+  curl -sS --connect-timeout 5 --max-time 10 \
   -w '\n%{http_code}\n' \
-  http://tokentimer-api:4000/health
+  http://tokentimer-api:4000/health)
+
+http_code=$(printf '%s\n' "$response" | tail -n 1)
+body=$(printf '%s\n' "$response" | sed '$d')
+
+echo "HTTP status: $http_code"
+
+if [ "$http_code" != "200" ]; then
+  echo "API returned HTTP $http_code"
+  exit 1
+fi
+
+if ! echo "$body" | grep -q '"status":"healthy"'; then
+  echo "API is not healthy"
+  exit 1
+fi
+
+echo "API health check passed"
 ```
 
-The expected result is HTTP `200` with a JSON response containing `"status":"healthy"`.
+The check fails unless the response is HTTP `200` with a JSON body containing `"status":"healthy"`.
 
 ### Troubleshooting
 
