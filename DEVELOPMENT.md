@@ -165,6 +165,84 @@ pnpm --filter @tokentimer/worker start:weekly-digest
 pnpm --filter @tokentimer/worker start:certops
 ```
 
+## Helm smoke test
+
+The Helm smoke test deploys TokenTimer into an ephemeral Kubernetes cluster and verifies that the API is reachable through its Kubernetes Service and returns a healthy response from `/health`.
+
+### Prerequisites
+
+- Docker
+- `kubectl`
+- Helm
+- [kind](https://kind.sigs.k8s.io/)
+- A working internet connection to pull the required container images and Helm charts
+
+### Run locally
+
+Create a Kubernetes cluster using a version compatible with the chart requirements:
+
+```bash
+kind create cluster \
+  --name ephemeral-smoke-test-cluster \
+  --image kindest/node:v1.29.14
+
+kubectl cluster-info \
+  --context kind-ephemeral-smoke-test-cluster
+```
+
+Install the prerequisites required by the chart and its custom resources, using the same versions and commands as the CI workflow.
+
+Install TokenTimer using the smoke-test values:
+
+```bash
+helm install tokentimer ./deploy/helm \
+  --namespace tokentimer \
+  --create-namespace \
+  -f deploy/helm/ci/ci-values-smoke-test.yaml
+```
+
+Wait for the API deployment:
+
+```bash
+kubectl rollout status deployment/tokentimer-api \
+  -n tokentimer \
+  --timeout=240s
+```
+
+Run the health check from inside the cluster. The test pod must use labels permitted by the API NetworkPolicy:
+
+```bash
+kubectl run smoke-test \
+  --image=curlimages/curl:8.12.1 \
+  --restart=Never \
+  --namespace=tokentimer \
+  --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
+  --command -- \
+  curl -sS --fail --connect-timeout 5 --max-time 10 \
+  -w '\n%{http_code}\n' \
+  http://tokentimer-api:4000/health
+```
+
+The expected result is HTTP `200` with a JSON response containing `"status":"healthy"`.
+
+### Troubleshooting
+
+Inspect the API deployment, Service endpoints, NetworkPolicies and pod logs:
+
+```bash
+kubectl get pods,svc,endpoints -n tokentimer
+kubectl get networkpolicy -n tokentimer
+kubectl logs -n tokentimer deployment/tokentimer-api
+helm status tokentimer -n tokentimer
+```
+
+### Cleanup
+
+```bash
+helm uninstall tokentimer -n tokentimer
+kind delete cluster --name ephemeral-smoke-test-cluster
+```
+
 ## Worker Runner
 
 `apps/worker/src/runner.js` is the long-running worker scheduler used by local

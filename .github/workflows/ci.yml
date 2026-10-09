@@ -7,6 +7,12 @@ name: CI
 on:
   push:
     branches: [main, master]
+
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'deploy/helm/**'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 permissions:
@@ -418,7 +424,7 @@ jobs:
   helm_smoke_test:
     name: Helm Smoke Test
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
 
       - name: Checkout
@@ -459,7 +465,7 @@ jobs:
 
       - name: Wait for workloads
         run: |
-          kubectl rollout status deployment/tokentimer-api -n tokentimer --timeout=60s
+          kubectl rollout status deployment/tokentimer-api -n tokentimer --timeout=240s
 
       - name: Smoke Test API Service
         run: |
