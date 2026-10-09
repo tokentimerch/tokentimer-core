@@ -5,6 +5,7 @@
 // key deletion is limited to material created and provenance-recorded by this
 // run through the production CNG helpers.
 // Usage: node nondefault-store-verify.js <workDir> <caConfig> [targetStore]
+//   Against an enterprise CA, set TT_VERIFY_CA_TEMPLATE to an auto-issue template.
 //   caConfig example: "tt-win2019\\TokenTimer Test Root CA"
 
 const path = require("node:path");
@@ -40,6 +41,11 @@ const { recordSupersededWindowsCertificate } = require(
  * hanging forever, so a repeat hang costs 60s locally, not an open-ended
  * Run Command stall. */
 const RUN_CAPTURED_TIMEOUT_MS = 60 * 1000;
+
+// An enterprise CA needs the template at submit; a standalone CA takes none.
+const SUBMIT_TEMPLATE_ARGS = process.env.TT_VERIFY_CA_TEMPLATE
+  ? ["-attrib", `CertificateTemplate:${process.env.TT_VERIFY_CA_TEMPLATE}`]
+  : [];
 
 function runCaptured(cmd, args) {
   try {
@@ -86,7 +92,7 @@ async function enrollTestCertificate({
   const cerPath = path.join(workDir, `${stem}.cer`);
   fs.writeFileSync(csrPath, csr.csrPem, "utf8");
   try { fs.unlinkSync(cerPath); } catch { /* absent is expected */ }
-  const submit = runCaptured("certreq", ["-submit", "-config", caConfig, csrPath, cerPath]);
+  const submit = runCaptured("certreq", ["-submit", ...SUBMIT_TEMPLATE_ARGS, "-config", caConfig, csrPath, cerPath]);
   const match = `${submit.stdout}\n${submit.stderr}`.match(/RequestId:\s*(\d+)/i);
   if (!fs.existsSync(cerPath) && match) {
     const resubmit = runCaptured("certutil", ["-config", caConfig, "-resubmit", match[1]]);
@@ -181,7 +187,7 @@ async function main() {
     }
   }
   let requestId = null;
-  const submit = runCaptured("certreq", ["-f", "-submit", "-config", caConfig, csrPath, cerPath]);
+  const submit = runCaptured("certreq", ["-f", "-submit", ...SUBMIT_TEMPLATE_ARGS, "-config", caConfig, csrPath, cerPath]);
   console.log("certreq -submit stdout:", submit.stdout);
   console.log("certreq -submit stderr:", submit.stderr);
   if (submit.timedOut) {
@@ -263,10 +269,10 @@ async function main() {
   console.log(targetStoreQuery.stdout);
   const normalizedTarget = targetStoreQuery.stdout.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
   const foundInTarget = normalizedTarget.includes(acceptResult.thumbprint);
-  const hasPrivateKeyInTarget =
-    /Key Container\s*=/i.test(targetStoreQuery.stdout) || /Provider\s*=/i.test(targetStoreQuery.stdout);
+  // certutil labels are localized, the container name is not.
+  const hasPrivateKeyInTarget = targetStoreQuery.stdout.includes(csrResult.containerName);
   console.log("thumbprint found verbatim in target-store certutil output:", foundInTarget);
-  console.log("Key Container/Provider line present in target-store output (private key survived the move):", hasPrivateKeyInTarget);
+  console.log("target-store output names our key container (private key survived the move):", hasPrivateKeyInTarget);
   if (!foundInTarget) {
     console.log("FAIL: expected thumbprint in target store output");
     process.exitCode = 1;
@@ -483,13 +489,12 @@ async function main() {
   ) {
     throw new Error("old certificate still exists after production cleanup");
   }
-  const oldKeyProbe = runCaptured("certutil", [
-    "-csp",
-    "Microsoft Software Key Storage Provider",
-    "-key",
-    csrResult.containerName,
-  ]);
-  if (oldKeyProbe.exitCode === 0 && oldKeyProbe.stdout.includes(csrResult.containerName)) {
+  // `certutil -key <name>` exits 0 and echoes the name even when the key is gone, so match the
+  // full KSP listing line by line instead.
+  const kspListing = runCaptured("certutil", ["-key", "-csp", "Microsoft Software Key Storage Provider"]);
+  if (kspListing.exitCode !== 0) throw new Error("could not list the Software KSP containers");
+  const kspContainers = new Set(kspListing.stdout.split(/\r?\n/).map((line) => line.trim()));
+  if (kspContainers.has(csrResult.containerName)) {
     throw new Error("old CNG key container still exists after production cleanup");
   }
   const replacementStoreProbe = runCaptured("certutil", [
@@ -506,18 +511,7 @@ async function main() {
   ) {
     throw new Error("replacement certificate was removed or is absent from the target store");
   }
-  const replacementKeyProbe = runCaptured("certutil", [
-    "-csp",
-    "Microsoft Software Key Storage Provider",
-    "-key",
-    replacement.containerName,
-  ]);
-  if (
-    replacementKeyProbe.exitCode !== 0 ||
-    !replacementKeyProbe.stdout
-      .toUpperCase()
-      .includes(replacement.containerName.toUpperCase())
-  ) {
+  if (!kspContainers.has(replacement.containerName)) {
     throw new Error("replacement CNG key container was removed or is unavailable");
   }
   console.log(

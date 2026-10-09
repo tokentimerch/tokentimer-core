@@ -4115,14 +4115,14 @@ describe("windows-iis renew job (os-store-managed)", () => {
       let error = null;
       let stdout = "";
       let stderr = "";
-      if (file === "certreq.exe" && args[1] === "-new") {
+      if (file === "certreq.exe" && args[2] === "-new") {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,
           "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
           "utf8",
         );
-      } else if (file === "certreq.exe" && args[1] === "-accept") {
+      } else if (file === "certreq.exe" && args[2] === "-accept") {
         // acceptCertificateViaCng computes the thumbprint itself from the
         // certificatePem bytes; certreq's own stdout is not parsed.
         if (acceptExitCode !== 0) {
@@ -4467,7 +4467,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     const calls = [];
     const windowsExecFileImpl = (file, args, options, callback) => {
       calls.push({ file, args, options });
-      if (file === "certreq.exe" && args[1] === "-new") {
+      if (file === "certreq.exe" && args[2] === "-new") {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,
@@ -4477,7 +4477,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
         process.nextTick(() => callback(null, "", ""));
         return;
       }
-      if (file === "certreq.exe" && args[1] === "-accept") {
+      if (file === "certreq.exe" && args[2] === "-accept") {
         process.nextTick(() => callback(null, "", ""));
         return;
       }
@@ -4560,7 +4560,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     const calls = [];
     const windowsExecFileImpl = (file, args, options, callback) => {
       calls.push({ file, args, options });
-      if (file === "certreq.exe" && args[1] === "-new") {
+      if (file === "certreq.exe" && args[2] === "-new") {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,

@@ -46,11 +46,28 @@ async function main() {
   fs.writeFileSync(path.join(workDir, "certutil-store-my-after-accept.txt"), storeOutput);
   console.log(storeOutput);
 
-  const hasPrivateKey = /Key Container\s*=/i.test(storeOutput) || /Provider\s*=/i.test(storeOutput);
-  console.log("hasPrivateKey (Key Container/Provider line present):", hasPrivateKey);
+  // certutil labels are localized ("Schlüsselcontainer" on de-DE), so ask the
+  // store directly and match only the container name, which never is.
+  const hasPrivateKey =
+    execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", `(Get-Item 'Cert:\\LocalMachine\\My\\${result.thumbprint}').HasPrivateKey`],
+      { encoding: "utf8" },
+    ).trim() === "True";
+  console.log("hasPrivateKey (LocalMachine\\My store):", hasPrivateKey);
   if (!hasPrivateKey) {
-    console.log("FAIL: expected HasPrivateKey=True equivalent evidence in certutil -store output");
+    console.log("FAIL: expected the accepted certificate to have its private key in LocalMachine\\My");
     process.exitCode = 1;
+  }
+  const containerNamePath = path.join(workDir, "container-name.txt");
+  if (fs.existsSync(containerNamePath)) {
+    const containerName = fs.readFileSync(containerNamePath, "utf8").trim();
+    const namesContainer = storeOutput.includes(containerName);
+    console.log(`certutil -store names the generated container ${containerName}:`, namesContainer);
+    if (!namesContainer) {
+      console.log("FAIL: the accepted certificate is not bound to the generated container");
+      process.exitCode = 1;
+    }
   }
 
   const normalizedStoreOutput = storeOutput.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();

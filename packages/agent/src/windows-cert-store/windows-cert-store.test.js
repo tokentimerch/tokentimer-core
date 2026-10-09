@@ -26,6 +26,7 @@ const { X509Certificate } = require("node:crypto");
 const {
   SUPPORTED_KEY_ALGORITHM_NAMES,
   buildContainerName,
+  buildEnrollmentContainerName,
   isAgentOwnedContainerName,
   recordIssuedContainer,
   hasIssuedContainerRecord,
@@ -92,6 +93,40 @@ describe("buildContainerName", () => {
     const a = buildContainerName("job-1");
     const b = buildContainerName("job-1");
     assert.notEqual(a, b);
+  });
+});
+
+describe("buildEnrollmentContainerName", () => {
+  const ENROLLMENT_ID = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+
+  it("is deterministic per enrollment and agent-owned", () => {
+    const name = buildEnrollmentContainerName(ENROLLMENT_ID);
+    assert.equal(name, `tokentimer-enr-${ENROLLMENT_ID}`);
+    assert.equal(buildEnrollmentContainerName(ENROLLMENT_ID), name);
+    assert.equal(isAgentOwnedContainerName(name), true);
+  });
+
+  it("rejects anything but a lowercase UUID instead of sanitizing it", () => {
+    for (const bad of [
+      ENROLLMENT_ID.toUpperCase(),
+      `${ENROLLMENT_ID}x`,
+      "3f2c8a1e4b5d4e6f8a7b9c0d1e2f3a4b",
+      "../3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b",
+      "",
+      null,
+      undefined,
+      42,
+    ]) {
+      assert.throws(() => buildEnrollmentContainerName(bad), /enrollmentId must be a lowercase UUID/);
+    }
+  });
+
+  it("never produces a name buildContainerName could produce", () => {
+    // Even for a job id shaped like an enrollment container, the ACME name
+    // keeps its random 8-hex suffix and so cannot equal the enrollment one.
+    const acme = buildContainerName(`enr-${ENROLLMENT_ID}`);
+    assert.notEqual(acme, buildEnrollmentContainerName(ENROLLMENT_ID));
+    assert.match(acme, /-[a-f0-9]{8}$/);
   });
 });
 
@@ -190,6 +225,29 @@ describe("buildCertreqInf", () => {
     assert.match(inf, /Exportable = FALSE/);
     assert.match(inf, /MachineKeySet = TRUE/);
     assert.match(inf, /ProviderName = "Microsoft Software Key Storage Provider"/);
+    assert.match(inf, /^Silent = TRUE$/m);
+  });
+
+  it("asks for keyEncipherment only on RSA keys", () => {
+    const expected = {
+      "rsa-2048": "0xa0",
+      "rsa-3072": "0xa0",
+      "rsa-4096": "0xa0",
+      "ec-p256": "0x80",
+      "ec-p384": "0x80",
+    };
+    assert.deepEqual(Object.keys(expected).sort(), [...SUPPORTED_KEY_ALGORITHM_NAMES].sort());
+    for (const [algorithm, keyUsage] of Object.entries(expected)) {
+      const inf = buildCertreqInf({ ...validInput, algorithm });
+      assert.deepEqual(inf.match(/^KeyUsage = .*$/gm), [`KeyUsage = ${keyUsage}`], algorithm);
+    }
+  });
+
+  it("never names a certificate template", () => {
+    for (const algorithm of SUPPORTED_KEY_ALGORITHM_NAMES) {
+      const inf = buildCertreqInf({ ...validInput, algorithm });
+      assert.doesNotMatch(inf, /RequestAttributes|CertificateTemplate/i);
+    }
   });
 
   it("de-duplicates the common name against altNames in the SAN extension", () => {
@@ -318,7 +376,7 @@ describe("normalizeCsrPemLabel", () => {
 // ---------------------------------------------------------------------------
 
 describe("generateCsrViaCng", () => {
-  it("invokes certreq -q -new <inf> <req> without a shell and with the expected argv shape", async () => {
+  it("invokes certreq -q -machine -new <inf> <req> without a shell and with the expected argv shape", async () => {
     const workDir = makeTempDir();
     const csrDer = Buffer.from([0x30, 0x03, 0x02, 0x01, 0x00]);
     const csrPem = `-----BEGIN NEW CERTIFICATE REQUEST-----\n${csrDer.toString("base64")}\n-----END NEW CERTIFICATE REQUEST-----\n`;
@@ -347,8 +405,162 @@ describe("generateCsrViaCng", () => {
     assert.equal(execFileImpl.calls.length, 1);
     const call = execFileImpl.calls[0];
     assert.equal(call.file, "certreq.exe");
-    assert.deepEqual(call.args.slice(0, 2), ["-q", "-new"]);
+    assert.equal(call.args.length, 5);
+    assert.deepEqual(call.args.slice(0, 3), ["-q", "-machine", "-new"]);
+    assert.match(call.args[3], /\.inf$/);
+    assert.match(call.args[4], /\.req$/);
     assert.equal(call.options.shell, undefined);
+  });
+
+  it("names the container after the enrollment when given an enrollmentId", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    let infText = null;
+    const execFileImpl = makeExecStub({
+      onCall: ({ file, args }) => {
+        if (file !== "certreq.exe" || !args.includes("-new")) return;
+        infText = fs.readFileSync(args[3], "utf8");
+        fs.writeFileSync(
+          args[4],
+          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          "utf8",
+        );
+      },
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      algorithm: "ec-p256",
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.containerName, `tokentimer-enr-${enrollmentId}`);
+    assert.match(infText, new RegExp(`KeyContainer = "tokentimer-enr-${enrollmentId}"`));
+    assert.match(infText, /^KeyUsage = 0x80$/m);
+    assert.equal(execFileImpl.calls.length, 2);
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.deepEqual(execFileImpl.calls[0].args, [
+      "-csp",
+      "Microsoft Software Key Storage Provider",
+      "-key",
+    ]);
+    assert.equal(execFileImpl.calls[1].file, "certreq.exe");
+  });
+
+  it("refuses a second enrollment generate when the container already exists", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    const execFileImpl = makeExecStub({
+      stdout: `Microsoft Software Key Storage Provider:\n  ${containerName}\n`,
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "enrollment_container_exists");
+    assert.equal(result.containerName, containerName);
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.deepEqual(fs.readdirSync(workDir), []);
+  });
+
+  it("never calls certreq -new when the Software KSP listing probe fails", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const error = Object.assign(new Error("certutil failed"), { code: 1 });
+    const execFileImpl = makeExecStub({
+      error,
+      stderr: "CertUtil: The system cannot find the path specified.",
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "enrollment_container_probe_failed");
+    assert.equal(execFileImpl.calls.length, 1);
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.equal(
+      execFileImpl.calls.some((call) => call.file === "certreq.exe"),
+      false,
+    );
+    assert.deepEqual(fs.readdirSync(workDir), []);
+  });
+
+  it("does not treat a similarly named KSP line as the enrollment container", async () => {
+    const workDir = makeTempDir();
+    const enrollmentId = "3f2c8a1e-4b5d-4e6f-8a7b-9c0d1e2f3a4b";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    let infText = null;
+    const execFileImpl = makeExecStub({
+      onCall: ({ file, args }) => {
+        if (file === "certutil.exe") {
+          // Prefix / suffix neighbors must not match the exact listing line.
+          return;
+        }
+        if (file === "certreq.exe" && args.includes("-new")) {
+          infText = fs.readFileSync(args[3], "utf8");
+          fs.writeFileSync(
+            args[4],
+            "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+            "utf8",
+          );
+        }
+      },
+      stdout: [
+        "Microsoft Software Key Storage Provider:",
+        `  ${containerName}-extra`,
+        `  prefix-${containerName}`,
+        "",
+      ].join("\n"),
+    });
+
+    const result = await generateCsrViaCng({
+      commonName: "www.example.com",
+      jobId: "job-42",
+      enrollmentId,
+      workDir,
+      execFileImpl,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.containerName, containerName);
+    assert.match(infText, new RegExp(`KeyContainer = "${containerName}"`));
+    assert.equal(execFileImpl.calls[0].file, "certutil.exe");
+    assert.equal(execFileImpl.calls[1].file, "certreq.exe");
+  });
+
+  it("rejects a malformed enrollmentId before ever invoking execFile", async () => {
+    const workDir = makeTempDir();
+    const execFileImpl = makeExecStub();
+    await assert.rejects(
+      generateCsrViaCng({
+        commonName: "www.example.com",
+        jobId: "job-42",
+        enrollmentId: "not-a-uuid",
+        workDir,
+        execFileImpl,
+      }),
+      /enrollmentId must be a lowercase UUID/,
+    );
+    assert.equal(execFileImpl.calls.length, 0);
+    assert.deepEqual(fs.readdirSync(workDir), []);
   });
 
   it("cleans up the INF and .req scratch files after a successful run", async () => {
@@ -413,7 +625,7 @@ describe("generateCsrViaCng", () => {
 // ---------------------------------------------------------------------------
 
 describe("acceptCertificateViaCng", () => {
-  it("invokes certreq -q -accept <cer> without a shell and returns the precomputed thumbprint", async () => {
+  it("invokes certreq -q -machine -accept <cer> without a shell and returns the precomputed thumbprint", async () => {
     const workDir = makeTempDir();
     const execFileImpl = makeExecStub();
 
@@ -428,7 +640,9 @@ describe("acceptCertificateViaCng", () => {
 
     assert.equal(execFileImpl.calls.length, 1);
     const call = execFileImpl.calls[0];
-    assert.deepEqual(call.args.slice(0, 2), ["-q", "-accept"]);
+    assert.equal(call.args.length, 4);
+    assert.deepEqual(call.args.slice(0, 3), ["-q", "-machine", "-accept"]);
+    assert.match(call.args[3], /\.cer$/);
   });
 
   it("cleans up the staged .cer file after completion, success or failure", async () => {
@@ -511,7 +725,7 @@ describe("acceptCertificateViaCng", () => {
     // certreq -accept, then certutil -addstore, -repairstore, -delstore, -store (verify), in that order.
     assert.equal(calls.length, 5);
     assert.equal(calls[0].file, "certreq.exe");
-    assert.deepEqual(calls[0].args.slice(0, 2), ["-q", "-accept"]);
+    assert.deepEqual(calls[0].args.slice(0, 3), ["-q", "-machine", "-accept"]);
     assert.equal(calls[1].file, "certutil.exe");
     assert.deepEqual(calls[1].args.slice(0, 2), ["-addstore", "WebHosting"]);
     assert.equal(calls[2].file, "certutil.exe");
