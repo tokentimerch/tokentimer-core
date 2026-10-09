@@ -916,7 +916,7 @@ async function resolveDeployPublicCertificate({
     );
   }
   const result = await client.query(
-    `SELECT certificate_pem, fingerprint_sha256
+    `SELECT certificate_pem, fingerprint_sha256, common_name, subject_alt_names
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2
@@ -937,10 +937,19 @@ async function resolveDeployPublicCertificate({
     .createHash("sha256")
     .update(certificatePem, "utf8")
     .digest("hex");
+  const subjectAltNames = Array.isArray(row.subject_alt_names)
+    ? row.subject_alt_names.filter((name) => typeof name === "string" && name.length > 0)
+    : [];
+  const commonName =
+    typeof row.common_name === "string" && row.common_name.length > 0
+      ? row.common_name
+      : null;
   return {
     certificatePem,
     certificatePemSha256,
     fingerprintSha256: row.fingerprint_sha256 || null,
+    commonName,
+    subjectAltNames,
   };
 }
 
@@ -1448,6 +1457,36 @@ async function claimJobs({
             fingerprintSha256: deployPublicCert.fingerprintSha256,
           };
         }
+        // Standalone deploy payloads often omit sans/target.reference; the
+        // agent would then treat certPath as the SAN and fail validation.
+        if (
+          (!Array.isArray(basePayload.sans) || basePayload.sans.length === 0) &&
+          Array.isArray(deployPublicCert.subjectAltNames) &&
+          deployPublicCert.subjectAltNames.length > 0
+        ) {
+          basePayload.sans = [...deployPublicCert.subjectAltNames];
+        }
+        if (
+          deployPublicCert.commonName &&
+          typeof basePayload.target.reference !== "string"
+        ) {
+          basePayload.target = {
+            ...basePayload.target,
+            type: basePayload.target.type || "domain",
+            reference: deployPublicCert.commonName,
+          };
+        }
+      }
+
+      // Standalone deploy jobs are created with subject_id only; the agent
+      // looks up keysDir/<certificateId>.key.pem for key-match validation /
+      // paired install, so the signed envelope must carry certificateId.
+      if (
+        job.subject_type === "managed_certificate" &&
+        job.subject_id &&
+        !basePayload.certificateId
+      ) {
+        basePayload.certificateId = String(job.subject_id);
       }
 
       if (trustAnchorPem) {

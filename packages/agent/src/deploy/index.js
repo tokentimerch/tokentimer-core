@@ -1036,6 +1036,32 @@ async function resolveRealDestination(fspImpl, destination) {
 }
 
 /**
+ * True when `candidate` is a keys.generateKeyPairToFile rotation staging
+ * sibling (`.${basename}.staging-<pid>-<hex>`), not a live custody key.
+ * Only those files are safe to unlink after a successful promote.
+ * @param {string} candidate
+ * @returns {boolean}
+ */
+function isRotationStagingKeyPath(candidate) {
+  if (typeof candidate !== "string" || candidate.length === 0) return false;
+  const base = path.basename(candidate);
+  return base.startsWith(".") && base.includes(".staging-");
+}
+
+/**
+ * Derive the live custody keyPath from a rotation staging sibling.
+ * @param {string} stagingPath
+ * @returns {string|null}
+ */
+function liveKeyPathFromRotationStaging(stagingPath) {
+  if (!isRotationStagingKeyPath(stagingPath)) return null;
+  const base = path.basename(stagingPath);
+  const match = /^\.(.+)\.staging-/.exec(base);
+  if (!match) return null;
+  return path.join(path.dirname(stagingPath), match[1]);
+}
+
+/**
  * Atomically deploys a matched certificate + private-key pair.
  *
  * Reads the private key from `privateKeyPath` (typically a staging path from
@@ -1374,13 +1400,37 @@ async function deployCertificateAndKey({
       );
     }
 
-    // Staging file is consumed once the live key is in place — unless the
-    // caller still needs it for additional destinations (multi-target).
+    // Only rotation staging siblings are consumed after install. A live
+    // custody key (keysDir/<certificateId>.key.pem) must survive when the
+    // production destination is a different path — otherwise a later
+    // standalone deploy cannot find a permitted local key reference.
     const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
     if (
       retainPrivateKeyStaging !== true &&
+      isRotationStagingKeyPath(normalizedPrivateKeyPath) &&
       normalizedPrivateKeyPath !== realKeyDestination
     ) {
+      const liveCustodyPath = liveKeyPathFromRotationStaging(
+        normalizedPrivateKeyPath,
+      );
+      if (
+        liveCustodyPath &&
+        path.normalize(path.resolve(liveCustodyPath)) !== realKeyDestination
+      ) {
+        try {
+          // Promote the rotated key into custody so renew/deploy reuse the
+          // key that matches the certificate just installed.
+          const custodyResolved = path.normalize(path.resolve(liveCustodyPath));
+          await fspImpl.copyFile(normalizedPrivateKeyPath, custodyResolved);
+          try {
+            await fspImpl.chmod(custodyResolved, DEPLOYED_KEY_DEFAULT_MODE);
+          } catch (_chmodErr) {
+            // win32 / platform without chmod
+          }
+        } catch (_err) {
+          // best-effort; production install already committed
+        }
+      }
       try {
         await fspImpl.unlink(normalizedPrivateKeyPath);
       } catch (_err) {
