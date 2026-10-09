@@ -165,7 +165,13 @@ async function runCycle(label) {
     workDir: cngWorkDir,
     store,
   });
-  check(`${label}: CNG accept`, accept.ok === true, accept.ok ? accept.thumbprint : accept.stderrExcerpt);
+  check(
+    `${label}: CNG accept`,
+    accept.ok === true,
+    accept.ok
+      ? accept.thumbprint
+      : `${accept.stderrExcerpt || accept.stdoutExcerpt || accept.detail || "no detail"}`.slice(0, 240),
+  );
   if (!accept.ok) return null;
 
   const deploy = await deployIisBinding({
