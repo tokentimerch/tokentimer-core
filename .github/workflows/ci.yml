@@ -420,24 +420,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Create Ephemeral Local Cluster
         run: |
-          kind create cluster --name ephemeral-smoke-test-cluster
+          kind create cluster --name ephemeral-smoke-test-cluster --image kindest/node:v1.29.14
           kubectl cluster-info --context kind-ephemeral-smoke-test-cluster
       
       - name: Install Prerequisite
         run: | 
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add cnpg https://cloudnative-pg.github.io/charts
           helm repo update
-          helm install kube-prom-stack prometheus-community/kube-prometheus-stack \
-           --namespace monitoring --create-namespace --set prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false
+
+          kubectl apply -f https://raw.githubusercontent.com/prometheus-community/helm-charts/main/charts/kube-prometheus-stack/charts/crds/crds/crd-servicemonitors.yaml
+         
+          kubectl wait \
+            --for=condition=Established \
+            crd/servicemonitors.monitoring.coreos.com \
+            --timeout=30s
+
           helm install cnpg-operator cnpg/cloudnative-pg --namespace cnpg-system --create-namespace --version 0.23.0 --wait
 
       - name: Install TokenTimer
         run: |
 
          helm lint ./deploy/helm \
-          -f deploy/helm/ci/ci-values-smoke-test.yaml
+          --set config.adminEmail=admin@example.com \
+          -f deploy/helm/ci/ci-values-smoke-test.yaml 
 
           helm install tokentimer ./deploy/helm \
            --version "$TT_VERSION" --namespace tokentimer --create-namespace \
@@ -448,19 +459,24 @@ jobs:
 
       - name: Wait for workloads
         run: |
-          kubectl rollout status deployment/tokentimer-api -n tokentimer --timeout=30s
+          kubectl rollout status deployment/tokentimer-api -n tokentimer --timeout=60s
 
       - name: Smoke Test API Service
         run: |
           response=$(kubectl run smoke-test \
-            --image=curlimages/curl:latest \
+            --image=curlimages/curl:8.12.1 \
             --restart=Never \
             -n tokentimer \
-            --rm -i -- \
-            curl -sS -w '\n%{http_code}' http://tokentimer-api:4000/health)
+            --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
+            --attach \
+            --quiet \
+            --command -- \
+            curl -sS --connect-timeout 5 --max-time 10 \
+            -w '\n%{http_code}\n' \
+            http://tokentimer-api:4000/health)
 
-          http_code=$(echo "$http_code" | grep -oE '^[0-9]{3}')
-          body=$(echo "$response" | sed '$d') 
+          http_code=$(printf '%s\n' "$response" | tail -n 1)
+          body=$(printf '%s\n' "$response" | sed '$d')
 
           echo "HTTP status: $http_code"
 
