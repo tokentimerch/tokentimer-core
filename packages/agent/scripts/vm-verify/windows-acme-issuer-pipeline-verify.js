@@ -65,17 +65,35 @@ function fingerprintSha256FromPem(pem) {
   return new crypto.X509Certificate(pem).fingerprint256.replace(/:/g, "").toUpperCase();
 }
 
-function tlsVerify(host, listenPort, expectedFingerprintSha256) {
+function loadPebbleCaBundle() {
+  // Stage 34 writes these next to the work dir (or inside it) before invoking us.
+  const candidates = [
+    path.join(workDir, "pebble-root.pem"),
+    path.join(workDir, "pebble-int.pem"),
+    path.join(path.dirname(workDir), "pebble-root.pem"),
+    path.join(path.dirname(workDir), "pebble-int.pem"),
+  ];
+  const pems = [];
+  for (const filePath of candidates) {
+    if (fs.existsSync(filePath)) pems.push(fs.readFileSync(filePath));
+  }
+  if (pems.length === 0) {
+    throw new Error("missing pebble-root.pem / pebble-int.pem beside workDir for TLS trust");
+  }
+  return pems;
+}
+
+function tlsVerify(host, listenPort, expectedFingerprintSha256, ca) {
   return new Promise((resolve) => {
     const socket = tls.connect(
       {
         host: "127.0.0.1",
         port: listenPort,
         servername: host,
-        // Fingerprint pin after connect; chain trust is the wrong check for a
-        // freshly issued Pebble leaf (same rationale as packages/agent/src/verify).
-        // codeql[js/disabling-certificate-validation]
-        rejectUnauthorized: false,
+        // Trust the lab Pebble CA (stage 34 imports the same PEMs into the
+        // Windows store). Fingerprint pin below still proves the deployed leaf.
+        rejectUnauthorized: true,
+        ca,
       },
       () => {
         const cert = socket.getPeerCertificate();
@@ -183,7 +201,7 @@ async function runCycle(label) {
     deploy.ok === true ? `thumb=${accept.thumbprint}` : `${deploy.code || ""} ${deploy.detail || ""}`.trim(),
   );
 
-  const tlsResult = await tlsVerify(cn, port, leafFingerprintSha256);
+  const tlsResult = await tlsVerify(cn, port, leafFingerprintSha256, loadPebbleCaBundle());
   check(
     `${label}: TLS handshake`,
     tlsResult.ok === true,
