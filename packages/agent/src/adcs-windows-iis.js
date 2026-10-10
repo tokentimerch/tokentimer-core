@@ -171,17 +171,44 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
 }
 
 function shouldRetainCngKey(outcome) {
-  // With a durable CSR artifact, not_submitted returns the journal to prepared
-  // and must keep the container for resume-submit. rejected_invalid frees it.
+  // Accepts issuer outcomes or durable journal states. Prefer journal state
+  // when both disagree (e.g. denied without HRESULT → submission_uncertain).
   return (
     outcome === "pending" ||
+    outcome === "pending_issuance" ||
     outcome === "uncertain" ||
     outcome === "submission_uncertain" ||
     outcome === "issued" ||
     outcome === "validation_deferred" ||
     outcome === "not_submitted" ||
-    outcome === "install_failed"
+    outcome === "install_failed" ||
+    outcome === "prepared" ||
+    outcome === "submitting" ||
+    outcome === "installing" ||
+    outcome === "keygen_intent" ||
+    outcome === "installed"
   );
+}
+
+/**
+ * Prefer the durable journal state for CNG cleanup when a receipt exists.
+ * Returns undefined when no journal override applies (use issuer outcome).
+ * Returns null when the journal is corrupt/unreadable (retain key).
+ */
+function resolveCleanupOutcome({ stateDir, enrollmentId }) {
+  if (typeof stateDir !== "string" || typeof enrollmentId !== "string") {
+    return undefined;
+  }
+  try {
+    const read = readEnrollmentJournal(stateDir, enrollmentId);
+    if (read.kind === "corrupt") return null;
+    if (read.kind === "valid" || read.kind === "legacy") {
+      return read.journal.state;
+    }
+  } catch {
+    return null;
+  }
+  return undefined;
 }
 
 /**
@@ -189,23 +216,30 @@ function shouldRetainCngKey(outcome) {
  * Independent of whether certificate PEM was received: rejected_invalid must
  * free the key (ADR-0014 decision 6). After prepared is journaled, pre-submit
  * aborts retain the key so continue can resume-submit the same CSR.
+ *
+ * When `journalState` is present on the options object it overrides the raw
+ * issuer outcome (including null = retain on unreadable journal).
  */
-function shouldCleanupAbandonedCngKey({
-  submitStarted,
-  issuanceOutcome,
-  containerCreated,
-  preparedJournalCommitted = false,
-}) {
+function shouldCleanupAbandonedCngKey(opts) {
+  const {
+    submitStarted,
+    issuanceOutcome,
+    containerCreated,
+    preparedJournalCommitted = false,
+  } = opts;
+  const effectiveOutcome = Object.hasOwn(opts, "journalState")
+    ? opts.journalState
+    : issuanceOutcome;
   // Durable prepared (or later) journal owns the container until abandon.
   if (preparedJournalCommitted === true) {
-    if (issuanceOutcome === null && !submitStarted) return false;
-    if (issuanceOutcome === null) return false;
-    return !shouldRetainCngKey(issuanceOutcome);
+    if (effectiveOutcome === null && !submitStarted) return false;
+    if (effectiveOutcome === null) return false;
+    return !shouldRetainCngKey(effectiveOutcome);
   }
   // Key exists but submit never started and prepared was never committed.
   if (!submitStarted) return containerCreated === true;
-  if (issuanceOutcome === null) return false;
-  return !shouldRetainCngKey(issuanceOutcome);
+  if (effectiveOutcome === null) return false;
+  return !shouldRetainCngKey(effectiveOutcome);
 }
 
 /**
@@ -909,8 +943,11 @@ function createAdcsWindowsIisExecutors(deps) {
             ? issuance.caHresult
             : null;
         // Without HRESULT stay reconcilable (matches enrollmentResult mapping).
+        // issuanceOutcome must follow the journalled state so finally cleanup
+        // cannot free the key while submission_uncertain is durable.
+        issuanceOutcome = caHresult ? "denied" : "submission_uncertain";
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
-          state: caHresult ? "denied" : "submission_uncertain",
+          state: issuanceOutcome,
           ...journalTrustFields,
           ...(caHresult ? { caHresult } : {}),
           ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
@@ -1092,6 +1129,10 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       return withInstalledEnrollmentResult(deployResult, decoded, issuance.requestId);
     } finally {
+      const journalledCleanupOutcome = resolveCleanupOutcome({
+        stateDir,
+        enrollmentId: decoded?.enrollmentId,
+      });
       if (
         containerName &&
         shouldCleanupAbandonedCngKey({
@@ -1099,6 +1140,9 @@ function createAdcsWindowsIisExecutors(deps) {
           issuanceOutcome,
           containerCreated: true,
           preparedJournalCommitted,
+          ...(journalledCleanupOutcome !== undefined
+            ? { journalState: journalledCleanupOutcome }
+            : {}),
         })
       ) {
         try {
@@ -1307,6 +1351,10 @@ function createAdcsWindowsIisExecutors(deps) {
       });
       return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
     } finally {
+      const journalledCleanupOutcome = resolveCleanupOutcome({
+        stateDir,
+        enrollmentId: decoded?.enrollmentId,
+      });
       if (
         containerName &&
         continueOutcome &&
@@ -1314,6 +1362,10 @@ function createAdcsWindowsIisExecutors(deps) {
           submitStarted: true,
           issuanceOutcome: continueOutcome,
           containerCreated: true,
+          preparedJournalCommitted: true,
+          ...(journalledCleanupOutcome !== undefined
+            ? { journalState: journalledCleanupOutcome }
+            : {}),
         })
       ) {
         try {
@@ -1347,6 +1399,7 @@ module.exports = {
   resultForValidationOutcome,
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
+  resolveCleanupOutcome,
   observeInstalledCertificateIdentity,
   withUniqueValidationLeafFile,
 };

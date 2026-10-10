@@ -13,6 +13,7 @@ const {
   resultForValidationOutcome,
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
+  resolveCleanupOutcome,
   observeInstalledCertificateIdentity,
   withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
@@ -32,7 +33,9 @@ describe("AD CS renew evidence ordering", () => {
       assert.ok(evidenceAt > reportAt, "fault point must precede reportIssuanceEvidence");
     }
     assertPersistBeforeReport('state: "issued"');
-    assertPersistBeforeReport('state: caHresult ? "denied" : "submission_uncertain"');
+    // denied-without-HRESULT journals submission_uncertain via issuanceOutcome.
+    assertPersistBeforeReport("issuanceOutcome = caHresult ? \"denied\" : \"submission_uncertain\"");
+    assertPersistBeforeReport('state: issuanceOutcome');
     assertPersistBeforeReport('state: "refused"');
   });
 });
@@ -232,6 +235,31 @@ describe("shouldCleanupAbandonedCngKey", () => {
     );
   });
 
+  it("retains the key when denied lacks caHresult and journal is submission_uncertain", () => {
+    // Raw issuer outcome is denied, but durable receipt is submission_uncertain.
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "denied",
+        journalState: "submission_uncertain",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+    // Terminal denied receipt (valid HRESULT path) still frees the key.
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "denied",
+        journalState: "denied",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      true,
+    );
+  });
+
   it("does nothing when no container was created", () => {
     assert.equal(
       shouldCleanupAbandonedCngKey({
@@ -241,6 +269,67 @@ describe("shouldCleanupAbandonedCngKey", () => {
       }),
       false,
     );
+  });
+});
+
+describe("resolveCleanupOutcome", () => {
+  it("prefers durable journal state over a raw denied issuer outcome", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "adcs-cleanup-"));
+    try {
+      const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+      const {
+        writeCsrArtifact,
+        writeEnrollmentJournal,
+      } = require("./issuers/adcs-enrollment-journal");
+      const { csrSha256 } = await writeCsrArtifact({
+        stateDir,
+        enrollmentId,
+        csrPem: "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n",
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "prepared",
+        attempt: 1,
+        containerName: `tokentimer-enr-${enrollmentId}`,
+        snapshotSha256: "b".repeat(64),
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid: "1.3.6.1.4.1.311.21.8.1",
+        jobId: "job:1",
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submitting",
+        attempt: 1,
+        containerName: `tokentimer-enr-${enrollmentId}`,
+        snapshotSha256: "b".repeat(64),
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid: "1.3.6.1.4.1.311.21.8.1",
+        jobId: "job:1",
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submission_uncertain",
+        attempt: 1,
+        containerName: `tokentimer-enr-${enrollmentId}`,
+        snapshotSha256: "b".repeat(64),
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid: "1.3.6.1.4.1.311.21.8.1",
+        jobId: "job:1",
+      });
+      assert.equal(resolveCleanupOutcome({ stateDir, enrollmentId }), "submission_uncertain");
+      assert.equal(
+        shouldCleanupAbandonedCngKey({
+          submitStarted: true,
+          issuanceOutcome: "denied",
+          journalState: resolveCleanupOutcome({ stateDir, enrollmentId }),
+          containerCreated: true,
+          preparedJournalCommitted: true,
+        }),
+        false,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

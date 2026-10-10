@@ -176,6 +176,102 @@ describe("adcs-enrollment-journal", () => {
     );
   });
 
+  it("rejects RequestId, leafSha256, and validationDeadlineAt mutations", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "pending",
+      attempt: 1,
+      requestId: 10,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+    });
+    await assert.rejects(
+      () =>
+        writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+          state: "pending",
+          attempt: 1,
+          requestId: 99,
+          containerName: CONTAINER,
+          snapshotSha256: "b".repeat(64),
+          csrSha256,
+          csrSpkiSha256: "c".repeat(64),
+          templateOid: TEMPLATE_OID,
+          jobId: "job:1",
+        }),
+      /requestId is immutable/,
+    );
+
+    const { leafSha256 } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: LEAF_PEM,
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "issued",
+      attempt: 1,
+      requestId: 10,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      leafSha256,
+      jobId: "job:1",
+    });
+    await assert.rejects(
+      () =>
+        writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+          state: "issued",
+          attempt: 1,
+          requestId: 10,
+          containerName: CONTAINER,
+          snapshotSha256: "b".repeat(64),
+          csrSha256,
+          csrSpkiSha256: "c".repeat(64),
+          templateOid: TEMPLATE_OID,
+          leafSha256: "f".repeat(64),
+          jobId: "job:1",
+        }),
+      /leafSha256 is immutable/,
+    );
+
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "validation_deferred",
+      attempt: 1,
+      requestId: 10,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      leafSha256,
+      validationDeadlineAt: "2099-01-01T00:00:00.000Z",
+      jobId: "job:1",
+    });
+    await assert.rejects(
+      () =>
+        writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+          state: "validation_deferred",
+          attempt: 1,
+          requestId: 10,
+          containerName: CONTAINER,
+          snapshotSha256: "b".repeat(64),
+          csrSha256,
+          csrSpkiSha256: "c".repeat(64),
+          templateOid: TEMPLATE_OID,
+          leafSha256,
+          validationDeadlineAt: "2099-06-01T00:00:00.000Z",
+          jobId: "job:1",
+        }),
+      /validationDeadlineAt is immutable/,
+    );
+  });
+
   it("persists issued leaf before validation_deferred can be journaled", async () => {
     const { csrSha256 } = await commitPrepared(stateDir);
     await commitSubmitting(stateDir, csrSha256);
@@ -300,6 +396,22 @@ describe("adcs-enrollment-journal", () => {
       "tokentimer-enr-ffffffff-ffff-ffff-ffff-ffffffffffff",
     );
     assert.equal(unprotected.protected, false);
+  });
+
+  it("treats an enrollment directory without a readable receipt as protected", () => {
+    const emptyId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+    const emptyContainer = `tokentimer-enr-${emptyId}`;
+    fs.mkdirSync(path.join(stateDir, "adcs-enrollments", emptyId), { recursive: true });
+    const protectedEmpty = isEnrollmentContainerProtected(stateDir, emptyId, emptyContainer);
+    assert.equal(protectedEmpty.protected, true);
+    assert.match(protectedEmpty.reason, /without readable journal/);
+
+    const missing = isEnrollmentContainerProtected(
+      stateDir,
+      "cccccccc-dddd-eeee-ffff-000000000000",
+      "tokentimer-enr-cccccccc-dddd-eeee-ffff-000000000000",
+    );
+    assert.equal(missing.protected, false);
   });
 
   it("exposes journal.json under the enrollment directory", async () => {

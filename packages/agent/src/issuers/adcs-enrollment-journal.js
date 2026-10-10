@@ -113,6 +113,23 @@ function sha256HexOfBuffer(buf) {
 }
 
 /**
+ * Error-aware path presence. Access errors are not treated as absence.
+ * @returns {{ exists: boolean, error?: string }}
+ */
+function pathStat(filePath) {
+  try {
+    fs.statSync(filePath);
+    return { exists: true };
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { exists: false };
+    return {
+      exists: true,
+      error: err && err.message ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * Ensure enrollment directory exists with restrictive permissions.
  */
 function ensureEnrollmentDir(stateDir, enrollmentId) {
@@ -176,8 +193,24 @@ function readEnrollmentJournal(stateDir, enrollmentId) {
   assertEnrollmentId(enrollmentId);
   const v2 = journalV2Path(stateDir, enrollmentId);
   const legacy = legacyJournalPath(stateDir, enrollmentId);
-  const v2Exists = fs.existsSync(v2);
-  const legacyExists = fs.existsSync(legacy);
+  const v2Stat = pathStat(v2);
+  const legacyStat = pathStat(legacy);
+  if (v2Stat.error) {
+    return {
+      kind: "corrupt",
+      error: `cannot stat v2 journal: ${v2Stat.error}`,
+      path: v2,
+    };
+  }
+  if (legacyStat.error) {
+    return {
+      kind: "corrupt",
+      error: `cannot stat legacy journal: ${legacyStat.error}`,
+      path: legacy,
+    };
+  }
+  const v2Exists = v2Stat.exists;
+  const legacyExists = legacyStat.exists;
 
   if (v2Exists && legacyExists) {
     let v2Body;
@@ -212,7 +245,15 @@ function readEnrollmentJournal(stateDir, enrollmentId) {
 
   // Keygen intent alone (crash between -new and prepared) is an open protection.
   const intentPath = keygenIntentPath(stateDir, enrollmentId);
-  if (fs.existsSync(intentPath)) {
+  const intentStat = pathStat(intentPath);
+  if (intentStat.error) {
+    return {
+      kind: "corrupt",
+      error: `cannot stat keygen-intent.json: ${intentStat.error}`,
+      path: intentPath,
+    };
+  }
+  if (intentStat.exists) {
     try {
       const intent = parseJsonFile(intentPath);
       if (
@@ -671,7 +712,14 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
       throw new Error("journal field containerName is immutable after commit");
     }
     if (previousState !== "keygen_intent") {
-      for (const field of ["snapshotSha256", "csrSpkiSha256", "templateOid", "csrSha256"]) {
+      for (const field of [
+        "snapshotSha256",
+        "csrSpkiSha256",
+        "templateOid",
+        "csrSha256",
+        "leafSha256",
+        "validationDeadlineAt",
+      ]) {
         if (
           typeof previousJournal[field] === "string" &&
           typeof fields[field] === "string" &&
@@ -679,6 +727,15 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
         ) {
           throw new Error(`journal field ${field} is immutable after commit`);
         }
+      }
+      if (
+        Number.isInteger(previousJournal.requestId) &&
+        previousJournal.requestId >= 1 &&
+        Number.isInteger(fields.requestId) &&
+        fields.requestId >= 1 &&
+        fields.requestId !== previousJournal.requestId
+      ) {
+        throw new Error("journal field requestId is immutable after commit");
       }
     }
   }
@@ -846,7 +903,8 @@ function journalStateProtectsContainer(state) {
 
 /**
  * Recheck whether an enrollment currently protects a CNG container.
- * Caller must hold the enrollment lock. Fail closed on corrupt journals.
+ * Caller must hold the enrollment lock. Fail closed on corrupt journals and
+ * on enrollment directories that exist without a readable receipt.
  */
 function isEnrollmentContainerProtected(stateDir, enrollmentId, containerName) {
   assertEnrollmentId(enrollmentId);
@@ -858,6 +916,20 @@ function isEnrollmentContainerProtected(stateDir, enrollmentId, containerName) {
     };
   }
   if (read.kind === "not_found") {
+    const dirStat = pathStat(enrollmentDir(stateDir, enrollmentId));
+    if (dirStat.error) {
+      return {
+        protected: true,
+        reason: `cannot stat enrollment directory; deferred: ${dirStat.error}`,
+      };
+    }
+    if (dirStat.exists) {
+      // Directory present but no readable journal/intent — never authorize delete.
+      return {
+        protected: true,
+        reason: "enrollment directory exists without readable journal; deferred",
+      };
+    }
     return { protected: false };
   }
   const state = read.journal.state;

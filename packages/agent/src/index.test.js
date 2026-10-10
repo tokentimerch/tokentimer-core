@@ -5160,6 +5160,30 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.match(result.skipped[0].reason, /journal scan failed/);
   });
 
+  it("defers enrollment-shaped deletes when the enrollment directory exists without a readable journal", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "cccccccc-dddd-eeee-ffff-000000000000";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    // Empty enrollment directory: initial protected-set scan fails closed, and
+    // the locked recheck must also refuse deletion.
+    fs.mkdirSync(path.join(workDir, "adcs-enrollments", enrollmentId), {
+      recursive: true,
+    });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(
+      result.skipped[0].reason,
+      /journal scan failed|without readable journal|deferred/,
+    );
+  });
+
   it("never frees a container that is now legitimately enrolled to a real certificate", async () => {
     workDir = makeTempConfigDir();
     const containerName = "tokentimer-job-1-live0001";
