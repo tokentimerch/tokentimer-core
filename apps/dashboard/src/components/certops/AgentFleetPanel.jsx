@@ -605,21 +605,37 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   its own title/description without the caller duplicating them.
  */
 const FLEET_ALL = 'all';
+// Fleet aggregates many jobs; keep a hard page budget so one huge stream
+// cannot freeze the modal, and surface truncation when the budget binds.
+const FLEET_LOG_PAGE_SIZE = 200;
+const FLEET_LOG_MAX_PAGES = 25;
 
-async function loadAgentLogPages(workspaceId, jobId, { signal, maxPages = 3 } = {}) {
+export async function loadAgentLogPages(
+  workspaceId,
+  jobId,
+  { signal, maxPages = FLEET_LOG_MAX_PAGES, pageSize = FLEET_LOG_PAGE_SIZE } = {}
+) {
   const items = [];
   let cursor;
+  let truncated = false;
   for (let page = 0; page < maxPages; page += 1) {
     const result = await listAgentJobLog(workspaceId, jobId, {
       cursor,
-      limit: 200,
+      limit: pageSize,
       signal,
     });
     items.push(...(result?.items || []));
-    if (!result?.hasMore || !result?.nextCursor) break;
+    if (!result?.hasMore || !result?.nextCursor) {
+      truncated = false;
+      break;
+    }
+    if (page === maxPages - 1) {
+      truncated = true;
+      break;
+    }
     cursor = result.nextCursor;
   }
-  return items;
+  return { items, truncated };
 }
 
 function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
@@ -629,6 +645,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const [jobs, setJobs] = useState([]);
   const [source, setSource] = useState(FLEET_ALL);
   const [mergedLines, setMergedLines] = useState([]);
+  const [truncatedJobIds, setTruncatedJobIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const agentLabel =
     agent?.name || agent?.hostname || agent?.agentId || 'Agent';
@@ -639,6 +656,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
     setLoading(true);
     setJobs([]);
     setMergedLines([]);
+    setTruncatedJobIds([]);
     setSource(FLEET_ALL);
 
     (async () => {
@@ -661,27 +679,37 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
         const batches = await Promise.all(
           jobIds.map(async jobId => {
             try {
-              const lines = await loadAgentLogPages(workspaceId, jobId, {
-                signal: controller.signal,
-              });
-              return lines.map(line => ({
-                ...line,
+              const { items: lines, truncated } = await loadAgentLogPages(
+                workspaceId,
                 jobId,
-                message: line.message
-                  ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
-                  : line.message,
-              }));
+                { signal: controller.signal }
+              );
+              return {
+                truncated,
+                jobId,
+                lines: lines.map(line => ({
+                  ...line,
+                  jobId,
+                  message: line.message
+                    ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
+                    : line.message,
+                })),
+              };
             } catch {
-              return [];
+              return { truncated: false, jobId, lines: [] };
             }
           })
         );
         if (cancelled) return;
-        setMergedLines(batches.flat());
+        setMergedLines(batches.flatMap(batch => batch.lines));
+        setTruncatedJobIds(
+          batches.filter(batch => batch.truncated).map(batch => batch.jobId)
+        );
       } catch {
         if (!cancelled) {
           setJobs([]);
           setMergedLines([]);
+          setTruncatedJobIds([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -743,6 +771,16 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
                   ))}
                 </Select>
               </Box>
+              {truncatedJobIds.length > 0 ? (
+                <Text fontSize='sm' color={muted}>
+                  Showing the first{' '}
+                  {FLEET_LOG_MAX_PAGES * FLEET_LOG_PAGE_SIZE} lines for{' '}
+                  {truncatedJobIds.length === 1
+                    ? `job ${String(truncatedJobIds[0]).slice(0, 8)}`
+                    : `${truncatedJobIds.length} jobs`}
+                  . Open the job Agent output panel for the full stream.
+                </Text>
+              ) : null}
               {source === FLEET_ALL ? (
                 <AgentShellConsole
                   title={`Agent · ${agentLabel}`}

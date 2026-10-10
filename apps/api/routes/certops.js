@@ -2828,6 +2828,7 @@ function createAgentJobLogReadHandler({ agentJobLogReader = readAgentJobLog } = 
         ...result,
         items: includeText ? result.items : [],
         nextCursor: includeText ? result.nextCursor : null,
+        hasMore: includeText ? Boolean(result.hasMore) : false,
         linesVisible: includeText,
       });
     } catch (err) {

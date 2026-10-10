@@ -43,7 +43,8 @@ function leakyReader(calls) {
     return {
       items: [{ seq: 1, level: "info", message: "secret-ish output" }],
       nextCursor: "abc",
-      hasMore: false,
+      // Intentionally leaky hasMore so the route must clear it for viewers.
+      hasMore: true,
       logsComplete: true,
       streams: [{ attempt: 1, status: "final" }],
       storageEnabled: true,
@@ -63,6 +64,7 @@ describe("CertOps agent job log read route", () => {
     assert.equal(calls[0].includeText, false);
     assert.deepEqual(res.body.items, []);
     assert.equal(res.body.nextCursor, null);
+    assert.equal(res.body.hasMore, false);
     assert.equal(res.body.linesVisible, false);
     assert.equal(res.body.logsComplete, true);
     assert.equal(res.body.streams.length, 1);
