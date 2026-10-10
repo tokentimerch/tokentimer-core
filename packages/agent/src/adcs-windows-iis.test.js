@@ -190,6 +190,30 @@ describe("observeInstalledCertificateIdentity", () => {
     assert.equal(observed.existingSerialHex, "0abc");
     assert.equal(observed.existingNotAfter, "2027-01-01T00:00:00.000Z");
   });
+
+  it("queries the same selector shape as deploy (wildcard, explicit IP, SNI)", async () => {
+    const seen = [];
+    const observe = (target) =>
+      observeInstalledCertificateIdentity({
+        windowsTarget: target,
+        queryCurrentBindingImpl: async ({ binding }) => {
+          seen.push(binding);
+          return { ok: true, thumbprint: null };
+        },
+        listMachineStoreCertificatesImpl: async () => ({ ok: true, certificates: [] }),
+      });
+
+    await observe({ store: "My", binding: { site: "s", port: 443 } });
+    await observe({ store: "My", binding: { site: "s", port: 443, address: "10.0.0.5" } });
+    await observe({
+      store: "My",
+      binding: { site: "s", port: 443, address: "*", sniHost: "app.example.com" },
+    });
+
+    assert.deepEqual(seen[0], { address: "*", port: 443 });
+    assert.deepEqual(seen[1], { address: "10.0.0.5", port: 443 });
+    assert.deepEqual(seen[2], { address: "*", port: 443, sniHost: "app.example.com" });
+  });
 });
 
 describe("withUniqueValidationLeafFile", () => {

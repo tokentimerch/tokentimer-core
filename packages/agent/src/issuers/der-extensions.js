@@ -44,30 +44,48 @@ function decodeOid(bytes) {
   if (bytes.length === 0) throw new Error("empty OID");
   const first = bytes[0];
   const parts = [Math.floor(first / 40), first % 40];
-  let value = 0;
+  // BigInt: JS << is signed 32-bit and truncates AD CS template OID arcs.
+  let value = 0n;
+  let arcStarted = false;
   for (let i = 1; i < bytes.length; i += 1) {
-    value = (value << 7) | (bytes[i] & 0x7f);
-    if ((bytes[i] & 0x80) === 0) {
-      parts.push(value);
-      value = 0;
+    const b = bytes[i];
+    if (!arcStarted && (b & 0x80) !== 0 && (b & 0x7f) === 0) {
+      throw new Error("DER OID has a leading 0x80 in base-128");
+    }
+    arcStarted = true;
+    value = (value << 7n) | BigInt(b & 0x7f);
+    if ((b & 0x80) === 0) {
+      parts.push(value.toString());
+      value = 0n;
+      arcStarted = false;
     }
   }
+  if (arcStarted) throw new Error("DER OID truncated mid base-128 arc");
   return parts.join(".");
 }
 
 function encodeOid(oid) {
-  const parts = oid.split(".").map((p) => Number(p));
-  if (parts.length < 2 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
-    throw new Error(`invalid OID ${oid}`);
+  const parts = String(oid).split(".");
+  if (parts.length < 2) throw new Error(`invalid OID ${oid}`);
+  const nums = parts.map((p) => {
+    if (!/^(0|[1-9][0-9]*)$/.test(p)) throw new Error(`invalid OID arc ${p}`);
+    return BigInt(p);
+  });
+  if (nums[0] > 2n) throw new Error(`invalid OID first arc ${parts[0]}`);
+  if (nums[0] < 2n && nums[1] >= 40n) {
+    throw new Error(`invalid OID second arc ${parts[1]} for first arc ${parts[0]}`);
   }
-  const out = [40 * parts[0] + parts[1]];
-  for (let i = 2; i < parts.length; i += 1) {
-    let n = parts[i];
-    const stack = [n & 0x7f];
-    n >>= 7;
-    while (n > 0) {
-      stack.push((n & 0x7f) | 0x80);
-      n >>= 7;
+  const out = [];
+  const first = nums[0] * 40n + nums[1];
+  if (first > 255n) throw new Error("OID first two arcs overflow initial octet");
+  out.push(Number(first));
+  for (let i = 2; i < nums.length; i += 1) {
+    let n = nums[i];
+    const stack = [Number(n & 0x7fn)];
+    n >>= 7n;
+    while (n > 0n) {
+      stack.push(Number((n & 0x7fn) | 0x80n));
+      n >>= 7n;
     }
     for (let j = stack.length - 1; j >= 0; j -= 1) out.push(stack[j]);
   }
@@ -284,6 +302,7 @@ module.exports = {
   readCertificateTemplateOid,
   extractSpkiFromCsr,
   extractSpkiFromCertificate,
+  decodeOid,
   encodeOid,
   pemToDer,
 };

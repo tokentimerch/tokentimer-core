@@ -216,12 +216,19 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 
 	policyPara := certChainPolicyPara{cbSize: uint32(unsafe.Sizeof(certChainPolicyPara{}))}
 	policyStatus := certChainPolicyStatus{cbSize: uint32(unsafe.Sizeof(certChainPolicyStatus{}))}
-	_, _, _ = procCertVerifyCertificateChainPolicy.Call(
+	policyOK, _, policyCallErr := procCertVerifyCertificateChainPolicy.Call(
 		uintptr(certChainPolicyBase),
 		chainCtx,
 		uintptr(unsafe.Pointer(&policyPara)),
 		uintptr(unsafe.Pointer(&policyStatus)),
 	)
+	// A failed API invocation must not be treated as policyError=0 / valid.
+	if policyOK == 0 {
+		return Result{
+			Verdict: VerdictInvalid,
+			Error:   fmt.Sprintf("CertVerifyCertificateChainPolicy failed: %v", policyCallErr),
+		}, nil
+	}
 
 	_ = revocationMode // require vs best-effort is applied by the JS caller
 	return MapChainTrust(trust, policyStatus.dwError), nil

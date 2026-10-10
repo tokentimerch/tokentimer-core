@@ -219,8 +219,13 @@ async function observeInstalledCertificateIdentity({
   queryCurrentBindingImpl = queryCurrentBinding,
   listMachineStoreCertificatesImpl = listMachineStoreCertificates,
 }) {
+  // Match deploy's selector: explicit address when present, else IIS wildcard "*".
+  const address =
+    typeof windowsTarget.binding.address === "string" && windowsTarget.binding.address.length > 0
+      ? windowsTarget.binding.address
+      : "*";
   const binding = {
-    address: "*",
+    address,
     port: windowsTarget.binding.port,
     ...(windowsTarget.binding.sniHost ? { sniHost: windowsTarget.binding.sniHost } : {}),
   };

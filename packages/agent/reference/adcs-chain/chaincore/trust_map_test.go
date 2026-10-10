@@ -46,4 +46,15 @@ func TestMapChainTrustRevocationUnknownOnlyWhenExclusive(t *testing.T) {
 	if r.Verdict != VerdictInvalid {
 		t.Fatalf("unknown without offline must be invalid, got %s", r.Verdict)
 	}
+
+	// Revocation-unavailable trust bits must not mask an untrusted-root policy error.
+	r = MapChainTrust(RevocationUnavailableMask, CertEUntrustedRoot)
+	if r.Verdict != VerdictInvalid {
+		t.Fatalf("untrusted root with offline revocation must be invalid, got %s", r.Verdict)
+	}
+
+	r = MapChainTrust(0, CryptERevocationOffline)
+	if r.Verdict != VerdictRevocationUnknown {
+		t.Fatalf("revocation-offline policy alone must be revocation_unknown, got %s", r.Verdict)
+	}
 }

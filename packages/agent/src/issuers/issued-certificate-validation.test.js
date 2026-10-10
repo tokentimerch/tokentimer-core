@@ -18,6 +18,8 @@ const {
   readExtKeyUsageOids,
   readKeyUsageNames,
   OID_SERVER_AUTH,
+  decodeOid,
+  encodeOid,
 } = require("./der-extensions");
 
 const ISSUED_CER = path.join(
@@ -49,6 +51,19 @@ describe("der-extensions against AD CS issued.cer fixture", () => {
     assert.ok(ku.includes("keyEncipherment"));
     const templateOid = readCertificateTemplateOid(der);
     assert.ok(typeof templateOid === "string" && templateOid.startsWith("1.3.6.1.4.1.311.21.8."));
+  });
+});
+
+describe("OID base-128 BigInt arcs", () => {
+  it("round-trips arcs above 2^31 without 32-bit truncation", () => {
+    const oid = "1.2.840.113556.1.8000000000";
+    const encoded = encodeOid(oid);
+    assert.equal(decodeOid(encoded), oid);
+  });
+
+  it("rejects truncated and non-minimal base-128 encodings", () => {
+    assert.throws(() => decodeOid(Buffer.from([0x2a, 0x80, 0x01])), /leading/);
+    assert.throws(() => decodeOid(Buffer.from([0x2a, 0x81])), /truncated/);
   });
 });
 
