@@ -204,6 +204,15 @@ DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
 {{- end }}
 CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnabled false)) | quote }}
+{{- /* Explicit checks, not truthiness: retention 0 means "store nothing". */}}
+{{- $retention := .Values.config.certopsAgentLogRetentionDays }}
+{{- if and (not (kindIs "invalid" $retention)) (ne (toString $retention) "") }}
+CERTOPS_AGENT_LOG_RETENTION_DAYS: {{ $retention | int64 | quote }}
+{{- end }}
+{{- $dailyBytes := .Values.config.certopsAgentLogDailyBytes }}
+{{- if and (not (kindIs "invalid" $dailyBytes)) (ne (toString $dailyBytes) "") }}
+CERTOPS_AGENT_LOG_DAILY_BYTES: {{ $dailyBytes | int64 | quote }}
+{{- end }}
 {{- if not .Values.config.existingSecret }}
 {{- if not .Values.config.disableAdminBootstrap }}
 ADMIN_EMAIL: {{ .Values.config.adminEmail | required "config.adminEmail is required for initial admin setup (or set config.disableAdminBootstrap=true / config.existingSecret)" | quote }}

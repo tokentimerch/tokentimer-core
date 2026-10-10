@@ -1439,6 +1439,8 @@ describe("certops maintenance worker", () => {
       CERTOPS_SWEEP_NONCE_ENABLED: "true",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
+        CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
+        CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
       },
       log: silentLogger,
       withClientFn: async (fn) => {
@@ -1618,6 +1620,8 @@ describe("certops maintenance worker", () => {
             CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
             CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
             CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
+            CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
+            CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
           },
           log: silentLogger,
           withClientFn: async () => {

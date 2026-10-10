@@ -214,13 +214,14 @@ function ScrollableChipRow({ children, isMobileLayout }) {
   );
 }
 
-function AssetSearchInput({
+export function AssetSearchInput({
   value,
   onCommit,
   inputBg,
   inputBorder,
   placeholderColor,
   searchIconColor,
+  placeholder = 'Search assets, domains, owners...',
 }) {
   const externalValue = value || '';
   const [draft, setDraft] = useState(externalValue);
@@ -261,7 +262,7 @@ function AssetSearchInput({
           pendingRef.current = true;
           setDraft(event.target.value);
         }}
-        placeholder='Search assets, domains, owners...'
+        placeholder={placeholder}
         size='sm'
         bg={inputBg}
         borderColor={inputBorder}

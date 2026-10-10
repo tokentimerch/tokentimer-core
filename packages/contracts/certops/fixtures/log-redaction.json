@@ -1,0 +1,42 @@
+[
+  {
+    "name": "authorization-header",
+    "input": "calling API Authorization: Bearer super-secret-token",
+    "expect": { "rejected": false, "excludes": ["super-secret-token"], "includes": ["[REDACTED]"] }
+  },
+  {
+    "name": "query-token",
+    "input": "fetch https://example.test/hook?token=abc123&x=1",
+    "expect": { "rejected": false, "excludes": ["abc123"] }
+  },
+  {
+    "name": "connection-string",
+    "input": "dial postgres://app:s3cret@db.internal:5432/cert",
+    "expect": { "rejected": false, "excludes": ["s3cret"] }
+  },
+  {
+    "name": "pfx-password",
+    "input": "store import pfxpassword=hunter2",
+    "expect": { "rejected": false, "excludes": ["hunter2"] }
+  },
+  {
+    "name": "high-entropy-beside-hint",
+    "input": "dns token aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expect": { "rejected": false, "excludes": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] }
+  },
+  {
+    "name": "bidi-and-line-separator",
+    "input": "deploy\u202Eok\u2028next",
+    "expect": { "rejected": false, "excludes": ["\u202E", "\u2028"], "includes": ["deployoknext"] }
+  },
+  {
+    "name": "private-key-block",
+    "input": "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----",
+    "expect": { "rejected": true }
+  },
+  {
+    "name": "field-secret",
+    "fields": { "note": "password=hunter2" },
+    "expect": { "rejected": false, "excludes": ["hunter2"] }
+  }
+]

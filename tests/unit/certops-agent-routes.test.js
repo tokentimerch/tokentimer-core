@@ -36,6 +36,7 @@ const AGENT_PATHS = [
   "/api/v1/certops/agent/jobs/claim",
   "/api/v1/certops/agent/jobs/job-1/lease",
   "/api/v1/certops/agent/jobs/results",
+  "/api/v1/certops/agent/jobs/job-1/logs",
 ];
 
 function createResponse() {

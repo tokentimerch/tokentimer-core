@@ -30,14 +30,16 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 60).name, "certops_public_csr_workflows");
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
-    assert.equal(migrations.at(-1).version, 68);
+    assert.equal(migrations.find((entry) => entry.version === 67).name, "inventory_and_auto_sync_name_length");
     assert.equal(
-      migrations.at(-1).name,
+      migrations.find((entry) => entry.version === 68).name,
       "certops_adcs_awaiting_issuer_and_continue_enrollment",
     );
+    assert.equal(migrations.at(-1).version, 69);
+    assert.equal(migrations.at(-1).name, "certops_agent_job_logs");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 68 }, (_, index) => index + 1),
+      Array.from({ length: 69 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -1796,7 +1798,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 68);
+    assert.equal(sorted[sorted.length - 1], 69);
   });
 });
 

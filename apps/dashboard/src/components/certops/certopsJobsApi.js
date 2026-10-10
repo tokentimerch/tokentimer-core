@@ -27,6 +27,14 @@ export const CERTOPS_JOB_OPERATIONS = [
   'reload',
   'revoke',
   'noop',
+  'distribute-trust',
+  'revoke-trust',
+];
+
+export const CERTOPS_JOB_CREATED_SINCE = [
+  { value: '24h', label: 'Last 24 hours' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
 ];
 
 export const CERTOPS_SUBJECT_TYPES = [
@@ -37,6 +45,7 @@ export const CERTOPS_SUBJECT_TYPES = [
   'domain',
   'endpoint',
   'external',
+  'trust_anchor',
 ];
 
 export const CERTOPS_JOB_LOG_EVENT_TYPES = [
@@ -80,6 +89,8 @@ export async function listJobs(
     subjectId,
     operation,
     source,
+    q,
+    createdSince,
     signal,
   } = {}
 ) {
@@ -89,6 +100,8 @@ export async function listJobs(
   if (subjectId !== undefined) params.subjectId = subjectId;
   if (operation !== undefined) params.operation = operation;
   if (source !== undefined) params.source = source;
+  if (q !== undefined) params.q = q;
+  if (createdSince !== undefined) params.createdSince = createdSince;
 
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/jobs`, {
     params,
@@ -132,6 +145,30 @@ export async function listJobLog(
  * Fetch evidence items attached to a job.
  * @returns {Promise<{ items: object[], pagination: { limit: number, offset: number } }>}
  */
+export async function listAgentJobLog(
+  workspaceId,
+  jobId,
+  { cursor, limit = 200, signal } = {}
+) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/jobs/${encodeURIComponent(jobId)}/agent-log`,
+    { params: { cursor, limit }, signal }
+  );
+  return res.data;
+}
+
+export async function listAgentFleetLog(
+  workspaceId,
+  agentId,
+  { limit = 20, signal } = {}
+) {
+  const res = await apiClient.get(
+    `${workspaceBase(workspaceId)}/agents/${encodeURIComponent(agentId)}/agent-log`,
+    { params: { limit }, signal }
+  );
+  return res.data;
+}
+
 export async function listJobEvidence(
   workspaceId,
   jobId,

@@ -83,6 +83,13 @@ const {
 } = require("./agentJobEligibility");
 const { isTrustAnchorOperation } = require("./jobs");
 const {
+  JOB_LOG_STREAM_CAPABILITY,
+  MAX_BATCH_BYTES,
+  openStreamForClaim,
+  closeClaimStreamSafely,
+  storageEnabled,
+} = require("./agentJobLogs");
+const {
   revalidateTrustJobForDispatch,
   ingestTrustJobResult,
   onTrustJobTerminalTransition,
@@ -909,7 +916,7 @@ async function resolveDeployPublicCertificate({
     );
   }
   const result = await client.query(
-    `SELECT certificate_pem, fingerprint_sha256
+    `SELECT certificate_pem, fingerprint_sha256, common_name, subject_alt_names
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2
@@ -930,10 +937,19 @@ async function resolveDeployPublicCertificate({
     .createHash("sha256")
     .update(certificatePem, "utf8")
     .digest("hex");
+  const subjectAltNames = Array.isArray(row.subject_alt_names)
+    ? row.subject_alt_names.filter((name) => typeof name === "string" && name.length > 0)
+    : [];
+  const commonName =
+    typeof row.common_name === "string" && row.common_name.length > 0
+      ? row.common_name
+      : null;
   return {
     certificatePem,
     certificatePemSha256,
     fingerprintSha256: row.fingerprint_sha256 || null,
+    commonName,
+    subjectAltNames,
   };
 }
 
@@ -1031,7 +1047,7 @@ async function claimJobs({
       ],
     );
 
-    if (supportedActions.length === 0) return { jobs: [] };
+    if (supportedActions.length === 0) return { jobs: [], logStreams: [] };
 
     // Load the agent's persisted selectors for the claim matcher. The claim
     // body can override DNS providers for this poll; targets/profiles come
@@ -1091,6 +1107,13 @@ async function claimJobs({
       capability: SIGNED_PAYLOAD_B64_CAPABILITY,
       env,
     });
+    const logStorageOn = storageEnabled(env);
+    const logStreamEnabled = logStorageOn && hasFreshCapability({
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      capability: JOB_LOG_STREAM_CAPABILITY,
+      env,
+    });
 
     // B2/B5: agent lane only; match assigned agent, target selector, DNS
     // provider, and command profile when the job requires them.
@@ -1128,8 +1151,26 @@ async function claimJobs({
               ) AS subject_is_provisioning
          FROM certificate_jobs cj
         WHERE workspace_id = $1
-          AND status = 'pending'
           AND executor_kind = 'agent'
+          AND (
+            (
+              status = 'pending'
+              AND (scheduled_for IS NULL OR scheduled_for <= NOW())
+              AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+            )
+            OR (
+              -- Same agent reclaiming a never-renewed expired claim after a
+              -- restart/offline gap. Without this, the row stays "claimed"
+              -- until the lease reaper's hard grace, so the returning agent
+              -- cannot retry even though no side effects were proven.
+              status = 'claimed'
+              AND claimed_by_agent_id = $3::uuid
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < NOW()
+              AND lease_renewed_at IS NULL
+              AND attempt_count < COALESCE(max_attempts, 3)
+            )
+          )
           AND (
             cj.subject_type IS DISTINCT FROM 'managed_certificate'
             OR (cj.operation = 'protocol_smoke' AND cj.subject_id IS NULL)
@@ -1151,8 +1192,6 @@ async function claimJobs({
                     AND cj.payload->>'canRestoreOriginal' = 'false'))
             )
           )
-          AND (scheduled_for IS NULL OR scheduled_for <= NOW())
-          AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])
           AND (assigned_agent_id IS NULL OR assigned_agent_id = $3::uuid)
           AND (
@@ -1222,6 +1261,7 @@ async function claimJobs({
       agentKind,
     };
     const jobs = [];
+    const logStreams = [];
     for (const row of selected.rows) {
       if (row.subject_type === "managed_certificate" && row.management_period_id) {
         const ownership = await client.query(
@@ -1275,7 +1315,7 @@ async function claimJobs({
                     completed_at = COALESCE(completed_at, NOW()),
                     updated_at = NOW()
               WHERE id = $1
-                AND status = 'pending'`,
+                AND status IN ('pending', 'claimed')`,
             [row.id, `Trust job dispatch revalidation failed: ${revalidation.reason}`],
           );
           continue;
@@ -1417,6 +1457,36 @@ async function claimJobs({
             fingerprintSha256: deployPublicCert.fingerprintSha256,
           };
         }
+        // Standalone deploy payloads often omit sans/target.reference; the
+        // agent would then treat certPath as the SAN and fail validation.
+        if (
+          (!Array.isArray(basePayload.sans) || basePayload.sans.length === 0) &&
+          Array.isArray(deployPublicCert.subjectAltNames) &&
+          deployPublicCert.subjectAltNames.length > 0
+        ) {
+          basePayload.sans = [...deployPublicCert.subjectAltNames];
+        }
+        if (
+          deployPublicCert.commonName &&
+          typeof basePayload.target.reference !== "string"
+        ) {
+          basePayload.target = {
+            ...basePayload.target,
+            type: basePayload.target.type || "domain",
+            reference: deployPublicCert.commonName,
+          };
+        }
+      }
+
+      // Standalone deploy jobs are created with subject_id only; the agent
+      // looks up keysDir/<certificateId>.key.pem for key-match validation /
+      // paired install, so the signed envelope must carry certificateId.
+      if (
+        job.subject_type === "managed_certificate" &&
+        job.subject_id &&
+        !basePayload.certificateId
+      ) {
+        basePayload.certificateId = String(job.subject_id);
       }
 
       if (trustAnchorPem) {
@@ -1453,10 +1523,41 @@ async function claimJobs({
           : ENVELOPE_VERSION_1,
       });
       jobs.push(signedJob);
+      // With storage off there is no history to keep and no purge to clean it.
+      logStreams.push(logStorageOn
+        ? await bestEffortLogOffer(client, {
+          workspaceId: agent.workspaceId,
+          jobId: String(job.id),
+          claimId: String(job.claim_id),
+          agentRowId: agent.id,
+          attemptNumber: job.attempt_count,
+          streamingEnabled: logStreamEnabled,
+        })
+        : { enabled: false, maxBatchBytes: MAX_BATCH_BYTES });
     }
 
-    return { jobs };
+    return { jobs, logStreams };
   });
+}
+
+async function bestEffortLogOffer(db, args) {
+  const disabled = { enabled: false, maxBatchBytes: MAX_BATCH_BYTES };
+  try {
+    await db.query("SAVEPOINT agent_log_stream");
+    const offer = await openStreamForClaim(db, args);
+    await db.query("RELEASE SAVEPOINT agent_log_stream");
+    return offer;
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK TO SAVEPOINT agent_log_stream");
+    } catch (_rollbackError) {
+      // The claim transaction must continue even when console storage fails.
+    }
+    logger.warn("agent log stream was not opened; claim continues", {
+      code: error?.code || null,
+    });
+    return disabled;
+  }
 }
 
 function safeParseJson(value) {
@@ -2368,6 +2469,13 @@ async function ingestResult({
     );
 
     const row = updated.rows[0];
+    if (row && job.claim_id) {
+      await closeClaimStreamSafely(client, {
+        workspaceId: agent.workspaceId,
+        jobId: String(job.id),
+        claimId: String(job.claim_id),
+      });
+    }
 
     // certificate_job_log's schema is designed to record job.completed/
     // job.failed/job.progress lifecycle events, but until now only the

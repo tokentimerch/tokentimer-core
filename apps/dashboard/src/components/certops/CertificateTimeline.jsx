@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Collapse,
@@ -11,6 +11,7 @@ import {
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import EvidenceTimeline from './EvidenceTimeline.jsx';
+import { JobDetailsButton } from './JobDetailsButton.jsx';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import {
   formatDateTime,
@@ -18,6 +19,8 @@ import {
   jobOperationLabel,
 } from './certopsJobsFormat';
 import { useCertOpsJobs } from './useCertOpsJobs.js';
+import { useCertOpsAgents } from './useCertOpsAgents.js';
+import { indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 /**
@@ -37,6 +40,8 @@ export default function CertificateTimeline({
   const { muted, border, dashboard } = useDashboardTheme();
   const rowHoverBg = dashboard.table.rowHover;
   const expandedBg = dashboard.bg.nested;
+  const { agents } = useCertOpsAgents();
+  const agentsById = useMemo(() => indexAgentsByAnyId(agents), [agents]);
   const { enabled, jobs, pagination, loading, error } = useCertOpsJobs({
     subjectType,
     subjectId,
@@ -102,8 +107,6 @@ export default function CertificateTimeline({
             ml={compact ? 1 : 5}
             pl={3}
             py={2}
-            borderLeftWidth='2px'
-            borderColor={border}
             bg={compact ? 'transparent' : expandedBg}
             borderRadius={compact ? 0 : 'md'}
           >
@@ -112,40 +115,64 @@ export default function CertificateTimeline({
         );
         return (
           <Box key={job.id} borderColor={border}>
-            <HStack
-              as='button'
-              type='button'
-              w='full'
-              textAlign='left'
-              spacing={2}
+            <Box
               px={compact ? 0 : 2}
               py={2}
               borderRadius='md'
+              cursor='pointer'
               _hover={{ bg: rowHoverBg }}
+              role='button'
+              tabIndex={0}
+              aria-expanded={isOpen}
               onClick={() =>
                 setExpandedId(current => (current === job.id ? null : job.id))
               }
-              aria-expanded={isOpen}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setExpandedId(current =>
+                    current === job.id ? null : job.id
+                  );
+                }
+              }}
             >
-              <Icon
-                as={isOpen ? ChevronDown : ChevronRight}
-                boxSize={3.5}
-                color={muted}
-                flexShrink={0}
-              />
-              <Text fontSize='sm' fontWeight='medium' flex='1' noOfLines={1}>
-                {jobOperationLabel(job.operation)}
-              </Text>
-              <JobStatusBadge status={job.status} />
-              <Text
-                fontSize='xs'
-                color={muted}
-                flexShrink={0}
-                title={formatDateTime(job.createdAt)}
+              <HStack
+                w='full'
+                spacing={2}
+                align='center'
+                flexWrap={{ base: 'wrap', md: 'nowrap' }}
               >
-                {formatRelativeDateTime(job.createdAt)}
-              </Text>
-            </HStack>
+                <Icon
+                  as={isOpen ? ChevronDown : ChevronRight}
+                  boxSize={3.5}
+                  color={muted}
+                  flexShrink={0}
+                />
+                <Text
+                  fontSize='sm'
+                  fontWeight='semibold'
+                  flex='1'
+                  noOfLines={1}
+                >
+                  {jobOperationLabel(job.operation)}
+                </Text>
+                <JobStatusBadge status={job.status} />
+                <Text
+                  fontSize='xs'
+                  color={muted}
+                  flexShrink={0}
+                  title={formatDateTime(job.createdAt)}
+                >
+                  {formatRelativeDateTime(job.createdAt)}
+                </Text>
+                <Box
+                  flexShrink={0}
+                  onClick={event => event.stopPropagation()}
+                >
+                  <JobDetailsButton job={job} agentsById={agentsById} />
+                </Box>
+              </HStack>
+            </Box>
             {compact ? (
               isOpen ? (
                 expandedContent

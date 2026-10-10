@@ -526,6 +526,12 @@ config:
   # false to disable the /certops API surface and worker monitor bridge.
   # Precedence: this value > System Settings DB > code default (disabled).
   certopsEnabled: true
+  # Days of agent output console lines to keep. Empty = code default (30).
+  # 0 stores no lines and the next certops sweep deletes stored ones.
+  certopsAgentLogRetentionDays: ""
+  # Bytes of new console lines each workspace may store per UTC day.
+  # Empty or 0 = no cap. Counted across API replicas.
+  certopsAgentLogDailyBytes: ""
 
   # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
   # These wrap, at rest, the job-signing private keys and the agent

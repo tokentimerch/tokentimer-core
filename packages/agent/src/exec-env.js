@@ -21,6 +21,11 @@
  *   - CERTOPS_DNS_HOOK: absolute path to certops-dns-hook.js (non-secret).
  *     Set by the ACME adapter so the acme.sh dns_certops.sh wrapper can
  *     locate the Node hook without putting credentials on argv/env.
+ *   - HTTPS_INSECURE: optional lab/dev flag honored by acme.sh (adds curl
+ *     --insecure). Needed when the ACME CA is served with a private TLS
+ *     chain that Windows/schannel curl cannot revoke-check (e.g. local
+ *     Pebble). Never a secret; omitted unless the agent process itself
+ *     was started with it.
  *
  * TOKENTIMER_AGENT_BOOTSTRAP_TOKEN and every other TOKENTIMER_AGENT_* /
  * arbitrary variable are deliberately NOT forwarded.
@@ -41,6 +46,7 @@ const SUBPROCESS_ENV_ALLOWLIST = Object.freeze([
   "TZ",
   "TOKENTIMER_AGENT_CONFIG_DIR",
   "CERTOPS_DNS_HOOK",
+  "HTTPS_INSECURE",
 ]);
 
 /**

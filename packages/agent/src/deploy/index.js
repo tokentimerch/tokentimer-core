@@ -1036,6 +1036,32 @@ async function resolveRealDestination(fspImpl, destination) {
 }
 
 /**
+ * True when `candidate` is a keys.generateKeyPairToFile rotation staging
+ * sibling (`.${basename}.staging-<pid>-<hex>`), not a live custody key.
+ * Only those files are safe to unlink after a successful promote.
+ * @param {string} candidate
+ * @returns {boolean}
+ */
+function isRotationStagingKeyPath(candidate) {
+  if (typeof candidate !== "string" || candidate.length === 0) return false;
+  const base = path.basename(candidate);
+  return base.startsWith(".") && base.includes(".staging-");
+}
+
+/**
+ * Derive the live custody keyPath from a rotation staging sibling.
+ * @param {string} stagingPath
+ * @returns {string|null}
+ */
+function liveKeyPathFromRotationStaging(stagingPath) {
+  if (!isRotationStagingKeyPath(stagingPath)) return null;
+  const base = path.basename(stagingPath);
+  const match = /^\.(.+)\.staging-/.exec(base);
+  if (!match) return null;
+  return path.join(path.dirname(stagingPath), match[1]);
+}
+
+/**
  * Atomically deploys a matched certificate + private-key pair.
  *
  * Reads the private key from `privateKeyPath` (typically a staging path from
@@ -1374,17 +1400,49 @@ async function deployCertificateAndKey({
       );
     }
 
-    // Staging file is consumed once the live key is in place — unless the
-    // caller still needs it for additional destinations (multi-target).
+    // Only rotation staging siblings are consumed after install. A live
+    // custody key (keysDir/<certificateId>.key.pem) must survive when the
+    // production destination is a different path — otherwise a later
+    // standalone deploy cannot find a permitted local key reference.
     const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
     if (
       retainPrivateKeyStaging !== true &&
+      isRotationStagingKeyPath(normalizedPrivateKeyPath) &&
       normalizedPrivateKeyPath !== realKeyDestination
     ) {
-      try {
-        await fspImpl.unlink(normalizedPrivateKeyPath);
-      } catch (_err) {
-        // best-effort
+      const liveCustodyPath = liveKeyPathFromRotationStaging(
+        normalizedPrivateKeyPath,
+      );
+      let canRemoveStaging = true;
+      if (
+        liveCustodyPath &&
+        path.normalize(path.resolve(liveCustodyPath)) !== realKeyDestination
+      ) {
+        canRemoveStaging = false;
+        try {
+          // Promote via atomic write so a failed custody update never
+          // deletes the only remaining copy of the rotated key.
+          const custodyResolved = path.normalize(path.resolve(liveCustodyPath));
+          const stagingKeyBytes = await fspImpl.readFile(normalizedPrivateKeyPath);
+          await atomicWrite(fspImpl, custodyResolved, stagingKeyBytes, {
+            mode: DEPLOYED_KEY_DEFAULT_MODE,
+          });
+          const promoted = await fspImpl.readFile(custodyResolved);
+          if (!Buffer.from(promoted).equals(Buffer.from(stagingKeyBytes))) {
+            throw new Error("custody key promotion verification failed");
+          }
+          canRemoveStaging = true;
+        } catch (_err) {
+          // Production install already committed; keep staging for recovery.
+          canRemoveStaging = false;
+        }
+      }
+      if (canRemoveStaging) {
+        try {
+          await fspImpl.unlink(normalizedPrivateKeyPath);
+        } catch (_err) {
+          // best-effort
+        }
       }
     }
 

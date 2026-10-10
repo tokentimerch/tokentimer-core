@@ -91,6 +91,10 @@ services:
       # enabled, including inventory-only installations. Retain them securely.
       CERTOPS_SIGNING_ENCRYPTION_KEY: ${CERTOPS_SIGNING_ENCRYPTION_KEY:-}
       CERTOPS_REGISTRATION_ENCRYPTION_KEY: ${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-}
+      # Agent output console. Retention must match worker-certops, which
+      # enforces it; 0 stores no lines. Empty = code defaults.
+      CERTOPS_AGENT_LOG_RETENTION_DAYS: ${CERTOPS_AGENT_LOG_RETENTION_DAYS:-}
+      CERTOPS_AGENT_LOG_DAILY_BYTES: ${CERTOPS_AGENT_LOG_DAILY_BYTES:-}
 
       # Auth
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}
@@ -566,6 +570,8 @@ services:
       # sweep marks it offline (ms). Keep in sync with the fleet panel's
       # expectations; default is 10 minutes when unset.
       CERTOPS_AGENT_OFFLINE_AFTER_MS: ${CERTOPS_AGENT_OFFLINE_AFTER_MS:-}
+      # Must match the api service (see its agent output console comment).
+      CERTOPS_AGENT_LOG_RETENTION_DAYS: ${CERTOPS_AGENT_LOG_RETENTION_DAYS:-}
       WORKER_CERTOPS_CRON: "${WORKER_CERTOPS_CRON:-*/1 * * * *}"
       WORKER_CERTOPS_INTERVAL_MS: ${WORKER_CERTOPS_INTERVAL_MS:-}
       WORKER_CERTOPS_RUN_ON_START: ${WORKER_CERTOPS_RUN_ON_START:-}

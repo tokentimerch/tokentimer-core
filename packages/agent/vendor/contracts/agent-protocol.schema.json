@@ -20,8 +20,8 @@
     },
     "messageType": {
       "type": "string",
-      "enum": ["register", "heartbeat", "claim", "result", "evidence"],
-      "description": "register/heartbeat/claim/result/evidence. See definitions.*Body below for the per-messageType payload."
+      "enum": ["register", "heartbeat", "claim", "result", "evidence", "log"],
+      "description": "register/heartbeat/claim/result/evidence/log. log is the execution-console telemetry channel and does not carry the control-channel sequence. See definitions.*Body below for the per-messageType payload."
     },
     "agentId": {
       "type": "string",
@@ -72,6 +72,10 @@
     {
       "if": { "properties": { "messageType": { "const": "evidence" } } },
       "then": { "properties": { "body": { "$ref": "#/definitions/evidenceBody" } } }
+    },
+    {
+      "if": { "properties": { "messageType": { "const": "log" } } },
+      "then": { "properties": { "body": { "$ref": "#/definitions/logBody" } } }
     }
   ],
   "definitions": {
@@ -345,6 +349,70 @@
           "then": {
             "required": ["enrollmentResult"],
             "properties": { "enrollmentResult": { "type": "object" } }
+          }
+        }
+      ]
+    },
+    "logLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "ts", "level", "step", "message"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "ts": { "type": "string", "format": "date-time" },
+        "level": { "type": "string", "enum": ["info", "warn", "error"] },
+        "step": {
+          "type": "string",
+          "enum": ["claim", "acme", "dns", "deploy", "reload", "verify", "discovery", "trust", "other"]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "fields": {
+          "type": "object",
+          "maxProperties": 8,
+          "additionalProperties": {
+            "anyOf": [
+              { "type": "string", "maxLength": 256 },
+              { "type": "number" },
+              { "type": "boolean" },
+              { "type": "null" }
+            ]
+          }
+        }
+      }
+    },
+    "logBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "claimId", "final"],
+      "description": "Execution-console batch for one claim. Lines are contiguous from firstSeq. An empty lines array is valid only when final is true. This message omits the control-channel sequence.",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "claimId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "firstSeq": { "type": "integer", "minimum": 1 },
+        "lines": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/definitions/logLine" }
+        },
+        "droppedBefore": { "type": "integer", "minimum": 0 },
+        "final": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "final": { "const": false } }, "required": ["final"] },
+          "then": {
+            "required": ["firstSeq", "lines"],
+            "properties": { "lines": { "minItems": 1 } }
           }
         }
       ]

@@ -47,6 +47,29 @@ describe("pack-release (H10)", () => {
     assert.doesNotMatch(list.stdout, /fixtures\//);
   });
 
+  it("ships Windows service host binaries under package/bin, not --out-dir", () => {
+    // Regression for pack-agent writing tokentimer-agent-host-*.exe into
+    // agent-dist/ (inherited --out-dir) so released tarballs omitted them
+    // and install-agent.ps1 failed without a local rebuild.
+    outDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-release-host-"));
+    const result = main([`--out-dir=${outDir}`]);
+    const list = spawnSync("tar", ["-tzf", result.tarballPath], { encoding: "utf8" });
+    assert.equal(list.status, 0);
+    assert.match(list.stdout, /package\/bin\/tokentimer-agent-host-amd64\.exe/);
+    assert.match(list.stdout, /package\/bin\/tokentimer-agent-host-arm64\.exe/);
+    assert.equal(
+      fs.existsSync(path.join(outDir, "tokentimer-agent-host-amd64.exe")),
+      false,
+      "host exe must not land in pack --out-dir",
+    );
+    assert.ok(
+      fs.existsSync(
+        path.join(path.resolve(__dirname, "..", "bin"), "tokentimer-agent-host-amd64.exe"),
+      ),
+      "host exe must be built into packages/agent/bin/",
+    );
+  });
+
   it("assertNoPrivateKeyMaterial rejects a tarball containing a private key", () => {
     const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-release-bad-"));
     try {

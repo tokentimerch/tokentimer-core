@@ -44,6 +44,66 @@ function json(value) {
   return typeof value === "string" ? JSON.parse(value) : value;
 }
 
+function filterListedJobs(jobs, normalizedSql, params) {
+  let rows = jobs.filter((row) => row.workspace_id === params[0]);
+  const equalityFilters = [
+    ["status = $", "status"],
+    ["operation = $", "operation"],
+    ["source = $", "source"],
+    ["subject_type = $", "subject_type"],
+    ["subject_id = $", "subject_id"],
+  ];
+  for (const [needle, column] of equalityFilters) {
+    const match = new RegExp(
+      `${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)`,
+    ).exec(normalizedSql);
+    if (!match) continue;
+    const expected = params[Number(match[1]) - 1];
+    rows = rows.filter((row) => row[column] === expected);
+  }
+
+  const sinceMatch =
+    /created_at >= NOW\(\) - \(\$(\d+)\)::interval/.exec(normalizedSql);
+  if (sinceMatch) {
+    const interval = String(params[Number(sinceMatch[1]) - 1] || "");
+    const hours =
+      interval === "24 hours"
+        ? 24
+        : interval === "7 days"
+          ? 24 * 7
+          : interval === "30 days"
+            ? 24 * 30
+            : null;
+    if (hours != null) {
+      const cutoffMs = Date.UTC(2026, 5, 30, 0, 0, 0) - hours * 60 * 60 * 1000;
+      rows = rows.filter(
+        (row) => new Date(row.created_at).getTime() >= cutoffMs,
+      );
+    }
+  }
+
+  const searchMatch = /id::text ILIKE '%' \|\| \$(\d+) \|\| '%'/.exec(
+    normalizedSql,
+  );
+  if (searchMatch) {
+    const needle = String(params[Number(searchMatch[1]) - 1] || "")
+      .toLowerCase();
+    rows = rows.filter((row) => {
+      const haystack = [
+        row.id,
+        row.subject_id,
+        row.operation,
+        row.source,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+      return haystack.includes(needle);
+    });
+  }
+
+  return rows;
+}
+
 function createMemoryClient(options = {}) {
   const jobs = [];
   const logs = [];
@@ -197,21 +257,20 @@ function createMemoryClient(options = {}) {
         normalizedSql.includes("SELECT COUNT(*)::int AS total") &&
         normalizedSql.includes("FROM certificate_jobs")
       ) {
-        let rows = jobs.filter((row) => row.workspace_id === params[0]);
-        if (normalizedSql.includes("status = $2")) {
-          rows = rows.filter((row) => row.status === params[1]);
-        }
-        return { rows: [{ total: rows.length }] };
+        return {
+          rows: [
+            {
+              total: filterListedJobs(jobs, normalizedSql, params).length,
+            },
+          ],
+        };
       }
 
       if (
         normalizedSql.includes("FROM certificate_jobs") &&
         normalizedSql.includes("ORDER BY created_at DESC")
       ) {
-        let rows = jobs.filter((row) => row.workspace_id === params[0]);
-        if (normalizedSql.includes("status = $2")) {
-          rows = rows.filter((row) => row.status === params[1]);
-        }
+        let rows = filterListedJobs(jobs, normalizedSql, params);
         const limitMatch = /LIMIT \$(\d+) OFFSET \$(\d+)/.exec(normalizedSql);
         if (limitMatch) {
           const limit = Number(params[Number(limitMatch[1]) - 1]);
@@ -535,6 +594,69 @@ describe("CertOps jobs service", () => {
     assert.equal(filtered.items.length, 1);
     assert.equal(filtered.items[0].status, "running");
     assert.equal(filtered.pagination.total, 2);
+  });
+
+  it("searches jobs by subject id and keeps the filtered total", async () => {
+    const client = createMemoryClient();
+    await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-alpha",
+      payload: { certificateId: "cert-alpha" },
+    });
+    await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-beta",
+      payload: { certificateId: "cert-beta" },
+    });
+
+    const found = await listCertificateJobs({
+      client,
+      workspaceId: WORKSPACE_A,
+      q: "cert-beta",
+      limit: 10,
+    });
+
+    assert.equal(found.items.length, 1);
+    assert.equal(found.items[0].subjectId, "cert-beta");
+    assert.equal(found.pagination.total, 1);
+  });
+
+  it("filters jobs by createdSince interval", async () => {
+    const client = createMemoryClient();
+    await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-old",
+      payload: { certificateId: "cert-old" },
+    });
+    // Memory client ticks created_at by one minute per write; pin an older
+    // row outside the 24h window so the interval filter is meaningful.
+    client.jobs[0].created_at = new Date(Date.UTC(2026, 4, 1, 0, 0, 0));
+    await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "deploy",
+      subjectType: "managed_certificate",
+      subjectId: "cert-new",
+      payload: { certificateId: "cert-new" },
+    });
+
+    const listed = await listCertificateJobs({
+      client,
+      workspaceId: WORKSPACE_A,
+      createdSince: "24h",
+    });
+
+    assert.equal(listed.pagination.total, 1);
+    assert.equal(listed.items[0].subjectId, "cert-new");
   });
 
   it("updates status only to bounded lifecycle values", async () => {

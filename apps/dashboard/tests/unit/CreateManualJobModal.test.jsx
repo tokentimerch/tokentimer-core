@@ -12,6 +12,7 @@ const {
   useCertOpsIsWorkspaceAdminMock,
   createJobMock,
   createControllerProvisionIntentMock,
+  listAgentJobLogMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(),
@@ -19,6 +20,7 @@ const {
   useCertOpsIsWorkspaceAdminMock: vi.fn(),
   createJobMock: vi.fn(),
   createControllerProvisionIntentMock: vi.fn(),
+  listAgentJobLogMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -47,6 +49,7 @@ vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
   return {
     ...actual,
     createJob: createJobMock,
+    listAgentJobLog: listAgentJobLogMock,
   };
 });
 
@@ -88,6 +91,16 @@ beforeEach(() => {
   useCertOpsIsWorkspaceAdminMock.mockReset();
   createJobMock.mockReset();
   createControllerProvisionIntentMock.mockReset();
+  listAgentJobLogMock.mockReset();
+  listAgentJobLogMock.mockResolvedValue({
+    items: [],
+    nextCursor: null,
+    hasMore: false,
+    logsComplete: false,
+    streams: [],
+    storageEnabled: true,
+    linesVisible: true,
+  });
   useWorkspaceMock.mockReturnValue({ workspaceId: 'ws-1' });
   useCertOpsAgentsMock.mockReturnValue({ agents: [] });
   useCertOpsControllerClustersMock.mockReturnValue({
@@ -547,6 +560,34 @@ describe('CreateManualJobModal trustOp mode', () => {
     expect(body.agentId).toBe('agent-b');
     expect(body.owner).toBe('team-a');
     expect(body.idempotencyKey).toBeTruthy();
+  });
+
+  it('stays open on the agent console after creating an agent job', async () => {
+    createJobMock.mockResolvedValue({ job: { id: 'job-1' } });
+    const onClose = vi.fn();
+    const onCreated = vi.fn();
+
+    renderModal({ trustOp: distributeTrustOp, onClose, onCreated });
+    fireEvent.change(screen.getByLabelText(/^Target agent/), {
+      target: { value: 'agent-b' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Owner/), {
+      target: { value: 'team-a' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Distribute trust anchor' })
+    );
+
+    await waitFor(() => {
+      expect(listAgentJobLogMock).toHaveBeenCalled();
+    });
+    expect(listAgentJobLogMock.mock.calls[0][0]).toBe('ws-1');
+    expect(listAgentJobLogMock.mock.calls[0][1]).toBe('job-1');
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.getByText('Close', { selector: 'button' })
+    ).toBeInTheDocument();
   });
 
   it("offers only the anchor's existing owners on distribute, from the installations the panel passed in", () => {

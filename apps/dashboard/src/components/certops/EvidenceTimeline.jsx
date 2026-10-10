@@ -1,16 +1,11 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
 import {
   Box,
+  Divider,
   Flex,
   HStack,
   Icon,
   IconButton,
-  Link,
-  Popover,
-  PopoverArrow,
-  PopoverBody,
-  PopoverContent,
-  PopoverTrigger,
   Spinner,
   Text,
   Tooltip,
@@ -21,13 +16,11 @@ import {
   CheckCircle2,
   Circle,
   FileSearch,
-  MoreHorizontal,
   Play,
   Shield,
   X,
   XCircle,
 } from 'lucide-react';
-import { Link as RouterLink } from 'react-router';
 import { useMemo } from 'react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
@@ -45,24 +38,22 @@ import {
 } from './certopsJobsFormat';
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
+import AgentShellConsole from './AgentShellConsole.jsx';
+import {
+  JobDetailsButton,
+  JobExecutionSummary,
+} from './JobDetailsButton.jsx';
+import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
-import { formatAgentLabel, indexAgentsByAnyId } from './certopsAgentLabel.js';
+import { indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
 
-function ApprovedByLine({ job, color }) {
-  const name = userFacingName(
-    job?.approvedByUserId,
-    job?.approvedByDisplayName
-  );
-  if (!name) return null;
-  return (
-    <Text fontSize='xs' color={color}>
-      Approved by {name}
-    </Text>
-  );
-}
+/** Marker diameter; spine is centered through this column. */
+const TIMELINE_MARKER = 24;
+const TIMELINE_SPINE = 2;
+const TIMELINE_GAP = 12;
 
 function RedactionBadge() {
   return (
@@ -198,35 +189,41 @@ function TimelineItem({
       : '';
 
   return (
-    <Box position='relative' pl={6} pb={4} _last={{ pb: 0 }}>
+    <Flex align='flex-start' gap={`${TIMELINE_GAP}px`} pb={5} _last={{ pb: 0 }}>
       <Flex
-        position='absolute'
-        left='-7px'
-        top='2px'
+        flexShrink={0}
         align='center'
         justify='center'
-        w='14px'
-        h='14px'
+        w={`${TIMELINE_MARKER}px`}
+        h={`${TIMELINE_MARKER}px`}
         borderRadius='full'
-        bg={dotBg}
-        borderWidth='1px'
-        borderColor={border}
+        bg={`${scheme}.50`}
+        borderWidth='1.5px'
+        borderColor={`${scheme}.200`}
+        boxShadow={`0 0 0 3px ${dotBg}`}
+        position='relative'
+        zIndex={1}
+        _dark={{
+          bg: `${scheme}.900`,
+          borderColor: `${scheme}.600`,
+        }}
       >
-        <Icon as={IconCmp} boxSize={2.5} color={`${scheme}.400`} />
+        <Icon
+          as={IconCmp}
+          boxSize={3.5}
+          color={`${scheme}.500`}
+          strokeWidth={2.25}
+          _dark={{ color: `${scheme}.300` }}
+        />
       </Flex>
 
-      <VStack align='stretch' spacing={1}>
+      <VStack align='stretch' spacing={1} minW={0} flex={1} pt='1px'>
         <HStack spacing={2} flexWrap='wrap'>
           <Text fontSize='sm' fontWeight='semibold'>
             {title}
           </Text>
           {attemptLabel ? (
             <CertOpsBadge colorScheme='blue'>{attemptLabel}</CertOpsBadge>
-          ) : null}
-          {isEvidence ? (
-            <CertOpsBadge colorScheme={evidenceTypeScheme(type)}>
-              {evidenceTypeLabel(type)}
-            </CertOpsBadge>
           ) : null}
           {redacted ? <RedactionBadge /> : null}
         </HStack>
@@ -264,7 +261,7 @@ function TimelineItem({
           {timestamp}
         </Text>
       </VStack>
-    </Box>
+    </Flex>
   );
 }
 
@@ -280,6 +277,7 @@ export default function EvidenceTimeline({
   compact = false,
   embedded = false,
 }) {
+  const { workspaceId } = useWorkspace();
   const { muted, border, dashboard } = useDashboardTheme();
   const failureBg = dashboard.callout.dangerSurface;
   const failureBorder = dashboard.callout.dangerBorder;
@@ -340,243 +338,91 @@ export default function EvidenceTimeline({
     }),
   ].filter(Boolean);
 
+  const showStandaloneHeader = !embedded;
+  const timelineBody =
+    items.length === 0 ? (
+      <Text fontSize='sm' color={muted}>
+        No timeline events recorded yet.
+      </Text>
+    ) : (
+      <Box position='relative'>
+        <Box
+          aria-hidden
+          position='absolute'
+          left={`${(TIMELINE_MARKER - TIMELINE_SPINE) / 2}px`}
+          top={`${TIMELINE_MARKER / 2}px`}
+          bottom={`${TIMELINE_MARKER / 2}px`}
+          w={`${TIMELINE_SPINE}px`}
+          bg={border}
+        />
+        {items.map(item => {
+          let attemptLabel = null;
+          if (item.kind === 'log' && item.entry.eventType === 'job.started') {
+            startedCount += 1;
+            const reported = reportedAttemptNumber(item.entry);
+            if (reported !== null) {
+              // Executor-reported counter is truncation-proof.
+              if (reported > 1) attemptLabel = `Attempt ${reported}`;
+            } else if (startedCount > 1) {
+              // Older entries may be truncated away, in which case counting
+              // visible job.started entries yields a wrong absolute number;
+              // fall back to a non-absolute label.
+              attemptLabel = logsTruncated
+                ? 'Later attempt'
+                : `Attempt ${startedCount}`;
+            }
+          }
+          const logMessage =
+            item.kind === 'log'
+              ? item.entry.message || item.entry.status || ''
+              : '';
+          const hideDetail =
+            sameOperatorMessage(logMessage, job.errorMessage) ||
+            sameOperatorMessage(logMessage, job.pendingReason?.message);
+          return (
+            <TimelineItem
+              key={item.id}
+              item={item}
+              attemptLabel={attemptLabel}
+              compact={compact}
+              hideDetail={hideDetail}
+            />
+          );
+        })}
+      </Box>
+    );
+
   return (
     <VStack align='stretch' spacing={3}>
-      <HStack justify='space-between' align='start' spacing={3}>
-        <VStack align='stretch' spacing={1}>
-          {embedded && !compact ? (
-            job.id ? (
-              <Link
-                as={RouterLink}
-                to={`/audit?q=${encodeURIComponent(job.id)}`}
-                fontSize='xs'
-                color={dashboard.accent.interactiveForeground}
-              >
-                View audit log
-              </Link>
-            ) : null
-          ) : (
-            <HStack spacing={2} flexWrap='wrap'>
+      {showStandaloneHeader ? (
+        <>
+          <HStack justify='space-between' align='center' spacing={3}>
+            <HStack spacing={2} flexWrap='wrap' minW={0} flex='1'>
               {!compact ? (
                 <>
                   <Text fontSize='sm' fontWeight='bold'>
                     {jobOperationLabel(job.operation)}
                   </Text>
                   <JobStatusBadge status={job.status} />
+                  {job.source ? <CertOpsBadge>{job.source}</CertOpsBadge> : null}
                 </>
               ) : null}
-              {!compact && job.source ? (
-                <CertOpsBadge>{job.source}</CertOpsBadge>
-              ) : null}
-              {job.id ? (
-                <Link
-                  as={RouterLink}
-                  to={`/audit?q=${encodeURIComponent(job.id)}`}
-                  fontSize='xs'
-                  color={dashboard.accent.interactiveForeground}
-                >
-                  View audit log
-                </Link>
-              ) : null}
-              {compact ? (
-                <Popover placement='bottom-end' isLazy>
-                  <PopoverTrigger>
-                    <IconButton
-                      aria-label='Job metadata'
-                      title='Job metadata'
-                      icon={<Icon as={MoreHorizontal} boxSize={4} />}
-                      size='xs'
-                      variant='ghost'
-                    />
-                  </PopoverTrigger>
-                  <PopoverContent
-                    w='min(340px, calc(100vw - 32px))'
-                    borderColor={border}
-                  >
-                    <PopoverArrow />
-                    <PopoverBody>
-                      <VStack align='stretch' spacing={2}>
-                        {job.source ? (
-                          <Text fontSize='xs'>
-                            Executor source: {job.source}
-                          </Text>
-                        ) : null}
-                        {job.id ? (
-                          <CopyableId id={job.id} label='Job ID' />
-                        ) : null}
-                        {job.subjectId ? (
-                          <CopyableId
-                            id={job.subjectId}
-                            label={
-                              subjectTypeLabel(job.subjectType) || 'Subject'
-                            }
-                          />
-                        ) : null}
-                        {job.claimId ? (
-                          <CopyableId id={job.claimId} label='Claim ID' />
-                        ) : null}
-                        {job.claimedByAgentId ? (
-                          <CopyableId
-                            id={job.claimedByAgentId}
-                            label='Claimed by agent'
-                            display={
-                              formatAgentLabel(
-                                job.claimedByAgentId,
-                                agentsById
-                              ) !== String(job.claimedByAgentId)
-                                ? formatAgentLabel(
-                                    job.claimedByAgentId,
-                                    agentsById
-                                  )
-                                : undefined
-                            }
-                          />
-                        ) : null}
-                        {job.assignedAgentId &&
-                        job.assignedAgentId !== job.claimedByAgentId ? (
-                          <CopyableId
-                            id={job.assignedAgentId}
-                            label='Assigned agent'
-                            display={
-                              formatAgentLabel(
-                                job.assignedAgentId,
-                                agentsById
-                              ) !== String(job.assignedAgentId)
-                                ? formatAgentLabel(
-                                    job.assignedAgentId,
-                                    agentsById
-                                  )
-                                : undefined
-                            }
-                          />
-                        ) : null}
-                        {job.claimedByControllerClusterId ? (
-                          <CopyableId
-                            id={job.claimedByControllerClusterId}
-                            label='Claimed by controller'
-                          />
-                        ) : null}
-                        {job.claimedByAgentSigningKeyId ? (
-                          <CopyableId
-                            id={job.claimedByAgentSigningKeyId}
-                            label="Agent's pinned signing key"
-                          />
-                        ) : null}
-                        <ApprovedByLine job={job} />
-                        {job.leaseExpiresAt ? (
-                          <Text fontSize='xs'>
-                            Lease expires {formatDateTime(job.leaseExpiresAt)}
-                          </Text>
-                        ) : null}
-                        {typeof job.attemptCount === 'number' ? (
-                          <Text fontSize='xs'>
-                            Attempt {job.attemptCount}
-                            {typeof job.maxAttempts === 'number'
-                              ? ` of ${job.maxAttempts}`
-                              : ''}
-                          </Text>
-                        ) : null}
-                        {job.approvedAt ? (
-                          <Text fontSize='xs'>
-                            Approved {formatDateTime(job.approvedAt)}
-                          </Text>
-                        ) : null}
-                      </VStack>
-                    </PopoverBody>
-                  </PopoverContent>
-                </Popover>
-              ) : null}
+              <JobDetailsButton job={job} agentsById={agentsById} />
             </HStack>
-          )}
-          {!compact ? (
-            <>
-              <HStack spacing={3} flexWrap='wrap'>
-                {!embedded && job.id ? (
-                  <CopyableId id={job.id} label='Job ID' />
-                ) : null}
-                {!embedded && job.subjectId ? (
-                  <CopyableId
-                    id={job.subjectId}
-                    label={subjectTypeLabel(job.subjectType) || 'Subject'}
-                  />
-                ) : null}
-                {job.claimId ? (
-                  <CopyableId id={job.claimId} label='Claim ID' />
-                ) : null}
-                {job.claimedByAgentId ? (
-                  <CopyableId
-                    id={job.claimedByAgentId}
-                    label='Claimed by agent'
-                    display={
-                      formatAgentLabel(job.claimedByAgentId, agentsById) !==
-                      String(job.claimedByAgentId)
-                        ? formatAgentLabel(job.claimedByAgentId, agentsById)
-                        : undefined
-                    }
-                  />
-                ) : null}
-                {job.assignedAgentId &&
-                job.assignedAgentId !== job.claimedByAgentId ? (
-                  <CopyableId
-                    id={job.assignedAgentId}
-                    label='Assigned agent'
-                    display={
-                      formatAgentLabel(job.assignedAgentId, agentsById) !==
-                      String(job.assignedAgentId)
-                        ? formatAgentLabel(job.assignedAgentId, agentsById)
-                        : undefined
-                    }
-                  />
-                ) : null}
-                {job.claimedByControllerClusterId ? (
-                  <CopyableId
-                    id={job.claimedByControllerClusterId}
-                    label='Claimed by controller'
-                  />
-                ) : null}
-                {job.claimedByAgentSigningKeyId ? (
-                  <CopyableId
-                    id={job.claimedByAgentSigningKeyId}
-                    label="Agent's pinned signing key"
-                  />
-                ) : null}
-                <ApprovedByLine job={job} color={muted} />
-              </HStack>
-              {job.leaseExpiresAt || job.attemptCount || job.approvedAt ? (
-                <HStack spacing={3} flexWrap='wrap'>
-                  {job.leaseExpiresAt ? (
-                    <Text fontSize='xs' color={muted}>
-                      Lease expires {formatDateTime(job.leaseExpiresAt)}
-                    </Text>
-                  ) : null}
-                  {typeof job.attemptCount === 'number' ? (
-                    <Text fontSize='xs' color={muted}>
-                      Attempt {job.attemptCount}
-                      {typeof job.maxAttempts === 'number'
-                        ? ` of ${job.maxAttempts}`
-                        : ''}
-                    </Text>
-                  ) : null}
-                  {job.approvedAt ? (
-                    <Text fontSize='xs' color={muted}>
-                      Approved {formatDateTime(job.approvedAt)}
-                    </Text>
-                  ) : null}
-                </HStack>
-              ) : null}
-            </>
-          ) : null}
-        </VStack>
-        {typeof onClose === 'function' ? (
-          <IconButton
-            aria-label='Close timeline'
-            icon={<Icon as={X} boxSize={3.5} />}
-            size='xs'
-            variant='ghost'
-            onClick={onClose}
-          />
-        ) : null}
-      </HStack>
+            {typeof onClose === 'function' ? (
+              <IconButton
+                aria-label='Close timeline'
+                icon={<Icon as={X} boxSize={3.5} />}
+                size='xs'
+                variant='ghost'
+                onClick={onClose}
+                flexShrink={0}
+              />
+            ) : null}
+          </HStack>
+          <Divider borderColor={border} opacity={0.85} />
+        </>
+      ) : null}
 
       {job.errorCode || job.errorMessage ? (
         <Box
@@ -629,53 +475,26 @@ export default function EvidenceTimeline({
         </Box>
       ) : null}
 
-      {items.length === 0 ? (
-        <Text fontSize='sm' color={muted}>
-          No timeline events recorded yet.
-        </Text>
-      ) : (
-        <Box borderLeftWidth='2px' borderColor={border} ml={1} pl={1}>
-          {items.map(item => {
-            let attemptLabel = null;
-            if (item.kind === 'log' && item.entry.eventType === 'job.started') {
-              startedCount += 1;
-              const reported = reportedAttemptNumber(item.entry);
-              if (reported !== null) {
-                // Executor-reported counter is truncation-proof.
-                if (reported > 1) attemptLabel = `Attempt ${reported}`;
-              } else if (startedCount > 1) {
-                // Older entries may be truncated away, in which case counting
-                // visible job.started entries yields a wrong absolute number;
-                // fall back to a non-absolute label.
-                attemptLabel = logsTruncated
-                  ? 'Later attempt'
-                  : `Attempt ${startedCount}`;
-              }
-            }
-            const logMessage =
-              item.kind === 'log'
-                ? item.entry.message || item.entry.status || ''
-                : '';
-            const hideDetail =
-              sameOperatorMessage(logMessage, job.errorMessage) ||
-              sameOperatorMessage(logMessage, job.pendingReason?.message);
-            return (
-              <TimelineItem
-                key={item.id}
-                item={item}
-                attemptLabel={attemptLabel}
-                compact={compact}
-                hideDetail={hideDetail}
-              />
-            );
-          })}
-        </Box>
-      )}
+      <JobExecutionSummary job={job} agentsById={agentsById} />
+
+      <Divider borderColor={border} opacity={0.85} />
+      {timelineBody}
 
       {truncationNotes.length > 0 ? (
         <Text fontSize='xs' color={muted}>
           {truncationNotes.join(' · ')}
         </Text>
+      ) : null}
+      {workspaceId && jobId ? (
+        <>
+          <Divider borderColor={border} opacity={0.85} />
+          <AgentShellConsole
+            workspaceId={workspaceId}
+            jobId={jobId}
+            title='Agent output'
+            maxHeight='200px'
+          />
+        </>
       ) : null}
     </VStack>
   );

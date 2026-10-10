@@ -1,6 +1,6 @@
 {
   "contractName": "api.certops-route-compat",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "status": "agent-runtime-stable",
   "description": "Frozen CertOps route namespaces and stable routes. The controller lane added only narrow cert-manager observation, provisioning intent, cluster-bound command, and just-in-time mutation-authorization surfaces. The agent protocol is implemented server-side: the /api/v1/certops/agent routes are live control-plane endpoints (register, heartbeat, claim, lease renew, results) with Ed25519-signed job dispatch, single-use result nonces, claim-ownership re-proof, executor_kind lane separation, and capability-matched claiming. 0.17.0 adds the workspace-scoped agent lifecycle admin routes (bootstrap-token issue/list/revoke, agent list/retire) and the approval-gate decision routes (approve, reject) to stableRoutes; all seven previously shipped without a corresponding contract entry.",
   "namespacePolicy": {
@@ -33,7 +33,7 @@
         "Outbound-only agent polling surface. The control plane never connects to agents.",
         "Enrollment and steady state use different credentials, by design.",
         "POST /agent/register uses agentBootstrapTokenAuth: a single-use, hashed, expiring bootstrap token an admin creates. Registration returns a per-agent credential, shown once.",
-        "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/{jobId}/lease, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
+        "/agent/heartbeat, /agent/jobs/claim, /agent/jobs/{jobId}/lease, /agent/jobs/{jobId}/logs, /agent/jobs/results use agentCredentialAuth: the issued per-agent credential (bearer). Bootstrap tokens do not authorize steady-state calls.",
         "All routes CSRF-exempt (token-authenticated, non-cookie). Namespace frozen; request/response bodies for register/heartbeat/claim/result/evidence are specified authoritatively by packages/contracts/certops/agent-protocol.schema.json (message envelope, additionalProperties false). POST /agent/jobs/results accepts both result and evidence messageTypes; the server dispatches on the envelope messageType. POST /agent/jobs/{jobId}/lease is a lean claimId+sequence body that transitions claimed→running and renews the lease/nonce before side effects."
       ]
     }
@@ -51,7 +51,8 @@
     "/api/v1/certops/agent/heartbeat": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
     "/api/v1/certops/agent/jobs/{jobId}/lease": "agentCredentialAuth",
-    "/api/v1/certops/agent/jobs/results": "agentCredentialAuth"
+    "/api/v1/certops/agent/jobs/results": "agentCredentialAuth",
+    "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth"
   },
   "guarantees": {
     "stableRoutes": [
@@ -76,6 +77,8 @@
       { "path": "/api/v1/workspaces/{id}/certops/provision-intents", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/log", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/agent-log", "method": "GET" },
+      { "path": "/api/v1/workspaces/{id}/certops/agents/{agentId}/agent-log", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/{jobId}/evidence", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/tokens", "method": "POST" },
@@ -97,7 +100,8 @@
       { "path": "/api/v1/certops/agent/heartbeat", "method": "POST" },
       { "path": "/api/v1/certops/agent/jobs/claim", "method": "POST" },
       { "path": "/api/v1/certops/agent/jobs/{jobId}/lease", "method": "POST" },
-      { "path": "/api/v1/certops/agent/jobs/results", "method": "POST" }
+      { "path": "/api/v1/certops/agent/jobs/results", "method": "POST" },
+      { "path": "/api/v1/certops/agent/jobs/{jobId}/logs", "method": "POST" }
     ],
     "rejectionPolicy": {
       "privateKeyMaterial": {

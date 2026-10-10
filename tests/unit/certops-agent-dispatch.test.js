@@ -1371,7 +1371,7 @@ describe("agentDispatch.claimJobs", () => {
       env: {},
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
@@ -1438,7 +1438,7 @@ describe("agentDispatch.claimJobs", () => {
       env: {},
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(casParams, ["agent-row-1", 9]);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
@@ -1680,7 +1680,7 @@ describe("agentDispatch.claimJobs", () => {
       env: {},
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.equal(blocked, true);
   });
 
@@ -1751,7 +1751,7 @@ describe("agentDispatch.claimJobs", () => {
       },
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
@@ -1788,7 +1788,7 @@ describe("agentDispatch.claimJobs", () => {
       },
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 

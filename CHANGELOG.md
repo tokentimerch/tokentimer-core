@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **CertOps agent output console.** Agents stream a curated, secret-filtered execution console for each job attempt, shown live on the job timeline and from the agent fleet. Managers and admins see the lines; viewers see only whether output is running, complete, or incomplete. The console is best effort: a slow or failing log endpoint never delays or changes a job result. Database migration 69 adds the storage. See [agent output console settings](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
+  - **Operator action:** upgrade the API, worker and agents in any order; agents stream only once both sides support it. Keep the `certops` worker scheduled: its new agent-log sweeps close streams for cancelled or requeued jobs and enforce retention.
+  - `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`) sets retention. `0` turns storage off and the next sweep deletes stored lines. `CERTOPS_AGENT_LOG_DAILY_BYTES` caps stored bytes per workspace per UTC day (`0`, the default, means no cap). `TT_AGENT_LOG_STREAM=off` stops one agent from sending. Compose forwards retention to `api` and `worker-certops` and the byte cap to `api`; Helm uses `config.certopsAgentLogRetentionDays` / `config.certopsAgentLogDailyBytes`.
+
 ### Changed
 
 - An IIS renewal on Windows now fails with `UNSUPPORTED_BINDING_SETTINGS` and leaves the binding untouched when the binding has a setting the agent cannot carry over to the new certificate, such as one this host's `netsh` cannot set. The error detail names the setting. Earlier versions dropped such settings on renewal. **Operator guidance:** remove the named setting, or rebind that certificate manually.

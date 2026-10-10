@@ -121,6 +121,11 @@ const {
   DEFAULT_AGENT_OFFLINE_AFTER_MS,
   resolveAgentOfflineAfterMs,
 } = require("../../api/services/certops/agentLiveness.js");
+const {
+  abandonExpiredStreams,
+  closeClaimStreamSafely,
+  purgeExpiredAgentLogs,
+} = require("../../api/services/certops/agentJobLogs.js");
 export { DEFAULT_AGENT_OFFLINE_AFTER_MS, resolveAgentOfflineAfterMs };
 
 const TERMINAL_JOB_STATUSES = new Set(
@@ -183,6 +188,14 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
   "trust-anchor-reconciliation": Object.freeze({
     enableEnv: "CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_TIMEOUT_MS",
+  }),
+  "agent-log-abandon": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_AGENT_LOG_ABANDON_TIMEOUT_MS",
+  }),
+  "agent-log-purge": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_TIMEOUT_MS",
   }),
 });
 
@@ -612,7 +625,7 @@ export async function reapExpiredLeases({
   await client.query("BEGIN");
   try {
     const expired = await client.query(
-      `SELECT cj.id, cj.workspace_id, cj.status, cj.attempt_count,
+      `SELECT cj.id, cj.workspace_id, cj.claim_id, cj.status, cj.attempt_count,
               cj.max_attempts, cj.operation, cj.subject_type, cj.subject_id,
               cj.lease_renewed_at,
               (ca.id IS NOT NULL
@@ -656,6 +669,11 @@ export async function reapExpiredLeases({
       if (hasRetryBudget) {
         // Never renewed / no side effects proven: safe automatic requeue.
         const backoffMs = computeBackoffMs(attemptCount);
+        await closeClaimStreamSafely(client, {
+          workspaceId: row.workspace_id,
+          jobId: String(row.id),
+          claimId: row.claim_id ? String(row.claim_id) : null,
+        });
         await client.query(
           `UPDATE certificate_jobs
               SET status = 'pending',
@@ -689,6 +707,11 @@ export async function reapExpiredLeases({
         const errorCode = "effects_unknown";
         const reconciliationReason =
           "lease_expired_after_side_effect_window_agent_unresponsive";
+        await closeClaimStreamSafely(client, {
+          workspaceId: row.workspace_id,
+          jobId: String(row.id),
+          claimId: row.claim_id ? String(row.claim_id) : null,
+        });
         await client.query(
           `UPDATE certificate_jobs
               SET status = 'orphaned_unknown_effect',
@@ -781,6 +804,11 @@ export async function reapExpiredLeases({
       } else {
         // Never renewed but retry budget exhausted (or non-claimable state).
         const errorCode = row.agent_alive ? "lease_expired" : "agent_offline";
+        await closeClaimStreamSafely(client, {
+          workspaceId: row.workspace_id,
+          jobId: String(row.id),
+          claimId: row.claim_id ? String(row.claim_id) : null,
+        });
         await client.query(
           `UPDATE certificate_jobs
               SET status = 'failed',
@@ -1694,6 +1722,27 @@ export async function runCertOpsMaintenance({
     );
   }
 
+  // Both sweeps commit per job, so they get a plain client, not a transaction.
+  results.agentLogAbandon = await runIsolated(
+    "agent-log-abandon",
+    log,
+    () => withClientFn((client) => abandonExpiredStreams({ client })),
+    {
+      enabled: isSweepEnabled("agent-log-abandon", env),
+      timeoutMs: resolveSweepTimeoutMs("agent-log-abandon", env),
+    },
+  );
+
+  results.agentLogPurge = await runIsolated(
+    "agent-log-purge",
+    log,
+    () => withClientFn((client) => purgeExpiredAgentLogs({ client, env })),
+    {
+      enabled: isSweepEnabled("agent-log-purge", env),
+      timeoutMs: resolveSweepTimeoutMs("agent-log-purge", env),
+    },
+  );
+
   log.info("CertOps maintenance worker finished", {
     leaseReaper:
       results.leaseReaper.status === "success"
@@ -1731,6 +1780,14 @@ export async function runCertOpsMaintenance({
       results.trustAnchorReconciliation.status === "success"
         ? results.trustAnchorReconciliation.result
         : results.trustAnchorReconciliation.status,
+    agentLogAbandon:
+      results.agentLogAbandon.status === "success"
+        ? results.agentLogAbandon.result
+        : results.agentLogAbandon.status,
+    agentLogPurge:
+      results.agentLogPurge.status === "success"
+        ? results.agentLogPurge.result
+        : results.agentLogPurge.status,
   });
 
   await pushMetricsFn("certops").catch((e) =>

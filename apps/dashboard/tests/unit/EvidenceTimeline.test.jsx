@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
@@ -6,7 +6,12 @@ import { ChakraProvider } from '@chakra-ui/react';
 import EvidenceTimeline from '../../src/components/certops/EvidenceTimeline.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
-const { useCertOpsJobTimelineMock, useCertOpsAgentsMock } = vi.hoisted(() => ({
+const {
+  useCertOpsJobTimelineMock,
+  useCertOpsAgentsMock,
+  getCertificateMock,
+  listTrustAnchorsMock,
+} = vi.hoisted(() => ({
   useCertOpsJobTimelineMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(() => ({
     enabled: true,
@@ -16,6 +21,8 @@ const { useCertOpsJobTimelineMock, useCertOpsAgentsMock } = vi.hoisted(() => ({
     error: '',
     refresh: vi.fn(),
   })),
+  getCertificateMock: vi.fn(),
+  listTrustAnchorsMock: vi.fn(),
 }));
 
 vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
@@ -24,6 +31,34 @@ vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
   useCertOpsAgents: useCertOpsAgentsMock,
+}));
+
+vi.mock('../../src/components/certops/AgentShellConsole.jsx', () => ({
+  default: () => null,
+}));
+
+vi.mock('../../src/components/certops/certopsApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsApi.js'
+  );
+  return {
+    ...actual,
+    getCertificate: getCertificateMock,
+  };
+});
+
+vi.mock('../../src/components/certops/certopsTrustAnchorsApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsTrustAnchorsApi.js'
+  );
+  return {
+    ...actual,
+    listTrustAnchors: listTrustAnchorsMock,
+  };
+});
+
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }));
 
 function renderWithProviders(ui) {
@@ -36,9 +71,9 @@ function renderWithProviders(ui) {
   );
 }
 
-/** Date line is `Approved ${formatDateTime(...)}`; locale may start with a month name. */
-function approvedAtLine(content) {
-  return /^Approved /.test(content) && !content.startsWith('Approved by');
+/** Metadata label for the approval timestamp (value is a separate date node). */
+function approvedAtLabel(content) {
+  return content === 'Approved';
 }
 
 function baseJob(overrides = {}) {
@@ -57,6 +92,12 @@ describe('EvidenceTimeline', () => {
   beforeEach(() => {
     useCertOpsJobTimelineMock.mockReset();
     useCertOpsAgentsMock.mockReset();
+    getCertificateMock.mockReset();
+    listTrustAnchorsMock.mockReset();
+    getCertificateMock.mockResolvedValue({
+      certificate: { commonName: 'app.example.com' },
+    });
+    listTrustAnchorsMock.mockResolvedValue({ items: [] });
     useCertOpsAgentsMock.mockReturnValue({
       enabled: true,
       agents: [],
@@ -269,8 +310,8 @@ describe('EvidenceTimeline', () => {
 
     expect(screen.getByText('Job started')).toBeInTheDocument();
     expect(screen.getByText('Job failed')).toBeInTheDocument();
-    expect(screen.getAllByText('Validation passed').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Validation failed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Validation passed')).toHaveLength(1);
+    expect(screen.getAllByText('Validation failed')).toHaveLength(1);
   });
 
   it('renders metadata.summary as the detail line for evidence without a subject', () => {
@@ -417,6 +458,8 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
     expect(screen.getByText('Claim ID')).toBeInTheDocument();
     expect(
       screen.getByText('22222222-2222-4222-8222-222222222222')
@@ -437,6 +480,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
     expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
   });
 
@@ -455,9 +499,10 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
     expect(screen.getByText('Approved by Alice Admin')).toBeInTheDocument();
     expect(screen.queryByText('9')).not.toBeInTheDocument();
-    expect(screen.getByText(approvedAtLine)).toBeInTheDocument();
+    expect(screen.getByText(approvedAtLabel)).toBeInTheDocument();
   });
 
   it('falls back to the user id when no display name is available', () => {
@@ -474,6 +519,7 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
     expect(screen.getByText('Approved by user-42')).toBeInTheDocument();
   });
 
@@ -489,7 +535,7 @@ describe('EvidenceTimeline', () => {
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
     expect(screen.queryByText(/Approved by/)).not.toBeInTheDocument();
-    expect(screen.queryByText(approvedAtLine)).not.toBeInTheDocument();
+    expect(screen.queryByText(approvedAtLabel)).not.toBeInTheDocument();
   });
 
   it('renders friendly labels for approval.granted, approval.rejected, and approval.invalidated log entries', () => {
@@ -669,9 +715,15 @@ describe('EvidenceTimeline', () => {
     expect(screen.queryByText('Failure reason')).not.toBeInTheDocument();
   });
 
-  it('does not repeat the job title in embedded mode', () => {
+  it('does not repeat the job title or Job details control in embedded mode', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
-      job: baseJob({ operation: 'distribute-trust' }),
+      job: baseJob({
+        operation: 'distribute-trust',
+        claimedByAgentId: 'agent-1',
+        attemptCount: 1,
+        maxAttempts: 3,
+        createdAt: '2026-01-02T03:04:05.000Z',
+      }),
       logEntries: [],
       evidence: [],
       loading: false,
@@ -682,8 +734,81 @@ describe('EvidenceTimeline', () => {
 
     expect(screen.queryByText('Distribute trust')).not.toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'View audit log' })
+      screen.queryByRole('button', { name: 'Job details' })
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId('job-execution-summary')).toBeInTheDocument();
+    expect(screen.getByText('Source')).toBeInTheDocument();
+    expect(screen.getByText('scheduler')).toBeInTheDocument();
+  });
+
+  it('links managed certificates and agents from the execution summary', async () => {
+    const certId = '11111111-1111-4111-8111-111111111111';
+    const agentId = '22222222-2222-4222-8222-222222222222';
+    useCertOpsAgentsMock.mockReturnValue({
+      enabled: true,
+      agents: [
+        {
+          id: agentId,
+          agentId: 'edge-1',
+          name: 'edge-agent',
+          hostname: 'edge-1',
+        },
+      ],
+      pagination: null,
+      loading: false,
+      error: '',
+      refresh: vi.fn(),
+    });
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        subjectType: 'managed_certificate',
+        subjectId: certId,
+        claimedByAgentId: agentId,
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' embedded />);
+
+    const certLink = await screen.findByRole('link', {
+      name: 'app.example.com',
+    });
+    expect(certLink).toHaveAttribute(
+      'href',
+      `/certops/certificates?certificateId=${certId}`
+    );
+    const agentLink = screen.getByRole('link', { name: 'edge-agent' });
+    expect(agentLink).toHaveAttribute(
+      'href',
+      `/certops/agents?agentId=${agentId}`
+    );
+  });
+
+  it('does not link a missing trust anchor', async () => {
+    const anchorId = '33333333-3333-4333-8333-333333333333';
+    listTrustAnchorsMock.mockResolvedValue({ items: [] });
+    useCertOpsJobTimelineMock.mockReturnValue({
+      job: baseJob({
+        subjectType: 'trust_anchor',
+        subjectId: anchorId,
+      }),
+      logEntries: [],
+      evidence: [],
+      loading: false,
+      error: '',
+    });
+
+    renderWithProviders(<EvidenceTimeline jobId='job-1' embedded />);
+
+    expect(
+      await screen.findByText('Resource unavailable')
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: /trust anchor/i })
+    ).not.toBeInTheDocument();
   });
 
   it('does not render a failure reason block for a successful job', () => {
@@ -711,11 +836,12 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-abc-123' />);
 
-    const link = screen.getByRole('link', { name: 'View audit log' });
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
+    const link = screen.getByText('View audit log').closest('a');
     expect(link).toHaveAttribute('href', '/audit?q=job-abc-123');
   });
 
-  it('keeps job and executor identifiers in a secondary metadata action in compact mode', () => {
+  it('keeps job and executor identifiers in a secondary metadata action', () => {
     useCertOpsJobTimelineMock.mockReturnValue({
       job: baseJob({
         id: 'job-compact-123',
@@ -730,17 +856,16 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-compact-123' compact />);
 
-    expect(
-      screen.getByRole('link', { name: 'View audit log' })
-    ).toBeInTheDocument();
     expect(screen.queryByText('Technical details')).not.toBeInTheDocument();
     expect(screen.queryByText('Job ID')).not.toBeInTheDocument();
+    expect(screen.queryByText('Claim ID')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Job metadata' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
 
     expect(screen.getByText('Job ID')).toBeInTheDocument();
     expect(screen.getByText('Claim ID')).toBeInTheDocument();
     expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
+    expect(screen.getByText('View audit log')).toBeInTheDocument();
   });
 
   it('renders the close button with an accessible name when onClose is provided', () => {
@@ -946,7 +1071,7 @@ describe('EvidenceTimeline', () => {
     expect(screen.queryByText('Later attempt')).not.toBeInTheDocument();
   });
 
-  it('shows the claimed agent hostname next to the copyable id', () => {
+  it('keeps agent hostname and id stacked in the Job details popover', () => {
     useCertOpsAgentsMock.mockReturnValue({
       enabled: true,
       agents: [
@@ -962,7 +1087,11 @@ describe('EvidenceTimeline', () => {
       refresh: vi.fn(),
     });
     useCertOpsJobTimelineMock.mockReturnValue({
-      job: baseJob({ claimedByAgentId: 'agent-row-1' }),
+      job: baseJob({
+        claimedByAgentId: 'agent-row-1',
+        attemptCount: 1,
+        maxAttempts: 3,
+      }),
       logEntries: [],
       evidence: [],
       loading: false,
@@ -971,9 +1100,17 @@ describe('EvidenceTimeline', () => {
 
     renderWithProviders(<EvidenceTimeline jobId='job-1' />);
 
-    expect(
-      screen.getByText('DESKTOP-J85DKKR (agent-row-1)')
-    ).toBeInTheDocument();
+    // Summary surfaces agent/attempt for scanning; claim label stays in popover.
+    expect(screen.getByTestId('job-execution-summary')).toBeInTheDocument();
+    expect(screen.getByText('DESKTOP-J85DKKR')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(screen.queryByText('Claimed by agent')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Job details' }));
     expect(screen.getByText('Claimed by agent')).toBeInTheDocument();
+    expect(screen.getByText('Job ID')).toBeInTheDocument();
+    expect(screen.getAllByText('agent-row-1').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Attempt').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('1 of 3').length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -3,6 +3,7 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Box,
   Button,
   ButtonGroup,
   Checkbox,
@@ -47,6 +48,7 @@ import {
   truncateId,
 } from './certopsJobsFormat';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
+import AgentShellConsole from './AgentShellConsole.jsx';
 import { useCertOpsControllerClusters } from './useCertOpsControllerClusters.js';
 import {
   useCertOpsIsWorkspaceAdmin,
@@ -277,6 +279,22 @@ function createJobErrorMessage(err) {
       err?.response?.data?.error || 'This trust-anchor job request is invalid.'
     );
   }
+  // Job validation codes: the API returns the service's field-specific
+  // message. Prefer that over a generic toast so the operator knows what to fix.
+  if (
+    code === 'CERTOPS_JOB_INVALID' ||
+    code === 'CERTOPS_JOB_OPERATION_INVALID' ||
+    code === 'CERTOPS_JOB_METADATA_INVALID' ||
+    code === 'CERTOPS_JOB_EXECUTION_FIELD_INVALID' ||
+    code === 'CERTOPS_JOB_EXECUTION_FIELD_REQUIRED' ||
+    code === 'CERTOPS_JOB_SOURCE_INVALID' ||
+    code === 'CERTOPS_JOB_STATUS_INVALID'
+  ) {
+    return (
+      err?.response?.data?.error ||
+      'This job request is invalid. Check the operation, subject, and payload fields.'
+    );
+  }
   if (code === 'CERTOPS_CONTROLLER_PROVISIONING_TERMINAL_IDENTITY') {
     return 'This certificate/secret name was already retired in this namespace and cannot be reactivated by provisioning. Choose a different certificate or secret name.';
   }
@@ -343,6 +361,7 @@ export default function CreateManualJobModal({
   const [fieldReason, setFieldReason] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [createdJobId, setCreatedJobId] = useState(null);
   const [subjectSuggestions, setSubjectSuggestions] = useState([]);
   const [controllerClusterId, setControllerClusterId] = useState('');
   const [controllerNamespace, setControllerNamespace] = useState('');
@@ -570,8 +589,14 @@ export default function CreateManualJobModal({
 
   const handleClose = () => {
     if (submitting) return;
+    // Refresh again on close so a job created while the modal was open
+    // (including while its assigned agent was offline) is visible in the
+    // list behind the modal once the operator dismisses it.
+    const createdWhileOpen = Boolean(createdJobId);
+    setCreatedJobId(null);
     resetForm();
     onClose();
+    if (createdWhileOpen) onCreated?.();
   };
 
   // Suggestions adapt to the selected subject type: each type with an
@@ -737,6 +762,11 @@ export default function CreateManualJobModal({
             'Job created',
             result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
           );
+          if (result?.job?.id) {
+            setCreatedJobId(result.job.id);
+            onCreated?.();
+            return;
+          }
         }
         resetForm();
         onClose();
@@ -763,6 +793,7 @@ export default function CreateManualJobModal({
             : 'Provisioning intent created',
           result?.job?.id ? `Job ID: ${truncateId(result.job.id)}` : undefined
         );
+        // Controller jobs have no agent console to watch.
         resetForm();
         onClose();
         onCreated?.();
@@ -790,6 +821,11 @@ export default function CreateManualJobModal({
             : `Job ID: ${truncateId(job.id)}`
           : undefined
       );
+      if (job?.id) {
+        setCreatedJobId(job.id);
+        onCreated?.();
+        return;
+      }
       resetForm();
       onClose();
       onCreated?.();
@@ -808,28 +844,44 @@ export default function CreateManualJobModal({
       scrollBehavior='inside'
     >
       <ModalOverlay {...overlayProps} />
-      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '640px' }}>
+      <DashboardModalFrame
+        maxW={{
+          base: 'calc(100vw - 24px)',
+          md: createdJobId ? '720px' : '640px',
+        }}
+      >
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
-            {isTrustOp
-              ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
-                // trust"), so appending the full "trust anchor" would stutter.
-                `${jobOperationLabel(trustOp.operation)} anchor`
-              : 'Create manual job'}
+            {createdJobId
+              ? 'Job dispatched'
+              : isTrustOp
+                ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
+                  // trust"), so appending the full "trust anchor" would stutter.
+                  `${jobOperationLabel(trustOp.operation)} anchor`
+                : 'Create manual job'}
           </DashboardModalTitle>
           <DashboardModalDescription>
-            {isTrustOp
-              ? `${trustOp.anchorName || 'Trust anchor'}${
-                  trustOp.anchorFingerprint
-                    ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
-                    : ''
-                }. The job is recorded with source "api".`
-              : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
+            {createdJobId
+              ? 'Live agent execution. The console below streams agent output as it arrives.'
+              : isTrustOp
+                ? `${trustOp.anchorName || 'Trust anchor'}${
+                    trustOp.anchorFingerprint
+                      ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
+                      : ''
+                  }. The job is recorded with source "api".`
+                : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
         <ModalBody {...bodyProps}>
-          {isTrustOp ? (
+          {createdJobId ? (
+            <AgentShellConsole
+              workspaceId={workspaceId}
+              jobId={createdJobId}
+              title='Agent output'
+              maxHeight='360px'
+            />
+          ) : isTrustOp ? (
             <VStack align='stretch' spacing={4}>
               {!isWorkspaceAdmin ? (
                 <Alert status='warning' variant='subtle' borderRadius='md'>
@@ -1558,14 +1610,14 @@ export default function CreateManualJobModal({
             onClick={handleClose}
             isDisabled={submitting}
           >
-            Cancel
+            {createdJobId ? 'Close' : 'Cancel'}
           </Button>
           <Button
             {...primaryButtonProps}
             ml={{ base: 0, md: 3 }}
             mt={{ base: 2, md: 0 }}
             onClick={handleSubmit}
-            isDisabled={!canSubmit}
+            isDisabled={!canSubmit || Boolean(createdJobId)}
             isLoading={submitting}
             loadingText='Creating'
           >

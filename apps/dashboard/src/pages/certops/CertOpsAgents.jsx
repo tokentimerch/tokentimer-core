@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Stack } from '@chakra-ui/react';
-import { useOutletContext } from 'react-router';
+import { useOutletContext, useSearchParams } from 'react-router';
 import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
 import BootstrapTokenList from '../../components/certops/BootstrapTokenList.jsx';
 import DeployAgentModal from '../../components/certops/DeployAgentModal.jsx';
@@ -17,10 +17,16 @@ import {
  * panel's header action, since it is a one-time task rather than page
  * furniture; the fleet table and the token list stay inline because they
  * are ongoing state an operator scans repeatedly.
+ *
+ * Deep links (`?agentId=` / `?trustAnchorId=`) are resolved inside the
+ * panels after their lists load: highlight + scroll (no details modal).
  */
 export default function CertOpsAgents() {
   const { certOpsPaused } = useOutletContext() || {};
   const canManage = useCertOpsCanManage();
+  const [searchParams] = useSearchParams();
+  const focusAgentId = searchParams.get('agentId') || '';
+  const focusTrustAnchorId = searchParams.get('trustAnchorId') || '';
   const [deployOpen, setDeployOpen] = useState(false);
   // Bumped when DeployAgentModal detects a freshly registered agent, so the
   // fleet panel refetches immediately instead of waiting on its own poll.
@@ -31,6 +37,7 @@ export default function CertOpsAgents() {
       <DashboardPanel>
         <AgentFleetPanel
           refreshSignal={fleetRefreshSignal}
+          focusAgentId={focusAgentId || undefined}
           headerAction={
             canManage ? (
               <DashboardActionButton
@@ -47,7 +54,7 @@ export default function CertOpsAgents() {
         <BootstrapTokenList />
       </DashboardPanel>
       <DashboardPanel>
-        <TrustAnchorsPanel />
+        <TrustAnchorsPanel focusTrustAnchorId={focusTrustAnchorId || undefined} />
       </DashboardPanel>
 
       <DeployAgentModal

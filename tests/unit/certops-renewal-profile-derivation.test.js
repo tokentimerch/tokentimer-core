@@ -48,6 +48,27 @@ function issuedCertificate(overrides = {}) {
 }
 
 describe("renewal profile derivation from an issued certificate", () => {
+  it("derives a file-based profile from a Windows absolute certPath/keyPath issue", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload({
+        certPath: "C:\\Users\\Public\\tt-ssl\\win.pem",
+        keyPath: "C:\\Users\\Public\\tt-ssl\\win.key.pem",
+        chainPath: null,
+        reloadService: null,
+      }),
+      certificate: issuedCertificate({
+        commonName: "agentlogs-core-win.local",
+        subjectAltNames: ["agentlogs-core-win.local"],
+      }),
+    });
+    assert.equal(profile.target.certPath, "C:\\Users\\Public\\tt-ssl\\win.pem");
+    assert.equal(profile.target.keyPath, "C:\\Users\\Public\\tt-ssl\\win.key.pem");
+    assert.equal(
+      profile.deploymentTargets[0].keyPath,
+      "C:\\Users\\Public\\tt-ssl\\win.key.pem",
+    );
+  });
+
   it("reproduces the execution contract the issuance actually used", () => {
     const profile = deriveRenewalProfileFromIssuedCertificate({
       payload: issuePayload(),

@@ -24,7 +24,9 @@
         "csrfTokenRateLimitWindowMs": { "type": ["integer", "string"], "minimum": 1, "pattern": "^([1-9][0-9]*)?$" },
         "csrfTokenRateLimitMax": { "type": ["integer", "string"], "minimum": 1, "pattern": "^([1-9][0-9]*)?$" },
         "alertThresholds": { "type": "string", "pattern": "^[0-9]+(,[0-9]+)*$" },
-        "certopsEnabled": { "type": "boolean" }
+        "certopsEnabled": { "type": "boolean" },
+        "certopsAgentLogRetentionDays": { "type": ["integer", "string"], "minimum": 0, "pattern": "^([0-9]+)?$" },
+        "certopsAgentLogDailyBytes": { "type": ["integer", "string"], "minimum": 0, "pattern": "^([0-9]+)?$" }
       }
     },
     "twilio": {

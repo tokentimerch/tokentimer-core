@@ -365,6 +365,60 @@ describe("certops renewal profile", () => {
     assert.equal(payload.deploymentTargets[0].backupDir, "/var/backups/certs");
   });
 
+  it("accepts Windows drive and UNC absolute paths on file-based targets", () => {
+    const profile = validateRenewalProfile(
+      validProfile({
+        deploymentTargets: [
+          {
+            type: "domain",
+            reference: "win.example.com",
+            certPath: "C:\\tt-ssl\\win.pem",
+            keyPath: "D:/tt-ssl/win.key.pem",
+            chainPath: "\\\\fileserver\\certs\\win-chain.pem",
+            backupDir: "C:\\tt-ssl\\backup",
+          },
+        ],
+        target: {
+          type: "domain",
+          reference: "win.example.com",
+          certPath: "C:\\tt-ssl\\win.pem",
+          keyPath: "D:/tt-ssl/win.key.pem",
+          chainPath: "\\\\fileserver\\certs\\win-chain.pem",
+        },
+      }),
+    );
+    assert.equal(profile.deploymentTargets[0].certPath, "C:\\tt-ssl\\win.pem");
+    assert.equal(profile.deploymentTargets[0].keyPath, "D:/tt-ssl/win.key.pem");
+    assert.equal(
+      profile.deploymentTargets[0].chainPath,
+      "\\\\fileserver\\certs\\win-chain.pem",
+    );
+    assert.equal(profile.deploymentTargets[0].backupDir, "C:\\tt-ssl\\backup");
+  });
+
+  it("rejects relative host paths on file-based targets", () => {
+    assert.throws(
+      () =>
+        validateRenewalProfile(
+          validProfile({
+            deploymentTargets: [
+              {
+                type: "domain",
+                reference: "win.example.com",
+                certPath: "tt-ssl\\win.pem",
+              },
+            ],
+            target: {
+              type: "domain",
+              reference: "win.example.com",
+              certPath: "tt-ssl\\win.pem",
+            },
+          }),
+        ),
+      /certPath is invalid/,
+    );
+  });
+
   it("rejects world-writable file modes on deployment targets", () => {
     assert.throws(
       () =>

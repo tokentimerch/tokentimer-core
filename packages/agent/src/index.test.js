@@ -753,6 +753,7 @@ describe("registerIfNeeded", () => {
     // pass the manifest gate and get declared.
     const expectedDeclaredCapabilities = [
       "evidence-claim-binding-v1",
+      "job-log-stream-v1",
       ...(process.platform === "win32"
         ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
         : AGENT_TRUST_STORE_PREREQUISITES.candidate
@@ -3121,6 +3122,15 @@ describe("resolveDeclaredCapabilities advertises agent-id-binding-v1 from the ef
       const capabilities = resolveDeclaredCapabilities(requireSignedAgentId);
       assert.ok(capabilities.includes("evidence-claim-binding-v1"));
     }
+  });
+
+  it("omits job-log-stream-v1 when TT_AGENT_LOG_STREAM=off", () => {
+    const on = resolveDeclaredCapabilities(true, {});
+    const off = resolveDeclaredCapabilities(true, { TT_AGENT_LOG_STREAM: "off" });
+    assert.ok(on.includes("job-log-stream-v1"));
+    assert.ok(!off.includes("job-log-stream-v1"));
+    assert.ok(off.includes("evidence-claim-binding-v1"));
+    assert.ok(off.includes(AGENT_ID_BINDING_CAPABILITY));
   });
 });
 

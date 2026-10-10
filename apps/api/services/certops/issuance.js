@@ -85,6 +85,15 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
+/** POSIX, Windows drive, or UNC — mirrors agent isAbsolutePathLike. */
+function isAbsoluteHostPath(candidate) {
+  return (
+    /^\//.test(candidate) ||
+    /^[A-Za-z]:[\\/]/.test(candidate) ||
+    /^\\\\/.test(candidate)
+  );
+}
+
 function normalizeDnsName(value, fieldName) {
   if (typeof value !== "string") {
     throw issuanceError(`${fieldName} must be a string`);
@@ -268,13 +277,15 @@ function normalizeIssuanceRequest(options) {
   // real rate-limited order and leaves the row stuck in provisioning. Rejecting
   // it here costs nothing and the agent's own deploy step enforces the same
   // shape. A relative path is equally unusable: the agent resolves it against
-  // an unspecified working directory.
-  if (!trimmedCertPath.startsWith("/")) {
+  // an unspecified working directory. Absolute means POSIX ("/..."), Windows
+  // drive ("C:\..." / "C:/..."), or UNC ("\\server\share\...") — same rule the
+  // agent already uses for deploy/ACME paths (isAbsolutePathLike).
+  if (!isAbsoluteHostPath(trimmedCertPath)) {
     throw issuanceError(
       "payload.certPath must be an absolute path (the agent resolves it on the host filesystem)",
     );
   }
-  if (trimmedCertPath.endsWith("/")) {
+  if (trimmedCertPath.endsWith("/") || trimmedCertPath.endsWith("\\")) {
     throw issuanceError(
       "payload.certPath must be a file path, not a directory (e.g. /etc/ssl/certs/example.com.pem)",
     );
