@@ -169,6 +169,57 @@ test("does not re-report a failed 413 head via droppedBefore after the tail succ
   assert.equal(state.agentGapLines, 1);
 });
 
+test("keeps both lost lines in droppedBefore when a 413 head and tail both fail", async () => {
+  const bodies = [];
+  const session = createJobLogSession({
+    jobId: "job-1",
+    claimId: "claim-413-both-fail",
+    maxBatchBytes: 64 * 1024,
+    sleep: async () => {},
+    now: () => 0,
+    post: async (request) => {
+      bodies.push(request.body);
+      if (request.body.final === true) {
+        return { status: 200, json: { ackThroughSeq: 0, streamDisabled: false } };
+      }
+      if (request.body.lines.length > 1) return { status: 413, json: {} };
+      return { status: 422, json: {} };
+    },
+  });
+  session.logger.info("one");
+  session.logger.info("two");
+  await session.close();
+  const finalEmpty = bodies.find((body) => body.final === true && body.lines.length === 0);
+  assert.ok(finalEmpty);
+  assert.equal(finalEmpty.droppedBefore, 2);
+});
+
+test("reports no drops when both 413 halves succeed", async () => {
+  const bodies = [];
+  const session = createJobLogSession({
+    jobId: "job-1",
+    claimId: "claim-413-both-ok",
+    maxBatchBytes: 64 * 1024,
+    sleep: async () => {},
+    now: () => 0,
+    post: async (request) => {
+      bodies.push(request.body);
+      if (request.body.lines.length > 1) return { status: 413, json: {} };
+      return {
+        status: 200,
+        json: { ackThroughSeq: request.body.lines[0]?.seq || 0, streamDisabled: false },
+      };
+    },
+  });
+  session.logger.info("one");
+  session.logger.info("two");
+  await session.close();
+  const finals = bodies.filter((body) => body.final === true);
+  assert.equal(finals.at(-1).droppedBefore, 0);
+  assert.ok(bodies.some((body) => body.lines.length === 1 && body.lines[0].message === "one"));
+  assert.ok(bodies.some((body) => body.lines.length === 1 && body.lines[0].message === "two"));
+});
+
 test("never sends more lines than the schema allows in one batch", async () => {
   const bodies = [];
   let release;

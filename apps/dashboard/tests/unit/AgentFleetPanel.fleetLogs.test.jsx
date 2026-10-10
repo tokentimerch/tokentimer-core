@@ -87,4 +87,41 @@ describe('AgentFleetPanel fleet log helpers', () => {
     expect(fetchPage).toHaveBeenCalledTimes(4);
     expect(batches.flatMap(batch => batch.lines)).toHaveLength(40);
   });
+
+  it('settles when long jobs fully consume the shared budget (no waiter deadlock)', async () => {
+    const pageCounts = new Map();
+    const fetchPage = vi.fn(async (_ws, jobId, { limit }) => {
+      const page = pageCounts.get(jobId) || 0;
+      pageCounts.set(jobId, page + 1);
+      await new Promise(resolve => {
+        setTimeout(resolve, 5);
+      });
+      return {
+        items: Array.from({ length: limit }, (_, i) => ({
+          seq: page * limit + i + 1,
+          message: `${jobId}-${page}-${i}`,
+        })),
+        hasMore: true,
+        nextCursor: `${jobId}-p${page + 1}`,
+      };
+    });
+
+    const settled = loadFleetJobBatches('ws', ['job-a', 'job-b', 'job-c'], {
+      concurrency: 3,
+      pageSize: 200,
+      maxPagesPerJob: 10,
+      totalMaxLines: 4000,
+      fetchPage,
+    });
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('fleet budget deadlocked')), 3000);
+    });
+    const batches = await Promise.race([settled, timeout]);
+
+    expect(batches).toHaveLength(3);
+    expect(batches.every(batch => batch.failed === false)).toBe(true);
+    expect(batches.some(batch => batch.truncated === true)).toBe(true);
+    expect(batches.flatMap(batch => batch.lines)).toHaveLength(4000);
+    expect(fetchPage).toHaveBeenCalledTimes(20);
+  });
 });

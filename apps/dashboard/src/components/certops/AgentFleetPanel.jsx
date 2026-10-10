@@ -674,12 +674,14 @@ export async function mapWithConcurrency(items, concurrency, worker) {
 
 /**
  * Shared modal line budget. Workers claim page-sized slices and wait for an
- * in-flight peer to release unused capacity instead of skipping the job.
+ * active owner to release unused capacity instead of skipping the job.
+ * Waiters are not owners: when remaining is 0 and owners is 0, every waiter
+ * exits with an exhausted-budget result (no deadlock among waiters).
  */
 export function createFleetLineBudget(totalLines) {
   let remaining = totalLines;
-  // Workers inside withReservation, including those still waiting to claim.
-  let holders = 0;
+  // Callers that currently hold reserved capacity (fetch in flight).
+  let owners = 0;
   const waiters = [];
   function notify() {
     while (waiters.length > 0) waiters.shift()();
@@ -688,29 +690,25 @@ export function createFleetLineBudget(totalLines) {
     get remaining() {
       return remaining;
     },
-    get holders() {
-      return holders;
+    get owners() {
+      return owners;
     },
-    /**
-     * Enter as a holder first so peers waiting on an empty budget do not see
-     * holders===0 between another worker's claim and its fetch.
-     */
     async withReservation(wanted, work) {
       const need = Math.max(0, wanted);
-      holders += 1;
-      let reserved = 0;
+      if (need === 0) return { reserved: 0, result: null };
+      while (remaining < 1) {
+        // Only an owner can return unused capacity; waiters cannot help each other.
+        if (owners === 0) return { reserved: 0, result: null };
+        await new Promise(resolve => {
+          waiters.push(resolve);
+        });
+      }
+      const reserved = Math.min(remaining, need);
+      remaining -= reserved;
+      // Become an owner before any await so peers never see a gap after claim.
+      owners += 1;
       let used = 0;
       try {
-        if (need === 0) return { reserved: 0, result: null };
-        while (remaining < 1) {
-          // Another holder may still return unused capacity.
-          if (holders <= 1) return { reserved: 0, result: null };
-          await new Promise(resolve => {
-            waiters.push(resolve);
-          });
-        }
-        reserved = Math.min(remaining, need);
-        remaining -= reserved;
         const outcome = await work(reserved);
         used = Math.max(0, Math.min(reserved, Number(outcome?.used) || 0));
         return { reserved, result: outcome?.result ?? null };
@@ -718,8 +716,8 @@ export function createFleetLineBudget(totalLines) {
         used = 0;
         throw error;
       } finally {
-        if (reserved > 0) remaining += reserved - used;
-        holders = Math.max(0, holders - 1);
+        remaining += reserved - used;
+        owners = Math.max(0, owners - 1);
         notify();
       }
     },

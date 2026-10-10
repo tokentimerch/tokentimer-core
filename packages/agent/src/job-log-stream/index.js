@@ -235,19 +235,22 @@ function createJobLogSession({
           budgetMs: Math.max(0, deadline() - now()),
         });
         if (stopped) return false;
-        if (!headOk) {
-          // drop() already counted head lines locally. Once a later seq is
-          // accepted the server records that hole as a seq gap; keep those
-          // lines out of a later droppedBefore so the same loss is not counted twice.
+        const tailOk = await sendBatch(
+          {
+            lines: pending.lines.slice(mid),
+            droppedBefore: 0,
+            firstSeq: pending.lines[mid].seq,
+          },
+          { budgetMs: Math.max(0, deadline() - now()) },
+        );
+        if (stopped) return false;
+        if (!headOk && tailOk) {
+          // Head lines are already in buffer.dropped. The accepted tail makes
+          // that hole a server seq gap, so omit them from a later droppedBefore.
+          // When the tail also fails, keep the count: nothing reached the server.
           buffer.dropped = Math.max(0, buffer.dropped - headBatch.lines.length);
         }
-        pending = {
-          lines: pending.lines.slice(mid),
-          droppedBefore: 0,
-          firstSeq: pending.lines[mid].seq,
-        };
-        attempt = 0;
-        continue;
+        return headOk && tailOk;
       }
       if (status === 429 || status === 503) {
         await wait(Number.isFinite(response.retryAfterMs) ? response.retryAfterMs : backoff(attempt));
