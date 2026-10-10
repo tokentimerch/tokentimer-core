@@ -124,4 +124,40 @@ describe('AgentFleetPanel fleet log helpers', () => {
     expect(batches.flatMap(batch => batch.lines)).toHaveLength(4000);
     expect(fetchPage).toHaveBeenCalledTimes(20);
   });
+
+  it('keeps page-one lines and budget when a later page fails', async () => {
+    const pageCounts = new Map();
+    const fetchPage = vi.fn(async (_ws, jobId, { limit }) => {
+      const page = pageCounts.get(jobId) || 0;
+      pageCounts.set(jobId, page + 1);
+      if (jobId === 'job-fail' && page === 1) {
+        throw new Error('page two unavailable');
+      }
+      return {
+        items: Array.from({ length: limit }, (_, i) => ({
+          seq: page * limit + i + 1,
+          message: `${jobId}-p${page}-${i}`,
+        })),
+        hasMore: jobId === 'job-fail' && page === 0,
+        nextCursor: jobId === 'job-fail' && page === 0 ? 'c1' : null,
+      };
+    });
+
+    const batches = await loadFleetJobBatches('ws', ['job-fail', 'job-ok'], {
+      concurrency: 1,
+      pageSize: 2,
+      maxPagesPerJob: 3,
+      totalMaxLines: 4,
+      fetchPage,
+    });
+
+    const failed = batches.find(batch => batch.jobId === 'job-fail');
+    const ok = batches.find(batch => batch.jobId === 'job-ok');
+    expect(failed.failed).toBe(true);
+    expect(failed.lines).toHaveLength(2);
+    expect(ok.failed).toBe(false);
+    expect(ok.truncated).toBe(false);
+    expect(ok.lines).toHaveLength(2);
+    expect(batches.flatMap(batch => batch.lines)).toHaveLength(4);
+  });
 });

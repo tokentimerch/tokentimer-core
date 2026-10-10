@@ -245,10 +245,15 @@ function createJobLogSession({
         );
         if (stopped) return false;
         if (!headOk && tailOk) {
-          // Head lines are already in buffer.dropped. The accepted tail makes
-          // that hole a server seq gap, so omit them from a later droppedBefore.
-          // When the tail also fails, keep the count: nothing reached the server.
-          buffer.dropped = Math.max(0, buffer.dropped - headBatch.lines.length);
+          // drop(head) added head lines plus any prior droppedBefore. The
+          // accepted tail makes that whole hole a server seq gap, so undo both
+          // parts. When the tail also fails, keep the count: nothing landed.
+          buffer.dropped = Math.max(
+            0,
+            buffer.dropped -
+              headBatch.lines.length -
+              (headBatch.droppedBefore || 0),
+          );
         }
         return headOk && tailOk;
       }

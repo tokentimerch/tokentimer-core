@@ -169,6 +169,94 @@ test("does not re-report a failed 413 head via droppedBefore after the tail succ
   assert.equal(state.agentGapLines, 1);
 });
 
+test("does not double-count prior drops when a 413 head fails and the tail succeeds", async () => {
+  const {
+    batchKeyOf,
+    contentHash,
+    resolveIngest,
+  } = require("../../../../apps/api/services/certops/agentJobLogs.js");
+  const bodies = [];
+  const session = createJobLogSession({
+    jobId: "job-1",
+    claimId: "claim-413-predrop",
+    maxBatchBytes: 64 * 1024,
+    sleep: async () => {},
+    now: () => 0,
+    post: async (request) => {
+      bodies.push(request.body);
+      const { lines, final } = request.body;
+      if (final === true) {
+        return { status: 200, json: { ackThroughSeq: 0, streamDisabled: false } };
+      }
+      if (lines.length > 1) return { status: 413, json: {} };
+      if (lines[0]?.message === "lost" || lines[0]?.message === "head") {
+        return { status: 422, json: {} };
+      }
+      return {
+        status: 200,
+        json: { ackThroughSeq: lines[0]?.seq || 0, streamDisabled: false },
+      };
+    },
+  });
+  // Permanent loss before the split so the 413 head carries droppedBefore: 1.
+  session.logger.info("lost");
+  await session.flush();
+  session.logger.info("head");
+  session.logger.info("tail");
+  await session.close();
+
+  const accepted = bodies.filter(
+    (body) => body.final !== true && body.lines.length === 1 && body.lines[0].message === "tail",
+  );
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0].droppedBefore, 0);
+  const finalEmpty = bodies.find((body) => body.final === true && body.lines.length === 0);
+  assert.ok(finalEmpty);
+  assert.equal(finalEmpty.droppedBefore, 0);
+
+  const toStored = (raw) => {
+    const stored = {
+      seq: raw.seq,
+      level: raw.level || "info",
+      step: raw.step || null,
+      message: raw.message,
+      fields: raw.fields || null,
+    };
+    stored.hash = contentHash(stored);
+    stored.bytes = Buffer.byteLength(String(raw.message || ""), "utf8");
+    return stored;
+  };
+  let state = {
+    streamingEnabled: true,
+    status: "pending",
+    acceptUntil: null,
+    resolvedThroughSeq: 0,
+    acceptedLines: 0,
+    acceptedBytes: 0,
+    serverDroppedLines: 0,
+    agentGapLines: 0,
+    rejectedBatches: 0,
+    conflictCount: 0,
+    conflicts: {},
+    lastBatchKey: null,
+    lastAck: null,
+    lastHttpStatus: null,
+    stored: {},
+  };
+  for (const body of [accepted[0], finalEmpty]) {
+    const lines = (body.lines || []).map(toStored);
+    const applied = resolveIngest(state, {
+      key: batchKeyOf(lines, body.final === true, body.droppedBefore || 0),
+      lines,
+      final: body.final === true,
+      droppedBefore: body.droppedBefore || 0,
+    });
+    state = applied.nextState;
+  }
+  // lost + head are the only missing lines; prior drop must not be reported again.
+  assert.equal(state.agentGapLines, 2);
+});
+
 test("keeps both lost lines in droppedBefore when a 413 head and tail both fail", async () => {
   const bodies = [];
   const session = createJobLogSession({

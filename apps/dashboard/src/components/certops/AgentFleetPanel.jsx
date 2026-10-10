@@ -769,7 +769,20 @@ export async function loadFleetJobBatches(
             };
           }));
         } catch {
-          return { truncated: false, failed: true, jobId, lines: [] };
+          // Keep pages already loaded so their budget stays matched to display.
+          // Discarding them would strand capacity other jobs still need.
+          return {
+            truncated: false,
+            failed: true,
+            jobId,
+            lines: items.map(line => ({
+              ...line,
+              jobId,
+              message: line.message
+                ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
+                : line.message,
+            })),
+          };
         }
         if (reserved <= 0) {
           truncated = true;
@@ -939,7 +952,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
               ) : null}
               {failedJobIds.length > 0 ? (
                 <Text fontSize='sm' color={muted}>
-                  Could not load logs for{' '}
+                  Could not load the full log for{' '}
                   {failedJobIds.length === 1
                     ? `job ${String(failedJobIds[0]).slice(0, 8)}`
                     : `${failedJobIds.length} jobs`}
