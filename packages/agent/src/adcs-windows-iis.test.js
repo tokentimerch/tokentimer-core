@@ -14,6 +14,7 @@ const {
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
   resolveCleanupOutcome,
+  isRetryableInstallInterrupt,
   observeInstalledCertificateIdentity,
   withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
@@ -269,6 +270,17 @@ describe("shouldCleanupAbandonedCngKey", () => {
       }),
       false,
     );
+  });
+});
+
+describe("isRetryableInstallInterrupt", () => {
+  it("treats lease blocks and store-lock failures as non-terminal interrupts", () => {
+    assert.equal(isRetryableInstallInterrupt({ status: "blocked" }), true);
+    assert.equal(
+      isRetryableInstallInterrupt({ status: "failed", retryableInterrupt: true }),
+      true,
+    );
+    assert.equal(isRetryableInstallInterrupt({ status: "failed" }), false);
   });
 });
 

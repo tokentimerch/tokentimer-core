@@ -343,6 +343,13 @@ function readEnrollmentRequestJournal(stateDir, enrollmentId) {
   return journal;
 }
 
+const {
+  readHighestRequestId,
+  recordHighestRequestId,
+  tryReconcileUncertainSubmission,
+  DEFAULT_RECONCILE_WINDOW,
+} = require("./adcs-enrollment-reconcile");
+
 module.exports = {
   filesystemSafeJobId,
   computeSpkiSha256Hex,
@@ -368,4 +375,8 @@ module.exports = {
   listProtectedEnrollmentContainers,
   looksLikeEnrollmentContainerName,
   durableWriteFile,
+  readHighestRequestId,
+  recordHighestRequestId,
+  tryReconcileUncertainSubmission,
+  DEFAULT_RECONCILE_WINDOW,
 };

@@ -3011,6 +3011,8 @@ async function runWindowsIisDeployTail({
     return {
       status: "failed",
       keyRotated: null,
+      // Lease/lock aborts must not become durable install_failed terminals.
+      retryableInterrupt: true,
       errorMessage: boundErrorMessage(`could not acquire windows-iis store lock: ${err.message}`),
     };
   }
