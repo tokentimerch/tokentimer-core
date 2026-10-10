@@ -802,28 +802,20 @@ test("expansion serializes a concurrent binding edit and preserves the approved 
   );
 });
 
-test("workspace transfer of published distribution history fails atomically without leaking issuer dependencies", async (t) => {
+test("workspace transfer retains source history and creates no destination issuer dependency", async () => {
   const f = await fixture(),
     destination = uuid();
   await pool.query(
     "INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Transfer destination',$2,'oss')",
     [destination, f.actor],
   );
-  // Existing transfer SQL relocates publishing jobs, whose workspace is pinned
-  // by immutable versions. Cross-workspace distribution migration is not supported.
-  await assert.rejects(
-    operations.transaction((client) =>
-      client.query(
-        "SELECT certops_transfer_management_sources($1,$2,$3::uuid[])",
-        [f.workspaceId, destination, [f.certificateId]],
-      ),
+  const moved = await operations.transaction((client) =>
+    client.query(
+      "SELECT certops_transfer_management_sources($1,$2,$3::uuid[])",
+      [f.workspaceId, destination, [f.certificateId]],
     ),
-    (error) => {
-      assert.equal(error.code, "23503");
-      t.diagnostic(`Existing transfer restriction: ${error.constraint}`);
-      return true;
-    },
   );
+  assert.equal(moved.rows[0].certops_transfer_management_sources, 1);
   assert.equal(
     (
       await pool.query(
@@ -831,16 +823,15 @@ test("workspace transfer of published distribution history fails atomically with
         [f.certificateId],
       )
     ).rows[0].workspace_id,
-    f.workspaceId,
+    destination,
   );
-  assert.equal(
+  assert.ok(
     (
       await pool.query(
         "SELECT ended_at FROM certops_management_periods WHERE id=$1",
         [f.managementPeriodId],
       )
     ).rows[0].ended_at,
-    null,
   );
   assert.equal(
     (
@@ -848,7 +839,7 @@ test("workspace transfer of published distribution history fails atomically with
         db: pool,
         workspaceId: destination,
       })
-    ).length,
+    )[0].dependencies.length,
     0,
   );
 });

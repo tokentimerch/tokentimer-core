@@ -31,11 +31,12 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
     assert.equal(migrations.find((entry) => entry.version === 68).name, "certops_material_distribution");
-    assert.equal(migrations.at(-1).version, 69);
-    assert.equal(migrations.at(-1).name, "certops_distribution_review");
+    assert.equal(migrations.find((entry) => entry.version === 69).name, "certops_distribution_review");
+    assert.equal(migrations.at(-1).version, 70);
+    assert.equal(migrations.at(-1).name, "certops_distribution_transfer");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 69 }, (_, index) => index + 1),
+      Array.from({ length: 70 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -1762,7 +1763,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 69);
+    assert.equal(sorted[sorted.length - 1], 70);
   });
 });
 

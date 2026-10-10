@@ -4618,6 +4618,11 @@ const migrations = [
     name: "certops_distribution_review",
     sql: fs.readFileSync(require("path").join(__dirname, "069-certops-distribution-review.sql"), "utf8"),
   },
+  {
+    version: 70,
+    name: "certops_distribution_transfer",
+    sql: fs.readFileSync(require("path").join(__dirname, "070-certops-distribution-transfer.sql"), "utf8"),
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
