@@ -984,7 +984,11 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   );
 }
 
-export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
+export default function AgentFleetPanel({
+  refreshSignal,
+  headerAction,
+  focusAgentId,
+} = {}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -1170,7 +1174,23 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                 {agents.map(agent => {
                   const status = String(agent.status || '').toLowerCase();
                   return (
-                    <Tr key={agent.id} {...tableStyles.rowProps}>
+                    <Tr
+                      key={agent.id}
+                      {...tableStyles.rowProps}
+                      data-agent-id={agent.id}
+                      bg={
+                        focusAgentId &&
+                        String(focusAgentId) === String(agent.id)
+                          ? 'blackAlpha.50'
+                          : undefined
+                      }
+                      _dark={
+                        focusAgentId &&
+                        String(focusAgentId) === String(agent.id)
+                          ? { bg: 'whiteAlpha.100' }
+                          : undefined
+                      }
+                    >
                       <Td {...agentPrimaryCellProps}>
                         <Box>
                           <CertOpsTruncatedText

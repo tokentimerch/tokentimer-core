@@ -33,9 +33,11 @@ const NO_FILTERS = Object.freeze({});
 
 /** Filters the job list accepts; the server takes the same names. */
 export const CERTOPS_JOB_FILTERS = {
+  q: { label: 'Search', default: '' },
   status: { label: 'Status', default: '' },
   operation: { label: 'Operation', default: '' },
   source: { label: 'Source', default: '' },
+  createdSince: { label: 'Created', default: '' },
 };
 
 /**
@@ -43,13 +45,15 @@ export const CERTOPS_JOB_FILTERS = {
  * rather than a server field name: 'true' means the retired
  * (revoked/decommissioned) rows are included, and the default ('', hidden)
  * is what the server sees translated into `excludeRetired=true`, not a
- * literal query param of its own.
+ * literal query param of its own. `management=unmanaged` is the URL form of
+ * the unmanaged-only inventory filter.
  */
 export const CERTOPS_CERTIFICATE_FILTERS = {
   q: { label: 'Search', default: '' },
   status: { label: 'Status', default: '' },
   source: { label: 'Source', default: '' },
-  showRetired: { label: 'Show retired/decommissioned', default: '' },
+  showRetired: { label: 'Lifecycle', default: '' },
+  management: { label: 'Management', default: '' },
 };
 
 /**

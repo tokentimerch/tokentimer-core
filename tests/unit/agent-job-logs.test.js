@@ -415,12 +415,21 @@ describe("agent job log ingest", () => {
     assert.equal(shaped.logsComplete, true);
   });
 
-  it("treats terminal jobs with no stream rows as complete without claiming a finished stream", () => {
+  it("treats terminal jobs as complete without claiming a finished stream replay", () => {
     assert.equal(logsComplete("succeeded", []), true);
     assert.equal(
       deliveryState({
         logsComplete: true,
         streams: [],
+        linesVisible: true,
+        storageEnabled: true,
+      }),
+      "No agent output recorded",
+    );
+    assert.equal(
+      deliveryState({
+        logsComplete: true,
+        streams: [{ status: "final", streamingEnabled: true }],
         linesVisible: true,
         storageEnabled: true,
       }),

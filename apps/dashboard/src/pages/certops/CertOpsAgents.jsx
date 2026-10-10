@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack } from '@chakra-ui/react';
-import { useOutletContext } from 'react-router';
+import { useOutletContext, useSearchParams } from 'react-router';
 import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
 import BootstrapTokenList from '../../components/certops/BootstrapTokenList.jsx';
 import DeployAgentModal from '../../components/certops/DeployAgentModal.jsx';
@@ -21,16 +21,36 @@ import {
 export default function CertOpsAgents() {
   const { certOpsPaused } = useOutletContext() || {};
   const canManage = useCertOpsCanManage();
+  const [searchParams] = useSearchParams();
+  const focusAgentId = searchParams.get('agentId') || '';
+  const focusTrustAnchorId = searchParams.get('trustAnchorId') || '';
   const [deployOpen, setDeployOpen] = useState(false);
   // Bumped when DeployAgentModal detects a freshly registered agent, so the
   // fleet panel refetches immediately instead of waiting on its own poll.
   const [fleetRefreshSignal, setFleetRefreshSignal] = useState(0);
+
+  useEffect(() => {
+    if (!focusTrustAnchorId) return;
+    const node = document.querySelector(
+      `[data-trust-anchor-id="${CSS.escape(focusTrustAnchorId)}"]`
+    );
+    node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+  }, [focusTrustAnchorId]);
+
+  useEffect(() => {
+    if (!focusAgentId) return;
+    const node = document.querySelector(
+      `[data-agent-id="${CSS.escape(focusAgentId)}"]`
+    );
+    node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+  }, [focusAgentId]);
 
   return (
     <Stack spacing={3} align='stretch'>
       <DashboardPanel>
         <AgentFleetPanel
           refreshSignal={fleetRefreshSignal}
+          focusAgentId={focusAgentId || undefined}
           headerAction={
             canManage ? (
               <DashboardActionButton
@@ -47,7 +67,7 @@ export default function CertOpsAgents() {
         <BootstrapTokenList />
       </DashboardPanel>
       <DashboardPanel>
-        <TrustAnchorsPanel />
+        <TrustAnchorsPanel focusTrustAnchorId={focusTrustAnchorId || undefined} />
       </DashboardPanel>
 
       <DeployAgentModal

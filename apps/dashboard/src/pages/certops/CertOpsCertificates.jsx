@@ -46,6 +46,7 @@ import DetachRenewalProfileModal from '../../components/certops/DetachRenewalPro
 import CertificateIdentityDetailModal from '../../components/certops/CertificateIdentityDetailModal.jsx';
 import CsrWorkflowPanel from '../../components/certops/CsrWorkflowPanel.jsx';
 import {
+  getCertificate,
   listCertificates,
   retireCertificate,
   retryRenewalSetupIntent,
@@ -230,9 +231,9 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
 export default function CertOpsCertificates() {
   const location = useLocation();
   const navigate = useNavigate();
-  const csrIdInUrl = new URLSearchParams(location.search).get(
-    'csrCertificateId'
-  );
+  const searchParams = new URLSearchParams(location.search);
+  const csrIdInUrl = searchParams.get('csrCertificateId');
+  const certificateIdInUrl = searchParams.get('certificateId');
   const {
     muted,
     dashboard,
@@ -296,7 +297,7 @@ export default function CertOpsCertificates() {
   } = useCertOpsListUrlState({ filters: CERTOPS_CERTIFICATE_FILTERS });
 
   const showRetired = filters.showRetired === 'true';
-  const [unmanagedOnly, setUnmanagedOnly] = useState(false);
+  const unmanagedOnly = filters.management === 'unmanaged';
   // An explicit status pick is more precise than the coarse retired toggle;
   // let it through even if that status happens to be revoked/decommissioned.
   const excludeRetired = !filters.status && !showRetired ? true : undefined;
@@ -332,6 +333,89 @@ export default function CertOpsCertificates() {
     setCsrCertificateId(csrIdInUrl);
     setCsrModalOpen(true);
   }, [csrIdInUrl]);
+
+  useEffect(() => {
+    if (!certificateIdInUrl || !workspaceId) return undefined;
+    let cancelled = false;
+    const controller = new AbortController();
+    const stripCertificateId = () => {
+      const params = new URLSearchParams(location.search);
+      if (!params.has('certificateId')) return;
+      params.delete('certificateId');
+      navigate(
+        {
+          pathname: location.pathname,
+          search: params.toString(),
+          hash: location.hash,
+        },
+        { replace: true }
+      );
+    };
+    (async () => {
+      try {
+        const data = await getCertificate(workspaceId, certificateIdInUrl, {
+          signal: controller.signal,
+        });
+        const cert = data?.certificate || data;
+        const fingerprint = cert?.fingerprintSha256;
+        let identity = null;
+        if (fingerprint) {
+          const listed = await listCertificates(workspaceId, {
+            grouped: true,
+            q: fingerprint,
+            limit: 20,
+            excludeRetired: false,
+            signal: controller.signal,
+          });
+          const items = Array.isArray(listed?.items) ? listed.items : [];
+          identity =
+            items.find(
+              item =>
+                String(item.fingerprintSha256 || '').toLowerCase() ===
+                  String(fingerprint).toLowerCase() ||
+                (Array.isArray(item.sources) &&
+                  item.sources.some(
+                    source =>
+                      String(source.id || source.managedCertificateId) ===
+                      String(certificateIdInUrl)
+                  ))
+            ) || items[0];
+        }
+        if (cancelled) return;
+        if (identity) {
+          setCsrModalOpen(false);
+          setDetailsTarget(identity);
+        } else {
+          showError(
+            'Certificate not found',
+            'This managed certificate is not available in the inventory view.'
+          );
+        }
+      } catch (err) {
+        if (cancelled || err?.name === 'CanceledError') return;
+        showError(
+          'Certificate not found',
+          err?.response?.data?.error ||
+            err?.message ||
+            'This certificate may have been deleted or is inaccessible.'
+        );
+      } finally {
+        if (!cancelled) stripCertificateId();
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    certificateIdInUrl,
+    workspaceId,
+    location.pathname,
+    location.search,
+    location.hash,
+    navigate,
+  ]);
+
   const closeCsrModal = () => {
     setCsrModalOpen(false);
     setCsrCertificateId(null);
@@ -396,7 +480,10 @@ export default function CertOpsCertificates() {
   };
 
   const visibleFilterLabels = activeFilterLabels.filter(
-    entry => entry.key !== 'showRetired' && entry.key !== 'q'
+    entry =>
+      entry.key !== 'showRetired' &&
+      entry.key !== 'q' &&
+      entry.key !== 'management'
   );
 
   const handleRetryRenewalSetup = async certificate => {
@@ -425,16 +512,18 @@ export default function CertOpsCertificates() {
         title='Certificates'
         description='Managed certificate inventory for this workspace'
         action={
-          <HStack>
+          <HStack spacing={2}>
             {canManage ? (
-              <DashboardActionButton
+              <Button
+                size='sm'
+                variant='ghost'
                 onClick={() => {
                   setCsrCertificateId(null);
                   setCsrModalOpen(true);
                 }}
               >
                 CSR workflows
-              </DashboardActionButton>
+              </Button>
             ) : null}
             <DashboardActionButton
               variant='outline'
@@ -447,7 +536,7 @@ export default function CertOpsCertificates() {
         }
       />
 
-      <HStack spacing={2} mb={3} flexWrap='wrap'>
+      <HStack spacing={2} mb={3} flexWrap='wrap' align='center'>
         <AssetSearchInput
           value={filters.q}
           onCommit={value => setFilter('q', value)}
@@ -462,6 +551,7 @@ export default function CertOpsCertificates() {
           maxW='200px'
           value={filters.status}
           onChange={event => setFilter('status', event.target.value)}
+          aria-label='Filter by certificate status'
         >
           <option value=''>All statuses</option>
           {MANAGED_CERTIFICATE_STATUSES.map(value => (
@@ -475,6 +565,7 @@ export default function CertOpsCertificates() {
           maxW='200px'
           value={filters.source}
           onChange={event => setFilter('source', event.target.value)}
+          aria-label='Filter by certificate source'
         >
           <option value=''>All sources</option>
           {MANAGED_CERTIFICATE_SOURCES.map(value => (
@@ -483,50 +574,60 @@ export default function CertOpsCertificates() {
             </option>
           ))}
         </Select>
-        <Button
+        <Select
           size='sm'
-          variant={showRetired ? 'solid' : 'outline'}
-          colorScheme='gray'
-          leftIcon={<Archive size={14} />}
-          onClick={() => setFilter('showRetired', showRetired ? '' : 'true')}
-          aria-pressed={showRetired}
-          title='Show revoked and decommissioned certificates'
+          maxW='220px'
+          value={showRetired ? 'including' : 'active'}
+          onChange={event =>
+            setFilter(
+              'showRetired',
+              event.target.value === 'including' ? 'true' : ''
+            )
+          }
+          aria-label='Filter by certificate lifecycle'
+          title={
+            retiredCount !== null
+              ? `${retiredCount} retired certificate${retiredCount === 1 ? '' : 's'} in this workspace`
+              : undefined
+          }
         >
-          Retired
-          {retiredCount !== null ? (
-            <Box
-              as='span'
-              ml={2}
-              px={1.5}
-              borderRadius='sm'
-              bg={showRetired ? 'whiteAlpha.300' : 'blackAlpha.200'}
-              fontSize='xs'
-              fontWeight='semibold'
-              lineHeight='1.5'
-            >
-              {retiredCount}
-            </Box>
-          ) : null}
-        </Button>
-        <Button
+          <option value='active'>
+            Active only
+            {retiredCount !== null ? ` (${retiredCount} retired hidden)` : ''}
+          </option>
+          <option value='including'>Including retired</option>
+        </Select>
+        <Select
           size='sm'
-          variant={unmanagedOnly ? 'solid' : 'outline'}
-          colorScheme='gray'
-          aria-pressed={unmanagedOnly}
-          onClick={() => {
-            setUnmanagedOnly(value => !value);
-            setPage({ offset: 0 });
-          }}
+          maxW='180px'
+          value={unmanagedOnly ? 'unmanaged' : ''}
+          onChange={event => setFilter('management', event.target.value)}
+          aria-label='Filter by management state'
         >
-          Unmanaged only
-        </Button>
+          <option value=''>All management</option>
+          <option value='unmanaged'>Unmanaged only</option>
+        </Select>
       </HStack>
 
-      {visibleFilterLabels.length > 0 ? (
-        <HStack spacing={2} mb={2} flexWrap='wrap'>
+      {filters.q ||
+      showRetired ||
+      unmanagedOnly ||
+      visibleFilterLabels.length > 0 ? (
+        <HStack spacing={2} mb={2} flexWrap='wrap' align='center'>
           <Text fontSize='xs' color={muted}>
             Filtered by{' '}
-            {visibleFilterLabels
+            {[
+              ...(filters.q
+                ? [{ label: 'Search', value: filters.q }]
+                : []),
+              ...visibleFilterLabels,
+              ...(showRetired
+                ? [{ label: 'Lifecycle', value: 'Including retired' }]
+                : []),
+              ...(unmanagedOnly
+                ? [{ label: 'Management', value: 'Unmanaged only' }]
+                : []),
+            ]
               .map(entry => `${entry.label}: ${entry.value}`)
               .join(', ')}
           </Text>

@@ -953,6 +953,8 @@ function jobListOptionsFromRequest(req) {
     subjectId: req.query.subjectId,
     operation: req.query.operation,
     source: req.query.source,
+    q: req.query.q,
+    createdSince: req.query.createdSince,
   };
 }
 

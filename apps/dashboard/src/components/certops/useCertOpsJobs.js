@@ -19,7 +19,7 @@ import {
  * Gated on workspaceId and `certops.enabled === true` (same pattern as
  * useWorkspaceCertOps). Re-fetches when filters change.
  *
- * @param {{ limit?: number, offset?: number, status?: string, subjectType?: string, subjectId?: string, operation?: string, source?: string }} [filters]
+ * @param {{ limit?: number, offset?: number, status?: string, subjectType?: string, subjectId?: string, operation?: string, source?: string, q?: string, createdSince?: string }} [filters]
  * @returns {{ enabled: boolean|null, jobs: object[], pagination: { limit: number, offset: number }|null, loading: boolean, error: string, refresh: function }}
  */
 export function useCertOpsJobs(filters = {}) {
@@ -33,6 +33,8 @@ export function useCertOpsJobs(filters = {}) {
     subjectId,
     operation,
     source,
+    q,
+    createdSince,
   } = filters;
 
   const [jobs, setJobs] = useState([]);
@@ -67,6 +69,8 @@ export function useCertOpsJobs(filters = {}) {
       subjectId,
       operation,
       source,
+      q,
+      createdSince,
       signal: controller.signal,
     })
       .then(data => {
@@ -104,6 +108,8 @@ export function useCertOpsJobs(filters = {}) {
     subjectId,
     operation,
     source,
+    q,
+    createdSince,
   ]);
 
   return { enabled, jobs, pagination, loading, error, refresh };

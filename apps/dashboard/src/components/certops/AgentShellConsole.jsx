@@ -5,7 +5,6 @@ import {
   HStack,
   Text,
   VStack,
-  useColorModeValue,
 } from '@chakra-ui/react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { listAgentJobLog } from './certopsJobsApi';
@@ -15,6 +14,17 @@ const MAX_PAGES_PER_TICK = 5;
 const VISIBLE_POLL_MS = 700;
 const HIDDEN_POLL_MS = 5000;
 const ERROR_POLL_MS = 10000;
+
+/** Always-dark terminal palette so light UI theme cannot wash out log text. */
+const SHELL = {
+  bg: '#0f172a',
+  border: 'rgba(148, 163, 184, 0.28)',
+  muted: '#94a3b8',
+  body: '#e2e8f0',
+  success: '#4ade80',
+  danger: '#f87171',
+  info: '#38bdf8',
+};
 
 const STATUS_LABEL = {
   connecting: 'Connecting',
@@ -134,10 +144,12 @@ export function deliveryLabel(payload, failed = false) {
   if (dropped > 0) return `Output incomplete: ${dropped} lines dropped`;
   if (streams.some(stream => stream.truncated)) return 'Log limit reached';
   if (payload.logsComplete) {
-    if (streams.length === 0) return 'No agent output recorded';
-    return payload.linesVisible === false
-      ? 'Stream complete (log text requires manager access)'
-      : 'Stream complete';
+    // Shown only in the empty shell. Closed stream rows without text mean
+    // the attempt finished without retained output — not a successful replay.
+    if (payload.linesVisible === false) {
+      return 'No agent output recorded (log text requires manager access)';
+    }
+    return 'No agent output recorded';
   }
   if (
     streams.length > 0 &&
@@ -239,15 +251,8 @@ export default function AgentShellConsole({
   maxHeight = '280px',
   onComplete,
 }) {
-  const { muted, border, text, dashboard } = useDashboardTheme();
-  const shellBg = useColorModeValue('#0f172a', '#020617');
-  const shellBorder = useColorModeValue('rgba(15, 23, 42, 0.18)', border);
-  const lineMuted = useColorModeValue('#64748b', '#94a3b8');
-  const lineBody = useColorModeValue('#e2e8f0', '#f1f5f9');
-  const lineSuccess = useColorModeValue('#4ade80', '#86efac');
-  const lineDanger = useColorModeValue('#f87171', '#fca5a5');
-  const lineInfo = useColorModeValue('#38bdf8', '#7dd3fc');
-  const cursorColor = dashboard?.accent?.interactiveForeground || lineInfo;
+  const { muted, text, dashboard } = useDashboardTheme();
+  const cursorColor = dashboard?.accent?.interactiveForeground || SHELL.info;
 
   const [payload, setPayload] = useState(null);
   const [items, setItems] = useState([]);
@@ -385,10 +390,10 @@ export default function AgentShellConsole({
 
   const colorForLine = line => {
     const tone = toneForLine(line);
-    if (tone === 'success') return lineSuccess;
-    if (tone === 'danger') return lineDanger;
-    if (tone === 'info') return lineInfo;
-    return lineBody;
+    if (tone === 'success') return SHELL.success;
+    if (tone === 'danger') return SHELL.danger;
+    if (tone === 'info') return SHELL.info;
+    return SHELL.body;
   };
 
   const live =
@@ -412,9 +417,9 @@ export default function AgentShellConsole({
             borderRadius='full'
             bg={
               badgeTone === 'success'
-                ? lineSuccess
+                ? SHELL.success
                 : badgeTone === 'danger'
-                  ? lineDanger
+                  ? SHELL.danger
                   : cursorColor
             }
             boxShadow={
@@ -435,10 +440,11 @@ export default function AgentShellConsole({
         </Badge>
       </HStack>
       <Box
-        bg={shellBg}
+        bg={SHELL.bg}
+        color={SHELL.body}
         borderRadius='12px'
         border='1px solid'
-        borderColor={shellBorder}
+        borderColor={SHELL.border}
         fontFamily='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
         fontSize='12px'
         lineHeight='1.7'
@@ -448,14 +454,25 @@ export default function AgentShellConsole({
         overflowY='auto'
         whiteSpace='pre-wrap'
         position='relative'
+        sx={{
+          // Force shell palette over theme body text (light mode).
+          color: `${SHELL.body} !important`,
+          '& [data-shell-muted]': { color: `${SHELL.muted} !important` },
+          '& [data-shell-line]': { color: 'inherit' },
+        }}
       >
-        <Text fontSize='10px' color={lineMuted} mb={2} letterSpacing='0.04em'>
+        <Text
+          fontSize='10px'
+          mb={2}
+          letterSpacing='0.04em'
+          data-shell-muted
+        >
           {displayLines[0]?.agent
             ? `HOST  ${displayLines[0].agent}`
             : 'HOST  tokentimer-agent'}
         </Text>
         {displayLines.length === 0 ? (
-          <Text color={lineMuted} role='status'>
+          <Text role='status' data-shell-muted>
             {deliveryLabel(payload, failed) === 'Waiting for output'
               ? 'Waiting for agent output...'
               : deliveryLabel(payload, failed)}
@@ -465,15 +482,20 @@ export default function AgentShellConsole({
             <Box
               key={line.id}
               as='div'
-              color={colorForLine(line)}
+              data-shell-line
               wordBreak='break-word'
+              sx={{ color: `${colorForLine(line)} !important` }}
             >
               {line.msg}
             </Box>
           ))
         )}
         {live ? (
-          <Box as='span' color={cursorColor} aria-hidden>
+          <Box
+            as='span'
+            aria-hidden
+            sx={{ color: `${cursorColor} !important` }}
+          >
             ▍
           </Box>
         ) : null}

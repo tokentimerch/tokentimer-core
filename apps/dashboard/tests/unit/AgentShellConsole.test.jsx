@@ -198,15 +198,25 @@ describe('AgentShellConsole', () => {
         logsComplete: true,
         jobStatus: 'failed',
       })
-    ).toBe('Stream complete (log text requires manager access)');
+    ).toBe('No agent output recorded (log text requires manager access)');
   });
 
-  it('does not claim a finished stream when a terminal job has no stream rows', () => {
+  it('does not claim a finished stream when a terminal job has no retained lines', () => {
     expect(
       deliveryLabel({
         items: [],
         linesVisible: true,
         streams: [],
+        storageEnabled: true,
+        logsComplete: true,
+        jobStatus: 'succeeded',
+      })
+    ).toBe('No agent output recorded');
+    expect(
+      deliveryLabel({
+        items: [],
+        linesVisible: true,
+        streams: finalStreams,
         storageEnabled: true,
         logsComplete: true,
         jobStatus: 'succeeded',

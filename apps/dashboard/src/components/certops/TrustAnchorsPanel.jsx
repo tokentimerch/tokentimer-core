@@ -547,7 +547,7 @@ const TRUST_ANCHOR_ADMIN_ONLY =
  * and viewers still see the panel title and why they cannot act, matching
  * the kill switch and job-approval copy, instead of an empty card.
  */
-export default function TrustAnchorsPanel() {
+export default function TrustAnchorsPanel({ focusTrustAnchorId } = {}) {
   const { workspaceId } = useWorkspace();
   const { enabled, isAdmin, anchors, loading, error, refresh } =
     useCertOpsTrustAnchors();
@@ -555,6 +555,14 @@ export default function TrustAnchorsPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [retireTarget, setRetireTarget] = useState(null);
   const [jobModalTarget, setJobModalTarget] = useState(null);
+
+  useEffect(() => {
+    if (!focusTrustAnchorId) return;
+    const match = anchors.find(
+      anchor => String(anchor.id) === String(focusTrustAnchorId)
+    );
+    if (match) setExpandedId(match.id);
+  }, [focusTrustAnchorId, anchors]);
 
   const { muted, dashboard } = useDashboardThemeColors();
   const titleColor = dashboard.text.primary;
@@ -643,7 +651,7 @@ export default function TrustAnchorsPanel() {
           {anchors.map(anchor => {
             const isOpen = expandedId === anchor.id;
             return (
-              <Box key={anchor.id}>
+              <Box key={anchor.id} data-trust-anchor-id={anchor.id}>
                 <HStack
                   w='full'
                   spacing={2}
@@ -654,6 +662,18 @@ export default function TrustAnchorsPanel() {
                   role='button'
                   tabIndex={0}
                   aria-expanded={isOpen}
+                  bg={
+                    focusTrustAnchorId &&
+                    String(focusTrustAnchorId) === String(anchor.id)
+                      ? 'blackAlpha.50'
+                      : undefined
+                  }
+                  _dark={
+                    focusTrustAnchorId &&
+                    String(focusTrustAnchorId) === String(anchor.id)
+                      ? { bg: 'whiteAlpha.100' }
+                      : undefined
+                  }
                   onClick={() =>
                     setExpandedId(current =>
                       current === anchor.id ? null : anchor.id

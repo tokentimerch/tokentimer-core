@@ -454,6 +454,24 @@ function normalizeOffset(value) {
   return Math.max(0, parsed);
 }
 
+const JOB_CREATED_SINCE_INTERVALS = Object.freeze({
+  "24h": "24 hours",
+  "7d": "7 days",
+  "30d": "30 days",
+});
+
+function normalizeJobCreatedSince(value) {
+  if (value === undefined || value === null || value === "") return null;
+  return JOB_CREATED_SINCE_INTERVALS[String(value)] || null;
+}
+
+function normalizeJobSearchQuery(value) {
+  const q = String(value || "")
+    .trim()
+    .slice(0, 128);
+  return q || null;
+}
+
 function normalizedFieldName(value) {
   return String(value || "")
     .toLowerCase()
@@ -2243,6 +2261,52 @@ async function listCertificateJobs(options) {
     const subjectId = normalizeOptionalShortText(options.subjectId, "subjectId");
     params.push(subjectId);
     conditions.push(`subject_id = $${params.length}`);
+  }
+
+  const createdSince = normalizeJobCreatedSince(options.createdSince);
+  if (createdSince) {
+    params.push(createdSince);
+    conditions.push(`created_at >= NOW() - ($${params.length})::interval`);
+  }
+
+  const search = normalizeJobSearchQuery(options.q);
+  if (search) {
+    params.push(search);
+    const idx = params.length;
+    conditions.push(`(
+      id::text ILIKE '%' || $${idx} || '%'
+      OR subject_id ILIKE '%' || $${idx} || '%'
+      OR operation ILIKE '%' || $${idx} || '%'
+      OR source ILIKE '%' || $${idx} || '%'
+      OR EXISTS (
+        SELECT 1 FROM managed_certificates mc
+         WHERE mc.workspace_id = certificate_jobs.workspace_id
+           AND mc.id::text = certificate_jobs.subject_id
+           AND (
+             COALESCE(mc.common_name, '') ILIKE '%' || $${idx} || '%'
+             OR COALESCE(mc.source_ref, '') ILIKE '%' || $${idx} || '%'
+           )
+      )
+      OR EXISTS (
+        SELECT 1 FROM certops_agents a
+         WHERE a.workspace_id = certificate_jobs.workspace_id
+           AND a.id IN (certificate_jobs.claimed_by_agent_id, certificate_jobs.assigned_agent_id)
+           AND (
+             COALESCE(a.name, '') ILIKE '%' || $${idx} || '%'
+             OR COALESCE(a.hostname, '') ILIKE '%' || $${idx} || '%'
+             OR COALESCE(a.agent_id, '') ILIKE '%' || $${idx} || '%'
+           )
+      )
+      OR EXISTS (
+        SELECT 1 FROM certops_trust_anchors ta
+         WHERE ta.workspace_id = certificate_jobs.workspace_id
+           AND ta.id::text = certificate_jobs.subject_id
+           AND (
+             COALESCE(ta.name, '') ILIKE '%' || $${idx} || '%'
+             OR COALESCE(ta.subject_common_name, '') ILIKE '%' || $${idx} || '%'
+           )
+      )
+    )`);
   }
 
   // Counted over the filter predicate the page itself uses, before LIMIT and

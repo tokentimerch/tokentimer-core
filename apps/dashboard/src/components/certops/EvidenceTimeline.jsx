@@ -1,16 +1,11 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
 import {
   Box,
-  Button,
+  Divider,
   Flex,
   HStack,
   Icon,
   IconButton,
-  Popover,
-  PopoverArrow,
-  PopoverBody,
-  PopoverContent,
-  PopoverTrigger,
   Spinner,
   Text,
   Tooltip,
@@ -21,13 +16,11 @@ import {
   CheckCircle2,
   Circle,
   FileSearch,
-  MoreHorizontal,
   Play,
   Shield,
   X,
   XCircle,
 } from 'lucide-react';
-import { Link as RouterLink } from 'react-router';
 import { useMemo } from 'react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import CopyableId from '../CopyableId.jsx';
@@ -46,217 +39,21 @@ import {
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
 import AgentShellConsole from './AgentShellConsole.jsx';
+import {
+  JobDetailsButton,
+  JobExecutionSummary,
+} from './JobDetailsButton.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
-import { agentDisplayName, indexAgentsByAnyId } from './certopsAgentLabel.js';
+import { indexAgentsByAnyId } from './certopsAgentLabel.js';
 import { truncationSummary } from './certopsPagination.js';
 
 const REDACTION_TOOLTIP = 'Sensitive values were removed before storage.';
 
-function ApprovedByLine({ job, color }) {
-  const name = userFacingName(
-    job?.approvedByUserId,
-    job?.approvedByDisplayName
-  );
-  if (!name) return null;
-  return (
-    <Text fontSize='xs' color={color}>
-      Approved by {name}
-    </Text>
-  );
-}
-
-function MetadataField({ label, children }) {
-  return (
-    <Box minW={0}>
-      <Text fontSize='xs' color='gray.500' mb={0.5}>
-        {label}
-      </Text>
-      {children}
-    </Box>
-  );
-}
-
-function AgentMetadataField({ id, label, agentsById }) {
-  if (!id) return null;
-  const agent =
-    agentsById instanceof Map ? agentsById.get(String(id)) : null;
-  const name = agentDisplayName(agent);
-  return (
-    <MetadataField label={label}>
-      {name ? (
-        <Text fontSize='xs' fontWeight='medium' noOfLines={1} title={name}>
-          {name}
-        </Text>
-      ) : null}
-      <CopyableId id={id} />
-    </MetadataField>
-  );
-}
-
-function JobMetadataDetails({ job, agentsById, includeJobId = true }) {
-  const { dashboard } = useDashboardTheme();
-  const attemptLabel =
-    typeof job.attemptCount === 'number'
-      ? typeof job.maxAttempts === 'number'
-        ? `${job.attemptCount} of ${job.maxAttempts}`
-        : String(job.attemptCount)
-      : null;
-
-  return (
-    <VStack align='stretch' spacing={3}>
-      {includeJobId && job.id ? (
-        <MetadataField label='Job ID'>
-          <CopyableId id={job.id} />
-        </MetadataField>
-      ) : null}
-      {job.source ? (
-        <MetadataField label='Executor source'>
-          <Text fontSize='xs'>{job.source}</Text>
-        </MetadataField>
-      ) : null}
-      {job.subjectId ? (
-        <MetadataField
-          label={subjectTypeLabel(job.subjectType) || 'Subject'}
-        >
-          <CopyableId id={job.subjectId} />
-        </MetadataField>
-      ) : null}
-      {job.claimId ? (
-        <MetadataField label='Claim ID'>
-          <CopyableId id={job.claimId} />
-        </MetadataField>
-      ) : null}
-      <AgentMetadataField
-        id={job.claimedByAgentId}
-        label='Claimed by agent'
-        agentsById={agentsById}
-      />
-      {job.assignedAgentId &&
-      job.assignedAgentId !== job.claimedByAgentId ? (
-        <AgentMetadataField
-          id={job.assignedAgentId}
-          label='Assigned agent'
-          agentsById={agentsById}
-        />
-      ) : null}
-      {job.claimedByControllerClusterId ? (
-        <MetadataField label='Claimed by controller'>
-          <CopyableId id={job.claimedByControllerClusterId} />
-        </MetadataField>
-      ) : null}
-      {job.claimedByAgentSigningKeyId ? (
-        <MetadataField label="Agent's pinned signing key">
-          <CopyableId id={job.claimedByAgentSigningKeyId} />
-        </MetadataField>
-      ) : null}
-      <ApprovedByLine job={job} />
-      {job.leaseExpiresAt ? (
-        <MetadataField label='Lease expires'>
-          <Text fontSize='xs'>{formatDateTime(job.leaseExpiresAt)}</Text>
-        </MetadataField>
-      ) : null}
-      {attemptLabel ? (
-        <MetadataField label='Attempt'>
-          <Text fontSize='xs'>{attemptLabel}</Text>
-        </MetadataField>
-      ) : null}
-      {job.approvedAt ? (
-        <MetadataField label='Approved'>
-          <Text fontSize='xs'>{formatDateTime(job.approvedAt)}</Text>
-        </MetadataField>
-      ) : null}
-      {job.id ? (
-        <Button
-          as={RouterLink}
-          to={`/audit?q=${encodeURIComponent(job.id)}`}
-          size='sm'
-          variant='outline'
-          mt={1}
-          w='100%'
-          leftIcon={<Icon as={FileSearch} boxSize={3.5} />}
-          color={dashboard.accent.interactiveForeground}
-          borderColor={dashboard.accent.interactiveBorder}
-          bg={dashboard.accent.interactiveSurface}
-          _hover={{
-            bg: dashboard.accent.interactiveSurface,
-            borderColor: dashboard.accent.interactiveForeground,
-          }}
-        >
-          View audit log
-        </Button>
-      ) : null}
-    </VStack>
-  );
-}
-
-function JobMetadataPopover({
-  job,
-  agentsById,
-  includeJobId = true,
-  border,
-  borderStrong,
-  muted,
-  text,
-}) {
-  return (
-    // Fixed strategy: absolute popovers inside scrollable modal bodies get
-    // height-clamped by Popper and clip the last fields (Attempt / audit CTA).
-    <Popover
-      placement='bottom-start'
-      strategy='fixed'
-      isLazy
-      modifiers={[
-        {
-          name: 'flip',
-          options: {
-            fallbackPlacements: ['top-start', 'bottom-end', 'top-end'],
-          },
-        },
-        {
-          name: 'preventOverflow',
-          options: { padding: 8, altAxis: true },
-        },
-      ]}
-    >
-      <PopoverTrigger>
-        <IconButton
-          aria-label='Job metadata'
-          title='Job metadata'
-          icon={<Icon as={MoreHorizontal} boxSize={5} />}
-          size='sm'
-          variant='outline'
-          color={text}
-          borderColor={borderStrong || border}
-          borderWidth='1px'
-          bg='transparent'
-          _hover={{ bg: 'blackAlpha.50', borderColor: muted }}
-          _dark={{
-            color: 'white',
-            borderColor: 'whiteAlpha.500',
-            _hover: { bg: 'whiteAlpha.150', borderColor: 'whiteAlpha.700' },
-          }}
-        />
-      </PopoverTrigger>
-      <PopoverContent
-        w='min(340px, calc(100vw - 32px))'
-        maxH='min(70vh, 28rem)'
-        overflowY='auto'
-        borderColor={border}
-        zIndex='popover'
-      >
-        <PopoverArrow />
-        <PopoverBody py={3}>
-          <JobMetadataDetails
-            job={job}
-            agentsById={agentsById}
-            includeJobId={includeJobId}
-          />
-        </PopoverBody>
-      </PopoverContent>
-    </Popover>
-  );
-}
+/** Marker diameter; spine is centered through this column. */
+const TIMELINE_MARKER = 24;
+const TIMELINE_SPINE = 2;
+const TIMELINE_GAP = 12;
 
 function RedactionBadge() {
   return (
@@ -392,24 +189,35 @@ function TimelineItem({
       : '';
 
   return (
-    <Box position='relative' pl={6} pb={4} _last={{ pb: 0 }}>
+    <Flex align='flex-start' gap={`${TIMELINE_GAP}px`} pb={5} _last={{ pb: 0 }}>
       <Flex
-        position='absolute'
-        left='-7px'
-        top='2px'
+        flexShrink={0}
         align='center'
         justify='center'
-        w='14px'
-        h='14px'
+        w={`${TIMELINE_MARKER}px`}
+        h={`${TIMELINE_MARKER}px`}
         borderRadius='full'
-        bg={dotBg}
-        borderWidth='1px'
-        borderColor={border}
+        bg={`${scheme}.50`}
+        borderWidth='1.5px'
+        borderColor={`${scheme}.200`}
+        boxShadow={`0 0 0 3px ${dotBg}`}
+        position='relative'
+        zIndex={1}
+        _dark={{
+          bg: `${scheme}.900`,
+          borderColor: `${scheme}.600`,
+        }}
       >
-        <Icon as={IconCmp} boxSize={2.5} color={`${scheme}.400`} />
+        <Icon
+          as={IconCmp}
+          boxSize={3.5}
+          color={`${scheme}.500`}
+          strokeWidth={2.25}
+          _dark={{ color: `${scheme}.300` }}
+        />
       </Flex>
 
-      <VStack align='stretch' spacing={1}>
+      <VStack align='stretch' spacing={1} minW={0} flex={1} pt='1px'>
         <HStack spacing={2} flexWrap='wrap'>
           <Text fontSize='sm' fontWeight='semibold'>
             {title}
@@ -453,7 +261,7 @@ function TimelineItem({
           {timestamp}
         </Text>
       </VStack>
-    </Box>
+    </Flex>
   );
 }
 
@@ -470,7 +278,7 @@ export default function EvidenceTimeline({
   embedded = false,
 }) {
   const { workspaceId } = useWorkspace();
-  const { muted, border, borderStrong, text, dashboard } = useDashboardTheme();
+  const { muted, border, dashboard } = useDashboardTheme();
   const failureBg = dashboard.callout.dangerSurface;
   const failureBorder = dashboard.callout.dangerBorder;
   const waitingBg = dashboard.callout.warningSurface;
@@ -530,40 +338,91 @@ export default function EvidenceTimeline({
     }),
   ].filter(Boolean);
 
+  const showStandaloneHeader = !embedded;
+  const timelineBody =
+    items.length === 0 ? (
+      <Text fontSize='sm' color={muted}>
+        No timeline events recorded yet.
+      </Text>
+    ) : (
+      <Box position='relative'>
+        <Box
+          aria-hidden
+          position='absolute'
+          left={`${(TIMELINE_MARKER - TIMELINE_SPINE) / 2}px`}
+          top={`${TIMELINE_MARKER / 2}px`}
+          bottom={`${TIMELINE_MARKER / 2}px`}
+          w={`${TIMELINE_SPINE}px`}
+          bg={border}
+        />
+        {items.map(item => {
+          let attemptLabel = null;
+          if (item.kind === 'log' && item.entry.eventType === 'job.started') {
+            startedCount += 1;
+            const reported = reportedAttemptNumber(item.entry);
+            if (reported !== null) {
+              // Executor-reported counter is truncation-proof.
+              if (reported > 1) attemptLabel = `Attempt ${reported}`;
+            } else if (startedCount > 1) {
+              // Older entries may be truncated away, in which case counting
+              // visible job.started entries yields a wrong absolute number;
+              // fall back to a non-absolute label.
+              attemptLabel = logsTruncated
+                ? 'Later attempt'
+                : `Attempt ${startedCount}`;
+            }
+          }
+          const logMessage =
+            item.kind === 'log'
+              ? item.entry.message || item.entry.status || ''
+              : '';
+          const hideDetail =
+            sameOperatorMessage(logMessage, job.errorMessage) ||
+            sameOperatorMessage(logMessage, job.pendingReason?.message);
+          return (
+            <TimelineItem
+              key={item.id}
+              item={item}
+              attemptLabel={attemptLabel}
+              compact={compact}
+              hideDetail={hideDetail}
+            />
+          );
+        })}
+      </Box>
+    );
+
   return (
     <VStack align='stretch' spacing={3}>
-      <HStack justify='space-between' align='center' spacing={3}>
-        <HStack spacing={2} flexWrap='wrap' minW={0} flex='1'>
-          <JobMetadataPopover
-            job={job}
-            agentsById={agentsById}
-            includeJobId={!embedded || compact}
-            border={border}
-            borderStrong={borderStrong}
-            muted={muted}
-            text={text}
-          />
-          {!embedded && !compact ? (
-            <>
-              <Text fontSize='sm' fontWeight='bold'>
-                {jobOperationLabel(job.operation)}
-              </Text>
-              <JobStatusBadge status={job.status} />
-              {job.source ? <CertOpsBadge>{job.source}</CertOpsBadge> : null}
-            </>
-          ) : null}
-        </HStack>
-        {typeof onClose === 'function' ? (
-          <IconButton
-            aria-label='Close timeline'
-            icon={<Icon as={X} boxSize={3.5} />}
-            size='xs'
-            variant='ghost'
-            onClick={onClose}
-            flexShrink={0}
-          />
-        ) : null}
-      </HStack>
+      {showStandaloneHeader ? (
+        <>
+          <HStack justify='space-between' align='center' spacing={3}>
+            <HStack spacing={2} flexWrap='wrap' minW={0} flex='1'>
+              {!compact ? (
+                <>
+                  <Text fontSize='sm' fontWeight='bold'>
+                    {jobOperationLabel(job.operation)}
+                  </Text>
+                  <JobStatusBadge status={job.status} />
+                  {job.source ? <CertOpsBadge>{job.source}</CertOpsBadge> : null}
+                </>
+              ) : null}
+              <JobDetailsButton job={job} agentsById={agentsById} />
+            </HStack>
+            {typeof onClose === 'function' ? (
+              <IconButton
+                aria-label='Close timeline'
+                icon={<Icon as={X} boxSize={3.5} />}
+                size='xs'
+                variant='ghost'
+                onClick={onClose}
+                flexShrink={0}
+              />
+            ) : null}
+          </HStack>
+          <Divider borderColor={border} opacity={0.85} />
+        </>
+      ) : null}
 
       {job.errorCode || job.errorMessage ? (
         <Box
@@ -616,48 +475,10 @@ export default function EvidenceTimeline({
         </Box>
       ) : null}
 
-      {items.length === 0 ? (
-        <Text fontSize='sm' color={muted}>
-          No timeline events recorded yet.
-        </Text>
-      ) : (
-        <Box borderLeftWidth='2px' borderColor={border} ml={1} pl={1}>
-          {items.map(item => {
-            let attemptLabel = null;
-            if (item.kind === 'log' && item.entry.eventType === 'job.started') {
-              startedCount += 1;
-              const reported = reportedAttemptNumber(item.entry);
-              if (reported !== null) {
-                // Executor-reported counter is truncation-proof.
-                if (reported > 1) attemptLabel = `Attempt ${reported}`;
-              } else if (startedCount > 1) {
-                // Older entries may be truncated away, in which case counting
-                // visible job.started entries yields a wrong absolute number;
-                // fall back to a non-absolute label.
-                attemptLabel = logsTruncated
-                  ? 'Later attempt'
-                  : `Attempt ${startedCount}`;
-              }
-            }
-            const logMessage =
-              item.kind === 'log'
-                ? item.entry.message || item.entry.status || ''
-                : '';
-            const hideDetail =
-              sameOperatorMessage(logMessage, job.errorMessage) ||
-              sameOperatorMessage(logMessage, job.pendingReason?.message);
-            return (
-              <TimelineItem
-                key={item.id}
-                item={item}
-                attemptLabel={attemptLabel}
-                compact={compact}
-                hideDetail={hideDetail}
-              />
-            );
-          })}
-        </Box>
-      )}
+      <JobExecutionSummary job={job} agentsById={agentsById} />
+
+      <Divider borderColor={border} opacity={0.85} />
+      {timelineBody}
 
       {truncationNotes.length > 0 ? (
         <Text fontSize='xs' color={muted}>
@@ -665,12 +486,15 @@ export default function EvidenceTimeline({
         </Text>
       ) : null}
       {workspaceId && jobId ? (
-        <AgentShellConsole
-          workspaceId={workspaceId}
-          jobId={jobId}
-          title='Agent output'
-          maxHeight='200px'
-        />
+        <>
+          <Divider borderColor={border} opacity={0.85} />
+          <AgentShellConsole
+            workspaceId={workspaceId}
+            jobId={jobId}
+            title='Agent output'
+            maxHeight='200px'
+          />
+        </>
       ) : null}
     </VStack>
   );

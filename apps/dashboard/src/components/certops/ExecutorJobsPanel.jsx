@@ -6,22 +6,31 @@ import {
   Collapse,
   HStack,
   Icon,
+  Select,
   Text,
   Tooltip,
   VStack,
 } from '@chakra-ui/react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import CopyableId from '../CopyableId.jsx';
+import { AssetSearchInput } from '../AssetFilters.jsx';
 import ApprovalDecisionModal from './ApprovalDecisionModal.jsx';
 import CreateManualJobModal from './CreateManualJobModal.jsx';
 import EvidenceTimeline from './EvidenceTimeline.jsx';
+import { JobDetailsButton } from './JobDetailsButton.jsx';
 import JobStatusBadge from './JobStatusBadge.jsx';
-import { approveJob, rejectJob } from './certopsJobsApi.js';
+import {
+  approveJob,
+  rejectJob,
+  CERTOPS_JOB_STATUSES,
+  CERTOPS_JOB_OPERATIONS,
+  CERTOPS_JOB_CREATED_SINCE,
+} from './certopsJobsApi.js';
 import {
   formatDateTime,
   formatRelativeDateTime,
   jobListAdvisory,
   jobOperationLabel,
+  jobStatusLabel,
   subjectTypeLabel,
   truncateId,
   userFacingName,
@@ -45,6 +54,18 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
+
+const JOB_SOURCE_OPTIONS = [
+  'api',
+  'executor',
+  'system',
+  'automation',
+  'domain-monitor',
+  'endpoint-monitor',
+  'control-plane',
+  'external',
+  'controller_provisioning',
+];
 
 const PAUSED_CREATE_REASON =
   'Certificate operations are paused for this workspace, so new jobs are refused. Resume from the Settings tab first.';
@@ -98,7 +119,12 @@ function JobReasonChip({ advisory }) {
  * caused the pause.
  */
 export default function ExecutorJobsPanel({ certOpsPaused = false }) {
-  const { muted, border, dashboard } = useDashboardTheme();
+  const {
+    muted,
+    border,
+    dashboard,
+    inputBg,
+  } = useDashboardTheme();
   const rowHoverBg = dashboard.table.rowHover;
   const expandedBg = dashboard.bg.nested;
   const canManage = useCertOpsCanManage();
@@ -110,6 +136,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
     offset,
     filters,
     setPage,
+    setFilter,
     clearFilters,
     activeFilterLabels,
     hasActiveFilters,
@@ -120,7 +147,12 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
     status: filters.status || undefined,
     operation: filters.operation || undefined,
     source: filters.source || undefined,
+    q: filters.q || undefined,
+    createdSince: filters.createdSince || undefined,
   });
+  const visibleFilterLabels = activeFilterLabels.filter(
+    entry => entry.key !== 'q'
+  );
   const [expandedId, setExpandedId] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState(null);
@@ -167,8 +199,8 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
   return (
     <DashboardPanel>
       <DashboardPanelHeader
-        title='Machine executor jobs'
-        description='Certificate jobs reported by machine tokens and the API'
+        title='Jobs'
+        description='Executor-reported certificate jobs from agents and the API'
         action={
           <HStack spacing={2}>
             {canManage ? (
@@ -202,14 +234,83 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
           available.
         </Text>
       ) : null}
-      {hasActiveFilters ? (
-        // A filtered list that comes up short has to say it is filtered, or the
-        // short answer reads as the whole truth. This is most likely when the
-        // view arrived through a link someone else built.
-        <HStack spacing={2} mb={2} flexWrap='wrap'>
+      <HStack spacing={2} mb={3} flexWrap='wrap' align='center'>
+        <AssetSearchInput
+          value={filters.q}
+          onCommit={value => setFilter('q', value)}
+          inputBg={inputBg}
+          inputBorder={border}
+          placeholderColor={muted}
+          searchIconColor={muted}
+          placeholder='Search job ID, certificate, agent, trust anchor...'
+        />
+        <Select
+          size='sm'
+          maxW='180px'
+          value={filters.status}
+          onChange={event => setFilter('status', event.target.value)}
+          aria-label='Filter by job status'
+        >
+          <option value=''>All statuses</option>
+          {CERTOPS_JOB_STATUSES.map(value => (
+            <option key={value} value={value}>
+              {jobStatusLabel(value)}
+            </option>
+          ))}
+        </Select>
+        <Select
+          size='sm'
+          maxW='200px'
+          value={filters.operation}
+          onChange={event => setFilter('operation', event.target.value)}
+          aria-label='Filter by job operation'
+        >
+          <option value=''>All operations</option>
+          {CERTOPS_JOB_OPERATIONS.map(value => (
+            <option key={value} value={value}>
+              {jobOperationLabel(value)}
+            </option>
+          ))}
+        </Select>
+        <Select
+          size='sm'
+          maxW='180px'
+          value={filters.source}
+          onChange={event => setFilter('source', event.target.value)}
+          aria-label='Filter by job source'
+        >
+          <option value=''>All sources</option>
+          {JOB_SOURCE_OPTIONS.map(value => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </Select>
+        <Select
+          size='sm'
+          maxW='180px'
+          value={filters.createdSince}
+          onChange={event => setFilter('createdSince', event.target.value)}
+          aria-label='Filter by created time'
+        >
+          <option value=''>Any time</option>
+          {CERTOPS_JOB_CREATED_SINCE.map(entry => (
+            <option key={entry.value} value={entry.value}>
+              {entry.label}
+            </option>
+          ))}
+        </Select>
+      </HStack>
+      {visibleFilterLabels.length > 0 || filters.q ? (
+        <HStack spacing={2} mb={3} flexWrap='wrap' align='center'>
           <Text fontSize='xs' color={muted}>
             Filtered by{' '}
-            {activeFilterLabels
+            {[
+              ...(filters.q
+                ? [{ label: 'Search', value: filters.q }]
+                : []),
+              ...visibleFilterLabels,
+            ]
               .map(entry => `${entry.label}: ${entry.value}`)
               .join(', ')}
           </Text>
@@ -312,25 +413,27 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     />
                     <Text
                       fontSize='sm'
-                      fontWeight='medium'
+                      fontWeight='semibold'
                       flexShrink={0}
                       noOfLines={1}
                     >
                       {jobOperationLabel(job.operation)}
                     </Text>
-                    <Box
+                    <JobStatusBadge status={job.status} />
+                    <Text
+                      fontSize='xs'
+                      color={muted}
                       flexShrink={0}
-                      onClick={event => event.stopPropagation()}
+                      title={formatDateTime(job.createdAt)}
                     >
-                      <CopyableId id={job.id} display={truncateId(job.id)} />
-                    </Box>
+                      {formatRelativeDateTime(job.createdAt)}
+                    </Text>
                     <Box flex='1' minW={0} />
                     {stalledByPause ? (
                       <Text fontSize='xs' color={muted} flexShrink={0}>
                         Not executable while paused
                       </Text>
                     ) : null}
-                    <JobStatusBadge status={job.status} />
                     {job.approvedByUserId ? (
                       <Tooltip
                         label={`Approved by ${userFacingName(
@@ -347,14 +450,6 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                         </Text>
                       </Tooltip>
                     ) : null}
-                    <Text
-                      fontSize='xs'
-                      color={muted}
-                      flexShrink={0}
-                      title={formatDateTime(job.createdAt)}
-                    >
-                      {formatRelativeDateTime(job.createdAt)}
-                    </Text>
                     {canManage && awaitingApproval ? (
                       <HStack
                         spacing={1}
@@ -382,6 +477,15 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                         </Button>
                       </HStack>
                     ) : null}
+                    <Box
+                      flexShrink={0}
+                      onClick={event => event.stopPropagation()}
+                    >
+                      <JobDetailsButton
+                        job={job}
+                        agentsById={agentsById}
+                      />
+                    </Box>
                   </HStack>
                   {targetLine ? (
                     <Text
@@ -408,8 +512,6 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                     ml={5}
                     pl={3}
                     py={2}
-                    borderLeftWidth='2px'
-                    borderColor={border}
                     bg={expandedBg}
                     borderRadius='md'
                   >

@@ -1051,8 +1051,8 @@ function deliveryState(payload) {
   if (dropped > 0) return `Output incomplete: ${dropped} lines dropped`;
   if (streams.some((stream) => stream.truncated)) return "Log limit reached";
   if (payload.logsComplete) {
-    if (streams.length === 0) return "No agent output recorded";
-    return "Stream complete";
+    // Empty shell / status copy: stream rows alone are not a successful replay.
+    return "No agent output recorded";
   }
   if (streams.length > 0 && streams.every((stream) => ["final", "abandoned", "disabled"].includes(stream.status))) {
     return "Waiting for the next attempt";
