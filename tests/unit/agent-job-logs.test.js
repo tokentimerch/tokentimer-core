@@ -333,6 +333,22 @@ describe("agent job log ingest", () => {
     assert.equal(replay.nextState.agentGapLines, 1);
   });
 
+  it("does not double-count droppedBefore when the same hole is a seq gap", () => {
+    const afterLine = resolveIngest(freshState(), {
+      key: "k1",
+      lines: [line(1)],
+      final: false,
+    });
+    const afterDrop = resolveIngest(afterLine.nextState, {
+      key: "k2",
+      lines: [line(4)],
+      final: false,
+      droppedBefore: 2,
+    });
+    assert.equal(afterDrop.nextState.agentGapLines, 2);
+    assert.equal(afterDrop.nextState.resolvedThroughSeq, 4);
+  });
+
   it("rejects malformed retention and daily-byte env values", () => {
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0.5" }), 30);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "30days" }), 30);

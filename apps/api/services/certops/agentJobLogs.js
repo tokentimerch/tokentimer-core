@@ -269,10 +269,12 @@ function resolveIngest(state, batch, options = {}) {
 
   // droppedBefore is a per-batch delta from the agent. Replay of the same
   // batchKey does not re-enter this path, so retries cannot double-count.
+  // When the batch also carries later seqs, the hole is visible as a seq gap;
+  // take the max so local drops are not counted twice.
   const droppedBefore = Number.isSafeInteger(batch.droppedBefore) && batch.droppedBefore > 0
     ? batch.droppedBefore
     : 0;
-  if (droppedBefore > 0) agentGapLines += droppedBefore;
+  let seqGapLines = 0;
 
   const ordered = [...batch.lines].sort((a, b) => a.seq - b.seq);
   for (const line of ordered) {
@@ -290,7 +292,7 @@ function resolveIngest(state, batch, options = {}) {
     }
     if (!sawNew) {
       sawNew = true;
-      if (line.seq > resolved + 1) agentGapLines += line.seq - resolved - 1;
+      if (line.seq > resolved + 1) seqGapLines = line.seq - resolved - 1;
     }
     const overClaim = acceptedLines + 1 > maxLines || acceptedBytes + line.bytes > maxBytes;
     const overQuota = quotaLimit > 0 && quotaUsed + line.bytes > quotaLimit;
@@ -310,6 +312,8 @@ function resolveIngest(state, batch, options = {}) {
     newlyStored += 1;
     resolved = line.seq;
   }
+
+  agentGapLines += Math.max(droppedBefore, seqGapLines);
 
   const ack = {
     ackThroughSeq: resolved,

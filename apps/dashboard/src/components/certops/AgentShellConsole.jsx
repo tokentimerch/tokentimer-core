@@ -339,7 +339,9 @@ export default function AgentShellConsole({
         if (fresh.length > 0) setItems(current => [...current, ...fresh]);
         setPayload(page);
         setFailed(false);
-        if (page?.logsComplete) {
+        // Drain remaining pages even after the job finishes; logsComplete alone
+        // must not stop while hasMore still points at unread ingest rows.
+        if (page?.logsComplete && !page?.hasMore) {
           if (!doneRef.current) {
             doneRef.current = true;
             onComplete?.(page);

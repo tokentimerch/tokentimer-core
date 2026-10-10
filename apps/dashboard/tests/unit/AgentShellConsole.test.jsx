@@ -84,6 +84,32 @@ describe('AgentShellConsole', () => {
     ).toBe('danger');
   });
 
+  it('keeps draining after logsComplete when the page cap leaves hasMore', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const pages = Array.from({ length: 6 }, (_, i) => ({
+      items: [line(i + 1, `page ${i + 1}`)],
+      nextCursor: `c${i + 1}`,
+      hasMore: i < 5,
+      logsComplete: true,
+      jobStatus: 'succeeded',
+      streams: finalStreams,
+      storageEnabled: true,
+    }));
+    const fetcher = vi.fn();
+    for (const page of pages) fetcher.mockResolvedValueOnce(page);
+
+    renderConsole(fetcher);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
+    await screen.findByText(/page 5/);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await screen.findByText(/page 6/);
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(fetcher.mock.calls[5][2].cursor).toBe('c5');
+    expect(screen.getByText('Succeeded')).toBeInTheDocument();
+  });
+
   it('polls from the last cursor and appends only new lines', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetcher = vi
