@@ -296,6 +296,32 @@ describe("CertOps identity HTTP authorization and admission", function () {
         .expect(400);
     }
   });
+  it("searches certificate identities by fingerprint substring and common name", async () => {
+    const byFingerprint = await request(BASE)
+      .get(path("certificate-identities"))
+      .query({ q: "A3A3A3A3" })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    assert.equal(byFingerprint.body.pagination.total, 1);
+    assert.equal(byFingerprint.body.items[0].identityId, identityId);
+    assert.equal(byFingerprint.body.items[0].fingerprintSha256, A);
+
+    const byName = await request(BASE)
+      .get(path("certificate-identities"))
+      .query({ q: "Identity route certificate" })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    assert.equal(byName.body.pagination.total, 1);
+    assert.equal(byName.body.items[0].identityId, identityId);
+
+    const miss = await request(BASE)
+      .get(path("certificate-identities"))
+      .query({ q: "deadbeefcafe" })
+      .set("Cookie", owner.cookie)
+      .expect(200);
+    assert.equal(miss.body.pagination.total, 0);
+    assert.equal(miss.body.items.length, 0);
+  });
   it("route re-add cannot bypass mandatory quota admission", async () => {
     const current = (
       await TestUtils.execQuery(

@@ -32,6 +32,21 @@ function normalizeFingerprint(value) {
   return FINGERPRINT_PATTERN.test(fingerprint) ? fingerprint : null;
 }
 
+/** Free-text inventory search: CN/name/issuer plus hex fingerprint substrings. */
+function normalizeCertificateSearchQuery(value) {
+  const q = String(value || "")
+    .trim()
+    .slice(0, 256);
+  if (!q) return null;
+  const fingerprintNeedle = q.replace(/[^a-fA-F0-9]/g, "").toLowerCase();
+  return {
+    q,
+    // Short hex fragments match too many SHA-256 values to be useful.
+    fingerprintNeedle:
+      fingerprintNeedle.length >= 4 ? fingerprintNeedle : null,
+  };
+}
+
 function reasonFor(value) {
   const reason = typeof value === "string" ? value.trim() : "";
   if (!reason || reason.length > 512 || /[\x00-\x1f\x7f]/.test(reason)) {
@@ -119,6 +134,7 @@ async function listCertificateIdentities({
   excludeRetired = false,
   unmanaged,
   identityId,
+  q,
   sort,
   direction,
   client = pool,
@@ -128,6 +144,7 @@ async function listCertificateIdentities({
   const normalizedStatus = normalizeCertificateStatusFilter(status);
   const normalizedSource = normalizeCertificateSourceFilter(source);
   const unmanagedOnly = normalizeCertificateFlagFilter(unmanaged, "unmanaged");
+  const search = normalizeCertificateSearchQuery(q);
   const params = [workspaceId];
   const conditions = ["TRUE"];
   if (identityId) {
@@ -159,6 +176,28 @@ async function listCertificateIdentities({
     conditions.push(
       unmanagedOnly ? "open_period_id IS NULL" : "open_period_id IS NOT NULL",
     );
+  if (search) {
+    params.push(search.q.toLowerCase());
+    const textParam = params.length;
+    const textMatch = `(
+      position($${textParam} in lower(COALESCE(common_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(managed_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(issuer, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(source_ref, ''))) > 0
+    )`;
+    if (search.fingerprintNeedle) {
+      params.push(search.fingerprintNeedle);
+      conditions.push(
+        `(${textMatch} OR (
+          fingerprint_sha256 IS NOT NULL AND
+          position($${params.length} in fingerprint_sha256) > 0
+        ))`,
+      );
+    } else {
+      conditions.push(textMatch);
+    }
+  }
   const orderBy = resolveListSort({
     sort,
     direction,

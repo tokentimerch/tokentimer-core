@@ -3450,6 +3450,7 @@ router.get(
         status: req.query.status, source: req.query.source,
         excludeRetired: req.query.excludeRetired === "true",
         unmanaged: req.query.unmanaged,
+        q: req.query.q,
         sort: req.query.sort, direction: req.query.direction,
       });
       const enriched = await withRenewalState({

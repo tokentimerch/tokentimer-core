@@ -46,6 +46,7 @@ export const CERTOPS_JOB_FILTERS = {
  * literal query param of its own.
  */
 export const CERTOPS_CERTIFICATE_FILTERS = {
+  q: { label: 'Search', default: '' },
   status: { label: 'Status', default: '' },
   source: { label: 'Source', default: '' },
   showRetired: { label: 'Show retired/decommissioned', default: '' },

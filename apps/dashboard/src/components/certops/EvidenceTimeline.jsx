@@ -200,7 +200,25 @@ function JobMetadataPopover({
   text,
 }) {
   return (
-    <Popover placement='bottom-start' isLazy>
+    // Fixed strategy: absolute popovers inside scrollable modal bodies get
+    // height-clamped by Popper and clip the last fields (Attempt / audit CTA).
+    <Popover
+      placement='bottom-start'
+      strategy='fixed'
+      isLazy
+      modifiers={[
+        {
+          name: 'flip',
+          options: {
+            fallbackPlacements: ['top-start', 'bottom-end', 'top-end'],
+          },
+        },
+        {
+          name: 'preventOverflow',
+          options: { padding: 8, altAxis: true },
+        },
+      ]}
+    >
       <PopoverTrigger>
         <IconButton
           aria-label='Job metadata'
@@ -222,10 +240,13 @@ function JobMetadataPopover({
       </PopoverTrigger>
       <PopoverContent
         w='min(340px, calc(100vw - 32px))'
+        maxH='min(70vh, 28rem)'
+        overflowY='auto'
         borderColor={border}
+        zIndex='popover'
       >
         <PopoverArrow />
-        <PopoverBody>
+        <PopoverBody py={3}>
           <JobMetadataDetails
             job={job}
             agentsById={agentsById}

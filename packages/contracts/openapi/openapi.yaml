@@ -3631,6 +3631,14 @@ paths:
           description: true selects identities with no open period; false selects currently managed identities.
           schema: { type: boolean }
         - in: query
+          name: q
+          description: >-
+            Case-insensitive substring match on common name, managed name,
+            display name, issuer, source reference, and SHA-256 fingerprint
+            (colons/spaces ignored; fingerprint matches require at least four
+            hex characters).
+          schema: { type: string, maxLength: 256 }
+        - in: query
           name: sort
           schema: { type: string, enum: [expiry, name, certificate, status, source, keyLocality, created], default: expiry }
         - in: query

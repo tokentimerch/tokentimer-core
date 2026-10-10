@@ -35,6 +35,7 @@ import {
   Plus,
   Unlink,
 } from 'lucide-react';
+import { AssetSearchInput } from '../../components/AssetFilters.jsx';
 import CopyableId from '../../components/CopyableId.jsx';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
 import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
@@ -232,7 +233,12 @@ export default function CertOpsCertificates() {
   const csrIdInUrl = new URLSearchParams(location.search).get(
     'csrCertificateId'
   );
-  const { muted, dashboard } = useDashboardTheme();
+  const {
+    muted,
+    dashboard,
+    inputBg,
+    border: inputBorder,
+  } = useDashboardTheme();
   const rowHoverBg = dashboard.table.rowHover;
   const tableHeadBg = useColorModeValue('gray.50', 'rgba(8, 13, 22, 0.84)');
   const tableHeadColor = useColorModeValue(
@@ -304,9 +310,15 @@ export default function CertOpsCertificates() {
       source: filters.source || undefined,
       excludeRetired,
       unmanaged: unmanagedOnly || undefined,
+      q: filters.q || undefined,
       sort: sort.key,
       direction: sort.direction,
     });
+  const searchIconColor = useColorModeValue(
+    'var(--chakra-colors-gray-500)',
+    'rgba(148, 163, 184, 0.86)'
+  );
+  const searchPlaceholderColor = muted;
 
   const [retireTarget, setRetireTarget] = useState(null);
   const [setupTarget, setSetupTarget] = useState(null);
@@ -384,7 +396,7 @@ export default function CertOpsCertificates() {
   };
 
   const visibleFilterLabels = activeFilterLabels.filter(
-    entry => entry.key !== 'showRetired'
+    entry => entry.key !== 'showRetired' && entry.key !== 'q'
   );
 
   const handleRetryRenewalSetup = async certificate => {
@@ -436,6 +448,15 @@ export default function CertOpsCertificates() {
       />
 
       <HStack spacing={2} mb={3} flexWrap='wrap'>
+        <AssetSearchInput
+          value={filters.q}
+          onCommit={value => setFilter('q', value)}
+          inputBg={inputBg}
+          inputBorder={inputBorder}
+          placeholderColor={searchPlaceholderColor}
+          searchIconColor={searchIconColor}
+          placeholder='Search certificates, fingerprints, issuers...'
+        />
         <Select
           size='sm'
           maxW='200px'

@@ -545,6 +545,19 @@ describe('CertOpsCertificates filters', () => {
       expect.objectContaining({ source: 'agent_filesystem' })
     );
   });
+
+  it('reads fingerprint search from the URL into the certificates query', () => {
+    renderPage(['/?q=534CE368D766B353']);
+
+    expect(
+      screen.getByPlaceholderText(
+        'Search certificates, fingerprints, issuers...'
+      )
+    ).toHaveValue('534CE368D766B353');
+    expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: '534CE368D766B353' })
+    );
+  });
 });
 
 describe('CertOpsCertificates retire action', () => {
