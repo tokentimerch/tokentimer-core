@@ -16,10 +16,10 @@ const {
 } = require("./index.js");
 
 describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
-  it("names exactly the three real-host-evidence-gated capability strings", () => {
+  it("names exactly the real-host-evidence-gated capability strings", () => {
     assert.deepEqual(
       [...GATED_CAPABILITIES],
-      ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"],
+      ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1", "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"],
     );
   });
 

@@ -431,7 +431,7 @@ function validateRenewalProfile(raw) {
 
   if (
     !Array.isArray(raw.deploymentTargets) ||
-    raw.deploymentTargets.length < 1 ||
+    raw.deploymentTargets.length < (raw.publicationDestination ? 0 : 1) ||
     raw.deploymentTargets.length > 32
   ) {
     throw profileError(
@@ -444,6 +444,12 @@ function validateRenewalProfile(raw) {
   );
 
   const target = validateTarget(raw.target || deploymentTargets[0], "target");
+  if (raw.publicationDestination) {
+    require("./materialDistribution").validateDistributionContract("publication", {
+      ...raw.publicationDestination, materialVersionId: "00000000-0000-5000-8000-000000000000",
+    });
+    if (deploymentTargets.length || target.type !== "domain" || target.certPath || raw.verification?.requireMatch) throw profileError("Publication profiles cannot deploy a local target");
+  }
 
   const verification = raw.verification;
   if (
@@ -515,6 +521,7 @@ function validateRenewalProfile(raw) {
       port: verifyPort,
       requireMatch: verification.requireMatch,
     },
+    ...(raw.publicationDestination ? { publicationDestination: { ...raw.publicationDestination } } : {}),
   };
 }
 
@@ -647,6 +654,14 @@ function executionFieldsFromRenewalProfile(profile) {
     // remain for single-destination backward compatibility.
     deploymentTargets: profile.deploymentTargets.map((t) => ({ ...t })),
   };
+  if (profile.publicationDestination) {
+    delete fields.deploymentTargets;
+    fields.keyMode = "vault-managed";
+    if (profile.preferredChain) fields.preferredChain = profile.preferredChain;
+    if (profile.ca.accountRef) fields.accountRef = profile.ca.accountRef;
+    if (profile.ca.eabRef) fields.eabRef = profile.ca.eabRef;
+    return fields;
+  }
   if (profile.target.type === "windows-iis") {
     // Mirrors issuance.js's WINDOWS_IIS_ISSUANCE_KEY_MODE: the agent's
     // executeJob dispatch (packages/agent/src/index.js) reads job.keyMode
@@ -749,6 +764,14 @@ function windowsIisTargetAuditFields(target) {
 function buildRenewalJobPayload({ certificate, reason = "expiry-threshold" }) {
   const renewalProfile = resolveRenewalProfileSnapshot(certificate);
   const executionFields = executionFieldsFromRenewalProfile(renewalProfile);
+  if (renewalProfile.publicationDestination) {
+    const crypto = require("node:crypto");
+    const bytes = crypto.createHash("sha256").update(`renew-material:${certificate.workspace_id}:${certificate.id}:${new Date(certificate.not_after).toISOString()}`).digest().subarray(0, 16);
+    bytes[6] = (bytes[6] & 15) | 0x50; bytes[8] = (bytes[8] & 63) | 0x80;
+    const hex = bytes.toString("hex");
+    executionFields.publication = { ...renewalProfile.publicationDestination,
+      materialVersionId: `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}` };
+  }
   return {
     certificateId: String(certificate.id),
     notAfter: new Date(certificate.not_after).toISOString(),

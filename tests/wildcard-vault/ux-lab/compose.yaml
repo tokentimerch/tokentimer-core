@@ -1,0 +1,128 @@
+name: tt-wildcard-ux-lab
+x-api-env: &api-env
+  NODE_ENV: production
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_NAME: wildcard_ux_lab
+  DB_USER: wildcard_ux_lab
+  DB_PASSWORD: lab-only-database-password
+  SESSION_SECRET: lab-only-session-secret-change-in-real-installations
+  CERTOPS_ENABLED: "true"
+  CERTOPS_SIGNING_ENCRYPTION_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
+  CERTOPS_REGISTRATION_ENCRYPTION_KEY: "2222222222222222222222222222222222222222222222222222222222222222"
+  APP_URL: http://127.0.0.1:${TT_UX_WEB_PORT:-58801}
+  API_URL: http://127.0.0.1:${TT_UX_API_PORT:-58800}
+  SMTP_HOST: mail
+  SMTP_PORT: 1025
+  SMTP_REQUIRE_TLS: "false"
+  FROM_EMAIL: lab@wildcard.test
+  FROM_EMAIL_NAME: Wildcard UX Lab
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: wildcard_ux_lab
+      POSTGRES_USER: wildcard_ux_lab
+      POSTGRES_PASSWORD: lab-only-database-password
+    volumes: [postgres:/var/lib/postgresql/data]
+    cpus: 0.5
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U wildcard_ux_lab"]
+      interval: 2s
+      retries: 30
+  mail:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:${TT_UX_MAIL_PORT:-58803}:8025"]
+    cpus: 0.25
+    mem_limit: 96m
+  vault:
+    image: hashicorp/vault:1.21
+    command: [server, -dev, -dev-listen-address=0.0.0.0:8200]
+    environment: { VAULT_DEV_ROOT_TOKEN_ID: ux-lab-only-vault-token }
+    cap_add: [IPC_LOCK]
+    cpus: 0.5
+    mem_limit: 256m
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
+    command: ["-defaultIPv6", "", "-defaultIPv4", "127.0.0.1"]
+    cpus: 0.25
+    mem_limit: 64m
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    command:
+      [
+        "-config",
+        "/fixture/pebble.json",
+        "-strict",
+        "-dnsserver",
+        "challtestsrv:8053",
+      ]
+    # This journey faults Vault, not ACME nonce handling in the fixture client.
+    # Real DNS-01 validation and anti-replay nonce validation remain enabled.
+    environment: { PEBBLE_VA_NOSLEEP: "1", PEBBLE_WFE_NONCEREJECT: "0" }
+    volumes: ["../pebble.json:/fixture/pebble.json:ro"]
+    cpus: 0.5
+    mem_limit: 128m
+    depends_on: [challtestsrv]
+  api:
+    # Reuse dependencies only; current API/package source is mounted read-only.
+    image: ${TT_UX_API_IMAGE:-tt-wildcard-core-api:20261008}
+    environment:
+      <<: *api-env
+      PORT: 4000
+      ADMIN_EMAIL: owner@wildcard.test
+      ADMIN_PASSWORD: "LabOwner-2026!Only"
+      ADMIN_NAME: Lab Owner
+      SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: "true"
+    volumes:
+      [
+        "../../../apps/api:/app/apps/api:ro",
+        "../../../packages:/app/packages:ro",
+      ]
+    ports: ["127.0.0.1:${TT_UX_API_PORT:-58800}:4000"]
+    cpus: 1
+    mem_limit: 512m
+    depends_on:
+      {
+        postgres: { condition: service_healthy },
+        mail: { condition: service_started },
+      }
+  worker:
+    image: ${TT_UX_WORKER_IMAGE:-localhost:58600/core-worker:20261008}
+    environment:
+      <<: *api-env
+      CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "false"
+      CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false"
+      CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false"
+    volumes:
+      [
+        "../../../apps/api:/app/apps/api:ro",
+        "../../../apps/worker:/app/apps/worker:ro",
+        "../../../packages:/app/packages:ro",
+        ".:/app/tests/wildcard-vault/ux-lab:ro",
+      ]
+    command: [node, /app/tests/wildcard-vault/ux-lab/worker-loop.cjs]
+    cpus: 0.5
+    mem_limit: 256m
+    profiles: [worker]
+    depends_on: [api]
+  customers:
+    image: ${TT_UX_CUSTOMER_IMAGE:-tt-wildcard-vault-fixture:20261008}
+    command: [node, tests/wildcard-vault/ux-lab/customer-host.cjs]
+    environment:
+      TT_UX_CERTIFICATE_MODE: ${TT_UX_CERTIFICATE_MODE:-san}
+    volumes: ["../../..:/repo:ro", "customers:/lab", "${TT_WILDCARD_UX_OUTPUT}:/lab-input:ro"]
+    ports:
+      [
+        "127.0.0.1:${TT_UX_WEB_PORT:-58801}:8080",
+        "127.0.0.1:${TT_UX_CONTROL_PORT:-58805}:8085",
+        "127.0.0.1:${TT_UX_NGINX_PORT:-58843}:8443",
+        "127.0.0.1:${TT_UX_HAPROXY_PORT:-58943}:9443",
+      ]
+    cpus: 1.5
+    mem_limit: 768m
+    depends_on: [api, vault, pebble]
+volumes:
+  postgres:
+  customers:

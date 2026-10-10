@@ -9,6 +9,7 @@ import { useOutletContext } from 'react-router';
 import { DashboardPanel } from '../../components/DashboardPrimitives.jsx';
 import RenewalProfilesPanel from '../../components/certops/RenewalProfilesPanel.jsx';
 import UpcomingRenewalsPanel from '../../components/certops/UpcomingRenewalsPanel.jsx';
+import DistributionGroupsPanel from '../../components/certops/DistributionGroupsPanel.jsx';
 
 /**
  * Renewals tab.
@@ -26,6 +27,9 @@ export default function CertOpsRenewals() {
 
   return (
     <SimpleGrid columns={{ base: 1 }} spacing={3}>
+      <DashboardPanel>
+        <DistributionGroupsPanel />
+      </DashboardPanel>
       {certOpsPaused ? (
         // A per-profile badge can only say whether that profile renews; it
         // cannot say the whole workspace is paused, and the two look identical

@@ -1,0 +1,6 @@
+[worker.oci]
+  max-parallelism = 1
+
+# Throwaway registry on this fixture's private network only.
+[registry."tt-wildcard-vault-20261008-registry-1:5000"]
+  http = true

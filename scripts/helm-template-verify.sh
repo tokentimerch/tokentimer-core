@@ -643,4 +643,9 @@ for setting in emailDailyCap degradedAttemptsThreshold autoSyncCriticalThreshold
   done
 done
 
+for hops in 0 1 2; do
+  proxy_value="$(helm template "${RELEASE_NAME}" "${CHART}" --set config.adminEmail=ci@example.com --set "config.trustProxyHops=${hops}" --show-only templates/configmap.yaml)"
+  assert_contains "${proxy_value}" "TRUST_PROXY_HOPS: \"${hops}\"" "explicit proxy trust hops ${hops} preserved"
+done
+
 echo "helm-template-verify: ok -> ${OUT}"

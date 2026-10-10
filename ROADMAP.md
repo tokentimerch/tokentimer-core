@@ -1,7 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-09 for the AD CS issuer contracts against main
-`91cc31d48322f63ae443676fc3657f4372e1b22e`.
+Last reviewed: 2026-10-10 for the certificate distribution candidate in PR #329
+and the AD CS issuer contracts on main.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -43,6 +43,10 @@ called stable while they are open.
   Name filesystem, IIS, or customer Vault locations on a certificate.
   One issuance can deploy to those destinations. The control plane
   never stores private keys. Shared-key Vault mode is explicit opt-in.
+  [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
+  customer Vault publication and independent consumer rollouts for any shared
+  certificate, including ordinary and wildcard certificates. Agent capabilities
+  remain gated pending qualification; this item is still open.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.

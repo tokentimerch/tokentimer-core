@@ -48,6 +48,7 @@ import {
   listCertificates,
   retireCertificate,
   retryRenewalSetupIntent,
+  repairPublicationRenewalProfile,
 } from '../../components/certops/certopsApi.js';
 import {
   MANAGED_CERTIFICATE_SOURCES,
@@ -61,7 +62,10 @@ import {
   sourceLabel,
   statusLabel,
 } from '../../components/certops/certopsFormat.js';
-import { useCertOpsCanManage } from '../../components/certops/useCertOps.js';
+import {
+  useCertOpsCanManage,
+  useCertOpsIsWorkspaceAdmin,
+} from '../../components/certops/useCertOps.js';
 import { useCertOpsCertificates } from '../../components/certops/useCertOpsCertificates.js';
 import {
   DashboardActionButton,
@@ -277,6 +281,7 @@ export default function CertOpsCertificates() {
     },
   };
   const canManage = useCertOpsCanManage();
+  const isWorkspaceAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
   const {
     limit,
@@ -401,6 +406,22 @@ export default function CertOpsCertificates() {
         err?.response?.data?.error ||
           err?.message ||
           'Could not retry automatic renewal setup.'
+      );
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const handleRepairPublicationRenewal = async certificate => {
+    setRetryingId(certificate.id);
+    try {
+      await repairPublicationRenewalProfile(workspaceId, certificate.id);
+      showSuccess('Renewal profile restored from the successful publication');
+      refresh();
+    } catch (err) {
+      showError(
+        'Repair failed',
+        err?.response?.data?.error || 'Could not repair renewal configuration.'
       );
     } finally {
       setRetryingId(null);
@@ -838,6 +859,25 @@ export default function CertOpsCertificates() {
                                       }
                                     />
                                   </Tooltip>
+                                ) : certificate.keyMode === 'vault-managed' ? (
+                                  isWorkspaceAdmin &&
+                                  certificate.keyReference ? (
+                                    <Tooltip label='Repair renewal profile'>
+                                      <IconButton
+                                        {...actionButtonProps}
+                                        aria-label='Repair renewal profile'
+                                        icon={<CalendarClock size={16} />}
+                                        isLoading={
+                                          retryingId === certificate.id
+                                        }
+                                        onClick={() =>
+                                          handleRepairPublicationRenewal(
+                                            certificate
+                                          )
+                                        }
+                                      />
+                                    </Tooltip>
+                                  ) : null
                                 ) : certificate.renewal?.state ===
                                     RENEWAL_STATES.notConfigured &&
                                   certificate.renewalSetup?.state !==

@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 64
+Total skips found: 66
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -45,6 +45,8 @@ Total skips found: 64
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/material-store/material-store.test.js` | 88 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/material-store/material-store.test.js` | 106 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |

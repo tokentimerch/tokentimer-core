@@ -361,6 +361,18 @@ export async function setUpCertificateRenewal(
   return res.data;
 }
 
+export async function repairPublicationRenewalProfile(
+  workspaceId,
+  certificateId
+) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/certificates/${encodeURIComponent(certificateId)}/renewal-profile/repair`,
+    {}
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
 /**
  * Detach a certificate from its renewal profile (U8). The profile row is
  * left alone since other certificates may share it; only this

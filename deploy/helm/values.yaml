@@ -445,7 +445,10 @@ config:
 
   # Replaces the chart-generated secret entirely.
   # Must contain SESSION_SECRET; optionally DB_PASSWORD, ADMIN_PASSWORD,
-  # WEEKLY_DIGEST_RECIPIENT_KEY, etc.
+  # WEEKLY_DIGEST_RECIPIENT_KEY, etc. With CertOps enabled it must also contain
+  # CERTOPS_SIGNING_ENCRYPTION_KEY and CERTOPS_REGISTRATION_ENCRYPTION_KEY,
+  # each 64 hexadecimal characters. Server-side Helm dry-run validates a
+  # readable existing Secret; offline helm template cannot inspect the cluster.
   existingSecret: ""
 
   # Optional HMAC secret for digest skip keys; falls back to SESSION_SECRET.

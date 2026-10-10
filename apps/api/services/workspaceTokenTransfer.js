@@ -351,6 +351,9 @@ async function transferTokenAssociations(
     };
   }
 
+  // Serialize authority changes with CertOps admission/dispatch in both tenants.
+  await client.query("SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE", [[fromWorkspaceId, toWorkspaceId]]);
+
   const sourceGroups = await loadWorkspaceGroups(client, fromWorkspaceId);
   const destGroups = await loadWorkspaceGroups(client, toWorkspaceId);
   const { map: groupIdMap } = buildContactGroupTransferMap(
@@ -413,6 +416,10 @@ async function transferTokenAssociations(
     fromWorkspaceId, certIds, targetIds,
   });
 
+  const retainedDistributionSources = await listIds(client,
+    `SELECT DISTINCT managed_certificate_id AS id FROM certops_distribution_groups
+      WHERE workspace_id=$1 AND managed_certificate_id=ANY($2::uuid[])`, [fromWorkspaceId, certIds]);
+
   const certIdTexts = certIds.map(String);
   const tokenIdTexts = tokenIds.map(String);
   const targetIdTexts = targetIds;
@@ -426,8 +433,9 @@ async function transferTokenAssociations(
           OR (subject_type = 'token' AND subject_id = ANY($3::text[]))
           OR (subject_type = 'certificate_target' AND subject_id = ANY($4::text[]))
           OR (subject_type = 'certificate_instance' AND subject_id = ANY($5::text[]))
-        )`,
-    [fromWorkspaceId, certIdTexts, tokenIdTexts, targetIdTexts, instanceIdTexts],
+        )
+        AND NOT (subject_type='managed_certificate' AND subject_id=ANY($6::text[]))`,
+    [fromWorkspaceId, certIdTexts, tokenIdTexts, targetIdTexts, instanceIdTexts, retainedDistributionSources],
   );
   await assertNoJobIdempotencyCollision(client, {
     jobIds,

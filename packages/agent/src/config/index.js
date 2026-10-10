@@ -1130,6 +1130,8 @@ function loadAgentConfig({ configDir } = {}) {
     pinnedSigningKey,
     dnsProviders,
     acmeAccounts,
+    materialStores: fileConfig.materialStores || null,
+    materialBindings: fileConfig.materialBindings || null,
     dnsPropagation,
   };
 }

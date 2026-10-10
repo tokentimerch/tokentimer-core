@@ -238,6 +238,18 @@ function normalizeIssuanceRequest(options) {
   }
 
   const targetType = target.type;
+  if (payload.publicationDestination) {
+    const destination = payload.publicationDestination;
+    if (targetType !== "domain" || !options.assignedAgentId || !isPlainObject(destination) ||
+      Object.keys(destination).some((key) => !["materialStoreRef", "issuanceProfileRef", "profileRevision"].includes(key)) ||
+      !/^[A-Za-z0-9_-]{1,64}$/.test(destination.materialStoreRef || "") ||
+      !/^[A-Za-z0-9_-]{1,64}$/.test(destination.issuanceProfileRef || "") ||
+      !Number.isInteger(destination.profileRevision) || destination.profileRevision < 1 ||
+      ["certPath", "keyPath", "chainPath", "deploymentTargets", "reloadService", "verifyHost", "verifyPort", "publication"].some((field) => payload[field] != null)) {
+      throw issuanceError("Publication requires an assigned issuer, a domain source and an approved local destination alias");
+    }
+    return { idempotencyKey, commonName, sans, targetType, certPath: null, publicationDestination: destination };
+  }
   if (targetType === "windows-iis") {
     if (payload.certPath !== undefined && payload.certPath !== null) {
       throw issuanceError(
@@ -296,7 +308,7 @@ function advisoryLockKeyForIssuance(workspaceId, idempotencyKey) {
 }
 
 async function insertProvisioningCertificate(client, options) {
-  const keyMode = keyModeForTargetType(options.targetType);
+  const keyMode = options.publicationDestination ? "vault-managed" : keyModeForTargetType(options.targetType);
   const windowsTarget = options.windowsTarget;
   // A filesystem target's key_reference/deployed_cert_path correlate this
   // row to the agent's later filesystem discovery scan of the same path
@@ -306,7 +318,7 @@ async function insertProvisioningCertificate(client, options) {
   // a path, so deployed_cert_path stays NULL and key_reference is instead an
   // opaque store/binding pointer (never key material -- the CNG key never
   // leaves the machine key store, let alone this row).
-  const keyReference = windowsTarget
+  const keyReference = options.publicationDestination ? `vault:${options.publicationDestination.materialStoreRef}` : windowsTarget
     ? `winstore://${windowsTarget.store}/${windowsTarget.binding.site}:${windowsTarget.binding.port}`
     : `file://${options.certPath}`;
   const deployedCertPath = windowsTarget ? null : options.certPath;
@@ -379,7 +391,7 @@ async function createCertificateIssuanceJob(options = {}) {
   const { jobCreatorOverride, ...jobOptions } = options;
   const createJob = jobCreatorOverride || createCertificateJob;
   const workspaceId = options.workspaceId;
-  const { idempotencyKey, commonName, sans, targetType, certPath, windowsTarget } =
+  const { idempotencyKey, commonName, sans, targetType, certPath, windowsTarget, publicationDestination } =
     normalizeIssuanceRequest(options);
 
   // Resolve the identity before touching certificate_jobs. A retried POST must
@@ -437,6 +449,7 @@ async function createCertificateIssuanceJob(options = {}) {
       targetType,
       certPath,
       windowsTarget,
+      publicationDestination,
       // Mirrors the resolution createCertificateJob performs for the job row, so
       // the certificate is correlated to the same agent that will deploy it.
       assignedAgentId:
@@ -450,6 +463,21 @@ async function createCertificateIssuanceJob(options = {}) {
   // request to decide replay-vs-conflict, so a replay that reconstructed the
   // payload differently would be reported as a conflicting reuse of the key
   // instead of returning the original job.
+  let publication = null;
+  const executionPayload = { ...options.payload };
+  delete executionPayload.publicationDestination;
+  if (publicationDestination) {
+    const group = await require("./materialDistribution").createGroupForSource({ client, workspaceId,
+      certificateId, issuerAgentId: options.assignedAgentId, ...publicationDestination });
+    // The intended logical version is stable across request retries, and is
+    // allocated before dispatch. It is separate from the leaf fingerprint.
+    const bytes = crypto.createHash("sha256").update(`material:${workspaceId}:${idempotencyKey}`).digest().subarray(0, 16);
+    bytes[6] = (bytes[6] & 15) | 0x50; bytes[8] = (bytes[8] & 63) | 0x80;
+    const hex = bytes.toString("hex");
+    const materialVersionId = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    publication = { type: "vault-kv2", groupId: group.id, managementPeriodId: group.management_period_id,
+      materialVersionId, ...publicationDestination };
+  }
   return await createJob({
     ...jobOptions,
     client,
@@ -458,7 +486,7 @@ async function createCertificateIssuanceJob(options = {}) {
     subjectType: "managed_certificate",
     subjectId: certificateId,
     payload: {
-      ...options.payload,
+      ...executionPayload,
       // Server-assigned: the agent uses certificateId as the job's identity
       // for its own state and logging, and it must match the row this job
       // reconciles.
@@ -470,7 +498,7 @@ async function createCertificateIssuanceJob(options = {}) {
       // this job, once dispatched, to the agent's CNG-native executor instead
       // of the file-based one (see AGENT_DEPLOYABLE_KEY_MODES's doc comment in
       // jobs.js and executeJob's dispatch check in packages/agent/src/index.js).
-      ...(windowsTarget
+      ...(publication ? { publication, keyMode: "vault-managed" } : windowsTarget
         ? { keyMode: WINDOWS_IIS_ISSUANCE_KEY_MODE }
         : { certPath }),
     },

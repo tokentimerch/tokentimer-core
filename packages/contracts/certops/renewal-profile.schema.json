@@ -25,22 +25,36 @@
       "const": 1
     },
     "profileId": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 128,
       "description": "Source certificate_profiles.id when snapshotted; null for ad-hoc API jobs."
     },
     "profileName": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 256
     },
     "sanPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "sans", "allowWildcards"],
+      "required": [
+        "mode",
+        "sans",
+        "allowWildcards"
+      ],
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["exact", "template", "inherit"]
+          "enum": [
+            "exact",
+            "template",
+            "inherit"
+          ]
         },
         "sans": {
           "type": "array",
@@ -59,7 +73,10 @@
     },
     "keyAlgorithm": {
       "type": "string",
-      "enum": ["rsa", "ecdsa"]
+      "enum": [
+        "rsa",
+        "ecdsa"
+      ]
     },
     "keySize": {
       "type": "integer",
@@ -68,7 +85,9 @@
     "keyRotationPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rotateOnRenew"],
+      "required": [
+        "rotateOnRenew"
+      ],
       "properties": {
         "rotateOnRenew": {
           "type": "boolean"
@@ -76,14 +95,21 @@
       }
     },
     "preferredChain": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 256,
       "description": "Preferred issuer chain name (e.g. ISRG Root X1); null means CA default."
     },
     "ca": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["endpoint", "accountRef", "eabRef"],
+      "required": [
+        "endpoint",
+        "accountRef",
+        "eabRef"
+      ],
       "properties": {
         "endpoint": {
           "type": "string",
@@ -92,12 +118,18 @@
           "format": "uri"
         },
         "accountRef": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128,
           "description": "Non-secret agent-local ACME account reference name."
         },
         "eabRef": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128,
           "description": "Non-secret agent-local EAB credential reference name; never the HMAC secret."
         }
@@ -106,11 +138,17 @@
     "acme": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "commandRef"],
+      "required": [
+        "kind",
+        "commandRef"
+      ],
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["certbot", "acme.sh"]
+          "enum": [
+            "certbot",
+            "acme.sh"
+          ]
         },
         "commandRef": {
           "type": "string",
@@ -123,7 +161,10 @@
     "dns": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "zone"],
+      "required": [
+        "provider",
+        "zone"
+      ],
       "properties": {
         "provider": {
           "type": "string",
@@ -140,12 +181,15 @@
     },
     "deploymentTargets": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "maxItems": 32,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "reference"],
+        "required": [
+          "type",
+          "reference"
+        ],
         "properties": {
           "type": {
             "type": "string",
@@ -164,56 +208,92 @@
             "maxLength": 512
           },
           "certPath": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512
           },
           "keyPath": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512,
             "pattern": "^/",
             "description": "Absolute POSIX destination for the matching private key PEM. Path/mode metadata only — never key content."
           },
           "reloadService": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9_.:@-]{1,128}$"
           },
           "chainPath": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512,
             "description": "Optional absolute destination for the intermediate chain PEM."
           },
           "certMode": {
-            "type": ["string", "integer", "null"],
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
             "description": "POSIX file mode for certPath (octal string like \"0644\" or integer)."
           },
           "keyMode": {
-            "type": ["string", "integer", "null"],
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
             "description": "POSIX file mode for keyPath (octal string like \"0600\" or integer)."
           },
           "chainMode": {
-            "type": ["string", "integer", "null"],
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ],
             "description": "POSIX file mode for chainPath (octal string like \"0644\" or integer)."
           },
           "owner": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1,
             "maxLength": 32,
             "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$"
           },
           "group": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1,
             "maxLength": 32,
             "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,31}$"
           },
           "backupDir": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 512,
             "pattern": "^/"
           },
           "backupRetentionCount": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1,
             "maximum": 64
           }
@@ -223,7 +303,10 @@
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "reference"],
+      "required": [
+        "type",
+        "reference"
+      ],
       "properties": {
         "type": {
           "type": "string",
@@ -242,16 +325,25 @@
           "maxLength": 512
         },
         "certPath": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 512
         },
         "keyPath": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 512,
           "pattern": "^/"
         },
         "chainPath": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 512
         }
       }
@@ -259,14 +351,22 @@
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requireMatch"],
+      "required": [
+        "requireMatch"
+      ],
       "properties": {
         "host": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 255
         },
         "port": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "maximum": 65535
         },
@@ -274,6 +374,347 @@
           "type": "boolean"
         }
       }
+    },
+    "publicationDestination": {
+      "$ref": "#/definitions/materialDistribution_publicationProfile"
     }
-  }
+  },
+  "definitions": {
+    "materialDistribution_uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "materialDistribution_alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "materialDistribution_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "materialDistribution_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "materialDistribution_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "materialDistribution_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_materialDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "bindingId",
+        "rolloutId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "generation",
+        "deploymentProfileRef",
+        "profileRevision",
+        "authorizationRevision",
+        "verificationPolicy"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "rolloutId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "authorizationRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "verificationOnly": {
+          "type": "boolean",
+          "description": "Approved read-only verification of the pinned version; no install or reload."
+        }
+      }
+    },
+    "materialDistribution_publicationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "validTo"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_deploymentReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fetched",
+        "installed",
+        "bound",
+        "servedVerified",
+        "trustValidated",
+        "fingerprintSha256",
+        "validTo",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fetched": {
+          "type": "boolean"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "servedVerified": {
+          "type": "boolean"
+        },
+        "trustValidated": {
+          "type": "boolean"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_publicationProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_consumerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "deploymentProfileRef",
+        "profileRevision",
+        "required",
+        "wave",
+        "verificationPolicy",
+        "freshnessSeconds",
+        "state"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "freshnessSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 604800
+        },
+        "state": {
+          "enum": [
+            "active",
+            "removed"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "publicationDestination"
+        ]
+      },
+      "then": {
+        "properties": {
+          "deploymentTargets": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "deploymentTargets": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
 }

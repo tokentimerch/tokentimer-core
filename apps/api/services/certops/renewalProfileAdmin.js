@@ -51,7 +51,7 @@ const {
   countInFlightRenewalJobsByCaEndpoint,
 } = require("./renewalScheduler");
 const { resolveRenewalPerCaCap, caCapKey } = require("./renewalCapacity");
-const { isAgentDeployableKeyMode } = require("./jobs");
+const { isAgentRenewableKeyMode } = require("./jobs");
 const { OPERATOR_OWNED_METADATA_KEY } = require("./renewalProfileDerivation");
 const { resolveListSort } = require("./listSorting");
 
@@ -544,7 +544,7 @@ const RENEWAL_BLOCKED_NOT_AGENT_DEPLOYABLE = "not_agent_deployable";
  * state the operator chose and the one they can undo. Everything else is a
  * defect they need to fix.
  *
- * Key custody is checked through jobs.isAgentDeployableKeyMode rather than a
+ * Key custody is checked through jobs.isAgentRenewableKeyMode rather than a
  * local key-mode list. The sweep does not filter on custody in SQL: it reaches
  * job creation, which throws CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE, and the
  * sweep counts that as skipped_not_agent_deployable. So a certificate with a
@@ -561,7 +561,8 @@ function classifyRenewalBlock(row) {
     return RENEWAL_BLOCKED_AUTO_RENEW_DISABLED;
   }
   if (row.not_after == null) return RENEWAL_BLOCKED_UNKNOWN_EXPIRY;
-  if (!isAgentDeployableKeyMode(row)) {
+  if (row.key_mode === "vault-managed" && !row.profile_id) return RENEWAL_BLOCKED_NO_PROFILE;
+  if (!isAgentRenewableKeyMode(row)) {
     return RENEWAL_BLOCKED_NOT_AGENT_DEPLOYABLE;
   }
   if (!row.profile_id) return RENEWAL_BLOCKED_NO_PROFILE;

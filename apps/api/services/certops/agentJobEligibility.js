@@ -133,6 +133,13 @@ function evaluateAgentJobEligibility({
   if (!supportedOperations.includes(wireActionForOperation(job.operation))) {
     return result(false, "operation_unsupported");
   }
+  const materialCapabilities = job.payload?.publication
+    ? ["material-store-vault-kv2-v1", "certificate-publication-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY]
+    : job.operation === "deploy-from-store" ? ["material-store-vault-kv2-v1", "deploy-from-store-v1", EVIDENCE_CLAIM_BINDING_CAPABILITY] : [];
+  if (materialCapabilities.length && (!routing.assignedAgentId || materialCapabilities.some((capability) =>
+    !hasFreshCapability({ declaredCapabilities: agent.declaredCapabilities, capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt, capability, env, now })))) {
+    return result(false, "material_capability_unavailable");
+  }
 
   const needsClaimBoundEvidence =
     job.operation === "issue" || job.subjectIsProvisioning === true;
