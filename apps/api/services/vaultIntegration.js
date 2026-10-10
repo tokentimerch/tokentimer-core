@@ -643,7 +643,7 @@ async function scanPki({ address, session, mount, maxItems = 500 }) {
     const batchResults = await Promise.all(
       batch.map(async (serial) => {
         if (items.length >= maxItems) return null;
-        let pem = null;
+        let pem;
         try {
           pem = await readPkiCertBySerial({
             address,
@@ -739,7 +739,7 @@ async function scanVault({
       address: address.substring(0, 50),
       error: e.message,
     });
-    throw new Error(`Invalid Vault address: ${e.message}`);
+    throw new Error(`Invalid Vault address: ${e.message}`, { cause: e });
   }
 
   // Allowlist of asset categories to keep (e.g. only "cert"). Empty/absent
