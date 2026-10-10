@@ -76,6 +76,9 @@ const JOB_STATUSES = Object.freeze([
   // occurred) but the agent never reported a result. Requires manual
   // operator reconciliation instead of a silent retry or success/failure.
   "orphaned_unknown_effect",
+  // Terminal for this job while its enrollment waits on the issuer
+  // (ADR-0014). A later continue-enrollment job picks up the enrollment.
+  "awaiting_issuer",
 ]);
 const JOB_STATUS_SET = new Set(JOB_STATUSES);
 
@@ -90,6 +93,7 @@ const TERMINAL_JOB_STATUSES = new Set([
   "cancelled",
   "dry_run_complete",
   "orphaned_unknown_effect",
+  "awaiting_issuer",
 ]);
 const ACTIVE_JOB_STATUSES = new Set(
   JOB_STATUSES.filter((status) => !TERMINAL_JOB_STATUSES.has(status)),
@@ -122,6 +126,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "blocked",
     "cancelled",
     "dry_run_complete",
+    "awaiting_issuer",
   ]),
   claimed: new Set([
     "running",
@@ -132,6 +137,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "cancelled",
     "dry_run_complete",
     "orphaned_unknown_effect",
+    "awaiting_issuer",
   ]),
   running: new Set([
     "succeeded",
@@ -141,6 +147,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
     "cancelled",
     "dry_run_complete",
     "orphaned_unknown_effect",
+    "awaiting_issuer",
   ]),
   rejected: new Set(),
   succeeded: new Set(),
@@ -149,6 +156,7 @@ const JOB_STATUS_TRANSITIONS = Object.freeze({
   cancelled: new Set(),
   dry_run_complete: new Set(),
   orphaned_unknown_effect: new Set(),
+  awaiting_issuer: new Set(),
 });
 
 // "issue" requests a brand-new certificate that TokenTimer does not track
@@ -181,6 +189,10 @@ const JOB_OPERATIONS = Object.freeze([
   "protocol_smoke",
   "distribute-trust",
   "revoke-trust",
+  // ADR-0014: continuation of an enrollment after awaiting_issuer. Created
+  // only by the enrollment scheduler (allowEnrollmentContinuation), never
+  // through the general createCertificateJob path.
+  "continue-enrollment",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
@@ -987,6 +999,7 @@ function initialLifecycleTimestamps(options, status) {
       "blocked",
       "dry_run_complete",
       "orphaned_unknown_effect",
+      "awaiting_issuer",
     ].includes(status)
       ? now
       : null);
@@ -1163,6 +1176,7 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
 
 const AGENT_MUTATING_OPERATIONS = new Set([
   "renew",
+  "continue-enrollment",
   "deploy",
   "reload",
   "revoke",
@@ -1669,6 +1683,19 @@ async function createCertificateJob(options) {
   if (operation === "protocol_smoke" && options.allowDiagnosticOperation !== true) {
     throw serviceError(
       "protocol_smoke jobs can only be created by the CertOps diagnostic-bootstrap service",
+      CERTOPS_JOB_OPERATION_INVALID,
+    );
+  }
+  // continue-enrollment is enrollment-lifecycle only (ADR-0014): the general
+  // createCertificateJob path must not invent continuations without a durable
+  // enrollment row and snapshot. The enrollment scheduler will pass
+  // allowEnrollmentContinuation when that surface lands.
+  if (
+    operation === "continue-enrollment" &&
+    options.allowEnrollmentContinuation !== true
+  ) {
+    throw serviceError(
+      "continue-enrollment jobs can only be created by the CertOps enrollment scheduler",
       CERTOPS_JOB_OPERATION_INVALID,
     );
   }
@@ -2287,7 +2314,8 @@ async function updateCertificateJobStatus(options) {
                   'failed',
                   'blocked',
                   'dry_run_complete',
-                  'orphaned_unknown_effect'
+                  'orphaned_unknown_effect',
+                  'awaiting_issuer'
                 )
                   THEN COALESCE(completed_at, NOW())
                 ELSE completed_at

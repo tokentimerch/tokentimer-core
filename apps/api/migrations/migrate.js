@@ -4608,6 +4608,44 @@ const migrations = [
       ALTER TABLE auto_sync_configs VALIDATE CONSTRAINT auto_sync_configs_name_canonical;
     `,
   },
+  {
+    version: 68,
+    name: "certops_adcs_awaiting_issuer_and_continue_enrollment",
+    sql: `
+      -- ADR-0014: terminal awaiting_issuer job status + continue-enrollment
+      -- operation. Cumulative CHECK redeclarations (same pattern as v28).
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_status_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_status_check CHECK (
+          status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete', 'orphaned_unknown_effect', 'awaiting_issuer'
+          )
+        );
+      ALTER TABLE certificate_job_log
+        DROP CONSTRAINT IF EXISTS certificate_job_log_status_check;
+      ALTER TABLE certificate_job_log
+        ADD CONSTRAINT certificate_job_log_status_check CHECK (
+          status IS NULL OR status IN (
+            'pending_approval', 'approved', 'rejected', 'pending', 'claimed',
+            'running', 'succeeded', 'failed', 'blocked', 'cancelled',
+            'dry_run_complete', 'orphaned_unknown_effect', 'awaiting_issuer'
+          )
+        );
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_operation_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_operation_check CHECK (
+          operation IN (
+            'issue', 'renew', 'deploy', 'reload', 'revoke', 'noop',
+            'protocol_smoke', 'distribute-trust', 'revoke-trust',
+            'continue-enrollment'
+          )
+        );
+    `,
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

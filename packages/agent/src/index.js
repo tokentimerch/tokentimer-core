@@ -120,6 +120,7 @@ const {
   assertIssuanceOutcome,
   createAcmeIssuer,
 } = require("./issuers");
+const { createAdcsWindowsIisExecutors } = require("./adcs-windows-iis");
 const {
   deployCertificate,
   deployCertificateAndKey,
@@ -300,6 +301,7 @@ function isNonEmptyStringValue(value) {
 const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "noop",
   "renew",
+  "continue-enrollment",
   "deploy",
   "reload",
   "distribute-trust",
@@ -1990,6 +1992,9 @@ async function handleSignedJob({
       log,
     });
     const heartbeatAbort = leaseHeartbeat.getAbort();
+    // Lease loss after a "clean" terminal must not be reported as success.
+    // awaiting_issuer is intentionally omitted: the CA request and RequestId
+    // journal already exist, so that status stays more accurate than orphaned.
     if (
       heartbeatAbort &&
       outcome &&
@@ -2039,6 +2044,11 @@ async function handleSignedJob({
       // Only trust-anchor jobs produce this; omitted (not null) for every
       // other job family so their result bodies stay byte-identical.
       ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
+      // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
+      // state; required by agent-protocol when status is awaiting_issuer.
+      ...(outcome.enrollmentResult
+        ? { enrollmentResult: outcome.enrollmentResult }
+        : {}),
     },
     evidence: evidenceBodies,
     log,
@@ -2279,17 +2289,23 @@ async function executeJob({
     });
   }
 
-  if (action !== "renew" && action !== "deploy" && action !== "reload") {
+  if (
+    action !== "renew" &&
+    action !== "continue-enrollment" &&
+    action !== "deploy" &&
+    action !== "reload"
+  ) {
     return {
       status: "blocked",
       errorMessage: `unsupported job action "${String(action)}"`,
     };
   }
 
-  if (action === "renew") {
-    const issuerKind = resolveJobIssuerKind(job);
-    if (issuerKind.error) {
-      return { status: "blocked", errorMessage: boundErrorMessage(issuerKind.error) };
+  let resolvedIssuerKind = null;
+  if (action === "renew" || action === "continue-enrollment") {
+    resolvedIssuerKind = resolveJobIssuerKind(job);
+    if (resolvedIssuerKind.error) {
+      return { status: "blocked", errorMessage: boundErrorMessage(resolvedIssuerKind.error) };
     }
   }
 
@@ -2316,7 +2332,46 @@ async function executeJob({
     };
   }
 
+  if (action === "continue-enrollment") {
+    if (resolvedIssuerKind.kind !== "adcs") {
+      return {
+        status: "blocked",
+        errorMessage: "continue-enrollment requires issuerKind adcs",
+      };
+    }
+    return getAdcsWindowsIisExecutors().executeWindowsIisContinueEnrollmentJob({
+      job,
+      jobId,
+      client: claimBoundClient,
+      executionContext,
+      log,
+      leaseOpts,
+      onBeforeMutation: markMutation,
+    });
+  }
+
   if (action === "renew") {
+    // AD CS must never fall through to the ACME file-based renew path.
+    if (resolvedIssuerKind.kind === "adcs") {
+      if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
+        return getAdcsWindowsIisExecutors().executeWindowsIisAdcsRenewJob({
+          job,
+          jobId,
+          client: claimBoundClient,
+          executionContext,
+          log,
+          leaseOpts,
+          onBeforeMutation: markMutation,
+          journalCtx,
+        });
+      }
+      return {
+        status: "blocked",
+        errorMessage: boundErrorMessage(
+          "AD CS renew requires keyMode os-store-managed and a windows-iis target",
+        ),
+      };
+    }
     // ADR-0012 decisions 9/13: a renew job whose custody is
     // os-store-managed against a windows-iis target takes the CNG-native
     // path (key generated inside the CNG store, IIS/http.sys rebind,
@@ -2406,9 +2461,54 @@ async function executeDryRunPlan({
     reload: [
       "reload: validate-then-reload the target service via allowlisted command profiles",
     ],
+    "continue-enrollment": [
+      "enrollment: verify the local RequestId journal matches the signed enrollment snapshot",
+      "adcs: retrieve the pending certificate from the CA (certreq -retrieve)",
+      "adcs: accept the certificate into the CNG store (certreq -accept)",
+      "deploy: bind the issued certificate to the windows-iis site",
+      "verify: fingerprint the deployed certificate",
+    ],
   }[action];
 
+  if (!Array.isArray(plannedSteps)) {
+    return {
+      status: "blocked",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `dry-run is not implemented for action ${JSON.stringify(action)}`,
+      ),
+    };
+  }
+
   const preflightIssues = [];
+
+  if (action === "continue-enrollment") {
+    if (job?.keyMode !== "os-store-managed" || job?.target?.type !== "windows-iis") {
+      preflightIssues.push(
+        "continue-enrollment requires keyMode os-store-managed and a windows-iis target",
+      );
+    } else if (
+      !isNonEmptyStringValue(job?.target?.store) ||
+      job?.target?.binding === null ||
+      typeof job?.target?.binding !== "object" ||
+      !isNonEmptyStringValue(job?.target?.binding?.site) ||
+      !Number.isInteger(job?.target?.binding?.port)
+    ) {
+      preflightIssues.push(
+        "windows-iis target requires target.store and target.binding.{site,port}",
+      );
+    }
+    if (job?.enrollment === null || typeof job?.enrollment !== "object") {
+      preflightIssues.push("continue-enrollment job carries no enrollment snapshot");
+    } else {
+      if (!isNonEmptyStringValue(job.enrollment.snapshotB64)) {
+        preflightIssues.push("enrollment.snapshotB64 is missing");
+      }
+      if (!isNonEmptyStringValue(job.enrollment.snapshotSha256)) {
+        preflightIssues.push("enrollment.snapshotSha256 is missing");
+      }
+    }
+  }
 
   if (action === "renew" || action === "deploy") {
     if (job?.target?.type === "windows-iis") {
@@ -2859,6 +2959,25 @@ async function executeRenewJob({
  *   container is legitimately bound to an enrolled certificate.
  * @returns {Promise<{status: string, keyRotated: null, errorMessage?: string, rejectionReason?: string}>}
  */
+// Lazy so createAdcsWindowsIisExecutors can close over runWindowsIisDeployTail
+// (defined below) without a temporal dead zone at module load.
+let adcsWindowsIisExecutors = null;
+function getAdcsWindowsIisExecutors() {
+  if (!adcsWindowsIisExecutors) {
+    adcsWindowsIisExecutors = createAdcsWindowsIisExecutors({
+      resolveAgentStateDir,
+      renewJobLeaseOrAbort,
+      reportIssuanceEvidence,
+      runWindowsIisDeployTail,
+      emitInfo,
+      emitLog,
+      recordWindowsCngContainer,
+      isValidCertificateId,
+    });
+  }
+  return adcsWindowsIisExecutors;
+}
+
 async function runWindowsIisDeployTail({
   jobId,
   client,

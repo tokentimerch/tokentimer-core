@@ -39,6 +39,8 @@ const TERMINAL_STATUSES = Object.freeze([
   "blocked",
   "dry_run_complete",
   "orphaned_unknown_effect",
+  // Job ends; enrollment RequestId journal under adcs-enrollments/ is separate.
+  "awaiting_issuer",
 ]);
 
 /**

@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 63
+Total skips found: 64
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -41,6 +41,7 @@ Total skips found: 63
 | `packages/agent/src/discovery/windows.test.js` | 462 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 515 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 603 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/issuers/adcs-enrollment.test.js` | 137 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |

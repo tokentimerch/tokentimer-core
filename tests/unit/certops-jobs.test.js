@@ -250,6 +250,7 @@ function createMemoryClient(options = {}) {
             "blocked",
             "dry_run_complete",
             "orphaned_unknown_effect",
+            "awaiting_issuer",
           ].includes(params[2])
         ) {
           row.completed_at = row.completed_at || now();
@@ -1985,6 +1986,51 @@ describe("CertOps jobs service", () => {
     assert.ok(orphaned.completedAt, "orphaned_unknown_effect must set completed_at");
   });
 
+  it("sets completed_at when transitioning to awaiting_issuer", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+    });
+    assert.equal(job.completedAt, null);
+
+    const claimed = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "claimed",
+    });
+    assert.equal(claimed.completedAt, null);
+
+    const awaiting = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: job.id,
+      status: "awaiting_issuer",
+    });
+    assert.equal(awaiting.status, "awaiting_issuer");
+    assert.ok(awaiting.completedAt, "awaiting_issuer must set completed_at");
+  });
+
+  it("sets completed_at when creating a job already in awaiting_issuer", async () => {
+    const client = createMemoryClient();
+    const job = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      status: "awaiting_issuer",
+      payload: { target: "host/web" },
+    });
+    assert.equal(job.status, "awaiting_issuer");
+    assert.ok(job.completedAt, "create-time awaiting_issuer must set completed_at");
+  });
+
   it("requires a valid renewalProfile for automation renew jobs", async () => {
     const {
       CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
@@ -2208,10 +2254,28 @@ describe("CertOps trust-anchor operation and subject-type wiring (ADR-0012 decis
   it("adds distribute-trust/revoke-trust to the operation vocabulary and trust_anchor to the subject vocabulary", () => {
     assert.ok(JOB_OPERATIONS.includes("distribute-trust"));
     assert.ok(JOB_OPERATIONS.includes("revoke-trust"));
+    assert.ok(JOB_OPERATIONS.includes("continue-enrollment"));
     assert.ok(SUBJECT_TYPES.includes("trust_anchor"));
     assert.deepEqual(
       [...TRUST_ANCHOR_OPERATIONS].sort(),
       ["distribute-trust", "revoke-trust"],
+    );
+  });
+
+  it("refuses continue-enrollment on the general createCertificateJob path", async () => {
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client: createMemoryClient(),
+          workspaceId: WORKSPACE_A,
+          operation: "continue-enrollment",
+          subjectType: "managed_certificate",
+          subjectId: "cert-continue-blocked",
+        }),
+      (err) =>
+        /continue-enrollment jobs can only be created by the CertOps enrollment scheduler/.test(
+          err.message,
+        ),
     );
   });
 

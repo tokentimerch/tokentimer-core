@@ -30,8 +30,14 @@ describe("resolveJobIssuerKind", () => {
     assert.deepEqual(resolveJobIssuerKind({ issuerKind: "acme" }), { kind: "acme" });
   });
 
-  it("refuses every other kind, including adcs, rather than falling back to ACME", () => {
-    for (const issuerKind of ["adcs", "venafi", "ACME", "", null, 1, { kind: "acme" }]) {
+  it("keeps adcs non-executable until validation and continuation land", () => {
+    const resolved = resolveJobIssuerKind({ issuerKind: "adcs" });
+    assert.equal(resolved.kind, undefined);
+    assert.match(resolved.error, /which this agent does not implement/);
+  });
+
+  it("refuses unknown kinds rather than falling back to ACME", () => {
+    for (const issuerKind of ["venafi", "ACME", "", null, 1, { kind: "acme" }]) {
       const resolved = resolveJobIssuerKind({ issuerKind });
       assert.equal(resolved.kind, undefined, JSON.stringify(issuerKind));
       assert.match(resolved.error, /which this agent does not implement/);

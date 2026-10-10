@@ -207,6 +207,33 @@ describe("createAdcsIssuer", () => {
     assert.equal(typeof issuer.retrieve, "function");
   });
 
+  it("creates a missing scratch parent before mkdtemp on submit", async () => {
+    const missingParent = path.join(scratchDir, "nested", "adcs-scratch");
+    assert.equal(fs.existsSync(missingParent), false);
+    const issuer = createAdcsIssuer({
+      caConfig: CA_CONFIG,
+      template: "TTWebServer",
+      caKeySha256: PIN,
+      caCertPath: path.join(scratchDir, "ca.cer"),
+      helperPath: path.join(scratchDir, "tokentimer-adcs-cmc.exe"),
+      scratchDir: missingParent,
+      jobId: "job-1",
+      enrollmentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      execFileImpl: async (_bin, argv) => {
+        const rsp = argv[argv.length - 1];
+        fs.writeFileSync(rsp, "fake-rsp");
+        return { stdout: "", stderr: "" };
+      },
+      decodeCmcImpl: async () => ({
+        ok: true,
+        result: { disposition: "pending", requestId: 7 },
+      }),
+    });
+    const outcome = await issuer.submit({ csrPem: CSR_PEM });
+    assert.equal(outcome.outcome, "pending");
+    assert.equal(fs.existsSync(missingParent), true);
+  });
+
   it("submit pending via CMC requestId", async () => {
     const issuer = makeIssuer({
       execFileImpl: async (_bin, argv) => {

@@ -30,11 +30,14 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 60).name, "certops_public_csr_workflows");
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
-    assert.equal(migrations.at(-1).version, 67);
-    assert.equal(migrations.at(-1).name, "inventory_and_auto_sync_name_length");
+    assert.equal(migrations.at(-1).version, 68);
+    assert.equal(
+      migrations.at(-1).name,
+      "certops_adcs_awaiting_issuer_and_continue_enrollment",
+    );
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 67 }, (_, index) => index + 1),
+      Array.from({ length: 68 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -1433,6 +1436,31 @@ describe("migration 43 trust-anchor persistence", () => {
   });
 });
 
+describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
+  const migration = migrations.find(
+    (entry) =>
+      entry.name === "certops_adcs_awaiting_issuer_and_continue_enrollment",
+  );
+
+  it("exists at version 68 and widens status plus operation checks", () => {
+    assert.ok(migration, "migration 68 expected");
+    assert.equal(migration.version, 68);
+    assert.match(migration.sql, /'awaiting_issuer'/);
+    assert.match(migration.sql, /'continue-enrollment'/);
+    assert.match(migration.sql, /certificate_jobs_status_check/);
+    assert.match(migration.sql, /certificate_jobs_operation_check/);
+  });
+
+  it("accepts exactly the operations the service layer declares today", () => {
+    const operationDeclared = migration.sql.match(/operation IN \(([^)]+)\)/);
+    assert.ok(operationDeclared, "operation IN (...) list expected");
+    const operationValues = operationDeclared[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].sort());
+  });
+});
+
 describe("migration 44 trust-anchor job operation and subject type", () => {
   const migration = migrations.find(
     (entry) => entry.name === "certops_trust_anchor_jobs",
@@ -1476,13 +1504,20 @@ describe("migration 44 trust-anchor job operation and subject type", () => {
     assert.match(migration.sql, /'trust_anchor'/);
   });
 
-  it("accepts exactly the operations and subject types the service layer declares today", () => {
+  it("accepts exactly the operations and subject types declared as of migration 44", () => {
     const operationDeclared = migration.sql.match(/operation IN \(([^)]+)\)/);
     assert.ok(operationDeclared, "operation IN (...) list expected");
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].sort());
+    // Migration 68 adds continue-enrollment; keep this snapshot pinned to v44.
+    const operationsAsOfMigration44 = JOB_OPERATIONS.filter(
+      (operation) => operation !== "continue-enrollment",
+    );
+    assert.deepEqual(
+      [...operationValues].sort(),
+      [...operationsAsOfMigration44].sort(),
+    );
 
     const subjectTypeDeclared = migration.sql.match(
       /subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
@@ -1761,7 +1796,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 67);
+    assert.equal(sorted[sorted.length - 1], 68);
   });
 });
 
