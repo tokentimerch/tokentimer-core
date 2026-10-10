@@ -298,7 +298,7 @@ router.post(
               sourceKind: s.sourceKind,
               dimensions: s.dimensions || { mount: s.mount },
               complete: s.complete === true,
-              reason: s.error ? "error" : s.truncated ? "truncated" : s.hasErrors ? "read_errors" : null,
+              reason: s.error ? "error" : s.truncated ? "truncated" : s.hasErrors ? "read_errors" : s.hasExcludedPaths ? "protected_material_paths" : null,
             })),
           });
           result.scan_id = scan.scanId;

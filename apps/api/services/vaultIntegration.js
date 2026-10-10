@@ -282,8 +282,12 @@ async function listKvV2KeysRecursive({
   // that were never actually looked at.
   const results = [];
   let truncated = false;
+  let hasExcludedPaths = false;
   async function walk(pathPrefix) {
-    if (isMaterialBundlePath(pathPrefix)) return;
+    if (isMaterialBundlePath(pathPrefix)) {
+      hasExcludedPaths = true;
+      return;
+    }
     if (results.length >= limit) {
       truncated = true;
       return;
@@ -314,11 +318,12 @@ async function listKvV2KeysRecursive({
       } else {
         if (!isMaterialBundlePath(`${pathPrefix}${key}`))
           results.push(`${pathPrefix}${key}`);
+        else hasExcludedPaths = true;
       }
     }
   }
   await walk(prefix);
-  return { keys: results, truncated };
+  return { keys: results, truncated, hasExcludedPaths };
 }
 
 async function readKvV2Secret({ address, session, mountPath, secretPath }) {
@@ -516,14 +521,21 @@ async function scanKvV2({
       trimmedPrefix = trimmedPrefix.slice(mountName.length + 1);
     }
   }
+  if (isMaterialBundlePath(trimmedPrefix)) {
+    // Deliberately uninspected is not confirmed empty. In particular, cleanup
+    // prefix matching can include legitimate UUID-suffix public siblings.
+    return { items: [], truncated: false, hasErrors: false,
+      permissionDenied: false, hasExcludedPaths: true };
+  }
   const normalizedPrefix = trimmedPrefix.length > 0 ? `${trimmedPrefix}/` : "";
-  const { keys, truncated: keyListTruncated } = await listKvV2KeysRecursive({
+  const { keys, truncated: keyListTruncated, hasExcludedPaths } = await listKvV2KeysRecursive({
     address,
     session,
     mountPath,
     prefix: normalizedPrefix,
     limit: maxItems,
   });
+  const readState = { hasReadErrors: false, permissionDenied: false };
   if (trimmedPrefix) {
     // The prefix may point at an exact secret (leaf) rather than a folder.
     // LIST only enumerates folders, so probe the leaf directly; both a
@@ -538,7 +550,9 @@ async function scanKvV2({
       keys.unshift(trimmedPrefix);
     } catch (e) {
       if (isVaultAuthError(e)) throw e;
-      // Not a readable secret; folder listing (possibly empty) stands.
+      // Only 404 proves the exact leaf absent. A denied/failed leaf probe
+      // cannot turn an empty folder listing into positive cleanup evidence.
+      if (e.status !== 404) recordVaultItemReadFailure(e, readState);
     }
   }
   const items = [];
@@ -546,7 +560,6 @@ async function scanKvV2({
   // before the read loop below ever runs; that must carry through even if
   // every enumerated key happens to be readable and under maxItems.
   let truncated = keyListTruncated;
-  const readState = { hasReadErrors: false, permissionDenied: false };
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {
@@ -596,6 +609,7 @@ async function scanKvV2({
     truncated,
     hasErrors: readState.hasReadErrors,
     permissionDenied: readState.permissionDenied,
+    hasExcludedPaths,
   };
 }
 
@@ -822,6 +836,7 @@ async function scanVault({
           truncated,
           hasErrors,
           permissionDenied,
+          hasExcludedPaths,
         } = await scanKvV2({
           address,
           session,
@@ -843,7 +858,8 @@ async function scanVault({
           truncated,
           hasErrors,
           permissionDenied: Boolean(permissionDenied),
-          complete: !truncated && !hasErrors,
+          complete: !truncated && !hasErrors && !hasExcludedPaths,
+          ...(hasExcludedPaths ? { hasExcludedPaths: true } : {}),
           // Sub-scope dimensions use different key semantics than a token's
           // own recorded dimensions: `pathPrefix` triggers a LIKE-prefix
           // match against the token's exact `path`, and `categories` is a
