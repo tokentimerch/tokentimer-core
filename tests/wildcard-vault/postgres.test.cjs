@@ -258,7 +258,7 @@ test("terminal never-executed publications release transactionally; uncertain at
     await client.query("ALTER TABLE certificate_jobs DISABLE TRIGGER trg_certops_release_unexecuted_publication");
     await client.query("UPDATE certificate_jobs SET status='cancelled' WHERE workspace_id=$1 AND id=$2",[workspaceId,stranded.id]);
     await client.query("ALTER TABLE certificate_jobs ENABLE TRIGGER trg_certops_release_unexecuted_publication");
-    const sql=fs.readFileSync(path.resolve(__dirname,"../../apps/api/migrations/069-certops-distribution-review.sql"),"utf8");
+    const sql=fs.readFileSync(path.resolve(__dirname,"../../apps/api/migrations/070-certops-distribution-review.sql"),"utf8");
     const repair=sql.slice(sql.indexOf("-- Repair"),sql.indexOf("-- Stable"));
     await client.query(repair);await client.query(repair);
   });

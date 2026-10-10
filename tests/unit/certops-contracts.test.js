@@ -152,6 +152,8 @@ const PLAN_JOB_STATUSES = [
   // a result: side effects are unknown and require operator reconciliation
   // instead of a silent retry (B6/H12).
   "orphaned_unknown_effect",
+  // Terminal for this job while enrollment waits on the issuer (ADR-0014).
+  "awaiting_issuer",
 ];
 
 const PLAN_EXECUTOR_EVENT_STATUSES = [

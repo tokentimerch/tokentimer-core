@@ -1,7 +1,7 @@
 -- Public metadata only. No key-bearing bundle, credential or Vault response.
 ALTER TABLE certificate_jobs DROP CONSTRAINT certificate_jobs_operation_check;
 ALTER TABLE certificate_jobs ADD CONSTRAINT certificate_jobs_operation_check CHECK (operation IN
-  ('issue','renew','deploy','deploy-from-store','reload','revoke','noop','protocol_smoke','distribute-trust','revoke-trust'));
+  ('issue','renew','deploy','deploy-from-store','reload','revoke','noop','protocol_smoke','distribute-trust','revoke-trust','continue-enrollment'));
 ALTER TABLE certops_management_periods ADD CONSTRAINT uq_certops_period_scope
   UNIQUE (workspace_id, managed_certificate_id, id);
 ALTER TABLE certops_agents ADD CONSTRAINT uq_certops_agent_scope UNIQUE (workspace_id, id);

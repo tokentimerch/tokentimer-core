@@ -55,7 +55,15 @@ const TRANSITION_ORIGIN_VALUES = Object.freeze(
 // Statuses that never notify regardless of origin. A dry run changes nothing on
 // the host by construction, so there is no failure for an operator to act on.
 const NON_ALERTING_STATUSES = Object.freeze(
-  new Set(["succeeded", "dry_run_complete", "pending", "approved", "claimed", "running"]),
+  new Set([
+    "succeeded",
+    "dry_run_complete",
+    "awaiting_issuer",
+    "pending",
+    "approved",
+    "claimed",
+    "running",
+  ]),
 );
 
 // Origins that represent a deliberate human decision. The human already knows.

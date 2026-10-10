@@ -1341,6 +1341,50 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(fs.existsSync(path.join(workDir, "deployed")), false);
   });
 
+  it("blocks dry-run continue-enrollment while adcs remains non-executable", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const job = makeSignedJob({
+      action: "continue-enrollment",
+      mode: "dry_run",
+      issuerKind: "adcs",
+      keyMode: "os-store-managed",
+      target: {
+        type: "windows-iis",
+        reference: "iis.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      enrollment: {
+        enrollmentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        attempt: 1,
+        snapshotB64: Buffer.from("{}").toString("base64"),
+        snapshotSha256: "a".repeat(64),
+      },
+    });
+    const policyEngine = engineWith(
+      {},
+      { declaredTargetSelectors: ["iis.example.com"] },
+    );
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine,
+      client,
+      executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "blocked");
+    // persistAndTransmitOutcome returns status/rejectionReason only; the
+    // reported result body still carries the issuer-kind refusal text.
+    assert.match(
+      client.calls.reportResult[0].errorMessage,
+      /issuer kind "adcs", which this agent does not implement/,
+    );
+  });
+
   it("local execution.dryRun refuses a mode:real job instead of silently succeeding", async () => {
     const client = createRecordingClient();
     const executionContext = makeExecutionContext({ dryRun: true });
