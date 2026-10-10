@@ -999,6 +999,7 @@ function initialLifecycleTimestamps(options, status) {
       "blocked",
       "dry_run_complete",
       "orphaned_unknown_effect",
+      "awaiting_issuer",
     ].includes(status)
       ? now
       : null);
@@ -2313,7 +2314,8 @@ async function updateCertificateJobStatus(options) {
                   'failed',
                   'blocked',
                   'dry_run_complete',
-                  'orphaned_unknown_effect'
+                  'orphaned_unknown_effect',
+                  'awaiting_issuer'
                 )
                   THEN COALESCE(completed_at, NOW())
                 ELSE completed_at

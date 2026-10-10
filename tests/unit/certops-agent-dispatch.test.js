@@ -2589,7 +2589,9 @@ describe("agentDispatch.ingestResult", () => {
       }),
       (error) =>
         error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID &&
-        /enrollment binding validation/i.test(error.message),
+        /awaiting_issuer is not accepted until enrollment binding validation/i.test(
+          error.message,
+        ),
     );
     assert.equal(nonceConsulted, false);
     assert.equal(
@@ -2597,6 +2599,50 @@ describe("agentDispatch.ingestResult", () => {
       false,
     );
   });
+
+  for (const status of ["succeeded", "failed"]) {
+    it(`rejects enrollmentResult on ordinary ACME ${status} results until enrollment binding exists`, async () => {
+      let nonceConsulted = false;
+      const dbPool = createMockPool((sql) => {
+        if (sql.includes("FOR UPDATE")) {
+          return { rows: [lockedJobRow({ mode: "real", operation: "renew" })] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await assert.rejects(
+        ingestResult({
+          dbPool,
+          agent: agentFixture(),
+          body: resultBody({
+            status,
+            errorMessage: status === "failed" ? "renewal timed out" : undefined,
+            enrollmentResult: {
+              enrollmentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+              attempt: 1,
+              state: "pending_issuance",
+              requestId: 4242,
+            },
+          }),
+          deps: {
+            consumeNonce: async () => {
+              nonceConsulted = true;
+              return { consumed: true };
+            },
+          },
+        }),
+        (error) =>
+          error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID &&
+          /enrollmentResult is not accepted until enrollment binding validation/i.test(
+            error.message,
+          ),
+      );
+      assert.equal(nonceConsulted, false);
+      assert.equal(
+        dbPool.state.queries.some((q) => q.text.includes("UPDATE certificate_jobs")),
+        false,
+      );
+    });
+  }
 
   it("treats duplicate terminal result delivery as idempotent", async () => {
     const completedAt = new Date("2026-07-22T10:20:00.000Z");
