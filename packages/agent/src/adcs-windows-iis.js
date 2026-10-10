@@ -180,10 +180,13 @@ function shouldRetainCngKey(outcome) {
 /**
  * Whether the CNG container created for this enrollment should be deleted.
  * Independent of whether certificate PEM was received: rejected_invalid must
- * free the key (ADR-0014 decision 6).
+ * free the key (ADR-0014 decision 6). Pre-submit aborts (key created, CA never
+ * contacted) must also free the key so renew is not blocked forever.
  */
-function shouldCleanupAbandonedCngKey({ submitStarted, issuanceOutcome }) {
-  if (!submitStarted) return false;
+function shouldCleanupAbandonedCngKey({ submitStarted, issuanceOutcome, containerCreated }) {
+  // Key exists but submit never started: lease abort / preflight after keygen.
+  if (!submitStarted) return containerCreated === true;
+  // Submit started with no classified outcome yet: retain (may be at the CA).
   if (issuanceOutcome === null) return false;
   return !shouldRetainCngKey(issuanceOutcome);
 }
@@ -259,10 +262,19 @@ async function observeInstalledCertificateIdentity({
       error: `bound thumbprint ${thumb} was not found in store ${windowsTarget.store}`,
     };
   }
-  return {
-    existingNotAfter: match.notAfter ?? null,
-    existingSerialHex: match.serialNumber ?? null,
-  };
+  const existingNotAfter = match.notAfter ?? null;
+  const existingSerialHex =
+    typeof match.serialNumber === "string" && match.serialNumber.length > 0
+      ? match.serialNumber
+      : null;
+  // Bound certificate present but unreadable metadata: fail closed. Do not
+  // pretend this is a first install and skip serial / requireLaterNotAfter.
+  if (existingNotAfter == null || existingSerialHex == null) {
+    return {
+      error: `bound certificate ${thumb} in store ${windowsTarget.store} is missing serial or notAfter metadata`,
+    };
+  }
+  return { existingNotAfter, existingSerialHex };
 }
 
 /**
@@ -796,7 +808,11 @@ function createAdcsWindowsIisExecutors(deps) {
     } finally {
       if (
         containerName &&
-        shouldCleanupAbandonedCngKey({ submitStarted, issuanceOutcome })
+        shouldCleanupAbandonedCngKey({
+          submitStarted,
+          issuanceOutcome,
+          containerCreated: true,
+        })
       ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
@@ -980,7 +996,11 @@ function createAdcsWindowsIisExecutors(deps) {
       if (
         containerName &&
         continueOutcome &&
-        shouldCleanupAbandonedCngKey({ submitStarted: true, issuanceOutcome: continueOutcome })
+        shouldCleanupAbandonedCngKey({
+          submitStarted: true,
+          issuanceOutcome: continueOutcome,
+          containerCreated: true,
+        })
       ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({

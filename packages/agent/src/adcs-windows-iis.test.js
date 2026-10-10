@@ -121,6 +121,7 @@ describe("shouldCleanupAbandonedCngKey", () => {
       shouldCleanupAbandonedCngKey({
         submitStarted: true,
         issuanceOutcome: "rejected_invalid",
+        containerCreated: true,
       }),
       true,
     );
@@ -131,6 +132,7 @@ describe("shouldCleanupAbandonedCngKey", () => {
       shouldCleanupAbandonedCngKey({
         submitStarted: true,
         issuanceOutcome: "validation_deferred",
+        containerCreated: true,
       }),
       false,
     );
@@ -138,6 +140,7 @@ describe("shouldCleanupAbandonedCngKey", () => {
       shouldCleanupAbandonedCngKey({
         submitStarted: true,
         issuanceOutcome: "issued",
+        containerCreated: true,
       }),
       false,
     );
@@ -148,6 +151,29 @@ describe("shouldCleanupAbandonedCngKey", () => {
       shouldCleanupAbandonedCngKey({
         submitStarted: true,
         issuanceOutcome: null,
+        containerCreated: true,
+      }),
+      false,
+    );
+  });
+
+  it("frees a key created before submit when the job aborts pre-submit (lease)", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: false,
+        issuanceOutcome: null,
+        containerCreated: true,
+      }),
+      true,
+    );
+  });
+
+  it("does nothing when no container was created", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: false,
+        issuanceOutcome: null,
+        containerCreated: false,
       }),
       false,
     );
@@ -213,6 +239,42 @@ describe("observeInstalledCertificateIdentity", () => {
     assert.deepEqual(seen[0], { address: "*", port: 443 });
     assert.deepEqual(seen[1], { address: "10.0.0.5", port: 443 });
     assert.deepEqual(seen[2], { address: "*", port: 443, sniHost: "app.example.com" });
+  });
+
+  it("fails closed when a bound certificate has unreadable serial or notAfter", async () => {
+    const incomplete = await observeInstalledCertificateIdentity({
+      windowsTarget,
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: "BB".repeat(20) }),
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: "bb".repeat(20),
+            serialNumber: null,
+            notAfter: "2027-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    });
+    assert.ok(incomplete.error);
+    assert.match(incomplete.error, /missing serial or notAfter/);
+
+    const missingExpiry = await observeInstalledCertificateIdentity({
+      windowsTarget,
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: "CC".repeat(20) }),
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: "cc".repeat(20),
+            serialNumber: "0def",
+            notAfter: null,
+          },
+        ],
+      }),
+    });
+    assert.ok(missingExpiry.error);
+    assert.match(missingExpiry.error, /missing serial or notAfter/);
   });
 });
 
