@@ -325,11 +325,17 @@ export default function CertOpsCertificates() {
   const [setupTarget, setSetupTarget] = useState(null);
   const [detachTarget, setDetachTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
+  // Keep the deep-link id while the details modal is open so the list row
+  // can stay highlighted even after the query param is stripped.
+  const [focusedCertificateId, setFocusedCertificateId] = useState(
+    certificateIdInUrl || ''
+  );
   const [csrCertificateId, setCsrCertificateId] = useState(csrIdInUrl);
   const [csrModalOpen, setCsrModalOpen] = useState(Boolean(csrIdInUrl));
   useEffect(() => {
     if (!csrIdInUrl) return;
     setDetailsTarget(null);
+    setFocusedCertificateId('');
     setCsrCertificateId(csrIdInUrl);
     setCsrModalOpen(true);
   }, [csrIdInUrl]);
@@ -338,6 +344,7 @@ export default function CertOpsCertificates() {
     if (!certificateIdInUrl || !workspaceId) return undefined;
     let cancelled = false;
     const controller = new AbortController();
+    setFocusedCertificateId(certificateIdInUrl);
     const stripCertificateId = () => {
       const params = new URLSearchParams(location.search);
       if (!params.has('certificateId')) return;
@@ -386,6 +393,7 @@ export default function CertOpsCertificates() {
           setCsrModalOpen(false);
           setDetailsTarget(identity);
         } else {
+          setFocusedCertificateId('');
           showError(
             'Certificate not found',
             'This managed certificate is not available in the inventory view.'
@@ -393,6 +401,7 @@ export default function CertOpsCertificates() {
         }
       } catch (err) {
         if (cancelled || err?.name === 'CanceledError') return;
+        setFocusedCertificateId('');
         showError(
           'Certificate not found',
           err?.response?.data?.error ||
@@ -747,15 +756,41 @@ export default function CertOpsCertificates() {
                     : [];
                   const extraSans = Math.max(0, sans.length - 1);
                   const retired = isRetiredStatus(certificate.status);
+                  const focusId = focusedCertificateId || detailsTarget?.id;
+                  const isFocused =
+                    Boolean(focusId) &&
+                    (String(certificate.id) === String(focusId) ||
+                      String(certificate.identityId) === String(focusId) ||
+                      (Array.isArray(certificate.sources) &&
+                        certificate.sources.some(
+                          source =>
+                            String(source.id || source.managedCertificateId) ===
+                            String(focusId)
+                        )) ||
+                      (detailsTarget &&
+                        String(certificate.identityId || certificate.id) ===
+                          String(
+                            detailsTarget.identityId || detailsTarget.id
+                          )));
                   return (
                     <Tr
                       key={certificate.identityId || certificate.id}
                       data-certificate-mobile-card
+                      data-certificate-id={certificate.id || undefined}
+                      data-certificate-identity-id={
+                        certificate.identityId || undefined
+                      }
                       display={{ base: 'grid', lg: 'table-row' }}
                       gridTemplateColumns={{
                         base: 'repeat(2, minmax(0, 1fr))',
                       }}
-                      bg={{ base: mobileCardBg, lg: 'transparent' }}
+                      bg={{
+                        base: isFocused ? mobileMetaBg : mobileCardBg,
+                        lg: isFocused ? mobileMetaBg : 'transparent',
+                      }}
+                      outline={isFocused ? '2px solid' : undefined}
+                      outlineColor={isFocused ? 'blue.400' : undefined}
+                      outlineOffset={isFocused ? '-2px' : undefined}
                       borderWidth={{ base: '1px', lg: 0 }}
                       borderStyle='solid'
                       borderColor={mobileCardBorder}
@@ -771,6 +806,7 @@ export default function CertOpsCertificates() {
                         if (event.target.closest('button')) return;
                         if (event.target.closest('a')) return;
                         if (event.target.closest('input')) return;
+                        setFocusedCertificateId('');
                         setDetailsTarget(certificate);
                       }}
                     >
@@ -1059,7 +1095,10 @@ export default function CertOpsCertificates() {
 
       <CertificateIdentityDetailModal
         isOpen={Boolean(detailsTarget)}
-        onClose={() => setDetailsTarget(null)}
+        onClose={() => {
+          setDetailsTarget(null);
+          setFocusedCertificateId('');
+        }}
         workspaceId={workspaceId}
         certificate={detailsTarget}
         canManage={canManage}

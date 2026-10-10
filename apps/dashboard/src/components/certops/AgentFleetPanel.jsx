@@ -48,6 +48,10 @@ import {
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
+import {
+  matchesCertOpsFocusId,
+  scrollCertOpsFocusedNode,
+} from './certopsResourceLinks.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
@@ -1009,11 +1013,20 @@ export default function AgentFleetPanel({
   const [logTarget, setLogTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
 
+  useEffect(() => {
+    if (!focusAgentId || loading) return undefined;
+    const id = CSS.escape(String(focusAgentId));
+    return scrollCertOpsFocusedNode(
+      `[data-agent-id="${id}"], [data-agent-public-id="${id}"]`
+    );
+  }, [focusAgentId, loading, agents]);
+
   const { muted, dashboard } = useDashboardThemeColors();
   const titleColor = dashboard.text.primary;
   const infoBg = dashboard.accent.interactiveSurface;
   const infoBorder = dashboard.accent.interactiveBorder;
   const infoText = dashboard.accent.interactiveForeground;
+  const focusRing = dashboard.accent?.interactiveBorder || infoBorder;
   const tableStyles = useCertOpsResponsiveTableStyles();
   const agentTableProps = {
     ...tableStyles.tableProps,
@@ -1173,23 +1186,22 @@ export default function AgentFleetPanel({
               <Tbody {...tableStyles.tbodyProps}>
                 {agents.map(agent => {
                   const status = String(agent.status || '').toLowerCase();
+                  const isFocused = matchesCertOpsFocusId(
+                    focusAgentId,
+                    agent.id,
+                    agent.agentId
+                  );
                   return (
                     <Tr
                       key={agent.id}
                       {...tableStyles.rowProps}
                       data-agent-id={agent.id}
-                      bg={
-                        focusAgentId &&
-                        String(focusAgentId) === String(agent.id)
-                          ? 'blackAlpha.50'
-                          : undefined
-                      }
-                      _dark={
-                        focusAgentId &&
-                        String(focusAgentId) === String(agent.id)
-                          ? { bg: 'whiteAlpha.100' }
-                          : undefined
-                      }
+                      data-agent-public-id={agent.agentId || undefined}
+                      tabIndex={isFocused ? -1 : undefined}
+                      outline={isFocused ? '2px solid' : undefined}
+                      outlineColor={isFocused ? focusRing : undefined}
+                      outlineOffset={isFocused ? '-2px' : undefined}
+                      bg={isFocused ? infoBg : undefined}
                     >
                       <Td {...agentPrimaryCellProps}>
                         <Box>

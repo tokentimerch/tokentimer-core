@@ -58,6 +58,10 @@ import {
   useCertOpsTrustAnchors,
 } from './useCertOpsTrustAnchors.js';
 import { formatDateTime, truncateId } from './certopsJobsFormat';
+import {
+  matchesCertOpsFocusId,
+  scrollCertOpsFocusedNode,
+} from './certopsResourceLinks.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showSuccess } from '../../utils/toast.js';
 
@@ -564,6 +568,13 @@ export default function TrustAnchorsPanel({ focusTrustAnchorId } = {}) {
     if (match) setExpandedId(match.id);
   }, [focusTrustAnchorId, anchors]);
 
+  useEffect(() => {
+    if (!focusTrustAnchorId || loading) return undefined;
+    return scrollCertOpsFocusedNode(
+      `[data-trust-anchor-id="${CSS.escape(String(focusTrustAnchorId))}"]`
+    );
+  }, [focusTrustAnchorId, loading, anchors]);
+
   const { muted, dashboard } = useDashboardThemeColors();
   const titleColor = dashboard.text.primary;
   const infoBg = dashboard.accent.interactiveSurface;
@@ -650,8 +661,19 @@ export default function TrustAnchorsPanel({ focusTrustAnchorId } = {}) {
         <VStack align='stretch' spacing={1}>
           {anchors.map(anchor => {
             const isOpen = expandedId === anchor.id;
+            const isFocused = matchesCertOpsFocusId(
+              focusTrustAnchorId,
+              anchor.id
+            );
             return (
-              <Box key={anchor.id} data-trust-anchor-id={anchor.id}>
+              <Box
+                key={anchor.id}
+                data-trust-anchor-id={anchor.id}
+                outline={isFocused ? '2px solid' : undefined}
+                outlineColor={isFocused ? infoBorder : undefined}
+                outlineOffset={isFocused ? '0' : undefined}
+                borderRadius='md'
+              >
                 <HStack
                   w='full'
                   spacing={2}
@@ -662,18 +684,7 @@ export default function TrustAnchorsPanel({ focusTrustAnchorId } = {}) {
                   role='button'
                   tabIndex={0}
                   aria-expanded={isOpen}
-                  bg={
-                    focusTrustAnchorId &&
-                    String(focusTrustAnchorId) === String(anchor.id)
-                      ? 'blackAlpha.50'
-                      : undefined
-                  }
-                  _dark={
-                    focusTrustAnchorId &&
-                    String(focusTrustAnchorId) === String(anchor.id)
-                      ? { bg: 'whiteAlpha.100' }
-                      : undefined
-                  }
+                  bg={isFocused ? infoBg : undefined}
                   onClick={() =>
                     setExpandedId(current =>
                       current === anchor.id ? null : anchor.id

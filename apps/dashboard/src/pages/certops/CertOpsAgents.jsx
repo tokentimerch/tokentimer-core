@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Stack } from '@chakra-ui/react';
 import { useOutletContext, useSearchParams } from 'react-router';
 import AgentFleetPanel from '../../components/certops/AgentFleetPanel.jsx';
@@ -17,6 +17,9 @@ import {
  * panel's header action, since it is a one-time task rather than page
  * furniture; the fleet table and the token list stay inline because they
  * are ongoing state an operator scans repeatedly.
+ *
+ * Deep links (`?agentId=` / `?trustAnchorId=`) are resolved inside the
+ * panels after their lists load: highlight + scroll (no details modal).
  */
 export default function CertOpsAgents() {
   const { certOpsPaused } = useOutletContext() || {};
@@ -28,22 +31,6 @@ export default function CertOpsAgents() {
   // Bumped when DeployAgentModal detects a freshly registered agent, so the
   // fleet panel refetches immediately instead of waiting on its own poll.
   const [fleetRefreshSignal, setFleetRefreshSignal] = useState(0);
-
-  useEffect(() => {
-    if (!focusTrustAnchorId) return;
-    const node = document.querySelector(
-      `[data-trust-anchor-id="${CSS.escape(focusTrustAnchorId)}"]`
-    );
-    node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-  }, [focusTrustAnchorId]);
-
-  useEffect(() => {
-    if (!focusAgentId) return;
-    const node = document.querySelector(
-      `[data-agent-id="${CSS.escape(focusAgentId)}"]`
-    );
-    node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-  }, [focusAgentId]);
 
   return (
     <Stack spacing={3} align='stretch'>

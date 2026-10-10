@@ -370,7 +370,8 @@ export function JobExecutionSummary({ job, agentsById }) {
       ? agentsById.get(String(agentId))
       : null;
   const agentName = agentDisplayName(agent);
-  const agentHref = jobAgentHref(agentId);
+  // Prefer the fleet row UUID so Agents can match data-agent-id after load.
+  const agentHref = jobAgentHref(agent?.id || agentId);
   const attemptLabel = attemptLabelFor(job);
   const subjectLabel = subjectTypeLabel(job.subjectType) || 'Subject';
   const subjectHref = subjectDisplay.missing

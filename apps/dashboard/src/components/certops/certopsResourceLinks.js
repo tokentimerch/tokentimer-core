@@ -1,7 +1,13 @@
 /**
  * Workspace-scoped deep links for CertOps resources referenced from jobs.
- * Detail UIs are modal/tab based, so links land on the owning page with a
- * query param the destination page resolves into a details view.
+ *
+ * Destinations:
+ * - managed_certificate → Certificates page opens CertificateIdentityDetailModal
+ * - trust_anchor → Agents page expands and highlights the trust-anchor row
+ * - agent → Agents page scrolls to and highlights the fleet row
+ *
+ * There is no dedicated agent/trust-anchor details modal; list focus is the
+ * information surface for those types.
  */
 
 const UUID_RE =
@@ -9,6 +15,50 @@ const UUID_RE =
 
 export function isCertOpsResourceId(value) {
   return typeof value === 'string' && UUID_RE.test(value.trim());
+}
+
+export function matchesCertOpsFocusId(focusId, ...candidates) {
+  if (!focusId) return false;
+  const needle = String(focusId);
+  return candidates.some(
+    candidate => candidate != null && String(candidate) === needle
+  );
+}
+
+/**
+ * Scroll a focused list row into view once it exists in the DOM.
+ * Retries briefly because fleet/trust-anchor lists load asynchronously.
+ */
+export function scrollCertOpsFocusedNode(selector) {
+  if (!selector || typeof document === 'undefined') return () => {};
+  let cancelled = false;
+  let attempts = 0;
+  const maxAttempts = 40;
+
+  const tick = () => {
+    if (cancelled) return;
+    const node = document.querySelector(selector);
+    if (node) {
+      node.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      if (typeof node.focus === 'function') {
+        try {
+          node.focus({ preventScroll: true });
+        } catch {
+          node.focus();
+        }
+      }
+      return;
+    }
+    attempts += 1;
+    if (attempts < maxAttempts) {
+      window.setTimeout(tick, 50);
+    }
+  };
+
+  tick();
+  return () => {
+    cancelled = true;
+  };
 }
 
 /**
