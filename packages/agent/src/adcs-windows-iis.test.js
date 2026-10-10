@@ -17,6 +17,26 @@ const {
   withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
 
+describe("AD CS renew evidence ordering", () => {
+  it("persists classified CA outcomes before reportIssuanceEvidence and exposes fault injection", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
+    assert.ok(renewFn >= 0);
+    const renewSrc = src.slice(renewFn, src.indexOf("async function executeWindowsIisAdcsContinueJob"));
+    function assertPersistBeforeReport(marker) {
+      const persistAt = renewSrc.indexOf(marker);
+      assert.ok(persistAt >= 0, `missing ${marker}`);
+      const reportAt = renewSrc.indexOf('onBeforeMutation("report-issuance-evidence")', persistAt);
+      const evidenceAt = renewSrc.indexOf("reportIssuanceEvidence", reportAt);
+      assert.ok(reportAt > persistAt, `${marker} must precede report-issuance-evidence fault point`);
+      assert.ok(evidenceAt > reportAt, "fault point must precede reportIssuanceEvidence");
+    }
+    assertPersistBeforeReport('state: "issued"');
+    assertPersistBeforeReport('state: caHresult ? "denied" : "submission_uncertain"');
+    assertPersistBeforeReport('state: "refused"');
+  });
+});
+
 const ENROLLMENT = {
   enrollmentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   attempt: 1,

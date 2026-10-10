@@ -341,6 +341,88 @@ function readLegacyJournal(filePath) {
   };
 }
 
+/** Fields required on the journal record for each state (artifacts checked separately). */
+const REQUIRED_FIELDS_BY_STATE = Object.freeze({
+  prepared: ["containerName", "snapshotSha256", "csrSha256", "csrSpkiSha256", "templateOid"],
+  submitting: ["containerName", "snapshotSha256", "csrSha256", "csrSpkiSha256", "templateOid"],
+  submission_uncertain: ["containerName", "snapshotSha256", "csrSha256", "csrSpkiSha256", "templateOid"],
+  pending: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "requestId"],
+  pending_issuance: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "requestId"],
+  issued: ["containerName", "snapshotSha256", "csrSha256", "csrSpkiSha256", "templateOid", "leafSha256"],
+  validation_deferred: [
+    "containerName",
+    "snapshotSha256",
+    "csrSha256",
+    "csrSpkiSha256",
+    "templateOid",
+    "leafSha256",
+    "validationDeadlineAt",
+  ],
+  installing: [
+    "containerName",
+    "snapshotSha256",
+    "csrSha256",
+    "csrSpkiSha256",
+    "templateOid",
+    "leafSha256",
+    "installStep",
+  ],
+  installed: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "leafSha256"],
+  install_failed: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "leafSha256"],
+  denied: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid"],
+  refused: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid"],
+  rejected_invalid: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid"],
+});
+
+/** Allowed previous states for a write (null = no prior journal.json). */
+const ALLOWED_TRANSITIONS = Object.freeze({
+  prepared: new Set([null, "prepared", "submitting", "keygen_intent"]),
+  submitting: new Set(["prepared"]),
+  submission_uncertain: new Set(["submitting", "submission_uncertain"]),
+  pending: new Set(["submitting", "submission_uncertain", "pending", null]),
+  pending_issuance: new Set(["submitting", "submission_uncertain", "pending", "pending_issuance"]),
+  issued: new Set(["submitting", "submission_uncertain", "pending", "pending_issuance", "issued"]),
+  validation_deferred: new Set(["issued", "validation_deferred"]),
+  installing: new Set(["issued", "validation_deferred", "installing", "install_failed"]),
+  installed: new Set(["installing", "installed"]),
+  install_failed: new Set(["installing", "install_failed"]),
+  denied: new Set(["submitting", "denied"]),
+  refused: new Set(["submitting", "prepared", "refused"]),
+  rejected_invalid: new Set([
+    "prepared",
+    "submitting",
+    "issued",
+    "validation_deferred",
+    "rejected_invalid",
+  ]),
+  validation_expired: new Set(["validation_deferred", "validation_expired"]),
+  abandoned: new Set(JOURNAL_STATES),
+  expired: new Set(JOURNAL_STATES),
+  cancelled: new Set(JOURNAL_STATES),
+});
+
+function missingRequiredFields(state, parsed) {
+  const required = REQUIRED_FIELDS_BY_STATE[state];
+  if (!required) return null;
+  for (const field of required) {
+    const value = parsed[field];
+    if (field === "requestId") {
+      if (!Number.isInteger(value) || value < 1) return field;
+      continue;
+    }
+    if (field.endsWith("Sha256") || field === "csrSpkiSha256" || field === "leafSha256") {
+      if (typeof value !== "string" || !HEX64.test(value)) return field;
+      continue;
+    }
+    if (field === "templateOid") {
+      if (typeof value !== "string" || !OID_PATTERN.test(value)) return field;
+      continue;
+    }
+    if (typeof value !== "string" || value.length === 0) return field;
+  }
+  return null;
+}
+
 function readV2Journal(stateDir, enrollmentId, filePath) {
   let parsed;
   try {
@@ -369,31 +451,51 @@ function readV2Journal(stateDir, enrollmentId, filePath) {
     return { kind: "corrupt", error: `unknown journal state ${JSON.stringify(parsed.state)}`, path: filePath };
   }
 
+  const missing = missingRequiredFields(parsed.state, parsed);
+  if (missing) {
+    return {
+      kind: "corrupt",
+      error: `journal state ${parsed.state} is missing required field ${missing}`,
+      path: filePath,
+    };
+  }
+
   const artifacts = { csrPem: null, leafPem: null, chainPem: null };
   // Resume-submit needs the CSR PEM. Pending retrieve can use csrSpkiSha256 alone.
-  const needsCsr = ["prepared", "submitting", "submission_uncertain"].includes(parsed.state);
-  if (needsCsr) {
+  const needsCsr = ["prepared", "submitting", "submission_uncertain", "issued", "validation_deferred", "installing"].includes(
+    parsed.state,
+  );
+  if (needsCsr || typeof parsed.csrSha256 === "string") {
     const csrPath = csrArtifactPath(stateDir, enrollmentId);
-    if (!fs.existsSync(csrPath)) {
+    if (needsCsr && !fs.existsSync(csrPath)) {
       return {
         kind: "corrupt",
         error: `journal state ${parsed.state} requires csr.pem but it is missing`,
         path: filePath,
       };
     }
-    try {
-      const csrPem = fs.readFileSync(csrPath, "utf8");
-      const csrSha256 = sha256HexOfString(csrPem);
-      if (typeof parsed.csrSha256 === "string" && parsed.csrSha256 !== csrSha256) {
-        return {
-          kind: "corrupt",
-          error: "csr.pem hash does not match journaled csrSha256",
-          path: csrPath,
-        };
+    if (fs.existsSync(csrPath)) {
+      try {
+        const csrPem = fs.readFileSync(csrPath, "utf8");
+        const csrSha256 = sha256HexOfString(csrPem);
+        if (typeof parsed.csrSha256 !== "string" || !HEX64.test(parsed.csrSha256)) {
+          return {
+            kind: "corrupt",
+            error: "journal is missing csrSha256 required to verify csr.pem",
+            path: filePath,
+          };
+        }
+        if (parsed.csrSha256 !== csrSha256) {
+          return {
+            kind: "corrupt",
+            error: "csr.pem hash does not match journaled csrSha256",
+            path: csrPath,
+          };
+        }
+        artifacts.csrPem = csrPem;
+      } catch (err) {
+        return { kind: "corrupt", error: `failed to read csr.pem: ${err.message}`, path: csrPath };
       }
-      artifacts.csrPem = csrPem;
-    } catch (err) {
-      return { kind: "corrupt", error: `failed to read csr.pem: ${err.message}`, path: csrPath };
     }
   }
 
@@ -412,7 +514,14 @@ function readV2Journal(stateDir, enrollmentId, filePath) {
     try {
       const leafPem = fs.readFileSync(leafPath, "utf8");
       const leafSha256 = sha256HexOfString(leafPem);
-      if (typeof parsed.leafSha256 === "string" && parsed.leafSha256 !== leafSha256) {
+      if (typeof parsed.leafSha256 !== "string" || !HEX64.test(parsed.leafSha256)) {
+        return {
+          kind: "corrupt",
+          error: "journal is missing leafSha256 required to verify leaf.pem",
+          path: filePath,
+        };
+      }
+      if (parsed.leafSha256 !== leafSha256) {
         return {
           kind: "corrupt",
           error: "leaf.pem hash does not match journaled leafSha256",
@@ -486,8 +595,10 @@ async function writeCsrArtifact({ stateDir, enrollmentId, csrPem }) {
     throw new TypeError("csrPem must be a PEM string");
   }
   ensureEnrollmentDir(stateDir, enrollmentId);
-  const csrSha256 = sha256HexOfString(csrPem);
-  await durableWriteFile(csrArtifactPath(stateDir, enrollmentId), csrPem.endsWith("\n") ? csrPem : `${csrPem}\n`);
+  // Hash the exact bytes persisted (normalize trailing newline first).
+  const normalized = csrPem.endsWith("\n") ? csrPem : `${csrPem}\n`;
+  const csrSha256 = sha256HexOfString(normalized);
+  await durableWriteFile(csrArtifactPath(stateDir, enrollmentId), normalized);
   return { csrSha256, path: csrArtifactPath(stateDir, enrollmentId) };
 }
 
@@ -516,6 +627,8 @@ async function writeIssuedCertificateArtifacts({
 
 /**
  * Commit a journal.json transition. Caller must hold the enrollment lock.
+ * Enforces state-required fields, permitted transitions, and immutable
+ * enrollment identity fields once committed past keygen_intent.
  * @param {object} fields journal body fields (state-required)
  */
 async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
@@ -526,6 +639,50 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
   if (typeof fields.state !== "string" || !JOURNAL_STATES.includes(fields.state)) {
     throw new TypeError(`invalid journal state ${JSON.stringify(fields?.state)}`);
   }
+  const missing = missingRequiredFields(fields.state, fields);
+  if (missing) {
+    throw new TypeError(`journal state ${fields.state} is missing required field ${missing}`);
+  }
+
+  const existing = readEnrollmentJournal(stateDir, enrollmentId);
+  if (existing.kind === "corrupt") {
+    throw new Error(`cannot transition corrupt journal: ${existing.error}`);
+  }
+  let previousState = null;
+  let previousJournal = null;
+  if (existing.kind === "valid" || existing.kind === "legacy") {
+    previousState = existing.journal.state;
+    previousJournal = existing.journal;
+  }
+
+  const allowed = ALLOWED_TRANSITIONS[fields.state];
+  if (!allowed || !allowed.has(previousState)) {
+    throw new Error(
+      `invalid journal transition ${previousState == null ? "(none)" : previousState} -> ${fields.state}`,
+    );
+  }
+
+  if (previousJournal) {
+    if (
+      typeof previousJournal.containerName === "string" &&
+      typeof fields.containerName === "string" &&
+      previousJournal.containerName !== fields.containerName
+    ) {
+      throw new Error("journal field containerName is immutable after commit");
+    }
+    if (previousState !== "keygen_intent") {
+      for (const field of ["snapshotSha256", "csrSpkiSha256", "templateOid", "csrSha256"]) {
+        if (
+          typeof previousJournal[field] === "string" &&
+          typeof fields[field] === "string" &&
+          previousJournal[field] !== fields[field]
+        ) {
+          throw new Error(`journal field ${field} is immutable after commit`);
+        }
+      }
+    }
+  }
+
   ensureEnrollmentDir(stateDir, enrollmentId);
   const payload = {
     schemaVersion: JOURNAL_SCHEMA_VERSION,
@@ -551,11 +708,13 @@ function listProtectedEnrollmentContainers(stateDir) {
   const root = enrollmentsRoot(stateDir);
   let names;
   try {
-    if (!fs.existsSync(root)) {
-      return { ok: true, containers: new Set(), enrollments: [] };
-    }
+    // readdir distinguishes missing (ENOENT) from inaccessible (EACCES/EPERM).
+    // existsSync(false) must not be treated as an empty protected set.
     names = fs.readdirSync(root);
   } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return { ok: true, containers: new Set(), enrollments: [] };
+    }
     return { ok: false, error: `cannot read adcs-enrollments: ${err.message}` };
   }
 
@@ -592,14 +751,21 @@ function listProtectedEnrollmentContainers(stateDir) {
     }
     if (read.kind === "not_found") {
       // Directory exists without readable journal/intent — fail closed.
+      // Use stat so permission errors are not treated as "absent".
       const dir = enrollmentDir(stateDir, enrollmentId);
-      if (fs.existsSync(dir)) {
+      try {
+        fs.statSync(dir);
         return {
           ok: false,
           error: `enrollment directory ${enrollmentId} has no readable journal or keygen intent`,
         };
+      } catch (err) {
+        if (err && err.code === "ENOENT") continue;
+        return {
+          ok: false,
+          error: `cannot stat enrollment directory ${enrollmentId}: ${err.message}`,
+        };
       }
-      continue;
     }
 
     const journal = read.journal;
@@ -661,6 +827,57 @@ function looksLikeEnrollmentContainerName(containerName) {
   );
 }
 
+/** Extract enrollment UUID from an enrollment-shaped CNG container name. */
+function enrollmentIdFromContainerName(containerName) {
+  if (typeof containerName !== "string") return null;
+  const match = containerName.match(
+    /enr-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+  );
+  return match ? match[1].toLowerCase() : null;
+}
+
+function journalStateProtectsContainer(state) {
+  return (
+    OPEN_JOURNAL_STATES.includes(state) ||
+    state === "install_failed" ||
+    ["validation_expired", "denied", "refused", "expired", "cancelled"].includes(state)
+  );
+}
+
+/**
+ * Recheck whether an enrollment currently protects a CNG container.
+ * Caller must hold the enrollment lock. Fail closed on corrupt journals.
+ */
+function isEnrollmentContainerProtected(stateDir, enrollmentId, containerName) {
+  assertEnrollmentId(enrollmentId);
+  const read = readEnrollmentJournal(stateDir, enrollmentId);
+  if (read.kind === "corrupt") {
+    return {
+      protected: true,
+      reason: "corrupt AD CS enrollment journal; deferred",
+    };
+  }
+  if (read.kind === "not_found") {
+    return { protected: false };
+  }
+  const state = read.journal.state;
+  if (!journalStateProtectsContainer(state)) {
+    return { protected: false };
+  }
+  const journalContainer = read.journal.containerName;
+  if (
+    typeof journalContainer === "string" &&
+    journalContainer.length > 0 &&
+    journalContainer !== containerName
+  ) {
+    return { protected: false };
+  }
+  return {
+    protected: true,
+    reason: "open AD CS enrollment journal protects this container",
+  };
+}
+
 /** @deprecated path helper kept for callers that still point at legacy files */
 function enrollmentJournalPath(stateDir, enrollmentId) {
   return legacyJournalPath(stateDir, enrollmentId);
@@ -692,4 +909,7 @@ module.exports = {
   writeEnrollmentJournal,
   listProtectedEnrollmentContainers,
   looksLikeEnrollmentContainerName,
+  enrollmentIdFromContainerName,
+  isEnrollmentContainerProtected,
+  ALLOWED_TRANSITIONS,
 };

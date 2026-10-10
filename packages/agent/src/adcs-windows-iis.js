@@ -521,13 +521,23 @@ function createAdcsWindowsIisExecutors(deps) {
   }
 
   function withInstalledEnrollmentResult(deployResult, enrollment, requestId) {
-    if (deployResult?.status !== "succeeded") return deployResult;
+    if (deployResult?.status === "succeeded") {
+      return {
+        ...deployResult,
+        enrollmentResult: installedEnrollmentResult(
+          enrollment.enrollmentId,
+          enrollment.attempt,
+          requestId,
+        ),
+      };
+    }
     return {
       ...deployResult,
-      enrollmentResult: installedEnrollmentResult(
+      enrollmentResult: enrollmentResultFor(
         enrollment.enrollmentId,
         enrollment.attempt,
-        requestId,
+        "install_failed",
+        Number.isInteger(requestId) && requestId >= 1 ? { requestId } : {},
       ),
     };
   }
@@ -851,22 +861,29 @@ function createAdcsWindowsIisExecutors(deps) {
         };
       }
       issuanceOutcome = issuance.outcome;
-      await reportIssuanceEvidence(client, jobId, issuance);
+
+      // Persist classified CA outcome before evidence reporting so a crash or
+      // report failure cannot leave submitting without a RequestId/leaf receipt.
+      const journalTrustFields = {
+        attempt: decoded.attempt,
+        containerName,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+        csrSha256,
+        csrSpkiSha256,
+        templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+      };
 
       if (issuance.outcome === "not_submitted") {
         // Proven never reached the CA: return journal to prepared for resume-submit.
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "prepared",
-          attempt: decoded.attempt,
-          containerName,
-          snapshotSha256: decoded.snapshotSha256,
-          jobId,
-          csrSha256,
-          csrSpkiSha256,
-          templateOid,
-          caConfig: snapshot.caConfig,
-          template: snapshot.template,
+          ...journalTrustFields,
         });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
       if (issuance.outcome === "pending") {
@@ -882,28 +899,53 @@ function createAdcsWindowsIisExecutors(deps) {
           containerName,
           csrPem: csrResult.csrPem,
         });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
+      if (issuance.outcome === "denied") {
+        const caHresult =
+          typeof issuance.caHresult === "string" && CA_HRESULT_PATTERN.test(issuance.caHresult)
+            ? issuance.caHresult
+            : null;
+        // Without HRESULT stay reconcilable (matches enrollmentResult mapping).
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: caHresult ? "denied" : "submission_uncertain",
+          ...journalTrustFields,
+          ...(caHresult ? { caHresult } : {}),
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
+      if (issuance.outcome === "refused") {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "refused",
+          ...journalTrustFields,
+          ...(typeof issuance.errorCode === "string" ? { errorCode: issuance.errorCode } : {}),
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
+      if (issuance.outcome === "uncertain") {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "submission_uncertain",
+          ...journalTrustFields,
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
       if (issuance.outcome !== "issued") {
-        if (issuance.outcome === "uncertain") {
-          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
-            state: "submission_uncertain",
-            attempt: decoded.attempt,
-            containerName,
-            snapshotSha256: decoded.snapshotSha256,
-            jobId,
-            csrSha256,
-            csrSpkiSha256,
-            templateOid,
-            caConfig: snapshot.caConfig,
-            template: snapshot.template,
-          });
-        }
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
       certificatePem = issuance.certificatePem;
 
-      // Persist issued leaf before decision-6 (recovery source of truth).
+      // Persist issued leaf before evidence and decision-6 (recovery source of truth).
       let leafSha256;
       try {
         const written = await writeIssuedCertificateArtifacts({
@@ -914,15 +956,7 @@ function createAdcsWindowsIisExecutors(deps) {
         leafSha256 = written.leafSha256;
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "issued",
-          attempt: decoded.attempt,
-          containerName,
-          snapshotSha256: decoded.snapshotSha256,
-          jobId,
-          csrSha256,
-          csrSpkiSha256,
-          templateOid,
-          caConfig: snapshot.caConfig,
-          template: snapshot.template,
+          ...journalTrustFields,
           leafSha256,
           ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
         });
@@ -935,6 +969,9 @@ function createAdcsWindowsIisExecutors(deps) {
           ),
         };
       }
+
+      if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+      await reportIssuanceEvidence(client, jobId, issuance);
 
       const validation = await runDecision6Validation({
         certificatePem,

@@ -214,7 +214,6 @@ const {
   listProtectedEnrollmentContainers,
   looksLikeEnrollmentContainerName,
   durableWriteFile,
-  sha256HexOfString,
 } = require("./adcs-enrollment-journal");
 
 function templateOidCachePath(stateDir, caConfig, template) {
@@ -302,8 +301,14 @@ async function writeEnrollmentRequestJournal({
   if (typeof templateOid !== "string" || !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
     throw new TypeError("templateOid is required");
   }
+  if (typeof containerName !== "string" || containerName.length === 0) {
+    throw new TypeError("containerName is required for a pending RequestId journal");
+  }
+  let csrSha256;
   if (typeof csrPem === "string" && csrPem.includes("BEGIN")) {
-    await writeCsrArtifact({ stateDir, enrollmentId, csrPem });
+    // Hash must match the exact bytes writeCsrArtifact persists.
+    const written = await writeCsrArtifact({ stateDir, enrollmentId, csrPem });
+    csrSha256 = written.csrSha256;
   }
   return writeEnrollmentJournal(stateDir, enrollmentId, {
     state: "pending",
@@ -313,10 +318,8 @@ async function writeEnrollmentRequestJournal({
     jobId,
     csrSpkiSha256,
     templateOid,
-    ...(typeof containerName === "string" ? { containerName } : {}),
-    ...(typeof csrPem === "string" && csrPem.includes("BEGIN")
-      ? { csrSha256: sha256HexOfString(csrPem) }
-      : {}),
+    containerName,
+    ...(csrSha256 ? { csrSha256 } : {}),
   });
 }
 
