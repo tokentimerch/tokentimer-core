@@ -2208,10 +2208,28 @@ describe("CertOps trust-anchor operation and subject-type wiring (ADR-0012 decis
   it("adds distribute-trust/revoke-trust to the operation vocabulary and trust_anchor to the subject vocabulary", () => {
     assert.ok(JOB_OPERATIONS.includes("distribute-trust"));
     assert.ok(JOB_OPERATIONS.includes("revoke-trust"));
+    assert.ok(JOB_OPERATIONS.includes("continue-enrollment"));
     assert.ok(SUBJECT_TYPES.includes("trust_anchor"));
     assert.deepEqual(
       [...TRUST_ANCHOR_OPERATIONS].sort(),
       ["distribute-trust", "revoke-trust"],
+    );
+  });
+
+  it("refuses continue-enrollment on the general createCertificateJob path", async () => {
+    await assert.rejects(
+      () =>
+        createCertificateJob({
+          client: createMemoryClient(),
+          workspaceId: WORKSPACE_A,
+          operation: "continue-enrollment",
+          subjectType: "managed_certificate",
+          subjectId: "cert-continue-blocked",
+        }),
+      (err) =>
+        /continue-enrollment jobs can only be created by the CertOps enrollment scheduler/.test(
+          err.message,
+        ),
     );
   });
 

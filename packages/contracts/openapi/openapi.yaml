@@ -8675,7 +8675,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment]
         status:
           type: string
           enum:
@@ -8691,6 +8691,7 @@ components:
             - cancelled
             - dry_run_complete
             - orphaned_unknown_effect
+            - awaiting_issuer
         source:
           type: string
           enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]
@@ -9100,7 +9101,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment]
         status:
           type: string
           enum:
@@ -9116,6 +9117,7 @@ components:
             - cancelled
             - dry_run_complete
             - orphaned_unknown_effect
+            - awaiting_issuer
         source:
           type: string
           enum: [api, executor, system, automation, domain-monitor, endpoint-monitor, control-plane, external, controller_provisioning]

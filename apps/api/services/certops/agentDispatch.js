@@ -137,6 +137,8 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
   // Agent self-reported: side effects may have occurred and rollback is
   // uncertain. Requires operator reconciliation (distinct from failed).
   orphaned_unknown_effect: "orphaned_unknown_effect",
+  // ADR-0014: this job ends while its enrollment waits on the issuer.
+  awaiting_issuer: "awaiting_issuer",
 });
 
 /**
@@ -2196,6 +2198,18 @@ async function ingestResult({
         CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
+    if (jobMode === "dry_run" && jobStatus === "awaiting_issuer") {
+      throw serviceError(
+        "awaiting_issuer is only valid for real jobs",
+        CERTOPS_AGENT_RESULT_STATUS_INVALID,
+      );
+    }
+    if (jobStatus === "awaiting_issuer" && !body.enrollmentResult) {
+      throw serviceError(
+        "awaiting_issuer requires enrollmentResult",
+        CERTOPS_AGENT_RESULT_STATUS_INVALID,
+      );
+    }
 
     // Single-use nonce consumption (replay ledger), bound to the workspace
     // and the agent the nonce was issued to.
@@ -2249,7 +2263,9 @@ async function ingestResult({
     }
 
     const isFailure =
-      jobStatus !== "succeeded" && jobStatus !== "dry_run_complete";
+      jobStatus !== "succeeded" &&
+      jobStatus !== "dry_run_complete" &&
+      jobStatus !== "awaiting_issuer";
     // Terminal renew failures must persist error_code for the alerts stage.
     const errorCode = isFailure
       ? body.rejectionReason || `AGENT_RESULT_${jobStatus.toUpperCase()}`
@@ -2286,11 +2302,13 @@ async function ingestResult({
     // legitimate: e.g. a very early failure before the agent even attempted
     // the OS mutation may not have an observedFingerprintBefore.
     const trustResult = body?.trustResult || null;
+    const enrollmentResult = body?.enrollmentResult || null;
     const resultMetadata = {
       ...(body.rejectionReason != null
         ? { rejectionReason: body.rejectionReason }
         : {}),
       ...(body.keyRotated != null ? { keyRotated: body.keyRotated } : {}),
+      ...(enrollmentResult ? { enrollmentResult } : {}),
       ...(trustResult
         ? {
             outcome: trustResult.outcome ?? null,

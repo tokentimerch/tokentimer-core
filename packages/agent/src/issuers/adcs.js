@@ -6,8 +6,8 @@
  * vocabulary. Never parses certreq console text.
  *
  * Enrollment concurrency: submit/retrieve for the same enrollmentId share an
- * in-process mutex. A durable cross-process lock (W6) is still required before
- * production AD CS enrollment is enabled in the executor.
+ * in-process mutex. The Windows IIS executor also holds acquireEnrollmentLock
+ * (durable, per enrollmentId) across keygen/submit/retrieve/accept.
  */
 
 const fs = require("node:fs");
@@ -18,6 +18,7 @@ const { promisify } = require("node:util");
 
 const { decodeCmcResponse } = require("./cmc-helper");
 const { mapAdcsDisposition } = require("./adcs-disposition");
+const { filesystemSafeJobId } = require("./adcs-enrollment");
 
 const execFileAsync = promisify(execFile);
 
@@ -114,7 +115,9 @@ async function runCertreq(execFileImpl, argv, timeoutMs) {
  * @returns {Promise<string>}
  */
 async function createInvocationWorkDir(scratchDir, jobId, phase) {
-  return fsp.mkdtemp(path.join(scratchDir, `adcs-${jobId}-${phase}-`));
+  // jobId may contain `:`; Windows paths cannot. Keep prior evidence dirs.
+  const safeJobId = filesystemSafeJobId(jobId);
+  return fsp.mkdtemp(path.join(scratchDir, `adcs-${safeJobId}-${phase}-`));
 }
 
 /**

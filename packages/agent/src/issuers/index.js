@@ -27,6 +27,7 @@
 
 const { createAcmeIssuer } = require("./acme");
 const { createAdcsIssuer } = require("./adcs");
+const adcsEnrollment = require("./adcs-enrollment");
 
 const ISSUANCE_OUTCOMES = Object.freeze([
   "issued",
@@ -38,10 +39,11 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "uncertain",
 ]);
 
-// Kinds the executor will run today. createAdcsIssuer is exported and tested,
-// but adcs stays off this list until the renew/continue-enrollment path wires
-// the enrollment snapshot, helper binary, and W6 durable enrollment lock.
-const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme"]);
+// AD CS renew/continue-enrollment are wired with acquireEnrollmentLock held
+// across keygen/submit/retrieve. Full issued-cert validation and scratch
+// retention remain later gates; this list only means the agent will claim
+// the job kind rather than block it as unimplemented.
+const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
 const MAX_REQUEST_ID = 0xffffffff;
@@ -114,4 +116,5 @@ module.exports = {
   assertIssuanceOutcome,
   createAcmeIssuer,
   createAdcsIssuer,
+  ...adcsEnrollment,
 };

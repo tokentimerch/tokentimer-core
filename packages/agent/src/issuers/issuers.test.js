@@ -30,8 +30,12 @@ describe("resolveJobIssuerKind", () => {
     assert.deepEqual(resolveJobIssuerKind({ issuerKind: "acme" }), { kind: "acme" });
   });
 
-  it("refuses every other kind, including adcs, rather than falling back to ACME", () => {
-    for (const issuerKind of ["adcs", "venafi", "ACME", "", null, 1, { kind: "acme" }]) {
+  it("accepts adcs once the renew/continue-enrollment path is wired", () => {
+    assert.deepEqual(resolveJobIssuerKind({ issuerKind: "adcs" }), { kind: "adcs" });
+  });
+
+  it("refuses unknown kinds rather than falling back to ACME", () => {
+    for (const issuerKind of ["venafi", "ACME", "", null, 1, { kind: "acme" }]) {
       const resolved = resolveJobIssuerKind({ issuerKind });
       assert.equal(resolved.kind, undefined, JSON.stringify(issuerKind));
       assert.match(resolved.error, /which this agent does not implement/);
