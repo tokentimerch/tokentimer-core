@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   resultForAdcsOutcome,
+  resultForValidationOutcome,
   shouldRetainCngKey,
 } = require("./adcs-windows-iis");
 
@@ -95,12 +96,39 @@ describe("resultForAdcsOutcome", () => {
 
 describe("shouldRetainCngKey", () => {
   it("retains the key when a later continue-enrollment may need it", () => {
-    for (const outcome of ["pending", "uncertain", "issued"]) {
+    for (const outcome of ["pending", "uncertain", "issued", "validation_deferred"]) {
       assert.equal(shouldRetainCngKey(outcome), true, outcome);
     }
     // not_submitted never reached the CA; free the container so renew can retry.
     assert.equal(shouldRetainCngKey("not_submitted"), false);
     assert.equal(shouldRetainCngKey("denied"), false);
     assert.equal(shouldRetainCngKey("failed"), false);
+    assert.equal(shouldRetainCngKey("rejected_invalid"), false);
+  });
+});
+
+describe("resultForValidationOutcome", () => {
+  it("maps deferred validation while retaining enrollment identity", () => {
+    const result = resultForValidationOutcome(
+      { state: "validation_deferred", detail: "offline CRL" },
+      ENROLLMENT,
+      99,
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.enrollmentResult.state, "validation_deferred");
+    assert.equal(result.enrollmentResult.requestId, 99);
+  });
+
+  it("maps rejected_invalid with ADCS_CERTIFICATE_INVALID", () => {
+    const result = resultForValidationOutcome(
+      {
+        state: "rejected_invalid",
+        errorCode: "ADCS_CERTIFICATE_INVALID",
+        detail: "bad SAN",
+      },
+      ENROLLMENT,
+    );
+    assert.equal(result.enrollmentResult.state, "rejected_invalid");
+    assert.equal(result.enrollmentResult.errorCode, "ADCS_CERTIFICATE_INVALID");
   });
 });

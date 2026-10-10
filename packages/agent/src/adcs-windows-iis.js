@@ -6,8 +6,8 @@
  * and (on issued) the deploy tail.
  *
  * Executable selection remains gated off in IMPLEMENTED_ISSUER_KINDS until
- * decision-6 validation, durable journal recovery, and continuation scheduling
- * land; this module is the non-executable wiring slice.
+ * durable journal recovery and continuation scheduling land; decision-6
+ * validation runs on the dormant path before accept.
  */
 
 const path = require("node:path");
@@ -20,9 +20,19 @@ const {
   mapSnapshotKeyAlgorithm,
   resolveAdcsCmcHelperPath,
   resolvePinnedCaCertPath,
+  resolveTemplateOid,
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
 } = require("./issuers");
+const {
+  validateIssuedCertificate,
+  extractSpkiFromCsr,
+  spkiSha256Hex,
+} = require("./issuers/issued-certificate-validation");
+const {
+  resolveAdcsChainHelperPath,
+  validateCertificateChain,
+} = require("./issuers/chain-helper");
 const {
   generateCsrViaCng,
   acquireEnrollmentLock,
@@ -155,9 +165,44 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
 
 function shouldRetainCngKey(outcome) {
   // not_submitted: transport proved the CA never saw the CSR, so free the
-  // container and let a later renew regenerate. pending/uncertain/issued keep
-  // the key for continue-enrollment retrieve/accept (never resubmit uncertain).
-  return outcome === "pending" || outcome === "uncertain" || outcome === "issued";
+  // container and let a later renew regenerate. pending/uncertain/issued and
+  // validation_deferred keep the key (decision 6); rejected_invalid frees it.
+  return (
+    outcome === "pending" ||
+    outcome === "uncertain" ||
+    outcome === "issued" ||
+    outcome === "validation_deferred"
+  );
+}
+
+/**
+ * @param {object} validation validateIssuedCertificate result
+ * @param {{ enrollmentId: string, attempt: number }} enrollment
+ * @param {number} [requestId]
+ */
+function resultForValidationOutcome(validation, { enrollmentId, attempt }, requestId) {
+  const requestExtras =
+    Number.isInteger(requestId) && requestId >= 1 ? { requestId } : {};
+  if (validation.state === "validation_deferred") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(validation.detail || "revocation status unknown"),
+      enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "validation_deferred", {
+        errorCode: null,
+        ...requestExtras,
+      }),
+    };
+  }
+  return {
+    status: "failed",
+    keyRotated: null,
+    errorMessage: boundErrorMessage(validation.detail || "issued certificate failed validation"),
+    enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "rejected_invalid", {
+      errorCode: validation.errorCode || "ADCS_CERTIFICATE_INVALID",
+      ...requestExtras,
+    }),
+  };
 }
 
 async function resolveWindowsIisTarget(job) {
@@ -207,6 +252,83 @@ function createAdcsWindowsIisExecutors(deps) {
     recordWindowsCngContainer,
     isValidCertificateId,
   } = deps;
+
+  async function runDecision6Validation({
+    certificatePem,
+    csrPem,
+    csrSpkiSha256,
+    snapshot,
+    requiredDnsName,
+    stateDir,
+    executionContext,
+    templateOidHint,
+  }) {
+    const oidResolved = resolveTemplateOid({
+      stateDir,
+      caConfig: snapshot.caConfig,
+      template: snapshot.template,
+      templateOid: templateOidHint || executionContext.adcsTemplateOid,
+    });
+    if (!oidResolved.ok) {
+      return {
+        ok: false,
+        state: "rejected_invalid",
+        errorCode: "ADCS_CERTIFICATE_INVALID",
+        detail: oidResolved.error,
+      };
+    }
+
+    const chainHelper = resolveAdcsChainHelperPath({
+      overridePath: executionContext.adcsChainHelperPath,
+    });
+    const chainValidateImpl =
+      executionContext.adcsChainValidateImpl ||
+      (async (args) => {
+        if (chainHelper.error) {
+          return { verdict: "invalid", detail: chainHelper.error };
+        }
+        const workDir = path.join(stateDir, "adcs-scratch", "validate");
+        await fsp.mkdir(workDir, { recursive: true });
+        const certPath = path.join(workDir, `leaf-${process.pid}.pem`);
+        await fsp.writeFile(certPath, args.certificatePem, "utf8");
+        try {
+          return await validateCertificateChain({
+            helperPath: chainHelper.path,
+            certPath,
+            caKeySha256: args.caKeySha256,
+            revocationCheck: args.revocationCheck,
+            caCertPath: args.caCertPath,
+            extraStorePath: args.extraStorePath,
+            execFileImpl: executionContext.adcsExecFileImpl || executionContext.windowsExecFileImpl,
+          });
+        } finally {
+          try {
+            await fsp.unlink(certPath);
+          } catch {
+            // best-effort cleanup
+          }
+        }
+      });
+
+    return validateIssuedCertificate({
+      certificatePem,
+      csrPem,
+      csrSpkiSha256,
+      authorizedDnsNames: snapshot.authorizedDnsNames,
+      requiredDnsName,
+      templateOid: oidResolved.templateOid,
+      caKeySha256: snapshot.caKeySha256,
+      minimumRemainingValidity: snapshot.minimumRemainingValidity,
+      requireLaterNotAfter: snapshot.requireLaterNotAfter === true,
+      existingNotAfter: executionContext.adcsExistingNotAfter ?? null,
+      existingSerialHex: executionContext.adcsExistingSerialHex ?? null,
+      keyAlgorithm: snapshot.keyAlgorithm,
+      chainValidateImpl,
+      revocationCheck: executionContext.adcsRevocationCheck || "require",
+      caCertPath: executionContext.adcsCaCertPath,
+      helperPath: chainHelper.path,
+    });
+  }
 
   async function buildAdcsIssuerContext({ job, executionContext, stateDir }) {
     const decoded = decodeEnrollmentSnapshot(job);
@@ -475,6 +597,23 @@ function createAdcsWindowsIisExecutors(deps) {
       issuanceOutcome = issuance.outcome;
       await reportIssuanceEvidence(client, jobId, issuance);
 
+      let csrSpkiSha256;
+      try {
+        csrSpkiSha256 = spkiSha256Hex(extractSpkiFromCsr(csrResult.csrPem));
+      } catch (err) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(`could not hash CSR public key: ${err.message}`),
+        };
+      }
+      const templateOidHint = resolveTemplateOid({
+        stateDir,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+        templateOid: executionContext.adcsTemplateOid,
+      });
+
       if (issuance.outcome === "pending") {
         await writeEnrollmentRequestJournal({
           stateDir,
@@ -483,6 +622,8 @@ function createAdcsWindowsIisExecutors(deps) {
           requestId: issuance.requestId,
           snapshotSha256: decoded.snapshotSha256,
           jobId,
+          csrSpkiSha256,
+          templateOid: templateOidHint.ok ? templateOidHint.templateOid : undefined,
         });
         return resultForAdcsOutcome(issuance, decoded);
       }
@@ -490,6 +631,22 @@ function createAdcsWindowsIisExecutors(deps) {
         return resultForAdcsOutcome(issuance, decoded);
       }
       certificatePem = issuance.certificatePem;
+
+      const validation = await runDecision6Validation({
+        certificatePem,
+        csrPem: csrResult.csrPem,
+        csrSpkiSha256,
+        snapshot,
+        requiredDnsName: commonName,
+        stateDir,
+        executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+        templateOidHint: templateOidHint.ok ? templateOidHint.templateOid : undefined,
+      });
+      if (!validation.ok) {
+        issuanceOutcome =
+          validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
+        return resultForValidationOutcome(validation, decoded, issuance.requestId);
+      }
 
       // Hold the enrollment lock through accept/deploy so continue-enrollment
       // cannot race retrieve/accept on the same enrollmentId.
@@ -634,6 +791,29 @@ function createAdcsWindowsIisExecutors(deps) {
         });
       }
 
+      if (typeof journal.csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(journal.csrSpkiSha256)) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `local RequestId journal for enrollment ${decoded.enrollmentId} is missing csrSpkiSha256; cannot validate before accept`,
+          ),
+        };
+      }
+
+      const validation = await runDecision6Validation({
+        certificatePem: issuance.certificatePem,
+        csrSpkiSha256: journal.csrSpkiSha256,
+        snapshot,
+        requiredDnsName: windowsTarget.reference,
+        stateDir,
+        executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+        templateOidHint: journal.templateOid,
+      });
+      if (!validation.ok) {
+        return resultForValidationOutcome(validation, decoded, journal.requestId);
+      }
+
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -663,5 +843,6 @@ function createAdcsWindowsIisExecutors(deps) {
 module.exports = {
   createAdcsWindowsIisExecutors,
   resultForAdcsOutcome,
+  resultForValidationOutcome,
   shouldRetainCngKey,
 };

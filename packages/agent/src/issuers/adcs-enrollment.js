@@ -202,6 +202,66 @@ function enrollmentJournalPath(stateDir, enrollmentId) {
   return path.join(stateDir, "adcs-enrollments", `${enrollmentId}.json`);
 }
 
+function templateOidCachePath(stateDir, caConfig, template) {
+  const digest = crypto
+    .createHash("sha256")
+    .update(`${caConfig}\0${template}`, "utf8")
+    .digest("hex");
+  return path.join(stateDir, "adcs-template-oids", `${digest}.json`);
+}
+
+/**
+ * Persist msPKI-Cert-Template-OID from a successful preflight for decision-6.
+ */
+async function cacheTemplateOid({ stateDir, caConfig, template, templateOid }) {
+  if (typeof templateOid !== "string" || !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
+    throw new TypeError("templateOid must be a dotted OID");
+  }
+  const dest = templateOidCachePath(stateDir, caConfig, template);
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  const payload = {
+    caConfig,
+    template,
+    templateOid,
+    updatedAt: new Date().toISOString(),
+  };
+  const tmp = `${dest}.${process.pid}.tmp`;
+  await fsp.writeFile(tmp, `${JSON.stringify(payload)}\n`, "utf8");
+  await fsp.rename(tmp, dest);
+  return payload;
+}
+
+/**
+ * @returns {{ ok: true, templateOid: string }|{ ok: false, error: string }}
+ */
+function resolveTemplateOid({ stateDir, caConfig, template, templateOid }) {
+  if (typeof templateOid === "string" && /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
+    return { ok: true, templateOid };
+  }
+  if (typeof stateDir !== "string" || typeof caConfig !== "string" || typeof template !== "string") {
+    return {
+      ok: false,
+      error: "templateOid is not available; run adcs-preflight and cache the template OID",
+    };
+  }
+  const dest = templateOidCachePath(stateDir, caConfig, template);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(dest, "utf8"));
+    if (
+      typeof parsed.templateOid === "string" &&
+      /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(parsed.templateOid)
+    ) {
+      return { ok: true, templateOid: parsed.templateOid };
+    }
+  } catch {
+    // fall through
+  }
+  return {
+    ok: false,
+    error: "templateOid is not available; run adcs-preflight and cache the template OID",
+  };
+}
+
 async function writeEnrollmentRequestJournal({
   stateDir,
   enrollmentId,
@@ -209,6 +269,8 @@ async function writeEnrollmentRequestJournal({
   requestId,
   snapshotSha256,
   jobId,
+  csrSpkiSha256,
+  templateOid,
 }) {
   const dest = enrollmentJournalPath(stateDir, enrollmentId);
   await fsp.mkdir(path.dirname(dest), { recursive: true });
@@ -220,6 +282,12 @@ async function writeEnrollmentRequestJournal({
     jobId,
     updatedAt: new Date().toISOString(),
   };
+  if (typeof csrSpkiSha256 === "string" && HEX64.test(csrSpkiSha256)) {
+    payload.csrSpkiSha256 = csrSpkiSha256;
+  }
+  if (typeof templateOid === "string" && /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
+    payload.templateOid = templateOid;
+  }
   const tmp = `${dest}.${process.pid}.tmp`;
   await fsp.writeFile(tmp, `${JSON.stringify(payload)}\n`, "utf8");
   await fsp.rename(tmp, dest);
@@ -247,6 +315,9 @@ module.exports = {
   pinnedCaCertPath,
   resolvePinnedCaCertPath,
   cachePinnedCaCert,
+  templateOidCachePath,
+  cacheTemplateOid,
+  resolveTemplateOid,
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
   enrollmentJournalPath,
