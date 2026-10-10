@@ -85,19 +85,25 @@ function noteMetric(fn) {
   }
 }
 
-function parseNonNegativeIntEnv(raw, fallback) {
+// PostgreSQL int / interval math in the purge sweep cannot accept JS's full
+// safe-integer range. 3650 days (10 years) is the documented operator ceiling.
+const MAX_AGENT_LOG_RETENTION_DAYS = 3650;
+
+function parseNonNegativeIntEnv(raw, fallback, { max = Number.MAX_SAFE_INTEGER } = {}) {
   if (raw == null) return fallback;
   const trimmed = String(raw).trim();
   if (trimmed === "") return fallback;
   // Reject prefixes like "30days" / "0.5" / "100MB"; only a full decimal integer.
   if (!/^\d+$/.test(trimmed)) return fallback;
   const parsed = Number(trimmed);
-  if (!Number.isSafeInteger(parsed)) return fallback;
+  if (!Number.isSafeInteger(parsed) || parsed > max) return fallback;
   return parsed;
 }
 
 function resolveRetentionDays(env = process.env) {
-  return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_RETENTION_DAYS, 30);
+  return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_RETENTION_DAYS, 30, {
+    max: MAX_AGENT_LOG_RETENTION_DAYS,
+  });
 }
 
 function storageEnabled(env = process.env) {
@@ -271,8 +277,9 @@ function resolveIngest(state, batch, options = {}) {
   let quotaLines = 0;
   let sawNew = false;
 
-  // droppedBefore is a per-batch delta from the agent. Replay of the same
-  // batchKey does not re-enter this path, so retries cannot double-count.
+  // droppedBefore is a per-batch delta from the agent. Same-key retry exits
+  // above. An older batch replayed after an intervening batch still reaches
+  // here with every line already resolved; do not re-apply its drop delta.
   // When the batch also carries later seqs, the hole is visible as a seq gap;
   // take the max so local drops are not counted twice.
   const droppedBefore = Number.isSafeInteger(batch.droppedBefore) && batch.droppedBefore > 0
@@ -317,7 +324,14 @@ function resolveIngest(state, batch, options = {}) {
     resolved = line.seq;
   }
 
-  agentGapLines += Math.max(droppedBefore, seqGapLines);
+  const pureResolvedReplay =
+    batch.lines.length > 0 &&
+    allResolved &&
+    newlyStored === 0 &&
+    serverDroppedCount === 0;
+  if (!pureResolvedReplay) {
+    agentGapLines += Math.max(droppedBefore, seqGapLines);
+  }
 
   const ack = {
     ackThroughSeq: resolved,
@@ -378,7 +392,10 @@ function projectRetainedBytes({
 
 function logsComplete(jobStatus, streams) {
   if (!TERMINAL_JOB_STATUSES.has(jobStatus)) return false;
-  return (streams || []).every((stream) => CLOSED_STREAM_STATUSES.has(stream.status));
+  // Empty streams: still complete for polling (historical jobs pre-migration),
+  // but the UI must not claim a stream finished — see deliveryState / deliveryLabel.
+  if (!streams || streams.length === 0) return true;
+  return streams.every((stream) => CLOSED_STREAM_STATUSES.has(stream.status));
 }
 
 function shouldAbandon(stream, now = new Date()) {
@@ -1033,7 +1050,10 @@ function deliveryState(payload) {
   );
   if (dropped > 0) return `Output incomplete: ${dropped} lines dropped`;
   if (streams.some((stream) => stream.truncated)) return "Log limit reached";
-  if (payload.logsComplete) return "Stream complete";
+  if (payload.logsComplete) {
+    if (streams.length === 0) return "No agent output recorded";
+    return "Stream complete";
+  }
   if (streams.length > 0 && streams.every((stream) => ["final", "abandoned", "disabled"].includes(stream.status))) {
     return "Waiting for the next attempt";
   }
@@ -1148,6 +1168,7 @@ async function readAgentFleetLog({ db = pool, workspaceId, agentId, limit = 20 }
 module.exports = {
   JOB_LOG_STREAM_CAPABILITY,
   MAX_BATCH_BYTES,
+  MAX_AGENT_LOG_RETENTION_DAYS,
   CLAIM_LINE_CAP,
   CLAIM_BYTE_CAP,
   ACCEPT_GRACE_MS,

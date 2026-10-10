@@ -238,6 +238,7 @@ describe("agent job log ingest", () => {
 
   it("keeps polling open across a retry gap and a quiet long job", () => {
     assert.equal(logsComplete("pending", []), false);
+    assert.equal(logsComplete("succeeded", []), true);
     assert.equal(logsComplete("succeeded", [{ status: "streaming" }]), false);
     assert.equal(logsComplete("succeeded", [{ status: "final" }, { status: "abandoned" }]), true);
     const quiet = {
@@ -369,11 +370,34 @@ describe("agent job log ingest", () => {
     assert.equal(sameKeyDifferentDrop.nextState.agentGapLines, 1);
   });
 
+  it("does not re-apply droppedBefore when an older batch is replayed after an intervening batch", () => {
+    const batchA = batchFrom([line(1)], false, 1);
+    const batchB = batchFrom([line(2)], false, 0);
+    const afterA = resolveIngest(freshState(), batchA);
+    assert.equal(afterA.nextState.agentGapLines, 1);
+    const afterB = resolveIngest(afterA.nextState, batchB);
+    assert.equal(afterB.nextState.agentGapLines, 1);
+    assert.equal(afterB.nextState.lastBatchKey, batchB.key);
+    const replayA = resolveIngest(afterB.nextState, batchA);
+    assert.equal(replayA.kind, "applied");
+    assert.equal(replayA.ack.newlyStored, 0);
+    assert.equal(replayA.ack.duplicateCount, 1);
+    assert.equal(replayA.nextState.agentGapLines, 1);
+    // Zero newly accepted lines with a nonzero drop delta still must not inflate.
+    const replayAAgain = resolveIngest(replayA.nextState, batchA);
+    assert.equal(replayAAgain.nextState.agentGapLines, 1);
+  });
+
   it("rejects malformed retention and daily-byte env values", () => {
+    const { MAX_AGENT_LOG_RETENTION_DAYS } = require("../../apps/api/services/certops/agentJobLogs");
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0.5" }), 30);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "30days" }), 30);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0" }), 0);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "14" }), 14);
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "3650" }), 3650);
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "3651" }), 30);
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "2147483648" }), 30);
+    assert.equal(MAX_AGENT_LOG_RETENTION_DAYS, 3650);
     assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "100MB" }), 0);
     assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "1048576" }), 1048576);
   });
@@ -389,5 +413,18 @@ describe("agent job log ingest", () => {
     });
     assert.equal(shaped.jobStatus, "failed");
     assert.equal(shaped.logsComplete, true);
+  });
+
+  it("treats terminal jobs with no stream rows as complete without claiming a finished stream", () => {
+    assert.equal(logsComplete("succeeded", []), true);
+    assert.equal(
+      deliveryState({
+        logsComplete: true,
+        streams: [],
+        linesVisible: true,
+        storageEnabled: true,
+      }),
+      "No agent output recorded",
+    );
   });
 });

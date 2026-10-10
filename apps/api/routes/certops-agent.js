@@ -179,10 +179,36 @@ function validateEvidenceBody(envelope) {
 }
 
 const logRateBuckets = new Map();
+const LOG_RATE_BUCKET_TTL_MS = 10 * 60 * 1000;
+const LOG_RATE_BUCKET_MAX_KEYS = 10_000;
+
+function agentLogRateKey(agent) {
+  const workspaceId = agent?.workspaceId || "unknown-workspace";
+  // Prefer the DB row id so two workspaces with the same public agentId never share a bucket.
+  const rowId = agent?.id || agent?.agentId || "unknown-agent";
+  return `${workspaceId}:${rowId}`;
+}
+
+function evictStaleLogRateBuckets(now) {
+  for (const [key, bucket] of logRateBuckets) {
+    if (now - bucket.updated > LOG_RATE_BUCKET_TTL_MS) {
+      logRateBuckets.delete(key);
+    }
+  }
+  if (logRateBuckets.size <= LOG_RATE_BUCKET_MAX_KEYS) return;
+  const oldest = [...logRateBuckets.entries()].sort((a, b) => a[1].updated - b[1].updated);
+  const excess = logRateBuckets.size - LOG_RATE_BUCKET_MAX_KEYS;
+  for (let i = 0; i < excess; i += 1) {
+    logRateBuckets.delete(oldest[i][0]);
+  }
+}
 
 function takeAgentLogPermit(agentKey, now = Date.now()) {
   const burst = 40;
   const refillPerMs = 20 / 1000;
+  if (logRateBuckets.size > LOG_RATE_BUCKET_MAX_KEYS / 2) {
+    evictStaleLogRateBuckets(now);
+  }
   let bucket = logRateBuckets.get(agentKey);
   if (!bucket) {
     bucket = { tokens: burst, updated: now };
@@ -207,7 +233,7 @@ async function logsHandler(req, res, options = {}) {
       throw messageError("jobId is invalid");
     }
     const envelope = validateEnvelope(req.body, "log");
-    const agentKey = req.certopsAgent?.agentId || req.certopsAgent?.id || "unknown";
+    const agentKey = agentLogRateKey(req.certopsAgent);
     if (!takeAgentLogPermit(agentKey)) {
       res.set("Retry-After", "1");
       return res.status(429).json({
@@ -694,16 +720,19 @@ module.exports._test = {
   CERTOPS_AGENT_MESSAGE_INVALID,
   CERTOPS_AGENT_REGISTER_PATH,
   CERTOPS_AGENT_RETIRED_RESPONSE,
+  agentLogRateKey,
   agentRateLimitIdentity,
   claimHandler,
   handleAgentRouteError,
   heartbeatHandler,
   leaseHandler,
+  logRateBuckets,
   registerHandler,
   rejectAgentPrivateMaterial,
   requireNonRetiredAgent,
   resultsHandler,
   logsHandler,
+  takeAgentLogPermit,
   CERTOPS_AGENT_JOBS_LOGS_PATH,
   validateClaimBody,
   validateEnvelope,

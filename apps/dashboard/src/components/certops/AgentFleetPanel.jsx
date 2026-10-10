@@ -605,28 +605,45 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   its own title/description without the caller duplicating them.
  */
 const FLEET_ALL = 'all';
-// Fleet aggregates many jobs; keep a hard page budget so one huge stream
-// cannot freeze the modal, and surface truncation when the budget binds.
+// Fleet aggregates many jobs. Per-job and modal-wide budgets prevent one busy
+// agent from freezing the browser; open a single job for the full stream.
 const FLEET_LOG_PAGE_SIZE = 200;
-const FLEET_LOG_MAX_PAGES = 25;
+const FLEET_LOG_MAX_PAGES_PER_JOB = 10;
+const FLEET_LOG_TOTAL_MAX_LINES = 4000;
+const FLEET_LOG_MAX_CONCURRENCY = 3;
 
 export async function loadAgentLogPages(
   workspaceId,
   jobId,
-  { signal, maxPages = FLEET_LOG_MAX_PAGES, pageSize = FLEET_LOG_PAGE_SIZE } = {}
+  {
+    signal,
+    maxPages = FLEET_LOG_MAX_PAGES_PER_JOB,
+    pageSize = FLEET_LOG_PAGE_SIZE,
+    maxItems = Number.POSITIVE_INFINITY,
+  } = {}
 ) {
   const items = [];
   let cursor;
   let truncated = false;
+  const pageLimit = Math.max(1, Math.min(pageSize, maxItems));
   for (let page = 0; page < maxPages; page += 1) {
+    const remaining = maxItems - items.length;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
     const result = await listAgentJobLog(workspaceId, jobId, {
       cursor,
-      limit: pageSize,
+      limit: Math.min(pageLimit, remaining),
       signal,
     });
-    items.push(...(result?.items || []));
+    const pageItems = result?.items || [];
+    items.push(...pageItems);
+    if (items.length >= maxItems) {
+      truncated = Boolean(result?.hasMore);
+      break;
+    }
     if (!result?.hasMore || !result?.nextCursor) {
-      truncated = false;
       break;
     }
     if (page === maxPages - 1) {
@@ -638,6 +655,23 @@ export async function loadAgentLogPages(
   return { items, truncated };
 }
 
+export async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Array.from(
+    { length: Math.min(Math.max(1, concurrency), Math.max(items.length, 1)) },
+    async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        results[index] = await worker(items[index], index);
+      }
+    }
+  );
+  await Promise.all(runners);
+  return results;
+}
+
 function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const { overlayProps, headerProps, bodyProps, closeButtonProps, footerProps } =
     useDashboardModalProps();
@@ -646,6 +680,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const [source, setSource] = useState(FLEET_ALL);
   const [mergedLines, setMergedLines] = useState([]);
   const [truncatedJobIds, setTruncatedJobIds] = useState([]);
+  const [failedJobIds, setFailedJobIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const agentLabel =
     agent?.name || agent?.hostname || agent?.agentId || 'Agent';
@@ -657,6 +692,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
     setJobs([]);
     setMergedLines([]);
     setTruncatedJobIds([]);
+    setFailedJobIds([]);
     setSource(FLEET_ALL);
 
     (async () => {
@@ -676,16 +712,32 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
 
         // Newest streams first from the API; reverse so the shell reads oldest→newest.
         const jobIds = [...items.map(item => item.jobId)].reverse();
-        const batches = await Promise.all(
-          jobIds.map(async jobId => {
+        const budget = { remaining: FLEET_LOG_TOTAL_MAX_LINES };
+        const perJobCap =
+          FLEET_LOG_MAX_PAGES_PER_JOB * FLEET_LOG_PAGE_SIZE;
+        const batches = await mapWithConcurrency(
+          jobIds,
+          FLEET_LOG_MAX_CONCURRENCY,
+          async jobId => {
+            // Reserve before await so concurrent workers cannot overshoot the modal budget.
+            const reserved = Math.min(budget.remaining, perJobCap);
+            budget.remaining -= reserved;
+            if (reserved <= 0) {
+              return { truncated: true, failed: false, jobId, lines: [] };
+            }
             try {
               const { items: lines, truncated } = await loadAgentLogPages(
                 workspaceId,
                 jobId,
-                { signal: controller.signal }
+                {
+                  signal: controller.signal,
+                  maxItems: reserved,
+                }
               );
+              budget.remaining += reserved - lines.length;
               return {
                 truncated,
+                failed: false,
                 jobId,
                 lines: lines.map(line => ({
                   ...line,
@@ -696,20 +748,25 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
                 })),
               };
             } catch {
-              return { truncated: false, jobId, lines: [] };
+              budget.remaining += reserved;
+              return { truncated: false, failed: true, jobId, lines: [] };
             }
-          })
+          }
         );
         if (cancelled) return;
         setMergedLines(batches.flatMap(batch => batch.lines));
         setTruncatedJobIds(
           batches.filter(batch => batch.truncated).map(batch => batch.jobId)
         );
+        setFailedJobIds(
+          batches.filter(batch => batch.failed).map(batch => batch.jobId)
+        );
       } catch {
         if (!cancelled) {
           setJobs([]);
           setMergedLines([]);
           setTruncatedJobIds([]);
+          setFailedJobIds([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -773,12 +830,21 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
               </Box>
               {truncatedJobIds.length > 0 ? (
                 <Text fontSize='sm' color={muted}>
-                  Showing the first{' '}
-                  {FLEET_LOG_MAX_PAGES * FLEET_LOG_PAGE_SIZE} lines for{' '}
+                  Showing up to {FLEET_LOG_TOTAL_MAX_LINES} lines across recent
+                  jobs
                   {truncatedJobIds.length === 1
-                    ? `job ${String(truncatedJobIds[0]).slice(0, 8)}`
-                    : `${truncatedJobIds.length} jobs`}
-                  . Open the job Agent output panel for the full stream.
+                    ? ` (truncated for job ${String(truncatedJobIds[0]).slice(0, 8)})`
+                    : ` (truncated for ${truncatedJobIds.length} jobs)`}
+                  . Open a single job Agent output panel for the full stream.
+                </Text>
+              ) : null}
+              {failedJobIds.length > 0 ? (
+                <Text fontSize='sm' color={muted}>
+                  Could not load logs for{' '}
+                  {failedJobIds.length === 1
+                    ? `job ${String(failedJobIds[0]).slice(0, 8)}`
+                    : `${failedJobIds.length} jobs`}
+                  . Select a job above to retry that stream.
                 </Text>
               ) : null}
               {source === FLEET_ALL ? (

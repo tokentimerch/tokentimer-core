@@ -201,6 +201,19 @@ describe('AgentShellConsole', () => {
     ).toBe('Stream complete (log text requires manager access)');
   });
 
+  it('does not claim a finished stream when a terminal job has no stream rows', () => {
+    expect(
+      deliveryLabel({
+        items: [],
+        linesVisible: true,
+        streams: [],
+        storageEnabled: true,
+        logsComplete: true,
+        jobStatus: 'succeeded',
+      })
+    ).toBe('No agent output recorded');
+  });
+
   it('badges failed jobs as Failed even when the log stream is final', () => {
     const fetcher = vi.fn().mockResolvedValue({
       items: [line(1, 'deploy failed')],

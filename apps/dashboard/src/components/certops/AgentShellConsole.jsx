@@ -134,6 +134,7 @@ export function deliveryLabel(payload, failed = false) {
   if (dropped > 0) return `Output incomplete: ${dropped} lines dropped`;
   if (streams.some(stream => stream.truncated)) return 'Log limit reached';
   if (payload.logsComplete) {
+    if (streams.length === 0) return 'No agent output recorded';
     return payload.linesVisible === false
       ? 'Stream complete (log text requires manager access)'
       : 'Stream complete';
