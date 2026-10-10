@@ -17,7 +17,7 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 
 const { decodeCmcResponse } = require("./cmc-helper");
-const { mapAdcsDisposition } = require("./adcs-disposition");
+const { mapAdcsDisposition, hexHresult } = require("./adcs-disposition");
 const { filesystemSafeJobId } = require("./adcs-enrollment");
 
 const execFileAsync = promisify(execFile);
@@ -116,6 +116,8 @@ async function runCertreq(execFileImpl, argv, timeoutMs) {
  */
 async function createInvocationWorkDir(scratchDir, jobId, phase) {
   // jobId may contain `:`; Windows paths cannot. Keep prior evidence dirs.
+  // mkdtemp does not create missing parents; ensure the scratch root exists.
+  await fsp.mkdir(scratchDir, { recursive: true });
   const safeJobId = filesystemSafeJobId(jobId);
   return fsp.mkdtemp(path.join(scratchDir, `adcs-${safeJobId}-${phase}-`));
 }
@@ -209,17 +211,22 @@ function createAdcsIssuer({
       cmc,
     });
 
+    const caHresult =
+      typeof mapped.hresult === "number" ? hexHresult(mapped.hresult) : undefined;
+
     if (mapped.outcome === "issued") {
       // Only the CMC-exported leaf (hash-verified by tokentimer-adcs-cmc).
       if (typeof mapped.certificateDerB64 !== "string" || mapped.certificateDerB64.length === 0) {
         return {
           outcome: "uncertain",
           detail: "CMC reported issued but certificateDerB64 was missing",
+          ...(caHresult ? { caHresult } : {}),
         };
       }
       return {
         outcome: "issued",
         certificatePem: derB64ToPem(mapped.certificateDerB64),
+        ...(caHresult ? { caHresult } : {}),
       };
     }
 
@@ -227,12 +234,14 @@ function createAdcsIssuer({
       return {
         outcome: "pending",
         requestId: mapped.requestId,
+        ...(caHresult ? { caHresult } : {}),
       };
     }
 
     return {
       outcome: mapped.outcome,
       detail: mapped.detail,
+      ...(caHresult ? { caHresult } : {}),
     };
   }
 

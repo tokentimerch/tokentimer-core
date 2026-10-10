@@ -133,6 +133,7 @@ describe("pinned CA cert cache and RequestId journal", () => {
   it("pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch", async (t) => {
     const ca = makeOpenSslCa(stateDir);
     if (!ca) {
+      // skip-reason: no-host - needs a real openssl binary on PATH
       t.skip("openssl not available");
       return;
     }

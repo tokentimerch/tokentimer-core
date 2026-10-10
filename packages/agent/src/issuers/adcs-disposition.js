@@ -29,7 +29,8 @@ function toUint32(code) {
 function hexHresult(code) {
   const u = toUint32(code);
   if (u === null) return "unknown";
-  return `0x${u.toString(16)}`;
+  // Enrollment-result contract requires ^0x[0-9A-F]{8}$ for caHresult.
+  return `0x${u.toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
 /**

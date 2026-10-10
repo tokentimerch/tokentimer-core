@@ -30,8 +30,10 @@ describe("resolveJobIssuerKind", () => {
     assert.deepEqual(resolveJobIssuerKind({ issuerKind: "acme" }), { kind: "acme" });
   });
 
-  it("accepts adcs once the renew/continue-enrollment path is wired", () => {
-    assert.deepEqual(resolveJobIssuerKind({ issuerKind: "adcs" }), { kind: "adcs" });
+  it("keeps adcs non-executable until validation and continuation land", () => {
+    const resolved = resolveJobIssuerKind({ issuerKind: "adcs" });
+    assert.equal(resolved.kind, undefined);
+    assert.match(resolved.error, /which this agent does not implement/);
   });
 
   it("refuses unknown kinds rather than falling back to ACME", () => {

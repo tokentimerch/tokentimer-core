@@ -43,19 +43,53 @@ describe("resultForAdcsOutcome", () => {
     assert.equal(result.enrollmentResult.state, "refused");
   });
 
-  it("maps denied and uncertain to failed", () => {
-    assert.equal(
-      resultForAdcsOutcome({ outcome: "denied", detail: "denied" }, ENROLLMENT)
-        .status,
-      "failed",
+  it("maps denied with a contract-shaped caHresult", () => {
+    const result = resultForAdcsOutcome(
+      {
+        outcome: "denied",
+        detail: "denied",
+        caHresult: "0x80094012",
+        requestId: 4242,
+      },
+      ENROLLMENT,
     );
-    assert.equal(
-      resultForAdcsOutcome(
-        { outcome: "uncertain", detail: "maybe" },
-        ENROLLMENT,
-      ).status,
-      "failed",
+    assert.equal(result.status, "failed");
+    assert.equal(result.enrollmentResult.state, "denied");
+    assert.equal(result.enrollmentResult.caHresult, "0x80094012");
+    assert.equal(result.enrollmentResult.requestId, 4242);
+  });
+
+  it("does not claim denied without a contract-shaped caHresult", () => {
+    const result = resultForAdcsOutcome(
+      { outcome: "denied", detail: "denied" },
+      ENROLLMENT,
     );
+    assert.equal(result.enrollmentResult.state, "submission_uncertain");
+  });
+
+  it("maps submit uncertain to submission_uncertain", () => {
+    const result = resultForAdcsOutcome(
+      { outcome: "uncertain", detail: "maybe" },
+      ENROLLMENT,
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.enrollmentResult.state, "submission_uncertain");
+    assert.equal(result.enrollmentResult.errorCode, "ADCS_DISPOSITION_UNKNOWN");
+  });
+
+  it("keeps pending_issuance when retrieve is uncertain for a known RequestId", () => {
+    const result = resultForAdcsOutcome(
+      { outcome: "uncertain", detail: "retrieve flaky" },
+      ENROLLMENT,
+      { knownRequestId: 4242 },
+    );
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.enrollmentResult, {
+      enrollmentId: ENROLLMENT.enrollmentId,
+      attempt: 1,
+      state: "pending_issuance",
+      requestId: 4242,
+    });
   });
 });
 

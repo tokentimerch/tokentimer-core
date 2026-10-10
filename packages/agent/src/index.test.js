@@ -1341,7 +1341,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(fs.existsSync(path.join(workDir, "deployed")), false);
   });
 
-  it("dry-run continue-enrollment reports dry_run_complete without crashing", async () => {
+  it("blocks dry-run continue-enrollment while adcs remains non-executable", async () => {
     const client = createRecordingClient();
     const executionContext = makeExecutionContext({ dryRun: false });
     const job = makeSignedJob({
@@ -1376,13 +1376,8 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
       log: silentLog,
     });
 
-    assert.equal(outcome.status, "dry_run_complete");
-    assert.equal(client.calls.reportResult[0].status, "dry_run_complete");
-    const items = client.calls.reportEvidence[0].evidenceItems;
-    assert.ok(items.length >= 3);
-    assert.ok(
-      items.some((item) => /continue-enrollment/.test(item.summary)),
-    );
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
   });
 
   it("local execution.dryRun refuses a mode:real job instead of silently succeeding", async () => {
@@ -3965,20 +3960,19 @@ describe("renew chain deployment", () => {
     assert.equal(fs.readFileSync(job.certPath, "utf8"), readFixture("chain-leaf-fullchain.crt.pem"));
   });
 
-  it("blocks a non-windows-iis AD CS renew before any ACME work", async () => {
+  it("blocks a renew job naming an issuer kind this agent does not implement, before any key or ACME work", async () => {
     seedLiveKey();
-    const acmeExecFileImpl = makeCertbotStub();
-    const job = makeJob({ issuerKind: "adcs" });
-    const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
+    for (const mode of ["real", "dry_run"]) {
+      const acmeExecFileImpl = makeCertbotStub();
+      const job = makeJob({ issuerKind: "adcs", mode });
+      const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
 
-    assert.equal(outcome.status, "blocked");
-    assert.match(
-      outcome.errorMessage,
-      /AD CS renew requires keyMode os-store-managed and a windows-iis target/,
-    );
-    assert.equal(acmeExecFileImpl.calls.length, 0);
-    assert.equal(client.calls.reportEvidence.length, 0);
-    assert.deepEqual(stagingLeftovers(), []);
+      assert.equal(outcome.status, "blocked", mode);
+      assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+      assert.equal(acmeExecFileImpl.calls.length, 0);
+      assert.equal(client.calls.reportEvidence.length, 0);
+      assert.deepEqual(stagingLeftovers(), []);
+    }
   });
 });
 
@@ -4567,14 +4561,12 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.equal(windowsExecFileImpl.calls.length, 0);
   });
 
-  it("routes AD CS renew to the AD CS executor instead of ACME", async () => {
+  it("blocks a renew job naming an issuer kind this agent does not implement, before any Windows process runs", async () => {
     const job = makeJob({ issuerKind: "adcs" });
     const { outcome, windowsExecFileImpl } = await runIisRenew({ job });
 
-    // Missing enrollment snapshot fails inside the AD CS path; ACME / certreq
-    // for the ACME IIS renew path must not run.
-    assert.equal(outcome.status, "failed");
-    assert.match(outcome.errorMessage, /enrollment/i);
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
     assert.equal(windowsExecFileImpl.calls.length, 0);
   });
 

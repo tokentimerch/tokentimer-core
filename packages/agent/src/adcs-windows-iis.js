@@ -4,9 +4,14 @@
  * Windows IIS AD CS renew + continue-enrollment executor (ADR-0014).
  * Holds acquireEnrollmentLock across CNG keygen, certreq submit/retrieve,
  * and (on issued) the deploy tail.
+ *
+ * Executable selection remains gated off in IMPLEMENTED_ISSUER_KINDS until
+ * decision-6 validation, durable journal recovery, and continuation scheduling
+ * land; this module is the non-executable wiring slice.
  */
 
 const path = require("node:path");
+const fsp = require("node:fs/promises");
 
 const {
   createAdcsIssuer,
@@ -29,6 +34,7 @@ const {
 } = require("./windows-cert-store");
 
 const WINDOWS_CERT_STORE_WORK_DIR_NAME = "windows-cert-store-work";
+const CA_HRESULT_PATTERN = /^0x[0-9A-F]{8}$/;
 
 function boundErrorMessage(message, max = 512) {
   const text = String(message || "");
@@ -48,7 +54,20 @@ function enrollmentResultFor(enrollmentId, attempt, state, extras = {}) {
   };
 }
 
-function resultForAdcsOutcome(issuance, { enrollmentId, attempt }) {
+function installedEnrollmentResult(enrollmentId, attempt, requestId) {
+  const extras = { errorCode: null, caHresult: null };
+  if (Number.isInteger(requestId) && requestId >= 1) {
+    extras.requestId = requestId;
+  }
+  return enrollmentResultFor(enrollmentId, attempt, "installed", extras);
+}
+
+/**
+ * @param {object} issuance issuer outcome
+ * @param {{ enrollmentId: string, attempt: number }} enrollment
+ * @param {{ knownRequestId?: number }} [options] set on continue-enrollment retrieve
+ */
+function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {}) {
   if (issuance.outcome === "pending") {
     return {
       status: "awaiting_issuer",
@@ -70,12 +89,28 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }) {
     };
   }
   if (issuance.outcome === "denied") {
+    const caHresult =
+      typeof issuance.caHresult === "string" && CA_HRESULT_PATTERN.test(issuance.caHresult)
+        ? issuance.caHresult
+        : null;
+    if (!caHresult) {
+      // Contract requires caHresult for denied; without it stay reconcilable.
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(issuance.detail || "CA denied without HRESULT"),
+        enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "submission_uncertain", {
+          errorCode: "ADCS_DISPOSITION_UNKNOWN",
+        }),
+      };
+    }
     return {
       status: "failed",
       keyRotated: null,
       errorMessage: boundErrorMessage(issuance.detail),
       enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "denied", {
-        caHresult: issuance.caHresult || null,
+        caHresult,
+        ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
       }),
     };
   }
@@ -90,6 +125,18 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }) {
     };
   }
   if (issuance.outcome === "uncertain") {
+    // A known pending RequestId stays pending_issuance (retry/retrieve), not
+    // submission_uncertain (which is only for unclassified submit side effects).
+    if (Number.isInteger(options.knownRequestId) && options.knownRequestId >= 1) {
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(issuance.detail),
+        enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "pending_issuance", {
+          requestId: options.knownRequestId,
+        }),
+      };
+    }
     return {
       status: "failed",
       keyRotated: null,
@@ -161,12 +208,7 @@ function createAdcsWindowsIisExecutors(deps) {
     isValidCertificateId,
   } = deps;
 
-  async function buildAdcsIssuerContext({
-    job,
-    jobId,
-    executionContext,
-    stateDir,
-  }) {
+  async function buildAdcsIssuerContext({ job, executionContext, stateDir }) {
     const decoded = decodeEnrollmentSnapshot(job);
     if (!decoded.ok) return { error: decoded.error };
 
@@ -210,6 +252,23 @@ function createAdcsWindowsIisExecutors(deps) {
     };
   }
 
+  async function withAdcsIssuer(scratchRoot, factory) {
+    await fsp.mkdir(scratchRoot, { recursive: true });
+    return factory(scratchRoot);
+  }
+
+  function withInstalledEnrollmentResult(deployResult, enrollment, requestId) {
+    if (deployResult?.status !== "succeeded") return deployResult;
+    return {
+      ...deployResult,
+      enrollmentResult: installedEnrollmentResult(
+        enrollment.enrollmentId,
+        enrollment.attempt,
+        requestId,
+      ),
+    };
+  }
+
   async function executeWindowsIisAdcsRenewJob({
     job,
     jobId,
@@ -238,7 +297,7 @@ function createAdcsWindowsIisExecutors(deps) {
     const { windowsTarget, commonName } = targetResolved;
 
     const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
-    const ctx = await buildAdcsIssuerContext({ job, jobId, executionContext, stateDir });
+    const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir });
     if (ctx.error) {
       const base = {
         status: ctx.errorCode ? "rejected" : "failed",
@@ -258,7 +317,19 @@ function createAdcsWindowsIisExecutors(deps) {
     }
 
     const { decoded, keyMapped, helperPath, caCertPath, domains, snapshot } = ctx;
-    const csrCommonName = domains.includes(commonName) ? commonName : domains[0];
+    if (!domains.includes(commonName)) {
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `target.reference ${JSON.stringify(commonName)} is not in enrollment authorizedDnsNames`,
+        ),
+        enrollmentResult: enrollmentResultFor(decoded.enrollmentId, decoded.attempt, "refused", {
+          errorCode: null,
+        }),
+      };
+    }
+    const csrCommonName = commonName;
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
@@ -277,6 +348,7 @@ function createAdcsWindowsIisExecutors(deps) {
     let containerName = null;
     let certificatePem;
     let issuanceOutcome = null;
+    let submitStarted = false;
     try {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
@@ -357,28 +429,49 @@ function createAdcsWindowsIisExecutors(deps) {
         );
       }
 
-      const issuer = createAdcsIssuer({
-        caConfig: snapshot.caConfig,
-        template: snapshot.template,
-        caKeySha256: snapshot.caKeySha256,
-        caCertPath,
-        helperPath,
-        scratchDir: path.join(stateDir, "adcs-scratch"),
-        jobId,
-        enrollmentId: decoded.enrollmentId,
-        execFileImpl: executionContext.adcsExecFileImpl || windowsExecFileImpl,
-        decodeCmcImpl: executionContext.adcsDecodeCmcImpl,
-        info: emitInfo,
-      });
+      const scratchRoot = path.join(stateDir, "adcs-scratch");
+      const issuer = await withAdcsIssuer(scratchRoot, (scratchDir) =>
+        createAdcsIssuer({
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          caKeySha256: snapshot.caKeySha256,
+          caCertPath,
+          helperPath,
+          scratchDir,
+          jobId,
+          enrollmentId: decoded.enrollmentId,
+          execFileImpl: executionContext.adcsExecFileImpl || windowsExecFileImpl,
+          decodeCmcImpl: executionContext.adcsDecodeCmcImpl,
+          info: emitInfo,
+        }),
+      );
 
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
-      const issuance = assertIssuanceOutcome(
-        await issuer.submit({ csrPem: csrResult.csrPem, domains }),
-      );
+      // Once submit starts, an unclassified exception must retain the key.
+      submitStarted = true;
+      let issuance;
+      try {
+        issuance = assertIssuanceOutcome(
+          await issuer.submit({ csrPem: csrResult.csrPem, domains }),
+        );
+      } catch (err) {
+        issuanceOutcome = "uncertain";
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(`AD CS submit interrupted: ${err.message}`),
+          enrollmentResult: enrollmentResultFor(
+            decoded.enrollmentId,
+            decoded.attempt,
+            "submission_uncertain",
+            { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+          ),
+        };
+      }
       issuanceOutcome = issuance.outcome;
       await reportIssuanceEvidence(client, jobId, issuance);
 
@@ -400,7 +493,7 @@ function createAdcsWindowsIisExecutors(deps) {
 
       // Hold the enrollment lock through accept/deploy so continue-enrollment
       // cannot race retrieve/accept on the same enrollmentId.
-      return await runWindowsIisDeployTail({
+      const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
         certificatePem,
@@ -414,8 +507,11 @@ function createAdcsWindowsIisExecutors(deps) {
         windowsExecFileImpl,
         windowsConnectImpl,
       });
+      return withInstalledEnrollmentResult(deployResult, decoded, issuance.requestId);
     } finally {
-      if (certificatePem === undefined && containerName && !shouldRetainCngKey(issuanceOutcome)) {
+      const retainAfterSubmit =
+        submitStarted && (issuanceOutcome === null || shouldRetainCngKey(issuanceOutcome));
+      if (certificatePem === undefined && containerName && !retainAfterSubmit) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
             containerName,
@@ -451,7 +547,7 @@ function createAdcsWindowsIisExecutors(deps) {
     }
     const { windowsTarget } = targetResolved;
     const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
-    const ctx = await buildAdcsIssuerContext({ job, jobId, executionContext, stateDir });
+    const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir });
     if (ctx.error) {
       return {
         status: "failed",
@@ -506,32 +602,39 @@ function createAdcsWindowsIisExecutors(deps) {
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
 
-      const issuer = createAdcsIssuer({
-        caConfig: snapshot.caConfig,
-        template: snapshot.template,
-        caKeySha256: snapshot.caKeySha256,
-        caCertPath,
-        helperPath,
-        scratchDir: path.join(stateDir, "adcs-scratch"),
-        jobId,
-        enrollmentId: decoded.enrollmentId,
-        execFileImpl: executionContext.adcsExecFileImpl || windowsExecFileImpl,
-        decodeCmcImpl: executionContext.adcsDecodeCmcImpl,
-        info: emitInfo,
-      });
+      const scratchRoot = path.join(stateDir, "adcs-scratch");
+      const issuer = await withAdcsIssuer(scratchRoot, (scratchDir) =>
+        createAdcsIssuer({
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          caKeySha256: snapshot.caKeySha256,
+          caCertPath,
+          helperPath,
+          scratchDir,
+          jobId,
+          enrollmentId: decoded.enrollmentId,
+          execFileImpl: executionContext.adcsExecFileImpl || windowsExecFileImpl,
+          decodeCmcImpl: executionContext.adcsDecodeCmcImpl,
+          info: emitInfo,
+        }),
+      );
 
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
       const issuance = assertIssuanceOutcome(await issuer.retrieve(journal.requestId));
       await reportIssuanceEvidence(client, jobId, issuance);
 
       if (issuance.outcome === "pending") {
-        return resultForAdcsOutcome(issuance, decoded);
+        return resultForAdcsOutcome(issuance, decoded, {
+          knownRequestId: journal.requestId,
+        });
       }
       if (issuance.outcome !== "issued") {
-        return resultForAdcsOutcome(issuance, decoded);
+        return resultForAdcsOutcome(issuance, decoded, {
+          knownRequestId: journal.requestId,
+        });
       }
 
-      return await runWindowsIisDeployTail({
+      const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
         certificatePem: issuance.certificatePem,
@@ -545,6 +648,7 @@ function createAdcsWindowsIisExecutors(deps) {
         windowsExecFileImpl,
         windowsConnectImpl,
       });
+      return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
     } finally {
       enrollmentLock.release();
     }
