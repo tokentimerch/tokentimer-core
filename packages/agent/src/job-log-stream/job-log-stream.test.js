@@ -88,6 +88,87 @@ test("splits a batch when the server answers 413", async () => {
   assert.ok(sizes.includes(1));
 });
 
+test("does not re-report a failed 413 head via droppedBefore after the tail succeeds", async () => {
+  const {
+    batchKeyOf,
+    contentHash,
+    resolveIngest,
+  } = require("../../../../apps/api/services/certops/agentJobLogs.js");
+  const bodies = [];
+  const session = createJobLogSession({
+    jobId: "job-1",
+    claimId: "claim-413-half",
+    maxBatchBytes: 64 * 1024,
+    sleep: async () => {},
+    now: () => 0,
+    post: async (request) => {
+      bodies.push(request.body);
+      const { lines } = request.body;
+      if (lines.length > 1) return { status: 413, json: {} };
+      if (lines[0]?.message === "one") return { status: 422, json: {} };
+      return {
+        status: 200,
+        json: { ackThroughSeq: lines[0]?.seq || 0, streamDisabled: false },
+      };
+    },
+  });
+  session.logger.info("one");
+  session.logger.info("two");
+  await session.close();
+
+  const accepted = bodies.filter(
+    (body) => body.final !== true && body.lines.length === 1 && body.lines[0].message === "two",
+  );
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0].droppedBefore, 0);
+  const finalEmpty = bodies.find((body) => body.final === true && body.lines.length === 0);
+  assert.ok(finalEmpty);
+  // Head line is visible to the server as a seq gap once "two" lands; final must not
+  // also claim that same loss through droppedBefore.
+  assert.equal(finalEmpty.droppedBefore, 0);
+
+  const toStored = (raw) => {
+    const stored = {
+      seq: raw.seq,
+      level: raw.level || "info",
+      step: raw.step || null,
+      message: raw.message,
+      fields: raw.fields || null,
+    };
+    stored.hash = contentHash(stored);
+    stored.bytes = Buffer.byteLength(String(raw.message || ""), "utf8");
+    return stored;
+  };
+  let state = {
+    streamingEnabled: true,
+    status: "pending",
+    acceptUntil: null,
+    resolvedThroughSeq: 0,
+    acceptedLines: 0,
+    acceptedBytes: 0,
+    serverDroppedLines: 0,
+    agentGapLines: 0,
+    rejectedBatches: 0,
+    conflictCount: 0,
+    conflicts: {},
+    lastBatchKey: null,
+    lastAck: null,
+    lastHttpStatus: null,
+    stored: {},
+  };
+  for (const body of [accepted[0], finalEmpty]) {
+    const lines = (body.lines || []).map(toStored);
+    const applied = resolveIngest(state, {
+      key: batchKeyOf(lines, body.final === true, body.droppedBefore || 0),
+      lines,
+      final: body.final === true,
+      droppedBefore: body.droppedBefore || 0,
+    });
+    state = applied.nextState;
+  }
+  assert.equal(state.agentGapLines, 1);
+});
+
 test("never sends more lines than the schema allows in one batch", async () => {
   const bodies = [];
   let release;

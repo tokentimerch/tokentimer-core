@@ -672,6 +672,145 @@ export async function mapWithConcurrency(items, concurrency, worker) {
   return results;
 }
 
+/**
+ * Shared modal line budget. Workers claim page-sized slices and wait for an
+ * in-flight peer to release unused capacity instead of skipping the job.
+ */
+export function createFleetLineBudget(totalLines) {
+  let remaining = totalLines;
+  // Workers inside withReservation, including those still waiting to claim.
+  let holders = 0;
+  const waiters = [];
+  function notify() {
+    while (waiters.length > 0) waiters.shift()();
+  }
+  return {
+    get remaining() {
+      return remaining;
+    },
+    get holders() {
+      return holders;
+    },
+    /**
+     * Enter as a holder first so peers waiting on an empty budget do not see
+     * holders===0 between another worker's claim and its fetch.
+     */
+    async withReservation(wanted, work) {
+      const need = Math.max(0, wanted);
+      holders += 1;
+      let reserved = 0;
+      let used = 0;
+      try {
+        if (need === 0) return { reserved: 0, result: null };
+        while (remaining < 1) {
+          // Another holder may still return unused capacity.
+          if (holders <= 1) return { reserved: 0, result: null };
+          await new Promise(resolve => {
+            waiters.push(resolve);
+          });
+        }
+        reserved = Math.min(remaining, need);
+        remaining -= reserved;
+        const outcome = await work(reserved);
+        used = Math.max(0, Math.min(reserved, Number(outcome?.used) || 0));
+        return { reserved, result: outcome?.result ?? null };
+      } catch (error) {
+        used = 0;
+        throw error;
+      } finally {
+        if (reserved > 0) remaining += reserved - used;
+        holders = Math.max(0, holders - 1);
+        notify();
+      }
+    },
+  };
+}
+
+/**
+ * Load log pages for many jobs under a shared line budget.
+ * Reserves one page at a time; unused capacity is returned for other jobs.
+ */
+export async function loadFleetJobBatches(
+  workspaceId,
+  jobIds,
+  {
+    signal,
+    concurrency = FLEET_LOG_MAX_CONCURRENCY,
+    pageSize = FLEET_LOG_PAGE_SIZE,
+    maxPagesPerJob = FLEET_LOG_MAX_PAGES_PER_JOB,
+    totalMaxLines = FLEET_LOG_TOTAL_MAX_LINES,
+    fetchPage = listAgentJobLog,
+  } = {}
+) {
+  const budget = createFleetLineBudget(totalMaxLines);
+  return mapWithConcurrency(jobIds, concurrency, async jobId => {
+    try {
+      const items = [];
+      let cursor;
+      let truncated = false;
+      for (let page = 0; page < maxPagesPerJob; page += 1) {
+        const room = totalMaxLines - items.length;
+        if (room <= 0) {
+          truncated = true;
+          break;
+        }
+        const want = Math.min(pageSize, room);
+        let reserved;
+        let result;
+        try {
+          ({ reserved, result } = await budget.withReservation(want, async limit => {
+            const pageResult = await fetchPage(workspaceId, jobId, {
+              cursor,
+              limit,
+              signal,
+            });
+            const pageItems = pageResult?.items || [];
+            return {
+              used: Math.min(limit, pageItems.length),
+              result: pageResult,
+            };
+          }));
+        } catch {
+          return { truncated: false, failed: true, jobId, lines: [] };
+        }
+        if (reserved <= 0) {
+          truncated = true;
+          break;
+        }
+        const pageItems = result?.items || [];
+        const kept = pageItems.slice(0, reserved);
+        items.push(...kept);
+        if (items.length >= totalMaxLines) {
+          truncated = Boolean(result?.hasMore) || pageItems.length > reserved;
+          break;
+        }
+        if (!result?.hasMore || !result?.nextCursor) {
+          break;
+        }
+        if (page === maxPagesPerJob - 1) {
+          truncated = true;
+          break;
+        }
+        cursor = result.nextCursor;
+      }
+      return {
+        truncated,
+        failed: false,
+        jobId,
+        lines: items.map(line => ({
+          ...line,
+          jobId,
+          message: line.message
+            ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
+            : line.message,
+        })),
+      };
+    } catch {
+      return { truncated: false, failed: true, jobId, lines: [] };
+    }
+  });
+}
+
 function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const { overlayProps, headerProps, bodyProps, closeButtonProps, footerProps } =
     useDashboardModalProps();
@@ -712,47 +851,9 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
 
         // Newest streams first from the API; reverse so the shell reads oldest→newest.
         const jobIds = [...items.map(item => item.jobId)].reverse();
-        const budget = { remaining: FLEET_LOG_TOTAL_MAX_LINES };
-        const perJobCap =
-          FLEET_LOG_MAX_PAGES_PER_JOB * FLEET_LOG_PAGE_SIZE;
-        const batches = await mapWithConcurrency(
-          jobIds,
-          FLEET_LOG_MAX_CONCURRENCY,
-          async jobId => {
-            // Reserve before await so concurrent workers cannot overshoot the modal budget.
-            const reserved = Math.min(budget.remaining, perJobCap);
-            budget.remaining -= reserved;
-            if (reserved <= 0) {
-              return { truncated: true, failed: false, jobId, lines: [] };
-            }
-            try {
-              const { items: lines, truncated } = await loadAgentLogPages(
-                workspaceId,
-                jobId,
-                {
-                  signal: controller.signal,
-                  maxItems: reserved,
-                }
-              );
-              budget.remaining += reserved - lines.length;
-              return {
-                truncated,
-                failed: false,
-                jobId,
-                lines: lines.map(line => ({
-                  ...line,
-                  jobId,
-                  message: line.message
-                    ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
-                    : line.message,
-                })),
-              };
-            } catch {
-              budget.remaining += reserved;
-              return { truncated: false, failed: true, jobId, lines: [] };
-            }
-          }
-        );
+        const batches = await loadFleetJobBatches(workspaceId, jobIds, {
+          signal: controller.signal,
+        });
         if (cancelled) return;
         setMergedLines(batches.flatMap(batch => batch.lines));
         setTruncatedJobIds(

@@ -226,12 +226,26 @@ function createJobLogSession({
       }
       if (status === 413 && pending.lines.length > 1) {
         const mid = Math.ceil(pending.lines.length / 2);
-        await sendBatch(
-          { lines: pending.lines.slice(0, mid), droppedBefore: pending.droppedBefore, firstSeq: pending.lines[0].seq },
-          { budgetMs: Math.max(0, deadline() - now()) },
-        );
+        const headBatch = {
+          lines: pending.lines.slice(0, mid),
+          droppedBefore: pending.droppedBefore,
+          firstSeq: pending.lines[0].seq,
+        };
+        const headOk = await sendBatch(headBatch, {
+          budgetMs: Math.max(0, deadline() - now()),
+        });
         if (stopped) return false;
-        pending = { lines: pending.lines.slice(mid), droppedBefore: 0, firstSeq: pending.lines[mid].seq };
+        if (!headOk) {
+          // drop() already counted head lines locally. Once a later seq is
+          // accepted the server records that hole as a seq gap; keep those
+          // lines out of a later droppedBefore so the same loss is not counted twice.
+          buffer.dropped = Math.max(0, buffer.dropped - headBatch.lines.length);
+        }
+        pending = {
+          lines: pending.lines.slice(mid),
+          droppedBefore: 0,
+          firstSeq: pending.lines[mid].seq,
+        };
         attempt = 0;
         continue;
       }
