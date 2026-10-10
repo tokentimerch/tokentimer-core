@@ -1377,7 +1377,12 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     });
 
     assert.equal(outcome.status, "blocked");
-    assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+    // persistAndTransmitOutcome returns status/rejectionReason only; the
+    // reported result body still carries the issuer-kind refusal text.
+    assert.match(
+      client.calls.reportResult[0].errorMessage,
+      /issuer kind "adcs", which this agent does not implement/,
+    );
   });
 
   it("local execution.dryRun refuses a mode:real job instead of silently succeeding", async () => {

@@ -2204,9 +2204,13 @@ async function ingestResult({
         CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
-    if (jobStatus === "awaiting_issuer" && !body.enrollmentResult) {
+    // Status vocabulary and migration 68 land before the durable enrollment
+    // row and binding validation. Until those exist, refuse awaiting_issuer
+    // at ingestion so an ordinary ACME job cannot complete as a non-alerting
+    // pending enrollment with an arbitrary enrollmentResult shape.
+    if (jobStatus === "awaiting_issuer") {
       throw serviceError(
-        "awaiting_issuer requires enrollmentResult",
+        "awaiting_issuer is not accepted until enrollment binding validation is implemented",
         CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
