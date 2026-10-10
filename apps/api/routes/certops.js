@@ -3102,7 +3102,9 @@ function deriveCertificateRenewalState(
 
   if (keyMode === "vault-managed" && !row?.profile_id) {
     return { ...base, state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
-      detail: "The Vault publication renewal profile is missing. Repair it from the successful publication record." };
+      detail: row?.key_reference
+        ? "The Vault publication renewal profile is missing. Repair it from the successful publication record."
+        : "Certificate distribution is not configured in this workspace. Configure a distribution source before enabling renewal." };
   }
   if (!isAgentRenewableKeyMode(row)) {
     return {
@@ -3195,6 +3197,7 @@ async function loadCertificateRenewalRows({
     `SELECT mc.id,
             mc.status,
             mc.key_mode,
+            mc.key_reference,
             mc.not_after,
             mc.common_name,
             mc.subject_alt_names,
@@ -3225,6 +3228,7 @@ function renewalRowFromInventoryRecord(certificate) {
     id: certificate?.id,
     status: certificate?.status,
     key_mode: certificate?.keyMode,
+    key_reference: certificate?.keyReference,
     not_after: certificate?.notAfter,
     common_name: certificate?.commonName,
     subject_alt_names: certificate?.subjectAltNames,

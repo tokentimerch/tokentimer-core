@@ -13,6 +13,10 @@ const root = "/lab",
   build = "/lab/experimental-agent";
 const source = "/repo/packages/agent";
 const agents = new Map();
+const scannerRequests = [];
+const certificateSans = process.env.TT_UX_CERTIFICATE_MODE === "wildcard"
+  ? ["*.wildcard.test", "wildcard.test"]
+  : ["nginx.wildcard.test", "haproxy.wildcard.test"];
 const fault = {
   armed: false,
   path: null,
@@ -104,7 +108,7 @@ async function startAgent(name, token) {
     ...process.env,
     TOKENTIMER_AGENT_CONFIG_DIR: dir,
     NODE_EXTRA_CA_CERTS: "/lab/transport.crt",
-    REQUESTS_CA_BUNDLE: "/repo/.scratch/wildcard-ux/pebble-ca.pem",
+    REQUESTS_CA_BUNDLE: "/lab-input/pebble-ca.pem",
   };
   if (token) env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = token;
   const child = spawn(process.execPath, [build + "/bin/tokentimer-agent.js"], {
@@ -124,7 +128,7 @@ function config(name, extra = {}) {
     caBundlePath: "/lab/transport.crt",
     heartbeatIntervalMs: 2000,
     pollIntervalMs: 1500,
-    declaredTargetSelectors: ["*.wildcard.test", "wildcard.test"],
+    declaredTargetSelectors: certificateSans,
     declaredCommandProfileNames: ["certbot"],
     policy: {
       allowedTargetSelectors: ["*"],
@@ -179,7 +183,7 @@ function store(workspaceId, groupId, wireId, issuer) {
         [groupId]: {
           workspaceId,
           prefix: workspaceId + "/" + groupId,
-          sans: ["*.wildcard.test", "wildcard.test"],
+          sans: certificateSans,
           keyAlgorithm: "ec",
           ...(issuer
             ? {
@@ -199,6 +203,7 @@ function store(workspaceId, groupId, wireId, issuer) {
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
+  if (action === "scanner-requests") return { requests: [...scannerRequests] };
   if (action === "enroll") {
     config(
       name,
@@ -310,6 +315,13 @@ async function control(body) {
             .map(JSON.parse)
         : [],
     };
+    if (!name.includes("issuer") && fs.existsSync(dir + "/cert.pem")) {
+      const certificate = new crypto.X509Certificate(fs.readFileSync(dir + "/cert.pem"));
+      facts.certificate = {
+        fingerprint256: certificate.fingerprint256,
+        subjectAltName: certificate.subjectAltName,
+      };
+    }
     if (body.certificateId) {
       assert.match(body.certificateId, /^[0-9a-f-]{36}$/);
       const file = path.join(
@@ -392,6 +404,13 @@ async function main() {
   http
     .createServer((req, res) => forward(req, res, "challtestsrv", 8055))
     .listen(18055, "127.0.0.1");
+  // Observe only request methods/paths from the product scanner. No bodies,
+  // authentication headers or private material enter the lab evidence.
+  http.createServer((req, res) => {
+    scannerRequests.push({ method: req.method, path: req.url });
+    if (scannerRequests.length > 500) scannerRequests.shift();
+    forward(req, res, "vault", 8200);
+  }).listen(18020, "0.0.0.0");
   // Public throwaway CA root only, retrieved on this isolated bridge.
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
@@ -442,7 +461,7 @@ async function main() {
         return forward(req, res, "api", 4000);
       if (req.url === "/env.js") {
         res.setHeader("Content-Type", "application/javascript");
-        return res.end('window.__ENV__={API_URL:"http://127.0.0.1:58801"};');
+        return res.end('window.__ENV__={API_URL:window.location.origin};');
       }
       const relative = decodeURIComponent(req.url.split("?")[0]),
         dist = "/repo/apps/dashboard/dist";

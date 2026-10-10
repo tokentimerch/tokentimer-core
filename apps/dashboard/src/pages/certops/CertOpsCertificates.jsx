@@ -860,7 +860,8 @@ export default function CertOpsCertificates() {
                                     />
                                   </Tooltip>
                                 ) : certificate.keyMode === 'vault-managed' ? (
-                                  isWorkspaceAdmin ? (
+                                  isWorkspaceAdmin &&
+                                  certificate.keyReference ? (
                                     <Tooltip label='Repair renewal profile'>
                                       <IconButton
                                         {...actionButtonProps}

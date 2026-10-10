@@ -1451,13 +1451,23 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
     assert.match(migration.sql, /certificate_jobs_operation_check/);
   });
 
-  it("accepts exactly the operations the service layer declares today", () => {
+  it("preserves the operation vocabulary as of migration 68", () => {
     const operationDeclared = migration.sql.match(/operation IN \(([^)]+)\)/);
     assert.ok(operationDeclared, "operation IN (...) list expected");
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].sort());
+    assert.deepEqual([...operationValues].sort(), JOB_OPERATIONS.filter(operation => operation !== "deploy-from-store").sort());
+  });
+});
+
+describe("migration 69 distribution operation compatibility", () => {
+  it("adds deploy-from-store while retaining AD CS continuation", () => {
+    const migration = migrations.find(entry => entry.version === 69);
+    const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
+    assert.ok(declared);
+    const values = declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual(values.sort(), [...JOB_OPERATIONS].sort());
   });
 });
 

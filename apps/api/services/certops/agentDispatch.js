@@ -2332,8 +2332,11 @@ async function ingestResult({
           ).slice(0, 1024)
         : null;
 
-    // Only ever SET needs_operator_reconciliation to true here — never clear
-    // an existing true from fencing (clearing is an explicit operator action).
+    // A publication retry is an explicit operator action. Its validated,
+    // claim-bound receipt above resolves the earlier uncertain Vault write.
+    // Other job families must retain their existing reconciliation fence.
+    const clearPublicationReconciliation =
+      jobStatus === "succeeded" && Boolean(job.payload?.publication);
     let setNeedsReconciliation = false;
     let reconciliationReason = null;
     if (jobStatus === "orphaned_unknown_effect") {
@@ -2388,10 +2391,12 @@ async function ingestResult({
               lease_expires_at = NULL,
               needs_operator_reconciliation = CASE
                 WHEN $5::boolean THEN TRUE
+                WHEN $8::boolean THEN FALSE
                 ELSE needs_operator_reconciliation
               END,
               reconciliation_reason = CASE
                 WHEN $5::boolean THEN $6
+                WHEN $8::boolean THEN NULL
                 ELSE reconciliation_reason
               END,
               updated_at = NOW()
@@ -2406,6 +2411,7 @@ async function ingestResult({
         setNeedsReconciliation,
         reconciliationReason,
         JSON.stringify(resultMetadata),
+        clearPublicationReconciliation,
       ],
     );
 

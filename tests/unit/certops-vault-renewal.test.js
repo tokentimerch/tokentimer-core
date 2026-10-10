@@ -77,6 +77,7 @@ const row = {
   workspace_id: W,
   status: "active",
   key_mode: "vault-managed",
+  key_reference: "vault:customer/group",
   not_after: "2027-01-01T00:00:00.000Z",
   common_name: "*.example.com",
   subject_alt_names: payload.sans,
@@ -101,6 +102,15 @@ test("SAN-only Vault profile enables renewal, never generic local deployment", (
   const missing = { ...row, profile_id: null };
   assert.equal(classifyRenewalBlock(missing), RENEWAL_BLOCKED_NO_PROFILE);
   assert.equal(deriveCertificateRenewalState(missing).state, "not-configured");
+  assert.match(deriveCertificateRenewalState(missing).detail, /Repair it/);
+});
+
+test("transferred Vault inventory does not advertise repair from another workspace's publication", () => {
+  const transferred = { ...row, profile_id: null, key_reference: null };
+  const renewal = deriveCertificateRenewalState(transferred);
+  assert.equal(renewal.state, "not-configured");
+  assert.match(renewal.detail, /distribution is not configured in this workspace/);
+  assert.doesNotMatch(renewal.detail, /repair/i);
 });
 
 test("manual renewal versions differ across requests and remain stable on replay", async () => {

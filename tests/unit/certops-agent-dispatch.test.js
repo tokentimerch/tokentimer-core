@@ -2307,6 +2307,54 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(result.errorCode, null);
     assert.equal(updateParams[2], null);
     assert.equal(updateParams[3], null);
+    assert.equal(updateParams[7], false, "generic success must retain reconciliation fences");
+  });
+
+  it("clears an uncertain publication fence only after accepting its current claim receipt", async (t) => {
+    const material = require("../../apps/api/services/certops/materialDistribution");
+    let accepted = false;
+    t.mock.method(material, "acceptPublicationReceipt", async ({ job }) => {
+      assert.equal(job.claim_id, "claim-uuid-1");
+      accepted = true;
+    });
+    let updateParams;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        payload: { publication: { materialVersionId: "version-1" } },
+        needs_operator_reconciliation: true,
+      })] };
+      if (sql.includes("UPDATE certificate_jobs")) {
+        assert.equal(accepted, true, "receipt validation must precede fence clearing");
+        updateParams = params;
+        return { rows: [{ id: 42, status: "succeeded", completed_at: new Date(),
+          needs_operator_reconciliation: false, reconciliation_reason: null }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } });
+    assert.equal(updateParams[7], true);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("retains publication reconciliation when receipt validation fails", async (t) => {
+    const material = require("../../apps/api/services/certops/materialDistribution");
+    t.mock.method(material, "acceptPublicationReceipt", async () => {
+      throw new Error("receipt mismatch");
+    });
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        payload: { publication: { materialVersionId: "version-1" } },
+        needs_operator_reconciliation: true,
+      })] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } }), /receipt mismatch/);
+    assert.equal(dbPool.state.queries.some(q => q.text.includes("UPDATE certificate_jobs")), false);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
   });
 
   it("rejects a sequence regression after nonce consumption and rolls the whole transaction back", async () => {

@@ -14,8 +14,15 @@ const file = root + "/journey-state.json",
   state = fs.existsSync(file)
     ? JSON.parse(fs.readFileSync(file))
     : { runId: crypto.randomUUID(), completed: [], checks: [] };
-const base = "http://127.0.0.1:58801",
+const base = "http://127.0.0.1:" + (process.env.TT_UX_WEB_PORT || "58801"),
+  controlBase = "http://127.0.0.1:" + (process.env.TT_UX_CONTROL_PORT || "58805"),
+  mailBase = "http://127.0.0.1:" + (process.env.TT_UX_MAIL_PORT || "58803"),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+state.certificateMode ||= process.env.TT_UX_CERTIFICATE_MODE || "san";
+state.coreCommit ||= process.env.TT_UX_CORE_COMMIT || null;
+const certificateSans = state.certificateMode === "wildcard"
+  ? ["*.wildcard.test", "wildcard.test"]
+  : ["nginx.wildcard.test", "haproxy.wildcard.test"];
 const save = () =>
   fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n", {
     mode: 0o600,
@@ -39,7 +46,17 @@ async function wait(label, fn, ms = 120000) {
 class User {
   constructor(name) {
     this.name = name;
-    this.jar = new Map();
+    this.sessionFile = root + "/session-" + name + ".json";
+    const stored = fs.existsSync(this.sessionFile)
+      ? JSON.parse(fs.readFileSync(this.sessionFile))
+      : {};
+    this.jar = new Map(stored.jar || []);
+    this.csrf = stored.csrf || null;
+  }
+  saveSession() {
+    fs.writeFileSync(this.sessionFile, JSON.stringify({
+      jar: [...this.jar], csrf: this.csrf,
+    }), { mode: 0o600 });
   }
   async request(route, method = "GET", body, expected = 200, headers = {}) {
     if (method !== "GET" && !this.csrf)
@@ -61,6 +78,7 @@ class User {
         i = pair.indexOf("=");
       this.jar.set(pair.slice(0, i), pair.slice(i + 1));
     }
+    this.saveSession();
     const raw = await r.text();
     let data;
     try {
@@ -87,15 +105,24 @@ class User {
     return data;
   }
   async login(email, password) {
+    if (this.jar.size) {
+      const session = await this.request("/api/session");
+      if (session.loggedIn && session.user?.email === email) {
+        this.csrf = (await this.request("/api/csrf-token")).csrfToken;
+        this.saveSession();
+        return;
+      }
+    }
     await this.request("/auth/login", "POST", { email, password });
     this.csrf = null;
     this.csrf = (await this.request("/api/csrf-token")).csrfToken;
+    this.saveSession();
   }
 }
 const owner = new User("owner"),
   approver = new User("approver");
 async function customer(action, name = "issuer", extra = {}) {
-  const r = await fetch("http://127.0.0.1:58805", {
+  const r = await fetch(controlBase, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, name, ...extra }),
@@ -109,13 +136,13 @@ async function emailToken(email, type) {
   return wait(
     "captured " + type + " email",
     async () => {
-      const list = await fetch("http://127.0.0.1:58803/api/v1/messages").then(
+      const list = await fetch(mailBase + "/api/v1/messages").then(
         (r) => r.json(),
       );
       for (const m of list.messages || []) {
         if (!(m.To || []).some((to) => to.Address === email)) continue;
         const message = await fetch(
-          "http://127.0.0.1:58803/api/v1/message/" + m.ID,
+          mailBase + "/api/v1/message/" + m.ID,
         ).then((r) => r.json());
         const text = (message.Text || "") + " " + (message.HTML || "");
         const match =
@@ -227,7 +254,7 @@ async function setup() {
     const w = await owner.request(
       "/api/v1/workspaces",
       "POST",
-      { name: "Wildcard API UX Lab " + state.runId.slice(0, 8) },
+      { name: "Shared Certificate UX Lab " + state.runId.slice(0, 8) },
       201,
     );
     state.workspaceId = w.id || w.workspace?.id;
@@ -317,11 +344,11 @@ async function setup() {
     "normal admin bootstrap, email invitation/verification and three enrolled agents",
   );
 }
-async function publish() {
+async function preparePublication() {
   if (!state.issueJob) {
     const j = await createJob("issue", "issue", {
-      target: { type: "domain", reference: "*.wildcard.test" },
-      sans: ["*.wildcard.test", "wildcard.test"],
+      target: { type: "domain", reference: certificateSans[0] },
+      sans: certificateSans,
       caEndpoint: "https://pebble:14000/dir",
       commandRef: "certbot",
       dnsProvider: "pebble-challtestsrv",
@@ -340,11 +367,18 @@ async function publish() {
     state.groupId = j.payload.publication.groupId;
     save();
   }
-  await customer("configure", "issuer", {
-    workspaceId: state.workspaceId,
-    groupId: state.groupId,
-  });
-  await customer("start");
+  if (!state.publicationPrepared) {
+    await customer("configure", "issuer", {
+      workspaceId: state.workspaceId,
+      groupId: state.groupId,
+    });
+    await customer("start");
+    state.publicationPrepared = true;
+    save();
+  }
+}
+async function publish() {
+  await preparePublication();
   if ((await job(state.issueJob)).status === "pending_approval")
     await approve(state.issueJob);
   const j = await terminal(state.issueJob);
@@ -365,6 +399,7 @@ async function publish() {
   );
   assert.ok(detail.certificate.profileId);
   assert.equal(detail.certificate.renewal.state, "auto");
+  assert.deepEqual([...detail.certificate.subjectAltNames].sort(), [...certificateSans].sort());
   const repairRoute =
     api() + "/certificates/" + state.certificateId + "/renewal-profile/repair";
   const repair = await owner.request(repairRoute, "POST", {});
@@ -423,6 +458,12 @@ async function bindings() {
   await terminal(r.id);
   assert.equal((await rollout("initial")).id, r.id);
   const rows = await converge();
+  const served = await Promise.all(["nginx", "haproxy"].map(name => customer("facts", name)));
+  assert.equal(served[0].certificate.fingerprint256, served[1].certificate.fingerprint256);
+  if (state.certificateMode === "san") {
+    assert.ok(served.every(f => !f.certificate.subjectAltName.includes("*")));
+    check("one ordinary SAN certificate, with no wildcard, is served by both destinations");
+  }
   state.firstMatrix = rows;
   save();
   assert.equal((await rollout("initial")).id, r.id);
@@ -511,6 +552,10 @@ async function recovery() {
   check(
     "lost Vault write/read responses leave old key and block fresh issuance",
   );
+  const blockedTransfer = await transferInventory(409);
+  assert.equal(blockedTransfer.code, "CERTOPS_DISTRIBUTION_TRANSFER_RECONCILIATION_REQUIRED");
+  assert.ok((await versions()).some(v => v.id === state.versionId));
+  check("workspace transfer returns actionable 409 while a real Vault publication has uncertain effects");
   await customer("clear-fault");
   await owner.request(
     api() + "/distribution-jobs/" + state.rotationJob + "/retry",
@@ -534,6 +579,10 @@ async function recovery() {
   check(
     "operator retries original job: recovery promotes rotated custom key without another order",
   );
+  const recovered = await job(state.rotationJob);
+  assert.equal(recovered.needsOperatorReconciliation, false);
+  assert.equal(recovered.reconciliationReason, null);
+  check("validated publication recovery clears its stale reconciliation fence");
   if (!state.reuseJob) {
     const certificate = await owner.request(
       api() + "/certificates/" + state.certificateId,
@@ -667,8 +716,8 @@ async function authorization() {
 async function rejection() {
   if (!state.rejectedIssue) {
     const pending = await createJob("reject-issue", "issue", {
-      target: { type: "domain", reference: "*.wildcard.test" },
-      sans: ["*.wildcard.test", "wildcard.test"],
+      target: { type: "domain", reference: certificateSans[0] },
+      sans: certificateSans,
       caEndpoint: "https://pebble:14000/dir",
       commandRef: "certbot",
       dnsProvider: "pebble-challtestsrv",
@@ -709,6 +758,94 @@ async function rejection() {
     "public rejection releases never-claimed publication allocation and retains history",
   );
 }
+async function validation() {
+  const before = (await owner.request(api() + "/jobs")).items.map(j => j.id).sort();
+  for (const materialVersionId of [undefined, null, 42, [], "invalid-version"]) {
+    const response = await owner.request(group() + "/rollouts", "POST",
+      { materialVersionId, maxParallel: 1 }, 422,
+      { "Idempotency-Key": state.runId + "-invalid-" + String(materialVersionId) });
+    assert.equal(response.code, "CERTOPS_MATERIAL_CONTRACT_INVALID");
+  }
+  for (const [route, method, body] of [
+    [api() + "/distribution-groups/invalid/versions", "GET"],
+    [api() + "/distribution-groups/invalid/consumers", "GET"],
+    [group() + "/consumers/invalid", "PUT", state.bindings[0].body],
+    [api() + "/distribution-jobs/invalid/retry", "POST", {}],
+  ]) {
+    const response = await owner.request(route, method, body, 422);
+    assert.equal(response.code, "CERTOPS_MATERIAL_CONTRACT_INVALID");
+  }
+  assert.deepEqual((await owner.request(api() + "/jobs")).items.map(j => j.id).sort(), before);
+  check("nine malformed distribution requests return 422 and create no jobs");
+}
+async function scanner() {
+  const prefix = state.workspaceId + "/" + state.groupId + "/bundles/";
+  const before = (await customer("scanner-requests")).requests.length;
+  for (const pathPrefix of [
+    prefix + state.versionId,
+    prefix.replace("bundles/", "%62undles/") + state.versionId,
+    prefix.replace("bundles/", "%2562undles/") + state.versionId,
+    prefix.replace("bundles/", "bundles//") + state.versionId,
+    prefix + state.versionId + "?version=1",
+  ]) {
+    const result = await owner.request("/api/v1/integrations/vault/scan", "POST", {
+      workspace_id: state.workspaceId,
+      address: "http://customers:18020",
+      token: "ux-lab-only-vault-token",
+      include: { kv: true, pki: false },
+      mounts: ["secret"],
+      pathPrefix,
+    });
+    assert.deepEqual(result.items, []);
+  }
+  const requests = (await customer("scanner-requests")).requests.slice(before);
+  assert.ok(requests.length >= 5);
+  assert.ok(requests.every(r => r.method === "GET" && r.path === "/v1/sys/mounts"),
+    "The product scanner must never request a real private bundle, even with a root Vault token");
+  check("real Vault scans block five raw/encoded private bundle prefixes before any object request",
+    { observedRequests: requests });
+}
+async function transferInventory(expected = 200) {
+  if (!state.transferDestinationId) {
+    const workspace = await owner.request("/api/v1/workspaces", "POST",
+      { name: "Shared certificate destination " + state.runId.slice(0, 8) }, 201);
+    state.transferDestinationId = workspace.id || workspace.workspace?.id;
+    save();
+  }
+  const { certificate } = await owner.request(api() + "/certificates/" + state.certificateId);
+  assert.ok(certificate.tokenId, "The real publication must link its public inventory asset");
+  state.inventoryTokenId = certificate.tokenId;
+  save();
+  return owner.request("/api/v1/workspaces/" + state.transferDestinationId + "/transfer-tokens",
+    "POST", { from_workspace_id: state.workspaceId, token_ids: [certificate.tokenId] }, expected);
+}
+async function transfer() {
+  const before = await versions();
+  const result = await transferInventory();
+  assert.equal(result.moved, 1);
+  await verifyTransferredInventory(before);
+}
+async function verifyTransferredInventory(before) {
+  const destination = "/api/v1/workspaces/" + state.transferDestinationId + "/certops";
+  const { certificate } = await owner.request(destination + "/certificates/" + state.certificateId);
+  assert.equal(certificate.tokenId, state.inventoryTokenId);
+  assert.equal(certificate.profileId, null);
+  assert.equal(certificate.keyReference, null);
+  assert.equal(certificate.deployedAgentId, null);
+  assert.notEqual(certificate.renewal.state, "auto");
+  assert.match(certificate.renewal.detail, /distribution is not configured in this workspace/);
+  assert.doesNotMatch(certificate.renewal.detail, /repair/i);
+  const refused = await owner.request(destination + "/certificates/" + state.certificateId + "/renewal-profile/repair", "POST", {}, 404);
+  assert.equal(refused.code, "CERTOPS_DISTRIBUTION_NOT_FOUND");
+  check("transferred inventory reports unconfigured distribution and refuses cross-workspace publication repair");
+  assert.deepEqual((await owner.request(destination + "/distribution-groups")).groups, []);
+  if (before) assert.deepEqual((await versions()).map(v => v.id).sort(), before.map(v => v.id).sort());
+  assert.equal((await owner.request(api() + "/distribution-groups")).groups
+    .find(g => g.id === state.groupId).state, "retired");
+  assert.equal((await job(state.issueJob)).status, "succeeded");
+  check("public inventory transfers without a destination Vault integration; source material/job history stays put and destination management is unconfigured",
+    { destinationWorkspaceId: state.transferDestinationId, tokenId: state.inventoryTokenId });
+}
 async function main() {
   await wait(
     "API startup",
@@ -731,6 +868,16 @@ async function main() {
   if (state.approverRegistered)
     await approver.login(state.approverEmail, "LabApprover-2026!Only");
   const phase = process.argv[2] || "all";
+  if (phase === "transfer-status") {
+    await verifyTransferredInventory();
+    return;
+  }
+  if (phase === "prepare-publication") {
+    await preparePublication();
+    assert.equal((await job(state.issueJob)).status, "pending_approval");
+    check("publication prepared through the API for a different user's browser approval", { jobId: state.issueJob });
+    return;
+  }
   if (phase === "repair") {
     const repaired = await owner.request(
       api() +
@@ -815,9 +962,12 @@ async function main() {
     setup,
     publish,
     bindings,
+    validation,
+    scanner,
     rejection,
     authorization,
     recovery,
+    transfer,
   }))
     if (phase === "all" || phase === name) await step(name, fn);
   if (phase === "all") {
@@ -841,6 +991,8 @@ async function main() {
       JSON.stringify(
         {
           passed: true,
+          coreCommit: state.coreCommit,
+          certificateMode: state.certificateMode,
           runId: state.runId,
           workspaceId: state.workspaceId,
           checks: state.checks,
@@ -869,6 +1021,8 @@ main().catch((e) => {
     JSON.stringify(
       {
         passed: false,
+        coreCommit: state.coreCommit,
+        certificateMode: state.certificateMode,
         runId: state.runId,
         workspaceId: state.workspaceId,
         completed: state.completed,
@@ -876,10 +1030,7 @@ main().catch((e) => {
         databaseInjection: false,
         experimentalAgentBuild: true,
         failure: e.message,
-        blocked: [
-          "Recovery and next renewal require a usable public renewal workflow.",
-          "Historical migration backfill is not fabricated through the database.",
-        ],
+        failedPhase: process.argv[2] || "all",
       },
       null,
       2,

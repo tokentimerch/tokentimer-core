@@ -10,8 +10,8 @@ x-api-env: &api-env
   CERTOPS_ENABLED: "true"
   CERTOPS_SIGNING_ENCRYPTION_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
   CERTOPS_REGISTRATION_ENCRYPTION_KEY: "2222222222222222222222222222222222222222222222222222222222222222"
-  APP_URL: http://127.0.0.1:58801
-  API_URL: http://127.0.0.1:58800
+  APP_URL: http://127.0.0.1:${TT_UX_WEB_PORT:-58801}
+  API_URL: http://127.0.0.1:${TT_UX_API_PORT:-58800}
   SMTP_HOST: mail
   SMTP_PORT: 1025
   SMTP_REQUIRE_TLS: "false"
@@ -33,7 +33,7 @@ services:
       retries: 30
   mail:
     image: axllent/mailpit:v1.27
-    ports: ["127.0.0.1:58803:8025"]
+    ports: ["127.0.0.1:${TT_UX_MAIL_PORT:-58803}:8025"]
     cpus: 0.25
     mem_limit: 96m
   vault:
@@ -58,7 +58,9 @@ services:
         "-dnsserver",
         "challtestsrv:8053",
       ]
-    environment: { PEBBLE_VA_NOSLEEP: "1" }
+    # This journey faults Vault, not ACME nonce handling in the fixture client.
+    # Real DNS-01 validation and anti-replay nonce validation remain enabled.
+    environment: { PEBBLE_VA_NOSLEEP: "1", PEBBLE_WFE_NONCEREJECT: "0" }
     volumes: ["../pebble.json:/fixture/pebble.json:ro"]
     cpus: 0.5
     mem_limit: 128m
@@ -78,7 +80,7 @@ services:
         "../../../apps/api:/app/apps/api:ro",
         "../../../packages:/app/packages:ro",
       ]
-    ports: ["127.0.0.1:58800:4000"]
+    ports: ["127.0.0.1:${TT_UX_API_PORT:-58800}:4000"]
     cpus: 1
     mem_limit: 512m
     depends_on:
@@ -108,13 +110,15 @@ services:
   customers:
     image: ${TT_UX_CUSTOMER_IMAGE:-tt-wildcard-vault-fixture:20261008}
     command: [node, tests/wildcard-vault/ux-lab/customer-host.cjs]
-    volumes: ["../../..:/repo:ro", "customers:/lab"]
+    environment:
+      TT_UX_CERTIFICATE_MODE: ${TT_UX_CERTIFICATE_MODE:-san}
+    volumes: ["../../..:/repo:ro", "customers:/lab", "${TT_WILDCARD_UX_OUTPUT}:/lab-input:ro"]
     ports:
       [
-        "127.0.0.1:58801:8080",
-        "127.0.0.1:58805:8085",
-        "127.0.0.1:58843:8443",
-        "127.0.0.1:58943:9443",
+        "127.0.0.1:${TT_UX_WEB_PORT:-58801}:8080",
+        "127.0.0.1:${TT_UX_CONTROL_PORT:-58805}:8085",
+        "127.0.0.1:${TT_UX_NGINX_PORT:-58843}:8443",
+        "127.0.0.1:${TT_UX_HAPROXY_PORT:-58943}:9443",
       ]
     cpus: 1.5
     mem_limit: 768m
