@@ -84,6 +84,7 @@ test("local authority rejects cross-customer, arbitrary aliases and HTTP", (t) =
   assert.equal(fs.readFileSync(file, "utf8").includes("PRIVATE KEY"), true);
 });
 
+// skip-reason: no-host — requires the isolated real Vault fixture on loopback port 58200.
 test("real isolated Vault KV v2: pinned publication and idempotent CAS", { skip: process.env.TT_WILDCARD_VAULT_REAL !== "1" }, async (t) => {
   const f = fixture(t, "http://127.0.0.1:58200");
   f.stores.customer.timeoutMs = 5000;
@@ -101,6 +102,7 @@ test("CAS conflict never adopts unrelated existing bytes or returns Vault errors
   await assert.rejects(createVaultStore(f.stores,f.intent,{fixtureLoopbackHttp:true}).publish(f.bundle),e=>e.code==="material_cas_conflict"&&!e.message.includes("canary"));
 });
 
+// skip-reason: no-host — requires the isolated real Vault fixture and its synthetic root token.
 test("real Vault ACL separates issuer, consumer, scanner and customer prefixes", { skip: process.env.TT_WILDCARD_VAULT_REAL !== "1" }, async (t) => {
   const f=fixture(t,"http://127.0.0.1:58200");f.stores.customer.timeoutMs=5000;
   const root="isolated-vault-fixture-only",base="http://127.0.0.1:58200/v1";

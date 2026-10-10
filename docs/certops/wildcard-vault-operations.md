@@ -6,7 +6,7 @@ The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
 deploying to every consumer. The same certificate may be an ordinary, SAN, or
 wildcard certificate; sharing it is independent of its DNS names.
-This candidate adds migrations 68–70; Cloud applies
+This candidate adds migrations 69–71, after the existing AD CS migration 68; Cloud applies
 the same SQL as migrations 86–88 after main's inventory migration 85. Enterprise
 inherits Core through staged composition.
 
@@ -92,7 +92,7 @@ issuer or consumer credentials. Protect Vault backups as private keys.
 4. Use `GET /api/v1/workspaces/{id}/certops/distribution-groups` and its
    `/{groupId}/versions` resource to obtain public references. Use
    `PUT .../{groupId}/consumers/{bindingId}` to assign each consumer explicitly.
-   Required fields are in the shared `consumerBinding` schema. Wave 0 is the
+   Required fields are in the shared `consumerBinding` schema. The first wave is the
    canary; subsequent waves wait for earlier required consumers. Optional
    failures remain visible and do not count as verified consumers.
 5. `POST .../{groupId}/rollouts` with an `Idempotency-Key` header and body
@@ -197,7 +197,7 @@ and rollback. No automated deletion is introduced by this candidate.
 
 Review and commit Core first. Cloud pins that exact candidate SHA, materializes
 manifest-mapped files, retains its quota/private-material/continuing-result
-policy and runs migrations 85/86. Enterprise composes the same candidate, retaining
+policy and runs its own migrations 86–89. Enterprise composes the same candidate, retaining
 RBAC/SSO and base CertOps independently of licensed compliance reports. Candidate
 SHA compatibility and locally built images are not published release references.
 Only after full agent/customer qualification and real release gates should the

@@ -392,6 +392,44 @@ jobs:
           path: artifacts/*.txt
           if-no-files-found: ignore
 
+  vault_cleanup_regression:
+    name: Vault Inventory Cleanup Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pr329_cleanup
+          POSTGRES_PASSWORD: ci-synthetic-cleanup-only
+          POSTGRES_DB: pr329_cleanup_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pr329_cleanup -d pr329_cleanup_ci_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: pr329_cleanup_ci_test
+      DB_USER: pr329_cleanup
+      DB_PASSWORD: ci-synthetic-cleanup-only
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "11.13.0"
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate dedicated empty test database
+        run: node apps/api/migrations/migrate.js
+      - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
+        run: node --test tests/postgres/vault-material-cleanup.test.js
+
   helm_chart:
     name: Helm Chart Validation
     runs-on: ubuntu-latest
@@ -519,10 +557,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate production compose
-        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml config -q
+        run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml config -q
 
       - name: Validate production compose + images overlay
-        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
+        run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
 
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q

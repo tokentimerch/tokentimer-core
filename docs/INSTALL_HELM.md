@@ -163,3 +163,16 @@ TokenTimer creates the admin user automatically on first startup from `ADMIN_EMA
 Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
 
 Continue with [First asset and alert check](FIRST_ASSET.md). Optional network policy, monitoring, and scaling are covered in [Kubernetes operations](KUBERNETES_OPERATIONS.md).
+
+When using `config.existingSecret`, run a server-side Helm dry-run against the
+target namespace before installation or upgrade. The chart validates both
+CertOps keys on a readable existing Secret as 64 hexadecimal characters.
+Offline `helm template` cannot inspect cluster Secrets; a successful offline
+render is not key validation. Create the Secret first and use
+`helm upgrade --install ... --dry-run=server --hide-secret` with your normal
+release name, chart, namespace and values. Treat dry-run output as sensitive.
+Helm worker CronJobs currently inherit the shared application Secret through
+`envFrom`; they therefore receive the wrapping keys although maintenance
+sweeps do not decrypt records. Deployments requiring separate worker secret
+permissions must supply a reviewed chart override. Enterprise Compose limits
+these wrapping keys to the API.
