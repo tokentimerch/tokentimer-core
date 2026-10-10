@@ -28,6 +28,7 @@ const STATUS_LABEL = {
   claimed: 'Claimed',
   running: 'Running',
   complete: 'Complete',
+  incomplete: 'Incomplete',
   disabled: 'Disabled',
   forbidden: 'Restricted',
 };
@@ -42,6 +43,9 @@ function toneForStatus(status) {
     s === 'forbidden'
   ) {
     return 'danger';
+  }
+  if (s === 'incomplete') {
+    return 'warning';
   }
   if (
     s.includes('succeed') ||
@@ -104,13 +108,18 @@ export function toneForLine(line) {
   return 'info';
 }
 
+function streamDroppedLines(streams) {
+  return (streams || []).reduce(
+    (sum, stream) =>
+      sum + (stream.serverDroppedLines || 0) + (stream.agentGapLines || 0),
+    0
+  );
+}
+
 export function deliveryLabel(payload, failed = false) {
   if (failed) return 'Could not load agent output. Retrying.';
   if (!payload) return 'Waiting for output';
   if (payload.storageEnabled === false) return 'Agent log storage is disabled';
-  if (payload.linesVisible === false) {
-    return 'You need manager access to view agent output';
-  }
   const streams = payload.streams || [];
   if (streams.some(stream => stream.status === 'abandoned')) {
     return 'Agent stopped reporting';
@@ -121,14 +130,14 @@ export function deliveryLabel(payload, failed = false) {
   ) {
     return 'This agent did not stream logs for this attempt';
   }
-  const dropped = streams.reduce(
-    (sum, stream) =>
-      sum + (stream.serverDroppedLines || 0) + (stream.agentGapLines || 0),
-    0
-  );
+  const dropped = streamDroppedLines(streams);
   if (dropped > 0) return `Output incomplete: ${dropped} lines dropped`;
   if (streams.some(stream => stream.truncated)) return 'Log limit reached';
-  if (payload.logsComplete) return 'Stream complete';
+  if (payload.logsComplete) {
+    return payload.linesVisible === false
+      ? 'Stream complete (log text requires manager access)'
+      : 'Stream complete';
+  }
   if (
     streams.length > 0 &&
     streams.every(stream =>
@@ -137,6 +146,9 @@ export function deliveryLabel(payload, failed = false) {
   ) {
     return 'Waiting for the next attempt';
   }
+  if (payload.linesVisible === false) {
+    return 'Output is streaming (log text requires manager access)';
+  }
   return 'Waiting for output';
 }
 
@@ -144,11 +156,16 @@ function statusHintFromPayload(payload, failed) {
   if (failed) return 'retrying';
   if (!payload) return 'connecting';
   if (payload.storageEnabled === false) return 'disabled';
-  if (payload.linesVisible === false) return 'forbidden';
   const streams = payload.streams || [];
   if (streams.some(stream => stream.status === 'abandoned')) return 'failed';
+  const dropped = streamDroppedLines(streams);
   if (payload.logsComplete) {
-    if (streams.some(stream => stream.status === 'final')) return 'succeeded';
+    if (dropped > 0) return 'incomplete';
+    const job = String(payload.jobStatus || '').toLowerCase();
+    if (job === 'succeeded' || job === 'success') return 'succeeded';
+    if (job === 'failed') return 'failed';
+    if (job === 'cancelled') return 'cancelled';
+    if (job === 'rejected') return 'rejected';
     return 'complete';
   }
   if (streams.some(stream => stream.status === 'streaming')) return 'streaming';
@@ -359,7 +376,9 @@ export default function AgentShellConsole({
         ? 'red'
         : badgeTone === 'info'
           ? 'blue'
-          : 'gray';
+          : badgeTone === 'warning'
+            ? 'orange'
+            : 'gray';
 
   const colorForLine = line => {
     const tone = toneForLine(line);

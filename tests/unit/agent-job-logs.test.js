@@ -14,6 +14,8 @@ const {
   contentHash,
   logsComplete,
   resolveIngest,
+  resolveRetentionDays,
+  resolveDailyByteLimit,
   shouldAbandon,
   shouldDeleteStream,
   takeIngestOrders,
@@ -289,5 +291,67 @@ describe("agent job log ingest", () => {
       fields: { note: "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----" },
     }]);
     assert.equal(incoming.rejected, true);
+  });
+
+  it("drops secret-bearing structured field names even for short values", () => {
+    const result = scrubAgentLogFields({
+      password: "hunter2",
+      apiKey: "abc123",
+      accessToken: "short-token",
+      privateKey: "not-a-pem",
+      host: "server01",
+    });
+    assert.equal(result.rejected, false);
+    assert.deepEqual(result.fields, { host: "server01" });
+    assert.ok(result.redactions >= 4);
+  });
+
+  it("counts agent droppedBefore on an empty final batch", () => {
+    const afterLine = resolveIngest(freshState(), {
+      key: "k1",
+      lines: [line(1)],
+      final: false,
+      droppedBefore: 0,
+    });
+    assert.equal(afterLine.nextState.agentGapLines, 0);
+    const finalEmpty = resolveIngest(afterLine.nextState, {
+      key: "k-final",
+      lines: [],
+      final: true,
+      droppedBefore: 1,
+    });
+    assert.equal(finalEmpty.kind, "applied");
+    assert.equal(finalEmpty.nextState.status, "final");
+    assert.equal(finalEmpty.nextState.agentGapLines, 1);
+    const replay = resolveIngest(finalEmpty.nextState, {
+      key: "k-final",
+      lines: [],
+      final: true,
+      droppedBefore: 1,
+    });
+    assert.equal(replay.kind, "replay");
+    assert.equal(replay.nextState.agentGapLines, 1);
+  });
+
+  it("rejects malformed retention and daily-byte env values", () => {
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0.5" }), 30);
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "30days" }), 30);
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0" }), 0);
+    assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "14" }), 14);
+    assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "100MB" }), 0);
+    assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "1048576" }), 1048576);
+  });
+
+  it("exposes jobStatus on shaped read payloads", () => {
+    const shaped = shapeAgentLogRead({
+      jobStatus: "failed",
+      streams: [{ claimId: "c", attempt: 1, status: "final", streamingEnabled: true }],
+      lines: [],
+      limit: 10,
+      includeText: true,
+      storageEnabled: true,
+    });
+    assert.equal(shaped.jobStatus, "failed");
+    assert.equal(shaped.logsComplete, true);
   });
 });

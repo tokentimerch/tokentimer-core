@@ -101,6 +101,7 @@ describe('AgentShellConsole', () => {
         nextCursor: 'c2',
         hasMore: false,
         logsComplete: true,
+        jobStatus: 'succeeded',
         streams: finalStreams,
         storageEnabled: true,
       });
@@ -134,6 +135,7 @@ describe('AgentShellConsole', () => {
         nextCursor: 'c1',
         hasMore: false,
         logsComplete: true,
+        jobStatus: 'succeeded',
         streams: finalStreams,
         storageEnabled: true,
       });
@@ -151,15 +153,40 @@ describe('AgentShellConsole', () => {
     expect(screen.getByText('Succeeded')).toBeInTheDocument();
   });
 
-  it('labels a viewer response without showing lines', () => {
+  it('labels a viewer response with delivery status, not only Restricted', () => {
     expect(
       deliveryLabel({
         items: [],
         linesVisible: false,
-        streams: [],
+        streams: streaming,
         storageEnabled: true,
+        logsComplete: false,
       })
-    ).toBe('You need manager access to view agent output');
+    ).toBe('Output is streaming (log text requires manager access)');
+    expect(
+      deliveryLabel({
+        items: [],
+        linesVisible: false,
+        streams: finalStreams,
+        storageEnabled: true,
+        logsComplete: true,
+        jobStatus: 'failed',
+      })
+    ).toBe('Stream complete (log text requires manager access)');
+  });
+
+  it('badges failed jobs as Failed even when the log stream is final', () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      items: [line(1, 'deploy failed')],
+      nextCursor: 'c1',
+      hasMore: false,
+      logsComplete: true,
+      jobStatus: 'failed',
+      streams: finalStreams,
+      storageEnabled: true,
+    });
+    renderConsole(fetcher);
+    return screen.findByText('Failed');
   });
 
   it('formats bare messages into the agent logger line shape', () => {

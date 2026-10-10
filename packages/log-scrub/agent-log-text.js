@@ -9,6 +9,8 @@
 const {
   containsPrivateKeyMaterial,
   redactGenericSecrets,
+  fieldNameLooksGenericSecret,
+  fieldNameLooksPrivateKeyMaterial,
   PRIVATE_KEY_REDACTION_PLACEHOLDER,
 } = require("./secret-material");
 
@@ -81,7 +83,14 @@ function scrubAgentLogFields(fields, reservedNames = new Set()) {
       break;
     }
     const normalized = String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (!FIELD_KEY.test(key) || reservedNames.has(normalized)) {
+    // Drop secret-bearing keys even when the value itself has no scrub pattern
+    // (e.g. password: "hunter2"). reservedNames covers caller-specific denials.
+    if (
+      !FIELD_KEY.test(key) ||
+      reservedNames.has(normalized) ||
+      fieldNameLooksGenericSecret(key) ||
+      fieldNameLooksPrivateKeyMaterial(key)
+    ) {
       redactions += 1;
       continue;
     }

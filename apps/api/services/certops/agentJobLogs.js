@@ -85,12 +85,19 @@ function noteMetric(fn) {
   }
 }
 
-function resolveRetentionDays(env = process.env) {
-  const raw = env.CERTOPS_AGENT_LOG_RETENTION_DAYS;
-  if (raw == null || String(raw).trim() === "") return 30;
-  const parsed = Number.parseInt(String(raw).trim(), 10);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) return 30;
+function parseNonNegativeIntEnv(raw, fallback) {
+  if (raw == null) return fallback;
+  const trimmed = String(raw).trim();
+  if (trimmed === "") return fallback;
+  // Reject prefixes like "30days" / "0.5" / "100MB"; only a full decimal integer.
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) return fallback;
   return parsed;
+}
+
+function resolveRetentionDays(env = process.env) {
+  return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_RETENTION_DAYS, 30);
 }
 
 function storageEnabled(env = process.env) {
@@ -98,11 +105,7 @@ function storageEnabled(env = process.env) {
 }
 
 function resolveDailyByteLimit(env = process.env) {
-  const raw = env.CERTOPS_AGENT_LOG_DAILY_BYTES;
-  if (raw == null || String(raw).trim() === "" || String(raw).trim() === "0") return 0;
-  const parsed = Number.parseInt(String(raw).trim(), 10);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) return 0;
-  return parsed;
+  return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_DAILY_BYTES, 0);
 }
 
 function assertLockSequence(names) {
@@ -263,6 +266,13 @@ function resolveIngest(state, batch, options = {}) {
   let quotaBytes = 0;
   let quotaLines = 0;
   let sawNew = false;
+
+  // droppedBefore is a per-batch delta from the agent. Replay of the same
+  // batchKey does not re-enter this path, so retries cannot double-count.
+  const droppedBefore = Number.isSafeInteger(batch.droppedBefore) && batch.droppedBefore > 0
+    ? batch.droppedBefore
+    : 0;
+  if (droppedBefore > 0) agentGapLines += droppedBefore;
 
   const ordered = [...batch.lines].sort((a, b) => a.seq - b.seq);
   for (const line of ordered) {
@@ -432,9 +442,15 @@ function rowToState(row, stored) {
 }
 
 async function lockJobState(client, workspaceId, jobId) {
+  // Only insert when the certificate job still exists so a deleted job yields
+  // a missing row (claim-invalid) instead of a foreign-key 500.
   await client.query(
     `INSERT INTO certops_agent_log_job_state (workspace_id, job_id)
-     VALUES ($1::uuid, $2::uuid)
+     SELECT $1::uuid, $2::uuid
+      WHERE EXISTS (
+        SELECT 1 FROM certificate_jobs
+         WHERE workspace_id = $1::uuid AND id = $2::uuid
+      )
      ON CONFLICT (workspace_id, job_id) DO NOTHING`,
     [workspaceId, jobId],
   );
@@ -457,7 +473,10 @@ async function openStreamForClaim(client, {
   streamingEnabled,
 }) {
   assertLockSequence(OPERATION_LOCKS.claimOpen);
-  await lockJobState(client, workspaceId, jobId);
+  const jobState = await lockJobState(client, workspaceId, jobId);
+  if (!jobState) {
+    return { enabled: false, maxBatchBytes: MAX_BATCH_BYTES, missingJob: true };
+  }
   await client.query(
     `INSERT INTO certops_agent_log_stream (
        workspace_id, job_id, claim_id, agent_id, attempt_number,
@@ -619,11 +638,16 @@ async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, 
     quotaUsed = Number(quota.rows[0]?.used_bytes) || 0;
   }
 
+  const droppedBeforeParsed = Number(body.droppedBefore);
+  const droppedBefore = Number.isSafeInteger(droppedBeforeParsed) && droppedBeforeParsed > 0
+    ? droppedBeforeParsed
+    : 0;
   const decision = resolveIngest(rowToState(row, stored), {
     key,
     lines: hashedLines,
     final: body.final === true,
     rejected: scrubbed.rejected,
+    droppedBefore,
   }, {
     quotaUsedBytes: quotaUsed,
     quotaLimitBytes: storageEnabled(env) ? quotaLimit : 0,
@@ -978,6 +1002,7 @@ function shapeAgentLogRead({ jobStatus, streams, lines, limit, includeText, stor
       : [],
     nextCursor: includeText && resumeAt > 0 ? encodeCursor(resumeAt) : null,
     hasMore,
+    jobStatus: jobStatus || null,
     logsComplete: logsComplete(jobStatus, streams),
     streams: (streams || []).map(publicStream),
     storageEnabled: enabled !== false,

@@ -1413,28 +1413,36 @@ async function deployCertificateAndKey({
       const liveCustodyPath = liveKeyPathFromRotationStaging(
         normalizedPrivateKeyPath,
       );
+      let canRemoveStaging = true;
       if (
         liveCustodyPath &&
         path.normalize(path.resolve(liveCustodyPath)) !== realKeyDestination
       ) {
+        canRemoveStaging = false;
         try {
-          // Promote the rotated key into custody so renew/deploy reuse the
-          // key that matches the certificate just installed.
+          // Promote via atomic write so a failed custody update never
+          // deletes the only remaining copy of the rotated key.
           const custodyResolved = path.normalize(path.resolve(liveCustodyPath));
-          await fspImpl.copyFile(normalizedPrivateKeyPath, custodyResolved);
-          try {
-            await fspImpl.chmod(custodyResolved, DEPLOYED_KEY_DEFAULT_MODE);
-          } catch (_chmodErr) {
-            // win32 / platform without chmod
+          const stagingKeyBytes = await fspImpl.readFile(normalizedPrivateKeyPath);
+          await atomicWrite(fspImpl, custodyResolved, stagingKeyBytes, {
+            mode: DEPLOYED_KEY_DEFAULT_MODE,
+          });
+          const promoted = await fspImpl.readFile(custodyResolved);
+          if (!Buffer.from(promoted).equals(Buffer.from(stagingKeyBytes))) {
+            throw new Error("custody key promotion verification failed");
           }
+          canRemoveStaging = true;
         } catch (_err) {
-          // best-effort; production install already committed
+          // Production install already committed; keep staging for recovery.
+          canRemoveStaging = false;
         }
       }
-      try {
-        await fspImpl.unlink(normalizedPrivateKeyPath);
-      } catch (_err) {
-        // best-effort
+      if (canRemoveStaging) {
+        try {
+          await fspImpl.unlink(normalizedPrivateKeyPath);
+        } catch (_err) {
+          // best-effort
+        }
       }
     }
 
