@@ -13,9 +13,33 @@ const {
   resultForValidationOutcome,
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
+  resolveCleanupOutcome,
+  isRetryableInstallInterrupt,
   observeInstalledCertificateIdentity,
   withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
+
+describe("AD CS renew evidence ordering", () => {
+  it("persists classified CA outcomes before reportIssuanceEvidence and exposes fault injection", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
+    assert.ok(renewFn >= 0);
+    const renewSrc = src.slice(renewFn, src.indexOf("async function executeWindowsIisAdcsContinueJob"));
+    function assertPersistBeforeReport(marker) {
+      const persistAt = renewSrc.indexOf(marker);
+      assert.ok(persistAt >= 0, `missing ${marker}`);
+      const reportAt = renewSrc.indexOf('onBeforeMutation("report-issuance-evidence")', persistAt);
+      const evidenceAt = renewSrc.indexOf("reportIssuanceEvidence", reportAt);
+      assert.ok(reportAt > persistAt, `${marker} must precede report-issuance-evidence fault point`);
+      assert.ok(evidenceAt > reportAt, "fault point must precede reportIssuanceEvidence");
+    }
+    assertPersistBeforeReport('state: "issued"');
+    // denied-without-HRESULT journals submission_uncertain via issuanceOutcome.
+    assertPersistBeforeReport("issuanceOutcome = caHresult ? \"denied\" : \"submission_uncertain\"");
+    assertPersistBeforeReport('state: issuanceOutcome');
+    assertPersistBeforeReport('state: "refused"');
+  });
+});
 
 const ENROLLMENT = {
   enrollmentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -104,11 +128,18 @@ describe("resultForAdcsOutcome", () => {
 
 describe("shouldRetainCngKey", () => {
   it("retains the key when a later continue-enrollment may need it", () => {
-    for (const outcome of ["pending", "uncertain", "issued", "validation_deferred"]) {
+    for (const outcome of [
+      "pending",
+      "uncertain",
+      "submission_uncertain",
+      "issued",
+      "validation_deferred",
+      "not_submitted",
+      "install_failed",
+    ]) {
       assert.equal(shouldRetainCngKey(outcome), true, outcome);
     }
-    // not_submitted never reached the CA; free the container so renew can retry.
-    assert.equal(shouldRetainCngKey("not_submitted"), false);
+    // Denied / failed / rejected_invalid: no continuation needs this key.
     assert.equal(shouldRetainCngKey("denied"), false);
     assert.equal(shouldRetainCngKey("failed"), false);
     assert.equal(shouldRetainCngKey("rejected_invalid"), false);
@@ -157,12 +188,74 @@ describe("shouldCleanupAbandonedCngKey", () => {
     );
   });
 
-  it("frees a key created before submit when the job aborts pre-submit (lease)", () => {
+  it("frees a key created before prepared when the job aborts pre-submit (lease)", () => {
     assert.equal(
       shouldCleanupAbandonedCngKey({
         submitStarted: false,
         issuanceOutcome: null,
         containerCreated: true,
+        preparedJournalCommitted: false,
+      }),
+      true,
+    );
+  });
+
+  it("retains a key after prepared is journaled even if submit never started", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: false,
+        issuanceOutcome: null,
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+  });
+
+  it("retains the key for not_submitted so resume-submit can reuse the CSR", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "not_submitted",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+  });
+
+  it("retains the key on install_failed", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "install_failed",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+  });
+
+  it("retains the key when denied lacks caHresult and journal is submission_uncertain", () => {
+    // Raw issuer outcome is denied, but durable receipt is submission_uncertain.
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "denied",
+        journalState: "submission_uncertain",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+    // Terminal denied receipt (valid HRESULT path) still frees the key.
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "denied",
+        journalState: "denied",
+        containerCreated: true,
+        preparedJournalCommitted: true,
       }),
       true,
     );
@@ -177,6 +270,78 @@ describe("shouldCleanupAbandonedCngKey", () => {
       }),
       false,
     );
+  });
+});
+
+describe("isRetryableInstallInterrupt", () => {
+  it("treats lease blocks and store-lock failures as non-terminal interrupts", () => {
+    assert.equal(isRetryableInstallInterrupt({ status: "blocked" }), true);
+    assert.equal(
+      isRetryableInstallInterrupt({ status: "failed", retryableInterrupt: true }),
+      true,
+    );
+    assert.equal(isRetryableInstallInterrupt({ status: "failed" }), false);
+  });
+});
+
+describe("resolveCleanupOutcome", () => {
+  it("prefers durable journal state over a raw denied issuer outcome", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "adcs-cleanup-"));
+    try {
+      const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+      const {
+        writeCsrArtifact,
+        writeEnrollmentJournal,
+      } = require("./issuers/adcs-enrollment-journal");
+      const { csrSha256 } = await writeCsrArtifact({
+        stateDir,
+        enrollmentId,
+        csrPem: "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n",
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "prepared",
+        attempt: 1,
+        containerName: `tokentimer-enr-${enrollmentId}`,
+        snapshotSha256: "b".repeat(64),
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid: "1.3.6.1.4.1.311.21.8.1",
+        jobId: "job:1",
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submitting",
+        attempt: 1,
+        containerName: `tokentimer-enr-${enrollmentId}`,
+        snapshotSha256: "b".repeat(64),
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid: "1.3.6.1.4.1.311.21.8.1",
+        jobId: "job:1",
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submission_uncertain",
+        attempt: 1,
+        containerName: `tokentimer-enr-${enrollmentId}`,
+        snapshotSha256: "b".repeat(64),
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid: "1.3.6.1.4.1.311.21.8.1",
+        jobId: "job:1",
+      });
+      assert.equal(resolveCleanupOutcome({ stateDir, enrollmentId }), "submission_uncertain");
+      assert.equal(
+        shouldCleanupAbandonedCngKey({
+          submitStarted: true,
+          issuanceOutcome: "denied",
+          journalState: resolveCleanupOutcome({ stateDir, enrollmentId }),
+          containerCreated: true,
+          preparedJournalCommitted: true,
+        }),
+        false,
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

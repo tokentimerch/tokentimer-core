@@ -160,6 +160,9 @@ describe("pinned CA cert cache and RequestId journal", () => {
 
   it("round-trips the RequestId journal", async () => {
     const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    const csrPem =
+      "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n";
     await writeEnrollmentRequestJournal({
       stateDir,
       enrollmentId,
@@ -169,11 +172,14 @@ describe("pinned CA cert cache and RequestId journal", () => {
       jobId: "job:1",
       csrSpkiSha256: "e".repeat(64),
       templateOid: "1.3.6.1.4.1.311.21.8.1.2.3",
+      containerName,
+      csrPem,
     });
     const read = readEnrollmentRequestJournal(stateDir, enrollmentId);
     assert.equal(read.requestId, 99);
     assert.equal(read.attempt, 1);
     assert.equal(read.csrSpkiSha256, "e".repeat(64));
     assert.equal(read.templateOid, "1.3.6.1.4.1.311.21.8.1.2.3");
+    assert.equal(read.containerName, containerName);
   });
 });

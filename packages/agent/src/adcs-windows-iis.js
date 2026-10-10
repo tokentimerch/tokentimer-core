@@ -23,6 +23,13 @@ const {
   resolveTemplateOid,
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
+  writeKeygenIntent,
+  writeCsrArtifact,
+  writeEnrollmentJournal,
+  writeIssuedCertificateArtifacts,
+  readEnrollmentJournal,
+  recordHighestRequestId,
+  tryReconcileUncertainSubmission,
 } = require("./issuers");
 const {
   validateIssuedCertificate,
@@ -72,6 +79,13 @@ function installedEnrollmentResult(enrollmentId, attempt, requestId) {
     extras.requestId = requestId;
   }
   return enrollmentResultFor(enrollmentId, attempt, "installed", extras);
+}
+
+/** Lease/lock aborts must not become durable install_failed terminals. */
+function isRetryableInstallInterrupt(deployResult) {
+  if (!deployResult || typeof deployResult !== "object") return false;
+  if (deployResult.status === "blocked") return true;
+  return deployResult.retryableInterrupt === true;
 }
 
 /**
@@ -166,29 +180,75 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
 }
 
 function shouldRetainCngKey(outcome) {
-  // not_submitted: transport proved the CA never saw the CSR, so free the
-  // container and let a later renew regenerate. pending/uncertain/issued and
-  // validation_deferred keep the key (decision 6); rejected_invalid frees it.
+  // Accepts issuer outcomes or durable journal states. Prefer journal state
+  // when both disagree (e.g. denied without HRESULT → submission_uncertain).
   return (
     outcome === "pending" ||
+    outcome === "pending_issuance" ||
     outcome === "uncertain" ||
+    outcome === "submission_uncertain" ||
     outcome === "issued" ||
-    outcome === "validation_deferred"
+    outcome === "validation_deferred" ||
+    outcome === "not_submitted" ||
+    outcome === "install_failed" ||
+    outcome === "prepared" ||
+    outcome === "submitting" ||
+    outcome === "installing" ||
+    outcome === "keygen_intent" ||
+    outcome === "installed"
   );
+}
+
+/**
+ * Prefer the durable journal state for CNG cleanup when a receipt exists.
+ * Returns undefined when no journal override applies (use issuer outcome).
+ * Returns null when the journal is corrupt/unreadable (retain key).
+ */
+function resolveCleanupOutcome({ stateDir, enrollmentId }) {
+  if (typeof stateDir !== "string" || typeof enrollmentId !== "string") {
+    return undefined;
+  }
+  try {
+    const read = readEnrollmentJournal(stateDir, enrollmentId);
+    if (read.kind === "corrupt") return null;
+    if (read.kind === "valid" || read.kind === "legacy") {
+      return read.journal.state;
+    }
+  } catch {
+    return null;
+  }
+  return undefined;
 }
 
 /**
  * Whether the CNG container created for this enrollment should be deleted.
  * Independent of whether certificate PEM was received: rejected_invalid must
- * free the key (ADR-0014 decision 6). Pre-submit aborts (key created, CA never
- * contacted) must also free the key so renew is not blocked forever.
+ * free the key (ADR-0014 decision 6). After prepared is journaled, pre-submit
+ * aborts retain the key so continue can resume-submit the same CSR.
+ *
+ * When `journalState` is present on the options object it overrides the raw
+ * issuer outcome (including null = retain on unreadable journal).
  */
-function shouldCleanupAbandonedCngKey({ submitStarted, issuanceOutcome, containerCreated }) {
-  // Key exists but submit never started: lease abort / preflight after keygen.
+function shouldCleanupAbandonedCngKey(opts) {
+  const {
+    submitStarted,
+    issuanceOutcome,
+    containerCreated,
+    preparedJournalCommitted = false,
+  } = opts;
+  const effectiveOutcome = Object.hasOwn(opts, "journalState")
+    ? opts.journalState
+    : issuanceOutcome;
+  // Durable prepared (or later) journal owns the container until abandon.
+  if (preparedJournalCommitted === true) {
+    if (effectiveOutcome === null && !submitStarted) return false;
+    if (effectiveOutcome === null) return false;
+    return !shouldRetainCngKey(effectiveOutcome);
+  }
+  // Key exists but submit never started and prepared was never committed.
   if (!submitStarted) return containerCreated === true;
-  // Submit started with no classified outcome yet: retain (may be at the CA).
-  if (issuanceOutcome === null) return false;
-  return !shouldRetainCngKey(issuanceOutcome);
+  if (effectiveOutcome === null) return false;
+  return !shouldRetainCngKey(effectiveOutcome);
 }
 
 /**
@@ -504,13 +564,26 @@ function createAdcsWindowsIisExecutors(deps) {
   }
 
   function withInstalledEnrollmentResult(deployResult, enrollment, requestId) {
-    if (deployResult?.status !== "succeeded") return deployResult;
+    if (deployResult?.status === "succeeded") {
+      return {
+        ...deployResult,
+        enrollmentResult: installedEnrollmentResult(
+          enrollment.enrollmentId,
+          enrollment.attempt,
+          requestId,
+        ),
+      };
+    }
+    if (isRetryableInstallInterrupt(deployResult)) {
+      return deployResult;
+    }
     return {
       ...deployResult,
-      enrollmentResult: installedEnrollmentResult(
+      enrollmentResult: enrollmentResultFor(
         enrollment.enrollmentId,
         enrollment.attempt,
-        requestId,
+        "install_failed",
+        Number.isInteger(requestId) && requestId >= 1 ? { requestId } : {},
       ),
     };
   }
@@ -595,21 +668,33 @@ function createAdcsWindowsIisExecutors(deps) {
     let certificatePem;
     let issuanceOutcome = null;
     let submitStarted = false;
+    let preparedJournalCommitted = false;
     try {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
 
-      const existingJournal = readEnrollmentRequestJournal(stateDir, decoded.enrollmentId);
-      if (existingJournal) {
-        return {
-          status: "blocked",
-          keyRotated: null,
-          errorMessage: boundErrorMessage(
-            `enrollment ${decoded.enrollmentId} already has a local RequestId journal; use continue-enrollment`,
-          ),
-        };
+      {
+        const existing = readEnrollmentJournal(stateDir, decoded.enrollmentId);
+        if (existing.kind === "corrupt") {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `local AD CS enrollment journal is corrupt: ${existing.error}`,
+            ),
+          };
+        }
+        if (existing.kind === "valid" || existing.kind === "legacy") {
+          return {
+            status: "blocked",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `enrollment ${decoded.enrollmentId} already has a local enrollment journal (state ${existing.journal.state}); use continue-enrollment`,
+            ),
+          };
+        }
       }
       const enrollmentContainer = buildEnrollmentContainerName(decoded.enrollmentId);
       if (hasIssuedContainerRecord({ stateDir, containerName: enrollmentContainer })) {
@@ -643,6 +728,16 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       const templateOid = templateOidResolved.templateOid;
 
+      // Durable keygen intent before certreq -new (crash window A1).
+      await writeKeygenIntent({
+        stateDir,
+        enrollmentId: decoded.enrollmentId,
+        containerName: enrollmentContainer,
+        attempt: decoded.attempt,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+      });
+
       if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
       emitInfo(
         `job ${jobId}: generating CNG-native key + CSR for AD CS enrollment ${decoded.enrollmentId}`,
@@ -667,6 +762,39 @@ function createAdcsWindowsIisExecutors(deps) {
         };
       }
       containerName = csrResult.containerName;
+
+      let csrSpkiSha256;
+      let csrSha256;
+      try {
+        csrSpkiSha256 = spkiSha256Hex(extractSpkiFromCsr(csrResult.csrPem));
+        const csrWritten = await writeCsrArtifact({
+          stateDir,
+          enrollmentId: decoded.enrollmentId,
+          csrPem: csrResult.csrPem,
+        });
+        csrSha256 = csrWritten.csrSha256;
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "prepared",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256,
+          csrSpkiSha256,
+          templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+        });
+        preparedJournalCommitted = true;
+      } catch (err) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `failed to persist prepared enrollment journal/CSR: ${err.message}`,
+          ),
+        };
+      }
 
       if (journalCtx) {
         try {
@@ -718,6 +846,29 @@ function createAdcsWindowsIisExecutors(deps) {
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
+      // Durable submitting barrier: must succeed before certreq -submit.
+      try {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "submitting",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256,
+          csrSpkiSha256,
+          templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+        });
+      } catch (err) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `failed to persist submitting journal before CA contact: ${err.message}`,
+          ),
+        };
+      }
       // Once submit starts, an unclassified exception must retain the key.
       submitStarted = true;
       let issuance;
@@ -727,6 +878,22 @@ function createAdcsWindowsIisExecutors(deps) {
         );
       } catch (err) {
         issuanceOutcome = "uncertain";
+        try {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "submission_uncertain",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256,
+            csrSpkiSha256,
+            templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+          });
+        } catch {
+          // Key retention still applies via submitStarted.
+        }
         return {
           status: "failed",
           keyRotated: null,
@@ -740,17 +907,30 @@ function createAdcsWindowsIisExecutors(deps) {
         };
       }
       issuanceOutcome = issuance.outcome;
-      await reportIssuanceEvidence(client, jobId, issuance);
 
-      let csrSpkiSha256;
-      try {
-        csrSpkiSha256 = spkiSha256Hex(extractSpkiFromCsr(csrResult.csrPem));
-      } catch (err) {
-        return {
-          status: "failed",
-          keyRotated: null,
-          errorMessage: boundErrorMessage(`could not hash CSR public key: ${err.message}`),
-        };
+      // Persist classified CA outcome before evidence reporting so a crash or
+      // report failure cannot leave submitting without a RequestId/leaf receipt.
+      const journalTrustFields = {
+        attempt: decoded.attempt,
+        containerName,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+        csrSha256,
+        csrSpkiSha256,
+        templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+      };
+
+      if (issuance.outcome === "not_submitted") {
+        // Proven never reached the CA: return journal to prepared for resume-submit.
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "prepared",
+          ...journalTrustFields,
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
       }
       if (issuance.outcome === "pending") {
         await writeEnrollmentRequestJournal({
@@ -762,13 +942,89 @@ function createAdcsWindowsIisExecutors(deps) {
           jobId,
           csrSpkiSha256,
           templateOid,
+          containerName,
+          csrPem: csrResult.csrPem,
         });
+        await recordHighestRequestId(stateDir, snapshot.caConfig, issuance.requestId);
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
+      if (issuance.outcome === "denied") {
+        const caHresult =
+          typeof issuance.caHresult === "string" && CA_HRESULT_PATTERN.test(issuance.caHresult)
+            ? issuance.caHresult
+            : null;
+        // Without HRESULT stay reconcilable (matches enrollmentResult mapping).
+        // issuanceOutcome must follow the journalled state so finally cleanup
+        // cannot free the key while submission_uncertain is durable.
+        issuanceOutcome = caHresult ? "denied" : "submission_uncertain";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: issuanceOutcome,
+          ...journalTrustFields,
+          ...(caHresult ? { caHresult } : {}),
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
+      if (issuance.outcome === "refused") {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "refused",
+          ...journalTrustFields,
+          ...(typeof issuance.errorCode === "string" ? { errorCode: issuance.errorCode } : {}),
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
+      if (issuance.outcome === "uncertain") {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "submission_uncertain",
+          ...journalTrustFields,
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
       if (issuance.outcome !== "issued") {
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
       certificatePem = issuance.certificatePem;
+
+      // Persist issued leaf before evidence and decision-6 (recovery source of truth).
+      let leafSha256;
+      try {
+        const written = await writeIssuedCertificateArtifacts({
+          stateDir,
+          enrollmentId: decoded.enrollmentId,
+          leafPem: certificatePem,
+        });
+        leafSha256 = written.leafSha256;
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "issued",
+          ...journalTrustFields,
+          leafSha256,
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        });
+        if (Number.isInteger(issuance.requestId)) {
+          await recordHighestRequestId(stateDir, snapshot.caConfig, issuance.requestId);
+        }
+      } catch (err) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `failed to persist issued certificate artifact: ${err.message}`,
+          ),
+        };
+      }
+
+      if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+      await reportIssuanceEvidence(client, jobId, issuance);
 
       const validation = await runDecision6Validation({
         certificatePem,
@@ -784,9 +1040,58 @@ function createAdcsWindowsIisExecutors(deps) {
       if (!validation.ok) {
         issuanceOutcome =
           validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
+        if (validation.state === "validation_deferred") {
+          const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "validation_deferred",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256,
+            csrSpkiSha256,
+            templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            leafSha256,
+            validationDeadlineAt: deadline,
+            ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+          });
+        } else {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "rejected_invalid",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256,
+            csrSpkiSha256,
+            templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            leafSha256,
+            ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+          });
+        }
         return resultForValidationOutcome(validation, decoded, issuance.requestId);
       }
       await reportBestEffortRevocationEvidence(client, jobId, validation);
+
+      await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+        state: "installing",
+        attempt: decoded.attempt,
+        containerName,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+        csrSha256,
+        csrSpkiSha256,
+        templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+        leafSha256,
+        installStep: "accept",
+        ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+      });
 
       // Hold the enrollment lock through accept/deploy so continue-enrollment
       // cannot race retrieve/accept on the same enrollmentId.
@@ -804,14 +1109,57 @@ function createAdcsWindowsIisExecutors(deps) {
         windowsExecFileImpl,
         windowsConnectImpl,
       });
+      if (deployResult.status === "succeeded") {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "installed",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256,
+          csrSpkiSha256,
+          templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256,
+          installStep: "complete",
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        });
+      } else if (!isRetryableInstallInterrupt(deployResult)) {
+        issuanceOutcome = "install_failed";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "install_failed",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256,
+          csrSpkiSha256,
+          templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256,
+          installStep: "accept",
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        });
+      }
+      // Retryable lease/lock interrupts leave journal at installing.
       return withInstalledEnrollmentResult(deployResult, decoded, issuance.requestId);
     } finally {
+      const journalledCleanupOutcome = resolveCleanupOutcome({
+        stateDir,
+        enrollmentId: decoded?.enrollmentId,
+      });
       if (
         containerName &&
         shouldCleanupAbandonedCngKey({
           submitStarted,
           issuanceOutcome,
           containerCreated: true,
+          preparedJournalCommitted,
+          ...(journalledCleanupOutcome !== undefined
+            ? { journalState: journalledCleanupOutcome }
+            : {}),
         })
       ) {
         try {
@@ -831,6 +1179,204 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       if (enrollmentLock) enrollmentLock.release();
     }
+  }
+
+  async function validateAndInstallFromLeaf({
+    certificatePem,
+    journal,
+    decoded,
+    snapshot,
+    windowsTarget,
+    stateDir,
+    caCertPath,
+    executionContext,
+    jobId,
+    client,
+    cngWorkDir,
+    containerName,
+    log,
+    leaseOpts,
+    onBeforeMutation,
+    windowsExecFileImpl,
+    windowsConnectImpl,
+    continueOutcomeRef,
+  }) {
+    if (typeof journal.csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(journal.csrSpkiSha256)) {
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `local enrollment journal for ${decoded.enrollmentId} is missing csrSpkiSha256; cannot validate before accept`,
+        ),
+      };
+    }
+    if (
+      typeof journal.templateOid !== "string" ||
+      !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(journal.templateOid)
+    ) {
+      return {
+        status: "failed",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `local enrollment journal for ${decoded.enrollmentId} is missing templateOid; cannot validate before accept`,
+        ),
+      };
+    }
+
+    if (journal.state === "validation_deferred" && typeof journal.validationDeadlineAt === "string") {
+      const deadlineMs = Date.parse(journal.validationDeadlineAt);
+      if (Number.isFinite(deadlineMs) && Date.now() > deadlineMs) {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "validation_expired",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256: journal.leafSha256,
+          validationDeadlineAt: journal.validationDeadlineAt,
+          ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+        });
+        continueOutcomeRef.value = "rejected_invalid";
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `validation deadline ${journal.validationDeadlineAt} expired for enrollment ${decoded.enrollmentId}`,
+          ),
+          enrollmentResult: enrollmentResultFor(
+            decoded.enrollmentId,
+            decoded.attempt,
+            "validation_expired",
+            Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {},
+          ),
+        };
+      }
+    }
+
+    const validation = await runDecision6Validation({
+      certificatePem,
+      csrSpkiSha256: journal.csrSpkiSha256,
+      snapshot,
+      requiredDnsName: windowsTarget.reference,
+      stateDir,
+      executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+      templateOid: journal.templateOid,
+      windowsTarget,
+    });
+    if (!validation.ok) {
+      continueOutcomeRef.value =
+        validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
+      if (validation.state === "validation_deferred") {
+        const deadline =
+          typeof journal.validationDeadlineAt === "string"
+            ? journal.validationDeadlineAt
+            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "validation_deferred",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256: journal.leafSha256,
+          validationDeadlineAt: deadline,
+          ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+        });
+      } else {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "rejected_invalid",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256: journal.leafSha256,
+          ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+        });
+      }
+      return resultForValidationOutcome(validation, decoded, journal.requestId);
+    }
+    await reportBestEffortRevocationEvidence(client, jobId, validation);
+    continueOutcomeRef.value = "issued";
+
+    await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+      state: "installing",
+      attempt: decoded.attempt,
+      containerName,
+      snapshotSha256: decoded.snapshotSha256,
+      jobId,
+      csrSha256: journal.csrSha256,
+      csrSpkiSha256: journal.csrSpkiSha256,
+      templateOid: journal.templateOid,
+      caConfig: snapshot.caConfig,
+      template: snapshot.template,
+      leafSha256: journal.leafSha256,
+      installStep: journal.installStep || "accept",
+      ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+    });
+
+    const deployResult = await runWindowsIisDeployTail({
+      jobId,
+      client,
+      certificatePem,
+      target: windowsTarget,
+      stateDir,
+      cngWorkDir,
+      log,
+      containerName,
+      leaseOpts,
+      onBeforeMutation,
+      windowsExecFileImpl,
+      windowsConnectImpl,
+    });
+    if (deployResult.status === "succeeded") {
+      await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+        state: "installed",
+        attempt: decoded.attempt,
+        containerName,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+        csrSha256: journal.csrSha256,
+        csrSpkiSha256: journal.csrSpkiSha256,
+        templateOid: journal.templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+        leafSha256: journal.leafSha256,
+        installStep: "complete",
+        ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+      });
+    } else if (!isRetryableInstallInterrupt(deployResult)) {
+      continueOutcomeRef.value = "install_failed";
+      await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+        state: "install_failed",
+        attempt: decoded.attempt,
+        containerName,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+        csrSha256: journal.csrSha256,
+        csrSpkiSha256: journal.csrSpkiSha256,
+        templateOid: journal.templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+        leafSha256: journal.leafSha256,
+        installStep: journal.installStep || "accept",
+        ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+      });
+    }
+    return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
   }
 
   async function executeWindowsIisContinueEnrollmentJob({
@@ -858,29 +1404,6 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
     const { decoded, helperPath, caCertPath, snapshot } = ctx;
-    const journal = readEnrollmentRequestJournal(stateDir, decoded.enrollmentId);
-    if (!journal) {
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(
-          `no local RequestId journal for enrollment ${decoded.enrollmentId}; cannot retrieve`,
-        ),
-      };
-    }
-    if (
-      typeof journal.snapshotSha256 !== "string" ||
-      journal.snapshotSha256 !== decoded.snapshotSha256
-    ) {
-      return {
-        status: "rejected",
-        rejectionReason: "enrollment_snapshot_mismatch",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(
-          `local RequestId journal snapshotSha256 does not match the signed enrollment snapshot for ${decoded.enrollmentId}`,
-        ),
-      };
-    }
 
     let enrollmentLock;
     try {
@@ -893,16 +1416,89 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
 
+    let journal;
+    let artifacts = { csrPem: null, leafPem: null, chainPem: null };
+    {
+      const read = readEnrollmentJournal(stateDir, decoded.enrollmentId);
+      if (read.kind === "corrupt") {
+        if (enrollmentLock) enrollmentLock.release();
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `local AD CS enrollment journal is corrupt: ${read.error}`,
+          ),
+        };
+      }
+      if (read.kind === "not_found") {
+        if (enrollmentLock) enrollmentLock.release();
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `no local enrollment journal for enrollment ${decoded.enrollmentId}; cannot continue`,
+          ),
+        };
+      }
+      journal = read.journal;
+      artifacts = read.artifacts || artifacts;
+    }
+    if (
+      typeof journal.snapshotSha256 !== "string" ||
+      journal.snapshotSha256 !== decoded.snapshotSha256
+    ) {
+      if (enrollmentLock) enrollmentLock.release();
+      return {
+        status: "rejected",
+        rejectionReason: "enrollment_snapshot_mismatch",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `local enrollment journal snapshotSha256 does not match the signed enrollment snapshot for ${decoded.enrollmentId}`,
+        ),
+      };
+    }
+
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
-    const containerName = buildEnrollmentContainerName(decoded.enrollmentId);
-    let continueOutcome = null;
+    const containerName =
+      typeof journal.containerName === "string" && journal.containerName.length > 0
+        ? journal.containerName
+        : buildEnrollmentContainerName(decoded.enrollmentId);
+    const continueOutcomeRef = { value: null };
 
     try {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
+      }
+
+      // Terminal receipts: return recorded outcome without repeating CA contact.
+      if (journal.state === "installed") {
+        return {
+          status: "succeeded",
+          keyRotated: null,
+          enrollmentResult: installedEnrollmentResult(
+            decoded.enrollmentId,
+            decoded.attempt,
+            journal.requestId,
+          ),
+        };
+      }
+      if (["denied", "refused", "rejected_invalid", "validation_expired", "abandoned"].includes(journal.state)) {
+        return {
+          status: journal.state === "refused" ? "rejected" : "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `enrollment ${decoded.enrollmentId} is terminal in state ${journal.state}`,
+          ),
+          enrollmentResult: enrollmentResultFor(
+            decoded.enrollmentId,
+            decoded.attempt,
+            journal.state,
+            Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {},
+          ),
+        };
       }
 
       const scratchRoot = path.join(stateDir, "adcs-scratch");
@@ -922,8 +1518,325 @@ function createAdcsWindowsIisExecutors(deps) {
         }),
       );
 
+      // Crash in submitting: never auto-resubmit; mark uncertain then tier-2.
+      if (journal.state === "submitting") {
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "submission_uncertain",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+        });
+        journal = { ...journal, state: "submission_uncertain" };
+      }
+
+      // Resume-submit from durable CSR (prepared after not_submitted).
+      if (journal.state === "prepared") {
+        if (typeof artifacts.csrPem !== "string" || !artifacts.csrPem.includes("BEGIN")) {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `prepared enrollment ${decoded.enrollmentId} has no durable CSR; cannot resume-submit`,
+            ),
+          };
+        }
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "submitting",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
+        let issuance;
+        try {
+          issuance = assertIssuanceOutcome(
+            await issuer.submit({ csrPem: artifacts.csrPem, domains: snapshot.authorizedDnsNames }),
+          );
+        } catch (err) {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "submission_uncertain",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256: journal.csrSha256,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+          });
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(`AD CS resume-submit interrupted: ${err.message}`),
+            enrollmentResult: enrollmentResultFor(
+              decoded.enrollmentId,
+              decoded.attempt,
+              "submission_uncertain",
+              { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+            ),
+          };
+        }
+
+        if (issuance.outcome === "not_submitted") {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "prepared",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256: journal.csrSha256,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+          });
+          if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+          await reportIssuanceEvidence(client, jobId, issuance);
+          return resultForAdcsOutcome(issuance, decoded);
+        }
+        if (issuance.outcome === "pending") {
+          await writeEnrollmentRequestJournal({
+            stateDir,
+            enrollmentId: decoded.enrollmentId,
+            attempt: decoded.attempt,
+            requestId: issuance.requestId,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            containerName,
+            csrPem: artifacts.csrPem,
+          });
+          await recordHighestRequestId(stateDir, snapshot.caConfig, issuance.requestId);
+          if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+          await reportIssuanceEvidence(client, jobId, issuance);
+          return resultForAdcsOutcome(issuance, decoded);
+        }
+        if (issuance.outcome === "denied" || issuance.outcome === "refused" || issuance.outcome === "uncertain") {
+          const caHresult =
+            issuance.outcome === "denied" &&
+            typeof issuance.caHresult === "string" &&
+            CA_HRESULT_PATTERN.test(issuance.caHresult)
+              ? issuance.caHresult
+              : null;
+          const terminalState =
+            issuance.outcome === "refused"
+              ? "refused"
+              : issuance.outcome === "denied" && caHresult
+                ? "denied"
+                : "submission_uncertain";
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: terminalState,
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256: journal.csrSha256,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            ...(caHresult ? { caHresult } : {}),
+          });
+          if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+          await reportIssuanceEvidence(client, jobId, issuance);
+          return resultForAdcsOutcome(issuance, decoded);
+        }
+        if (issuance.outcome !== "issued") {
+          if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+          await reportIssuanceEvidence(client, jobId, issuance);
+          return resultForAdcsOutcome(issuance, decoded);
+        }
+
+        const written = await writeIssuedCertificateArtifacts({
+          stateDir,
+          enrollmentId: decoded.enrollmentId,
+          leafPem: issuance.certificatePem,
+        });
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "issued",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256: written.leafSha256,
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        });
+        if (Number.isInteger(issuance.requestId)) {
+          await recordHighestRequestId(stateDir, snapshot.caConfig, issuance.requestId);
+        }
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        journal = {
+          ...journal,
+          state: "issued",
+          leafSha256: written.leafSha256,
+          ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+        };
+        artifacts = { ...artifacts, leafPem: issuance.certificatePem };
+        return validateAndInstallFromLeaf({
+          certificatePem: issuance.certificatePem,
+          journal,
+          decoded,
+          snapshot,
+          windowsTarget,
+          stateDir,
+          caCertPath,
+          executionContext,
+          jobId,
+          client,
+          cngWorkDir,
+          containerName,
+          log,
+          leaseOpts,
+          onBeforeMutation,
+          windowsExecFileImpl,
+          windowsConnectImpl,
+          continueOutcomeRef,
+        });
+      }
+
+      // Tier-2 reconcile for uncertain submission (never resubmit).
+      if (journal.state === "submission_uncertain") {
+        if (typeof onBeforeMutation === "function") onBeforeMutation("adcs-reconcile");
+        const reconciled = await tryReconcileUncertainSubmission({
+          issuer,
+          stateDir,
+          caConfig: snapshot.caConfig,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          windowSize: executionContext.adcsReconcileWindowSize,
+          assertIssuanceOutcome,
+        });
+        if (reconciled.status !== "reconciled") {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `AD CS submission remains uncertain for enrollment ${decoded.enrollmentId}; operator RequestId or abandon required`,
+            ),
+            enrollmentResult: enrollmentResultFor(
+              decoded.enrollmentId,
+              decoded.attempt,
+              "submission_uncertain",
+              { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+            ),
+          };
+        }
+        const written = await writeIssuedCertificateArtifacts({
+          stateDir,
+          enrollmentId: decoded.enrollmentId,
+          leafPem: reconciled.certificatePem,
+        });
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "issued",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          leafSha256: written.leafSha256,
+          requestId: reconciled.requestId,
+        });
+        await recordHighestRequestId(stateDir, snapshot.caConfig, reconciled.requestId);
+        journal = {
+          ...journal,
+          state: "issued",
+          leafSha256: written.leafSha256,
+          requestId: reconciled.requestId,
+        };
+        return validateAndInstallFromLeaf({
+          certificatePem: reconciled.certificatePem,
+          journal,
+          decoded,
+          snapshot,
+          windowsTarget,
+          stateDir,
+          caCertPath,
+          executionContext,
+          jobId,
+          client,
+          cngWorkDir,
+          containerName,
+          log,
+          leaseOpts,
+          onBeforeMutation,
+          windowsExecFileImpl,
+          windowsConnectImpl,
+          continueOutcomeRef,
+        });
+      }
+
+      // Issued / deferred / installing / install_failed: use durable leaf (RequestId optional).
+      if (
+        ["issued", "validation_deferred", "installing", "install_failed"].includes(journal.state)
+      ) {
+        if (typeof artifacts.leafPem !== "string" || !artifacts.leafPem.includes("BEGIN")) {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `enrollment ${decoded.enrollmentId} state ${journal.state} has no durable issued certificate; cannot continue`,
+            ),
+          };
+        }
+        return validateAndInstallFromLeaf({
+          certificatePem: artifacts.leafPem,
+          journal,
+          decoded,
+          snapshot,
+          windowsTarget,
+          stateDir,
+          caCertPath,
+          executionContext,
+          jobId,
+          client,
+          cngWorkDir,
+          containerName,
+          log,
+          leaseOpts,
+          onBeforeMutation,
+          windowsExecFileImpl,
+          windowsConnectImpl,
+          continueOutcomeRef,
+        });
+      }
+
+      // Pending retrieve path (RequestId required).
+      if (!Number.isInteger(journal.requestId) || journal.requestId < 1) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `local enrollment journal for ${decoded.enrollmentId} has no RequestId yet (state ${journal.state}); cannot retrieve`,
+          ),
+        };
+      }
+
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
       const issuance = assertIssuanceOutcome(await issuer.retrieve(journal.requestId));
+      if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
       await reportIssuanceEvidence(client, jobId, issuance);
 
       if (issuance.outcome === "pending") {
@@ -937,62 +1850,54 @@ function createAdcsWindowsIisExecutors(deps) {
         });
       }
 
-      if (typeof journal.csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(journal.csrSpkiSha256)) {
-        return {
-          status: "failed",
-          keyRotated: null,
-          errorMessage: boundErrorMessage(
-            `local RequestId journal for enrollment ${decoded.enrollmentId} is missing csrSpkiSha256; cannot validate before accept`,
-          ),
-        };
-      }
-      if (
-        typeof journal.templateOid !== "string" ||
-        !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(journal.templateOid)
-      ) {
-        return {
-          status: "failed",
-          keyRotated: null,
-          errorMessage: boundErrorMessage(
-            `local RequestId journal for enrollment ${decoded.enrollmentId} is missing templateOid; cannot validate before accept`,
-          ),
-        };
-      }
-
-      const validation = await runDecision6Validation({
-        certificatePem: issuance.certificatePem,
-        csrSpkiSha256: journal.csrSpkiSha256,
-        snapshot,
-        requiredDnsName: windowsTarget.reference,
+      const written = await writeIssuedCertificateArtifacts({
         stateDir,
-        executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
-        templateOid: journal.templateOid,
-        windowsTarget,
+        enrollmentId: decoded.enrollmentId,
+        leafPem: issuance.certificatePem,
       });
-      if (!validation.ok) {
-        continueOutcome =
-          validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
-        return resultForValidationOutcome(validation, decoded, journal.requestId);
-      }
-      await reportBestEffortRevocationEvidence(client, jobId, validation);
-      continueOutcome = "issued";
+      await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+        state: "issued",
+        attempt: decoded.attempt,
+        containerName,
+        snapshotSha256: decoded.snapshotSha256,
+        jobId,
+        csrSha256: journal.csrSha256,
+        csrSpkiSha256: journal.csrSpkiSha256,
+        templateOid: journal.templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+        leafSha256: written.leafSha256,
+        requestId: journal.requestId,
+      });
+      await recordHighestRequestId(stateDir, snapshot.caConfig, journal.requestId);
+      journal = { ...journal, state: "issued", leafSha256: written.leafSha256 };
 
-      const deployResult = await runWindowsIisDeployTail({
+      return validateAndInstallFromLeaf({
+        certificatePem: issuance.certificatePem,
+        journal,
+        decoded,
+        snapshot,
+        windowsTarget,
+        stateDir,
+        caCertPath,
+        executionContext,
         jobId,
         client,
-        certificatePem: issuance.certificatePem,
-        target: windowsTarget,
-        stateDir,
         cngWorkDir,
-        log,
         containerName,
+        log,
         leaseOpts,
         onBeforeMutation,
         windowsExecFileImpl,
         windowsConnectImpl,
+        continueOutcomeRef,
       });
-      return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
     } finally {
+      const continueOutcome = continueOutcomeRef.value;
+      const journalledCleanupOutcome = resolveCleanupOutcome({
+        stateDir,
+        enrollmentId: decoded?.enrollmentId,
+      });
       if (
         containerName &&
         continueOutcome &&
@@ -1000,6 +1905,10 @@ function createAdcsWindowsIisExecutors(deps) {
           submitStarted: true,
           issuanceOutcome: continueOutcome,
           containerCreated: true,
+          preparedJournalCommitted: true,
+          ...(journalledCleanupOutcome !== undefined
+            ? { journalState: journalledCleanupOutcome }
+            : {}),
         })
       ) {
         try {
@@ -1033,6 +1942,8 @@ module.exports = {
   resultForValidationOutcome,
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
+  resolveCleanupOutcome,
+  isRetryableInstallInterrupt,
   observeInstalledCertificateIdentity,
   withUniqueValidationLeafFile,
 };

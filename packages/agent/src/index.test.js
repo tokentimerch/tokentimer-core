@@ -5116,6 +5116,74 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.equal(hasUnresolvedJournalForJob(workDir, "job-1"), true);
   });
 
+  it("never frees an AD CS enrollment container protected by an open enrollment journal", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    const { writeKeygenIntent } = require("./issuers/adcs-enrollment-journal");
+    await writeKeygenIntent({
+      stateDir: workDir,
+      enrollmentId,
+      containerName,
+      attempt: 1,
+      snapshotSha256: "a".repeat(64),
+      jobId: "job-1",
+    });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /open AD CS enrollment journal/);
+  });
+
+  it("defers enrollment-shaped deletes when the AD CS journal scan fails closed", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    // Unexpected entry makes listProtectedEnrollmentContainers return ok:false.
+    fs.mkdirSync(path.join(workDir, "adcs-enrollments"), { recursive: true });
+    fs.writeFileSync(path.join(workDir, "adcs-enrollments", "not-a-uuid"), "x");
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /journal scan failed/);
+  });
+
+  it("defers enrollment-shaped deletes when the enrollment directory exists without a readable journal", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "cccccccc-dddd-eeee-ffff-000000000000";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    // Empty enrollment directory: initial protected-set scan fails closed, and
+    // the locked recheck must also refuse deletion.
+    fs.mkdirSync(path.join(workDir, "adcs-enrollments", enrollmentId), {
+      recursive: true,
+    });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(
+      result.skipped[0].reason,
+      /journal scan failed|without readable journal|deferred/,
+    );
+  });
+
   it("never frees a container that is now legitimately enrolled to a real certificate", async () => {
     workDir = makeTempConfigDir();
     const containerName = "tokentimer-job-1-live0001";

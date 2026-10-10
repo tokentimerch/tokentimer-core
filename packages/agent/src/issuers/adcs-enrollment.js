@@ -3,6 +3,10 @@
 /**
  * AD CS enrollment helpers for the Windows IIS executor: snapshot decode,
  * helper binary resolution, pinned CA cert cache, and RequestId journal.
+ *
+ * Durable journal/artifacts live in ./adcs-enrollment-journal.js.
+ * Legacy writeEnrollmentRequestJournal / readEnrollmentRequestJournal remain
+ * as thin adapters for pending RequestId records.
  */
 
 const fs = require("node:fs");
@@ -198,9 +202,19 @@ async function cachePinnedCaCert({ stateDir, caKeySha256, certBytes }) {
   return dest;
 }
 
-function enrollmentJournalPath(stateDir, enrollmentId) {
-  return path.join(stateDir, "adcs-enrollments", `${enrollmentId}.json`);
-}
+const {
+  enrollmentJournalPath,
+  legacyJournalPath,
+  journalV2Path,
+  writeEnrollmentJournal,
+  readEnrollmentJournal,
+  writeCsrArtifact,
+  writeIssuedCertificateArtifacts,
+  writeKeygenIntent,
+  listProtectedEnrollmentContainers,
+  looksLikeEnrollmentContainerName,
+  durableWriteFile,
+} = require("./adcs-enrollment-journal");
 
 function templateOidCachePath(stateDir, caConfig, template) {
   const digest = crypto
@@ -262,6 +276,10 @@ function resolveTemplateOid({ stateDir, caConfig, template, templateOid }) {
   };
 }
 
+/**
+ * Persist a pending RequestId journal (v2). Prefer writeEnrollmentJournal
+ * + writeCsrArtifact for full prepared/submitting flows.
+ */
 async function writeEnrollmentRequestJournal({
   stateDir,
   enrollmentId,
@@ -271,40 +289,66 @@ async function writeEnrollmentRequestJournal({
   jobId,
   csrSpkiSha256,
   templateOid,
+  containerName,
+  csrPem,
 }) {
-  const dest = enrollmentJournalPath(stateDir, enrollmentId);
-  await fsp.mkdir(path.dirname(dest), { recursive: true });
-  const payload = {
-    enrollmentId,
+  if (!Number.isInteger(requestId) || requestId < 1) {
+    throw new TypeError("requestId must be an integer >= 1");
+  }
+  if (typeof csrSpkiSha256 !== "string" || !HEX64.test(csrSpkiSha256)) {
+    throw new TypeError("csrSpkiSha256 is required");
+  }
+  if (typeof templateOid !== "string" || !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
+    throw new TypeError("templateOid is required");
+  }
+  if (typeof containerName !== "string" || containerName.length === 0) {
+    throw new TypeError("containerName is required for a pending RequestId journal");
+  }
+  let csrSha256;
+  if (typeof csrPem === "string" && csrPem.includes("BEGIN")) {
+    // Hash must match the exact bytes writeCsrArtifact persists.
+    const written = await writeCsrArtifact({ stateDir, enrollmentId, csrPem });
+    csrSha256 = written.csrSha256;
+  }
+  return writeEnrollmentJournal(stateDir, enrollmentId, {
+    state: "pending",
     attempt,
     requestId,
     snapshotSha256,
     jobId,
-    updatedAt: new Date().toISOString(),
-  };
-  if (typeof csrSpkiSha256 === "string" && HEX64.test(csrSpkiSha256)) {
-    payload.csrSpkiSha256 = csrSpkiSha256;
-  }
-  if (typeof templateOid === "string" && /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
-    payload.templateOid = templateOid;
-  }
-  const tmp = `${dest}.${process.pid}.tmp`;
-  await fsp.writeFile(tmp, `${JSON.stringify(payload)}\n`, "utf8");
-  await fsp.rename(tmp, dest);
-  return payload;
+    csrSpkiSha256,
+    templateOid,
+    containerName,
+    ...(csrSha256 ? { csrSha256 } : {}),
+  });
 }
 
+/**
+ * Compatibility reader for pending RequestId. Returns null only when no
+ * enrollment record exists. Corrupt journals throw so callers fail closed.
+ */
 function readEnrollmentRequestJournal(stateDir, enrollmentId) {
-  const dest = enrollmentJournalPath(stateDir, enrollmentId);
-  try {
-    const raw = fs.readFileSync(dest, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!Number.isInteger(parsed.requestId) || parsed.requestId < 1) return null;
-    return parsed;
-  } catch {
+  const read = readEnrollmentJournal(stateDir, enrollmentId);
+  if (read.kind === "not_found") return null;
+  if (read.kind === "corrupt") {
+    const err = new Error(read.error);
+    err.code = "ADCS_ENROLLMENT_JOURNAL_CORRUPT";
+    throw err;
+  }
+  const journal = read.journal;
+  if (!Number.isInteger(journal.requestId) || journal.requestId < 1) {
+    // prepared/submitting without RequestId yet — not a RequestId journal.
     return null;
   }
+  return journal;
 }
+
+const {
+  readHighestRequestId,
+  recordHighestRequestId,
+  tryReconcileUncertainSubmission,
+  DEFAULT_RECONCILE_WINDOW,
+} = require("./adcs-enrollment-reconcile");
 
 module.exports = {
   filesystemSafeJobId,
@@ -321,4 +365,18 @@ module.exports = {
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
   enrollmentJournalPath,
+  legacyJournalPath,
+  journalV2Path,
+  writeEnrollmentJournal,
+  readEnrollmentJournal,
+  writeCsrArtifact,
+  writeIssuedCertificateArtifacts,
+  writeKeygenIntent,
+  listProtectedEnrollmentContainers,
+  looksLikeEnrollmentContainerName,
+  durableWriteFile,
+  readHighestRequestId,
+  recordHighestRequestId,
+  tryReconcileUncertainSubmission,
+  DEFAULT_RECONCILE_WINDOW,
 };

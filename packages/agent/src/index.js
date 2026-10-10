@@ -161,6 +161,7 @@ const {
   generateCsrViaCng,
   acceptCertificateViaCng,
   acquireStoreLock,
+  acquireEnrollmentLock,
   removeAbandonedKeyContainer,
   removeCertificateAndKeyContainer,
   isAgentOwnedContainerName,
@@ -3010,6 +3011,8 @@ async function runWindowsIisDeployTail({
     return {
       status: "failed",
       keyRotated: null,
+      // Lease/lock aborts must not become durable install_failed terminals.
+      retryableInterrupt: true,
       errorMessage: boundErrorMessage(`could not acquire windows-iis store lock: ${err.message}`),
     };
   }
@@ -3723,12 +3726,43 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     return { freed, skipped };
   }
 
-  for (const entry of entries) {
-    const containerName = entry.windowsCngContainerName;
-    if (!isNonEmptyStringValue(containerName)) continue;
-    if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+  // AD CS open-enrollment protection: fail closed. An unreadable or
+  // inconsistent adcs-enrollments tree must never look like an empty set.
+  let protectedEnrollmentContainers = null;
+  let protectedEnrollmentScanFailed = false;
+  let looksLikeEnrollmentContainerName = (name) =>
+    /enr-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
+  let enrollmentIdFromContainerName = () => null;
+  let isEnrollmentContainerProtected = () => ({
+    protected: true,
+    reason: "AD CS enrollment journal helpers unavailable; deferred",
+  });
+  try {
+    const adcsJournal = require("./issuers/adcs-enrollment-journal");
+    looksLikeEnrollmentContainerName = adcsJournal.looksLikeEnrollmentContainerName;
+    enrollmentIdFromContainerName = adcsJournal.enrollmentIdFromContainerName;
+    isEnrollmentContainerProtected = adcsJournal.isEnrollmentContainerProtected;
+    const protectedScan = adcsJournal.listProtectedEnrollmentContainers(stateDir);
+    if (protectedScan.ok !== true) {
+      protectedEnrollmentScanFailed = true;
+      emitLog(
+        log,
+        `windows-cng-container reconciliation: AD CS enrollment journal scan failed; ` +
+          `deferring deletes for enrollment-shaped containers: ${protectedScan.error}`,
+      );
+    } else {
+      protectedEnrollmentContainers = protectedScan.containers;
+    }
+  } catch (err) {
+    protectedEnrollmentScanFailed = true;
+    emitLog(
+      log,
+      `windows-cng-container reconciliation: AD CS enrollment journal scan threw; ` +
+        `deferring deletes for enrollment-shaped containers: ${err.message}`,
+    );
+  }
 
-    const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+  async function attemptOrphanContainerDelete(entry, containerName, targetStore) {
     // Deduplicated: the common case (store: "My", or no store recorded at
     // all) checks the same store only once. Must match
     // acquireWindowsStoreLocks' own store set exactly, since the lock
@@ -3745,7 +3779,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
       // rather than waiting here, since this sweep must never block agent
       // startup.
       skipped.push({ containerName, reason: `store locked: ${err.message}` });
-      continue;
+      return;
     }
 
     try {
@@ -3771,7 +3805,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
         // evidence the container is unused there, so this entry must be
         // deferred rather than treated as safe to delete.
         skipped.push({ containerName, reason: queryFailure });
-        continue;
+        return;
       }
 
       if (enrolled) {
@@ -3793,7 +3827,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           // enrolled, hence still skipped) on the next startup.
         }
         skipped.push({ containerName, reason: "enrolled" });
-        continue;
+        return;
       }
 
       const cleanup = await removeAbandonedKeyContainer({
@@ -3805,7 +3839,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           containerName,
           reason: `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
         });
-        continue;
+        return;
       }
       try {
         markWindowsCngContainerReconciled({
@@ -3821,6 +3855,68 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     } finally {
       storeLocks.release();
     }
+  }
+
+  for (const entry of entries) {
+    const containerName = entry.windowsCngContainerName;
+    if (!isNonEmptyStringValue(containerName)) continue;
+    if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+
+    if (protectedEnrollmentScanFailed && looksLikeEnrollmentContainerName(containerName)) {
+      skipped.push({
+        containerName,
+        reason: "adcs enrollment journal scan failed; deferred",
+      });
+      continue;
+    }
+    if (protectedEnrollmentContainers && protectedEnrollmentContainers.has(containerName)) {
+      skipped.push({
+        containerName,
+        reason: "open AD CS enrollment journal protects this container",
+      });
+      continue;
+    }
+
+    const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+
+    // Enrollment-shaped containers: recheck protection under the enrollment
+    // lock immediately before store checks/deletion (enrollment → store order).
+    if (looksLikeEnrollmentContainerName(containerName)) {
+      const enrollmentId = enrollmentIdFromContainerName(containerName);
+      if (!enrollmentId) {
+        skipped.push({
+          containerName,
+          reason: "enrollment-shaped container name could not be parsed; deferred",
+        });
+        continue;
+      }
+      let enrollmentLock;
+      try {
+        enrollmentLock = acquireEnrollmentLock(stateDir, enrollmentId);
+      } catch (err) {
+        skipped.push({
+          containerName,
+          reason: `enrollment locked: ${err.message}`,
+        });
+        continue;
+      }
+      try {
+        const recheck = isEnrollmentContainerProtected(stateDir, enrollmentId, containerName);
+        if (recheck.protected) {
+          skipped.push({
+            containerName,
+            reason: recheck.reason || "open AD CS enrollment journal protects this container",
+          });
+          continue;
+        }
+        await attemptOrphanContainerDelete(entry, containerName, targetStore);
+      } finally {
+        enrollmentLock.release();
+      }
+      continue;
+    }
+
+    await attemptOrphanContainerDelete(entry, containerName, targetStore);
   }
 
   if (freed.length > 0 || skipped.length > 0) {

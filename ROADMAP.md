@@ -1,7 +1,8 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-09 for the AD CS issuer contracts against main
-`91cc31d48322f63ae443676fc3657f4372e1b22e`.
+Last reviewed: 2026-10-11 for AD CS durable journal recovery work in draft
+[#343](https://github.com/tokentimerch/tokentimer-core/pull/343) (gated; `adcs`
+still not executable).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -69,8 +70,14 @@ called stable while it is open.
   ([#321](https://github.com/tokentimerch/tokentimer-core/issues/321)).
   Issue and renew IIS certificates from an enterprise AD CS CA, including
   templates that need CA-manager approval. The key stays on the host and
-  the agent authenticates as its machine account. Not released until the
-  ADR-0014 release gate passes on real hosts.
+  the agent authenticates as its machine account. Contracts, CNG path,
+  CMC adapter, inert executor wiring, and decision-6 validation before
+  accept are on `main` ([#342](https://github.com/tokentimerch/tokentimer-core/pull/342)).
+  Durable enrollment journal recovery (resume-submit, issued-leaf continue,
+  install interrupt handling, bounded RequestId reconcile) is in draft
+  [#343](https://github.com/tokentimerch/tokentimer-core/pull/343).
+  `adcs` remains out of the executable issuer kinds until that recovery,
+  control-plane enrollments, and the ADR-0014 release gate pass on real hosts.
 
 ---
 
