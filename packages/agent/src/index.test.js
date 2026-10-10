@@ -3123,6 +3123,15 @@ describe("resolveDeclaredCapabilities advertises agent-id-binding-v1 from the ef
       assert.ok(capabilities.includes("evidence-claim-binding-v1"));
     }
   });
+
+  it("omits job-log-stream-v1 when TT_AGENT_LOG_STREAM=off", () => {
+    const on = resolveDeclaredCapabilities(true, {});
+    const off = resolveDeclaredCapabilities(true, { TT_AGENT_LOG_STREAM: "off" });
+    assert.ok(on.includes("job-log-stream-v1"));
+    assert.ok(!off.includes("job-log-stream-v1"));
+    assert.ok(off.includes("evidence-claim-binding-v1"));
+    assert.ok(off.includes(AGENT_ID_BINDING_CAPABILITY));
+  });
 });
 
 describe("renewal profile fidelity helpers", () => {

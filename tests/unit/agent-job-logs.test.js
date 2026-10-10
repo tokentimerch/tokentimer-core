@@ -65,11 +65,12 @@ function freshState(overrides = {}) {
   };
 }
 
-function batchFrom(lines, final = false) {
+function batchFrom(lines, final = false, droppedBefore = 0) {
   return {
-    key: batchKeyOf(lines, final),
+    key: batchKeyOf(lines, final, droppedBefore),
     lines,
     final,
+    droppedBefore,
     rejected: false,
   };
 }
@@ -347,6 +348,25 @@ describe("agent job log ingest", () => {
     });
     assert.equal(afterDrop.nextState.agentGapLines, 2);
     assert.equal(afterDrop.nextState.resolvedThroughSeq, 4);
+  });
+
+  it("includes droppedBefore in the batch key so drop-count changes are not replayed as the prior ack", () => {
+    const lines = [line(2)];
+    assert.notEqual(batchKeyOf(lines, false, 0), batchKeyOf(lines, false, 1));
+    const first = resolveIngest(freshState(), {
+      ...batchFrom(lines, false, 1),
+    });
+    assert.equal(first.nextState.agentGapLines, 1);
+    const sameKeyDifferentDrop = resolveIngest(first.nextState, {
+      key: batchKeyOf(lines, false, 0),
+      lines,
+      final: false,
+      droppedBefore: 0,
+    });
+    // Different key means this is not treated as a silent replay of the
+    // previous batch; seqs are already resolved so gaps do not move again.
+    assert.equal(sameKeyDifferentDrop.kind, "applied");
+    assert.equal(sameKeyDifferentDrop.nextState.agentGapLines, 1);
   });
 
   it("rejects malformed retention and daily-byte env values", () => {

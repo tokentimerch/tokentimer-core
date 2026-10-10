@@ -131,11 +131,15 @@ function contentHash(line) {
     .digest("hex");
 }
 
-function batchKeyOf(lines, final) {
+function batchKeyOf(lines, final, droppedBefore = 0) {
+  const dropped = Number.isSafeInteger(droppedBefore) && droppedBefore > 0
+    ? droppedBefore
+    : 0;
   return crypto
     .createHash("sha256")
     .update(JSON.stringify({
       final: Boolean(final),
+      droppedBefore: dropped,
       lines: lines.map((line) => [line.seq, line.hash]),
     }))
     .digest("hex");
@@ -593,6 +597,10 @@ async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, 
   }
 
   const rawLines = Array.isArray(body.lines) ? body.lines : [];
+  const droppedBeforeParsed = Number(body.droppedBefore);
+  const droppedBeforeForKey = Number.isSafeInteger(droppedBeforeParsed) && droppedBeforeParsed > 0
+    ? droppedBeforeParsed
+    : 0;
   const key = batchKeyOf(rawLines.map((line) => ({
     seq: line.seq,
     hash: crypto.createHash("sha256").update(JSON.stringify({
@@ -601,7 +609,7 @@ async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, 
       message: String(line.message ?? ""),
       fields: line.fields || null,
     })).digest("hex"),
-  })), body.final === true);
+  })), body.final === true, droppedBeforeForKey);
   const scrubbed = scrubIncomingLines(rawLines, reservedNames);
   const hashedLines = scrubbed.rejected ? [] : scrubbed.lines;
   if (!storageEnabled(env)) {
@@ -642,10 +650,7 @@ async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, 
     quotaUsed = Number(quota.rows[0]?.used_bytes) || 0;
   }
 
-  const droppedBeforeParsed = Number(body.droppedBefore);
-  const droppedBefore = Number.isSafeInteger(droppedBeforeParsed) && droppedBeforeParsed > 0
-    ? droppedBeforeParsed
-    : 0;
+  const droppedBefore = droppedBeforeForKey;
   const decision = resolveIngest(rowToState(row, stored), {
     key,
     lines: hashedLines,

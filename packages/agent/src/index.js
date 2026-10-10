@@ -381,6 +381,12 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
   AGENT_CANDIDATE_CAPABILITIES,
 );
 
+const JOB_LOG_STREAM_CAPABILITY = "job-log-stream-v1";
+
+function agentLogStreamEnabled(env = process.env) {
+  return env.TT_AGENT_LOG_STREAM !== "off";
+}
+
 /**
  * ADR-0012 decision 3, step 4: agent-id-binding-v1 is advertised only from
  * the effective runtime value of requireSignedAgentId (already resolved
@@ -391,11 +397,20 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
  * effective value is false, absence of agentId is still tolerated by the
  * compatibility decoder (see checkAgentIdBinding), so advertising then
  * would overclaim.
+ *
+ * job-log-stream-v1 follows the same rule for TT_AGENT_LOG_STREAM=off: the
+ * agent must not advertise a stream it will refuse to open, or the control
+ * plane opens a pending stream that later looks abandoned.
  */
-function resolveDeclaredCapabilities(requireSignedAgentId) {
+function resolveDeclaredCapabilities(requireSignedAgentId, env = process.env) {
+  const base = agentLogStreamEnabled(env)
+    ? AGENT_DECLARED_CAPABILITIES
+    : AGENT_DECLARED_CAPABILITIES.filter(
+      (capability) => capability !== JOB_LOG_STREAM_CAPABILITY,
+    );
   return requireSignedAgentId
-    ? Object.freeze([...AGENT_DECLARED_CAPABILITIES, AGENT_ID_BINDING_CAPABILITY])
-    : AGENT_DECLARED_CAPABILITIES;
+    ? Object.freeze([...base, AGENT_ID_BINDING_CAPABILITY])
+    : Object.freeze([...base]);
 }
 
 /**
@@ -1980,7 +1995,7 @@ async function handleSignedJob({
       `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
   );
   const logOffer = readClaimLogStream(claimedJob);
-  const jobLogSession = logOffer?.enabled === true && process.env.TT_AGENT_LOG_STREAM !== "off"
+  const jobLogSession = logOffer?.enabled === true && agentLogStreamEnabled()
     ? createJobLogSession({
       post: (request) => client.postJobLogs(request),
       jobId,
