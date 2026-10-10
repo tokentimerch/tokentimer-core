@@ -38,7 +38,7 @@ describe("validateCertificateChain", () => {
     assert.equal(result.verdict, "valid");
   });
 
-  it("maps deferred exit to revocation_unknown", async () => {
+  it("maps deferred exit to revocation_unknown only with matching verdict", async () => {
     const result = await validateCertificateChain({
       helperPath: "helper",
       certPath: "leaf.pem",
@@ -76,5 +76,56 @@ describe("validateCertificateChain", () => {
     });
     assert.equal(result.ok, false);
     assert.equal(result.verdict, "ca_key_changed");
+  });
+
+  it("rejects a successful exit with a missing verdict", async () => {
+    const result = await validateCertificateChain({
+      helperPath: "helper",
+      certPath: "leaf.pem",
+      caKeySha256: "a".repeat(64),
+      execFileImpl: async () => ({
+        stdout: JSON.stringify({ trustStatus: 0 }),
+        stderr: "",
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.verdict, "invalid");
+    assert.match(result.detail, /recognized verdict/);
+  });
+
+  it("rejects exit/verdict disagreement", async () => {
+    const result = await validateCertificateChain({
+      helperPath: "helper",
+      certPath: "leaf.pem",
+      caKeySha256: "a".repeat(64),
+      execFileImpl: async () => {
+        const err = new Error("fail");
+        err.code = EXIT_FAIL;
+        err.stdout = JSON.stringify({ verdict: "valid" });
+        err.stderr = "";
+        throw err;
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.verdict, "invalid");
+    assert.match(result.detail, /disagrees/);
+  });
+
+  it("rejects deferred exit paired with invalid verdict", async () => {
+    const result = await validateCertificateChain({
+      helperPath: "helper",
+      certPath: "leaf.pem",
+      caKeySha256: "a".repeat(64),
+      execFileImpl: async () => {
+        const err = new Error("deferred");
+        err.code = EXIT_DEFERRED;
+        err.stdout = JSON.stringify({ verdict: "invalid", error: "broken" });
+        err.stderr = "";
+        throw err;
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.verdict, "invalid");
+    assert.match(result.detail, /disagrees/);
   });
 });

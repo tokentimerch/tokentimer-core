@@ -194,11 +194,16 @@ async function validateIssuedCertificate(params) {
     }
   }
 
-  const identityNames = new Set([
-    ...(cn !== null ? [cn.toLowerCase()] : []),
-    ...sans.map((n) => n.toLowerCase()),
-  ]);
-  if (!identityNames.has(requiredDnsName.toLowerCase())) {
+  // DNS SAN takes precedence for hostname matching (TLS name verification).
+  const required = requiredDnsName.toLowerCase();
+  if (sans.length > 0) {
+    const sanMatch = sans.some((san) => san.toLowerCase() === required);
+    if (!sanMatch) {
+      return invalid(
+        `required DNS name ${JSON.stringify(requiredDnsName)} is not present in DNS SAN`,
+      );
+    }
+  } else if (cn === null || cn.toLowerCase() !== required) {
     return invalid(
       `certificate does not cover required DNS name ${JSON.stringify(requiredDnsName)}`,
     );
@@ -247,10 +252,9 @@ async function validateIssuedCertificate(params) {
   if (notAfter <= nowMs + minimumRemainingValidity * 1000) {
     return invalid("certificate notAfter does not satisfy minimumRemainingValidity");
   }
-  if (requireLaterNotAfter) {
-    if (existingNotAfter == null) {
-      return invalid("requireLaterNotAfter is set but existingNotAfter is missing");
-    }
+  // Only compare when an installed certificate was observed. First install
+  // (no binding / empty store) skips requireLaterNotAfter.
+  if (requireLaterNotAfter && existingNotAfter != null) {
     const existingMs =
       existingNotAfter instanceof Date
         ? existingNotAfter.getTime()

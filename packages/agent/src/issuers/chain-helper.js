@@ -16,6 +16,8 @@ const EXIT_OK = 0;
 const EXIT_DEFERRED = 1;
 const EXIT_FAIL = 2;
 
+const RECOGNIZED_VERDICTS = new Set(["valid", "invalid", "revocation_unknown", "ca_key_changed"]);
+
 /**
  * @param {object} [opts]
  * @param {string} [opts.overridePath]
@@ -44,6 +46,12 @@ function resolveAdcsChainHelperPath({ overridePath, packageRoot } = {}) {
     error:
       "tokentimer-adcs-chain helper binary is not installed under packages/agent/reference/adcs-chain/dist",
   };
+}
+
+function expectedExitForVerdict(verdict) {
+  if (verdict === "valid") return EXIT_OK;
+  if (verdict === "revocation_unknown") return EXIT_DEFERRED;
+  return EXIT_FAIL;
 }
 
 /**
@@ -146,20 +154,47 @@ async function validateCertificateChain({
     };
   }
 
-  const verdict =
-    typeof parsed.verdict === "string"
-      ? parsed.verdict
-      : exitCode === EXIT_OK
-        ? "valid"
-        : exitCode === EXIT_DEFERRED
-          ? "revocation_unknown"
-          : "invalid";
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      ok: false,
+      exitCode: EXIT_FAIL,
+      verdict: "invalid",
+      detail: "chain helper JSON was not an object",
+      stdout,
+      stderr,
+    };
+  }
+
+  const verdict = parsed.verdict;
+  if (typeof verdict !== "string" || !RECOGNIZED_VERDICTS.has(verdict)) {
+    return {
+      ok: false,
+      exitCode: EXIT_FAIL,
+      verdict: "invalid",
+      detail: "chain helper response missing a recognized verdict",
+      result: parsed,
+      stderr,
+    };
+  }
+
+  const expectedExit = expectedExitForVerdict(verdict);
+  if (exitCode !== expectedExit) {
+    return {
+      ok: false,
+      exitCode: EXIT_FAIL,
+      verdict: "invalid",
+      detail: `chain helper exit ${exitCode} disagrees with verdict ${verdict} (expected exit ${expectedExit})`,
+      result: parsed,
+      stderr,
+    };
+  }
+
   const detail = typeof parsed.error === "string" ? parsed.error : parsed.detail;
 
-  if (exitCode === EXIT_OK && verdict === "valid") {
+  if (verdict === "valid") {
     return { ok: true, exitCode, verdict: "valid", result: parsed };
   }
-  if (exitCode === EXIT_DEFERRED || verdict === "revocation_unknown") {
+  if (verdict === "revocation_unknown") {
     return {
       ok: true,
       exitCode: EXIT_DEFERRED,
@@ -193,4 +228,5 @@ module.exports = {
   EXIT_OK,
   EXIT_DEFERRED,
   EXIT_FAIL,
+  RECOGNIZED_VERDICTS,
 };

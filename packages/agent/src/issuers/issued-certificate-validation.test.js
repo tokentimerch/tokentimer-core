@@ -99,6 +99,27 @@ describe("validateIssuedCertificate", () => {
     assert.match(result.detail, /SAN|CN|required DNS/i);
   });
 
+  it("requires the binding hostname in DNS SAN when SAN is present (CN alone is not enough)", async () => {
+    // Fixture has CN == SAN == hostname. Simulate a required name that matches
+    // only if CN were consulted while SAN carries a different authorized name.
+    const result = await validateIssuedCertificate({
+      ...base,
+      authorizedDnsNames: [hostname, "other.example.com"],
+      requiredDnsName: "other.example.com",
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.detail, /not present in DNS SAN/);
+  });
+
+  it("skips requireLaterNotAfter when no installed certificate was observed", async () => {
+    const result = await validateIssuedCertificate({
+      ...base,
+      requireLaterNotAfter: true,
+      existingNotAfter: null,
+    });
+    assert.equal(result.ok, true);
+  });
+
   it("rejects wrong template OID", async () => {
     const result = await validateIssuedCertificate({
       ...base,

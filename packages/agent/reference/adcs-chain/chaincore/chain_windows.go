@@ -13,18 +13,13 @@ import (
 )
 
 const (
-	certTrustIsRevoked                 = 0x00000004
-	certTrustRevocationStatusUnknown   = 0x00000040
-	certTrustIsOfflineRevocation       = 0x01000000
-	certChainRevocationCheckEndCert    = 0x10000000
-	certChainRevocationCheckChainExRoot = 0x40000000
-	usageMatchTypeAnd                  = 0
-	certChainPolicyBase                = 1
-	x509AsnEncoding                    = 0x00000001
-	pkcs7AsnEncoding                   = 0x00010000
-	certStoreAddAlways                 = 4
-	certStoreProvMemory                = 2
-	certCloseStoreForceFlag            = 1
+	usageMatchTypeAnd       = 0
+	certChainPolicyBase     = 1
+	x509AsnEncoding         = 0x00000001
+	pkcs7AsnEncoding        = 0x00010000
+	certStoreAddAlways      = 4
+	certStoreProvMemory     = 2
+	certCloseStoreForceFlag = 1
 )
 
 var (
@@ -192,7 +187,9 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 		},
 	}
 
-	flags := uint32(certChainRevocationCheckEndCert | certChainRevocationCheckChainExRoot)
+	// Mutually exclusive CERT_CHAIN_REVOCATION_CHECK_* group: use only
+	// CHAIN_EXCLUDE_ROOT (leaf + intermediates, root excluded).
+	flags := uint32(CertChainRevocationCheckChainExcludeRoot)
 	var chainCtx uintptr
 	r, _, callErr := procCertGetCertificateChain.Call(
 		0, // HCCE_CURRENT_USER default engine; machine context still uses local machine roots
@@ -217,41 +214,17 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 		return *pinVerdict, nil
 	}
 
-	if trust&certTrustIsRevoked != 0 {
-		return Result{
-			Verdict:     VerdictInvalid,
-			TrustStatus: trust,
-			Error:       "certificate is revoked",
-		}, nil
-	}
-	revocationUnknown := trust&certTrustRevocationStatusUnknown != 0 &&
-		trust&certTrustIsOfflineRevocation != 0
-	if revocationUnknown {
-		return Result{
-			Verdict:     VerdictRevocationUnknown,
-			TrustStatus: trust,
-			Error:       "revocation status unknown or offline",
-		}, nil
-	}
-
 	policyPara := certChainPolicyPara{cbSize: uint32(unsafe.Sizeof(certChainPolicyPara{}))}
 	policyStatus := certChainPolicyStatus{cbSize: uint32(unsafe.Sizeof(certChainPolicyStatus{}))}
-	pr, _, _ := procCertVerifyCertificateChainPolicy.Call(
+	_, _, _ = procCertVerifyCertificateChainPolicy.Call(
 		uintptr(certChainPolicyBase),
 		chainCtx,
 		uintptr(unsafe.Pointer(&policyPara)),
 		uintptr(unsafe.Pointer(&policyStatus)),
 	)
-	if pr == 0 || policyStatus.dwError != 0 || trust != 0 {
-		return Result{
-			Verdict:     VerdictInvalid,
-			TrustStatus: trust,
-			Error:       fmt.Sprintf("chain policy failed (trustStatus=0x%08x policyError=0x%08x)", trust, policyStatus.dwError),
-		}, nil
-	}
 
 	_ = revocationMode // require vs best-effort is applied by the JS caller
-	return Result{Verdict: VerdictValid, TrustStatus: trust}, nil
+	return MapChainTrust(trust, policyStatus.dwError), nil
 }
 
 func checkIssuerPin(chain *certChainContext, caKeySha256 string) *Result {

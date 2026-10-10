@@ -3,10 +3,18 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
+const fs = require("node:fs");
+const fsp = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
+
 const {
   resultForAdcsOutcome,
   resultForValidationOutcome,
   shouldRetainCngKey,
+  shouldCleanupAbandonedCngKey,
+  observeInstalledCertificateIdentity,
+  withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
 
 const ENROLLMENT = {
@@ -104,6 +112,108 @@ describe("shouldRetainCngKey", () => {
     assert.equal(shouldRetainCngKey("denied"), false);
     assert.equal(shouldRetainCngKey("failed"), false);
     assert.equal(shouldRetainCngKey("rejected_invalid"), false);
+  });
+});
+
+describe("shouldCleanupAbandonedCngKey", () => {
+  it("frees the key on rejected_invalid even when certificate PEM was received", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "rejected_invalid",
+      }),
+      true,
+    );
+  });
+
+  it("retains the key for validation_deferred and issued", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "validation_deferred",
+      }),
+      false,
+    );
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "issued",
+      }),
+      false,
+    );
+  });
+
+  it("retains the key when submit outcome is still unknown", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: null,
+      }),
+      false,
+    );
+  });
+});
+
+describe("observeInstalledCertificateIdentity", () => {
+  const windowsTarget = {
+    store: "WebHosting",
+    binding: { site: "Default Web Site", port: 443 },
+  };
+
+  it("returns nulls when nothing is bound (first install)", async () => {
+    const observed = await observeInstalledCertificateIdentity({
+      windowsTarget,
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: null }),
+      listMachineStoreCertificatesImpl: async () => {
+        throw new Error("store must not be queried when unbound");
+      },
+    });
+    assert.equal(observed.existingNotAfter, null);
+    assert.equal(observed.existingSerialHex, null);
+  });
+
+  it("reads serial and notAfter for the bound thumbprint", async () => {
+    const observed = await observeInstalledCertificateIdentity({
+      windowsTarget,
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: "AA".repeat(20) }),
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: "aa".repeat(20),
+            serialNumber: "0abc",
+            notAfter: "2027-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    });
+    assert.equal(observed.existingSerialHex, "0abc");
+    assert.equal(observed.existingNotAfter, "2027-01-01T00:00:00.000Z");
+  });
+});
+
+describe("withUniqueValidationLeafFile", () => {
+  it("gives concurrent validations distinct leaf paths and cleans them up", async () => {
+    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-val-"));
+    const seen = [];
+    await Promise.all([
+      withUniqueValidationLeafFile(stateDir, "pem-a", async (certPath) => {
+        seen.push(certPath);
+        assert.equal(fs.readFileSync(certPath, "utf8"), "pem-a");
+        await new Promise((r) => setTimeout(r, 20));
+      }),
+      withUniqueValidationLeafFile(stateDir, "pem-b", async (certPath) => {
+        seen.push(certPath);
+        assert.equal(fs.readFileSync(certPath, "utf8"), "pem-b");
+        await new Promise((r) => setTimeout(r, 20));
+      }),
+    ]);
+    assert.equal(seen.length, 2);
+    assert.notEqual(seen[0], seen[1]);
+    for (const certPath of seen) {
+      assert.equal(fs.existsSync(certPath), false);
+    }
+    await fsp.rm(stateDir, { recursive: true, force: true });
   });
 });
 
