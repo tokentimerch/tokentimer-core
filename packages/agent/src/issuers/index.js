@@ -28,6 +28,8 @@
 const { createAcmeIssuer } = require("./acme");
 const { createAdcsIssuer } = require("./adcs");
 const adcsEnrollment = require("./adcs-enrollment");
+const { validateIssuedCertificate } = require("./issued-certificate-validation");
+const { resolveAdcsChainHelperPath, validateCertificateChain } = require("./chain-helper");
 
 const ISSUANCE_OUTCOMES = Object.freeze([
   "issued",
@@ -39,9 +41,9 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "uncertain",
 ]);
 
-// AD CS executor code may land incrementally, but executable selection stays
-// off until ADR-0014 decision 6 validation, durable enrollment journal
-// recovery, and control-plane continuation scheduling are integrated.
+// AD CS executor + decision-6 validation may land incrementally, but
+// executable selection stays off until durable enrollment journal recovery
+// and control-plane continuation scheduling are integrated.
 const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
@@ -115,5 +117,8 @@ module.exports = {
   assertIssuanceOutcome,
   createAcmeIssuer,
   createAdcsIssuer,
+  validateIssuedCertificate,
+  resolveAdcsChainHelperPath,
+  validateCertificateChain,
   ...adcsEnrollment,
 };
