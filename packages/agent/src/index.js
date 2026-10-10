@@ -2351,16 +2351,9 @@ async function executeJob({
   }
 
   if (action === "renew") {
-    // ADR-0012 decisions 9/13: a renew job whose custody is
-    // os-store-managed against a windows-iis target takes the CNG-native
-    // path (key generated inside the CNG store, IIS/http.sys rebind,
-    // retention-ledger bookkeeping) instead of the file-based
-    // key/CSR/deploy path every other keyMode uses. keyMode gating here is
-    // defense in depth: apps/api/services/certops/jobs.js's
-    // AGENT_DEPLOYABLE_KEY_MODES is the control-plane's own gate on
-    // dispatching such a job at all.
-    if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
-      if (resolvedIssuerKind.kind === "adcs") {
+    // AD CS must never fall through to the ACME file-based renew path.
+    if (resolvedIssuerKind.kind === "adcs") {
+      if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
         return getAdcsWindowsIisExecutors().executeWindowsIisAdcsRenewJob({
           job,
           jobId,
@@ -2372,6 +2365,22 @@ async function executeJob({
           journalCtx,
         });
       }
+      return {
+        status: "blocked",
+        errorMessage: boundErrorMessage(
+          "AD CS renew requires keyMode os-store-managed and a windows-iis target",
+        ),
+      };
+    }
+    // ADR-0012 decisions 9/13: a renew job whose custody is
+    // os-store-managed against a windows-iis target takes the CNG-native
+    // path (key generated inside the CNG store, IIS/http.sys rebind,
+    // retention-ledger bookkeeping) instead of the file-based
+    // key/CSR/deploy path every other keyMode uses. keyMode gating here is
+    // defense in depth: apps/api/services/certops/jobs.js's
+    // AGENT_DEPLOYABLE_KEY_MODES is the control-plane's own gate on
+    // dispatching such a job at all.
+    if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
       return executeWindowsIisRenewJob({
         job,
         jobId,
@@ -2452,9 +2461,54 @@ async function executeDryRunPlan({
     reload: [
       "reload: validate-then-reload the target service via allowlisted command profiles",
     ],
+    "continue-enrollment": [
+      "enrollment: verify the local RequestId journal matches the signed enrollment snapshot",
+      "adcs: retrieve the pending certificate from the CA (certreq -retrieve)",
+      "adcs: accept the certificate into the CNG store (certreq -accept)",
+      "deploy: bind the issued certificate to the windows-iis site",
+      "verify: fingerprint the deployed certificate",
+    ],
   }[action];
 
+  if (!Array.isArray(plannedSteps)) {
+    return {
+      status: "blocked",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(
+        `dry-run is not implemented for action ${JSON.stringify(action)}`,
+      ),
+    };
+  }
+
   const preflightIssues = [];
+
+  if (action === "continue-enrollment") {
+    if (job?.keyMode !== "os-store-managed" || job?.target?.type !== "windows-iis") {
+      preflightIssues.push(
+        "continue-enrollment requires keyMode os-store-managed and a windows-iis target",
+      );
+    } else if (
+      !isNonEmptyStringValue(job?.target?.store) ||
+      job?.target?.binding === null ||
+      typeof job?.target?.binding !== "object" ||
+      !isNonEmptyStringValue(job?.target?.binding?.site) ||
+      !Number.isInteger(job?.target?.binding?.port)
+    ) {
+      preflightIssues.push(
+        "windows-iis target requires target.store and target.binding.{site,port}",
+      );
+    }
+    if (job?.enrollment === null || typeof job?.enrollment !== "object") {
+      preflightIssues.push("continue-enrollment job carries no enrollment snapshot");
+    } else {
+      if (!isNonEmptyStringValue(job.enrollment.snapshotB64)) {
+        preflightIssues.push("enrollment.snapshotB64 is missing");
+      }
+      if (!isNonEmptyStringValue(job.enrollment.snapshotSha256)) {
+        preflightIssues.push("enrollment.snapshotSha256 is missing");
+      }
+    }
+  }
 
   if (action === "renew" || action === "deploy") {
     if (job?.target?.type === "windows-iis") {

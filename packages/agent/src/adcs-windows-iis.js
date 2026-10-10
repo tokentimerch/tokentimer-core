@@ -24,6 +24,8 @@ const {
   removeAbandonedKeyContainer,
   recordIssuedContainer,
   removeIssuedContainerRecord,
+  buildEnrollmentContainerName,
+  hasIssuedContainerRecord,
 } = require("./windows-cert-store");
 
 const WINDOWS_CERT_STORE_WORK_DIR_NAME = "windows-cert-store-work";
@@ -105,12 +107,10 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }) {
 }
 
 function shouldRetainCngKey(outcome) {
-  return (
-    outcome === "pending" ||
-    outcome === "not_submitted" ||
-    outcome === "uncertain" ||
-    outcome === "issued"
-  );
+  // not_submitted: transport proved the CA never saw the CSR, so free the
+  // container and let a later renew regenerate. pending/uncertain/issued keep
+  // the key for continue-enrollment retrieve/accept (never resubmit uncertain).
+  return outcome === "pending" || outcome === "uncertain" || outcome === "issued";
 }
 
 async function resolveWindowsIisTarget(job) {
@@ -282,6 +282,28 @@ function createAdcsWindowsIisExecutors(deps) {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
+
+      const existingJournal = readEnrollmentRequestJournal(stateDir, decoded.enrollmentId);
+      if (existingJournal) {
+        return {
+          status: "blocked",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `enrollment ${decoded.enrollmentId} already has a local RequestId journal; use continue-enrollment`,
+          ),
+        };
+      }
+      const enrollmentContainer = buildEnrollmentContainerName(decoded.enrollmentId);
+      if (hasIssuedContainerRecord({ stateDir, containerName: enrollmentContainer })) {
+        return {
+          status: "blocked",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `enrollment ${decoded.enrollmentId} already has a CNG key container; use continue-enrollment or abandon the enrollment before renewing`,
+          ),
+        };
+      }
+
       if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
       emitInfo(
         `job ${jobId}: generating CNG-native key + CSR for AD CS enrollment ${decoded.enrollmentId}`,
@@ -375,6 +397,23 @@ function createAdcsWindowsIisExecutors(deps) {
         return resultForAdcsOutcome(issuance, decoded);
       }
       certificatePem = issuance.certificatePem;
+
+      // Hold the enrollment lock through accept/deploy so continue-enrollment
+      // cannot race retrieve/accept on the same enrollmentId.
+      return await runWindowsIisDeployTail({
+        jobId,
+        client,
+        certificatePem,
+        target: windowsTarget,
+        stateDir,
+        cngWorkDir,
+        log,
+        containerName,
+        leaseOpts,
+        onBeforeMutation,
+        windowsExecFileImpl,
+        windowsConnectImpl,
+      });
     } finally {
       if (certificatePem === undefined && containerName && !shouldRetainCngKey(issuanceOutcome)) {
         try {
@@ -393,35 +432,6 @@ function createAdcsWindowsIisExecutors(deps) {
         }
       }
       if (enrollmentLock) enrollmentLock.release();
-    }
-
-    // Re-acquire for accept/deploy so continue-enrollment cannot race cutover.
-    try {
-      enrollmentLock = acquireEnrollmentLock(stateDir, decoded.enrollmentId);
-    } catch (err) {
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(`could not re-acquire AD CS enrollment lock: ${err.message}`),
-      };
-    }
-    try {
-      return await runWindowsIisDeployTail({
-        jobId,
-        client,
-        certificatePem,
-        target: windowsTarget,
-        stateDir,
-        cngWorkDir,
-        log,
-        containerName,
-        leaseOpts,
-        onBeforeMutation,
-        windowsExecFileImpl,
-        windowsConnectImpl,
-      });
-    } finally {
-      enrollmentLock.release();
     }
   }
 
@@ -460,6 +470,19 @@ function createAdcsWindowsIisExecutors(deps) {
         ),
       };
     }
+    if (
+      typeof journal.snapshotSha256 !== "string" ||
+      journal.snapshotSha256 !== decoded.snapshotSha256
+    ) {
+      return {
+        status: "rejected",
+        rejectionReason: "enrollment_snapshot_mismatch",
+        keyRotated: null,
+        errorMessage: boundErrorMessage(
+          `local RequestId journal snapshotSha256 does not match the signed enrollment snapshot for ${decoded.enrollmentId}`,
+        ),
+      };
+    }
 
     let enrollmentLock;
     try {
@@ -475,7 +498,7 @@ function createAdcsWindowsIisExecutors(deps) {
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
-    const containerName = `tokentimer-enr-${decoded.enrollmentId}`;
+    const containerName = buildEnrollmentContainerName(decoded.enrollmentId);
 
     try {
       {

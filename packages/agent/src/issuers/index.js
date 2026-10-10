@@ -40,9 +40,9 @@ const ISSUANCE_OUTCOMES = Object.freeze([
 ]);
 
 // AD CS renew/continue-enrollment are wired with acquireEnrollmentLock held
-// across keygen/submit/retrieve. Full issued-cert validation and scratch
-// retention remain later gates; this list only means the agent will claim
-// the job kind rather than block it as unimplemented.
+// across keygen/submit/retrieve/accept/deploy. Full issued-cert validation
+// and scratch retention remain later gates; this list only means the agent
+// will claim the job kind rather than block it as unimplemented.
 const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).

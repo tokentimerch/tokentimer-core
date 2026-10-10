@@ -61,9 +61,11 @@ describe("resultForAdcsOutcome", () => {
 
 describe("shouldRetainCngKey", () => {
   it("retains the key when a later continue-enrollment may need it", () => {
-    for (const outcome of ["pending", "not_submitted", "uncertain", "issued"]) {
+    for (const outcome of ["pending", "uncertain", "issued"]) {
       assert.equal(shouldRetainCngKey(outcome), true, outcome);
     }
+    // not_submitted never reached the CA; free the container so renew can retry.
+    assert.equal(shouldRetainCngKey("not_submitted"), false);
     assert.equal(shouldRetainCngKey("denied"), false);
     assert.equal(shouldRetainCngKey("failed"), false);
   });

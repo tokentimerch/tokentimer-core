@@ -1341,6 +1341,50 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(fs.existsSync(path.join(workDir, "deployed")), false);
   });
 
+  it("dry-run continue-enrollment reports dry_run_complete without crashing", async () => {
+    const client = createRecordingClient();
+    const executionContext = makeExecutionContext({ dryRun: false });
+    const job = makeSignedJob({
+      action: "continue-enrollment",
+      mode: "dry_run",
+      issuerKind: "adcs",
+      keyMode: "os-store-managed",
+      target: {
+        type: "windows-iis",
+        reference: "iis.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      enrollment: {
+        enrollmentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        attempt: 1,
+        snapshotB64: Buffer.from("{}").toString("base64"),
+        snapshotSha256: "a".repeat(64),
+      },
+    });
+    const policyEngine = engineWith(
+      {},
+      { declaredTargetSelectors: ["iis.example.com"] },
+    );
+
+    const outcome = await handleClaimedJob({
+      job,
+      policyEngine,
+      client,
+      executionContext,
+      boundAgentId: TEST_BOUND_AGENT_ID,
+      log: silentLog,
+    });
+
+    assert.equal(outcome.status, "dry_run_complete");
+    assert.equal(client.calls.reportResult[0].status, "dry_run_complete");
+    const items = client.calls.reportEvidence[0].evidenceItems;
+    assert.ok(items.length >= 3);
+    assert.ok(
+      items.some((item) => /continue-enrollment/.test(item.summary)),
+    );
+  });
+
   it("local execution.dryRun refuses a mode:real job instead of silently succeeding", async () => {
     const client = createRecordingClient();
     const executionContext = makeExecutionContext({ dryRun: true });
@@ -3921,19 +3965,20 @@ describe("renew chain deployment", () => {
     assert.equal(fs.readFileSync(job.certPath, "utf8"), readFixture("chain-leaf-fullchain.crt.pem"));
   });
 
-  it("blocks a renew job naming an issuer kind this agent does not implement, before any key or ACME work", async () => {
+  it("blocks a non-windows-iis AD CS renew before any ACME work", async () => {
     seedLiveKey();
-    for (const mode of ["real", "dry_run"]) {
-      const acmeExecFileImpl = makeCertbotStub();
-      const job = makeJob({ issuerKind: "adcs", mode });
-      const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
+    const acmeExecFileImpl = makeCertbotStub();
+    const job = makeJob({ issuerKind: "adcs" });
+    const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
 
-      assert.equal(outcome.status, "blocked", mode);
-      assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
-      assert.equal(acmeExecFileImpl.calls.length, 0);
-      assert.equal(client.calls.reportEvidence.length, 0);
-      assert.deepEqual(stagingLeftovers(), []);
-    }
+    assert.equal(outcome.status, "blocked");
+    assert.match(
+      outcome.errorMessage,
+      /AD CS renew requires keyMode os-store-managed and a windows-iis target/,
+    );
+    assert.equal(acmeExecFileImpl.calls.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+    assert.deepEqual(stagingLeftovers(), []);
   });
 });
 
@@ -4522,12 +4567,14 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.equal(windowsExecFileImpl.calls.length, 0);
   });
 
-  it("blocks a renew job naming an issuer kind this agent does not implement, before any Windows process runs", async () => {
+  it("routes AD CS renew to the AD CS executor instead of ACME", async () => {
     const job = makeJob({ issuerKind: "adcs" });
     const { outcome, windowsExecFileImpl } = await runIisRenew({ job });
 
-    assert.equal(outcome.status, "blocked");
-    assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+    // Missing enrollment snapshot fails inside the AD CS path; ACME / certreq
+    // for the ACME IIS renew path must not run.
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /enrollment/i);
     assert.equal(windowsExecFileImpl.calls.length, 0);
   });
 
