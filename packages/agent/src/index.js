@@ -3723,10 +3723,54 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     return { freed, skipped };
   }
 
+  // AD CS open-enrollment protection: fail closed. An unreadable or
+  // inconsistent adcs-enrollments tree must never look like an empty set.
+  let protectedEnrollmentContainers = null;
+  let protectedEnrollmentScanFailed = false;
+  let looksLikeEnrollmentContainerName = (name) =>
+    /enr-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
+  try {
+    const adcsJournal = require("./issuers/adcs-enrollment-journal");
+    looksLikeEnrollmentContainerName = adcsJournal.looksLikeEnrollmentContainerName;
+    const protectedScan = adcsJournal.listProtectedEnrollmentContainers(stateDir);
+    if (protectedScan.ok !== true) {
+      protectedEnrollmentScanFailed = true;
+      emitLog(
+        log,
+        `windows-cng-container reconciliation: AD CS enrollment journal scan failed; ` +
+          `deferring deletes for enrollment-shaped containers: ${protectedScan.error}`,
+      );
+    } else {
+      protectedEnrollmentContainers = protectedScan.containers;
+    }
+  } catch (err) {
+    protectedEnrollmentScanFailed = true;
+    emitLog(
+      log,
+      `windows-cng-container reconciliation: AD CS enrollment journal scan threw; ` +
+        `deferring deletes for enrollment-shaped containers: ${err.message}`,
+    );
+  }
+
   for (const entry of entries) {
     const containerName = entry.windowsCngContainerName;
     if (!isNonEmptyStringValue(containerName)) continue;
     if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+
+    if (protectedEnrollmentScanFailed && looksLikeEnrollmentContainerName(containerName)) {
+      skipped.push({
+        containerName,
+        reason: "adcs enrollment journal scan failed; deferred",
+      });
+      continue;
+    }
+    if (protectedEnrollmentContainers && protectedEnrollmentContainers.has(containerName)) {
+      skipped.push({
+        containerName,
+        reason: "open AD CS enrollment journal protects this container",
+      });
+      continue;
+    }
 
     const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
     // Deduplicated: the common case (store: "My", or no store recorded at

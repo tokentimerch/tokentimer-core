@@ -104,11 +104,18 @@ describe("resultForAdcsOutcome", () => {
 
 describe("shouldRetainCngKey", () => {
   it("retains the key when a later continue-enrollment may need it", () => {
-    for (const outcome of ["pending", "uncertain", "issued", "validation_deferred"]) {
+    for (const outcome of [
+      "pending",
+      "uncertain",
+      "submission_uncertain",
+      "issued",
+      "validation_deferred",
+      "not_submitted",
+      "install_failed",
+    ]) {
       assert.equal(shouldRetainCngKey(outcome), true, outcome);
     }
-    // not_submitted never reached the CA; free the container so renew can retry.
-    assert.equal(shouldRetainCngKey("not_submitted"), false);
+    // Denied / failed / rejected_invalid: no continuation needs this key.
     assert.equal(shouldRetainCngKey("denied"), false);
     assert.equal(shouldRetainCngKey("failed"), false);
     assert.equal(shouldRetainCngKey("rejected_invalid"), false);
@@ -157,14 +164,51 @@ describe("shouldCleanupAbandonedCngKey", () => {
     );
   });
 
-  it("frees a key created before submit when the job aborts pre-submit (lease)", () => {
+  it("frees a key created before prepared when the job aborts pre-submit (lease)", () => {
     assert.equal(
       shouldCleanupAbandonedCngKey({
         submitStarted: false,
         issuanceOutcome: null,
         containerCreated: true,
+        preparedJournalCommitted: false,
       }),
       true,
+    );
+  });
+
+  it("retains a key after prepared is journaled even if submit never started", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: false,
+        issuanceOutcome: null,
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+  });
+
+  it("retains the key for not_submitted so resume-submit can reuse the CSR", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "not_submitted",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
+    );
+  });
+
+  it("retains the key on install_failed", () => {
+    assert.equal(
+      shouldCleanupAbandonedCngKey({
+        submitStarted: true,
+        issuanceOutcome: "install_failed",
+        containerCreated: true,
+        preparedJournalCommitted: true,
+      }),
+      false,
     );
   });
 
