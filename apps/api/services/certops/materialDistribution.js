@@ -23,6 +23,13 @@ function validateDistributionContract(name, value) {
   return value;
 }
 
+function normalizeDistributionId(value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    fail("CERTOPS_MATERIAL_CONTRACT_INVALID", 422);
+  }
+  return value.toLowerCase();
+}
+
 function hashIntent(value) {
   return crypto.createHash("sha256").update(canonicalizeJobPayload(value)).digest("hex");
 }
@@ -32,6 +39,7 @@ function enqueueDistributionEvent(client, workspaceId, eventType, dedupeKey, pay
 }
 
 async function lockGroup(client, workspaceId, groupId, { allowInactive = false } = {}) {
+  groupId = normalizeDistributionId(groupId);
   const group = (await client.query(`SELECT g.*, p.ended_at FROM certops_distribution_groups g
     JOIN certops_management_periods p ON p.workspace_id=g.workspace_id AND p.id=g.management_period_id
     WHERE g.workspace_id=$1 AND g.id=$2 FOR UPDATE OF g,p`, [workspaceId, groupId])).rows[0];
@@ -262,6 +270,7 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
 }
 
 async function consumerMatrix({ client, workspaceId, groupId }) {
+  groupId = normalizeDistributionId(groupId);
   return (await client.query(`SELECT b.id AS binding_id,b.assigned_agent_id,b.required,b.verification_policy,
     s.desired_material_version_id,s.desired_generation,s.accepted_generation,s.observed_material_version_id,
     s.observed_fingerprint_sha256,s.observed_valid_to,s.verification_method,s.observed_at,
@@ -283,5 +292,5 @@ async function consumerMatrix({ client, workspaceId, groupId }) {
   [workspaceId, groupId])).rows;
 }
 
-module.exports = { validateDistributionContract, hashIntent, enqueueDistributionEvent, buildRolloutIntent, lockGroup, resolveDistributionJobDefaults, createGroupForSource, allocateMaterialVersion,
+module.exports = { validateDistributionContract, normalizeDistributionId, hashIntent, enqueueDistributionEvent, buildRolloutIntent, lockGroup, resolveDistributionJobDefaults, createGroupForSource, allocateMaterialVersion,
   acceptPublicationReceipt, createRolloutSnapshot, acceptDeploymentReceipt, consumerMatrix, assertDeployableVersion };

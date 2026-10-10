@@ -4149,7 +4149,7 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuard
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,
   csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
-  csrRoute(async (req) => ({ versions: (await pool.query(`SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,req.params.groupId])).rows })));
+  csrRoute(async (req) => ({ versions: (await pool.query(`SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,materialDistribution.normalizeDistributionId(req.params.groupId)])).rows })));
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.putBinding({ workspaceId:req.workspace.id,groupId:req.params.groupId,

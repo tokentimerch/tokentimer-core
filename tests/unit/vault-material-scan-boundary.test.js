@@ -49,9 +49,21 @@ test("Vault scanner never requests material bundle bytes, including an exact pre
     `bundles/${version}`,
     `secret/bundles/${version}`,
     `secret/bundles/${version}/nested`,
+    `%62undles/${version}`,
+    `bundles/%32${version.slice(1)}`,
+    `bundles//${version}`,
+    `bundles/./${version}`,
+    `bundles%2f${version}`,
+    `%2562undles/${version}`,
+    `bundles\\${version}`,
+    `bundles/${version}?version=1`,
+    `bundles/${version}#ignored`,
   ]) {
+    const before = hits.length;
     const exact = await scanVault({ ...options, pathPrefix: prefix });
     assert.equal(exact.items.length, 0);
+    assert.ok(hits.slice(before).every(({pathname}) => pathname === '/v1/sys/mounts'),
+      `Reserved prefix must be rejected before any object request: ${prefix}`);
   }
   assert.equal(
     hits.some(({ pathname }) => pathname.includes(version)),

@@ -16,9 +16,22 @@ const {
 // Material publication objects contain private keys. Reserve this exact UUID
 // namespace before any Vault data request, even with overprivileged scanners.
 function isMaterialBundlePath(value) {
-  return /(?:^|\/)bundles\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/|$)/i.test(
-    String(value),
-  );
+  // Check the path Vault/proxies resolve, before handing a raw path to URL.
+  // Encoded segments, dot segments and query suffixes must not bypass custody.
+  try {
+    let decoded = String(value);
+    for (let depth = 0; depth < 4; depth++) {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    }
+    if (/%[0-9a-f]{2}/i.test(decoded)) return true;
+    const pathname = new URL('/' + decoded.replace(/\\/g, '/').replace(/^\/+/, ''),
+      'https://vault.invalid').pathname.replace(/\/+/g, '/');
+    return /(?:^|\/)bundles\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/|$)/i.test(pathname);
+  } catch {
+    return true;
+  }
 }
 
 function recordVaultItemReadFailure(err, state) {

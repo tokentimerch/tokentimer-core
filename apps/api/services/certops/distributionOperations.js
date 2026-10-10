@@ -15,7 +15,8 @@ async function transaction(work, dbPool = pool) {
 }
 async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(), binding, actorUserId }) {
   material.validateDistributionContract("consumerBinding", binding);
-  groupId = groupId.toLowerCase();
+  groupId = material.normalizeDistributionId(groupId);
+  bindingId = material.normalizeDistributionId(bindingId);
   binding = {...binding,agentId:binding.agentId.toLowerCase()};
   return transaction(async (client) => {
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
@@ -46,9 +47,9 @@ async function putBinding({ workspaceId, groupId, bindingId = crypto.randomUUID(
   });
 }
 async function requestRollout({ workspaceId, groupId, materialVersionId, maxParallel = 1, verificationOnly = false, actorUserId, idempotencyKey }) {
-  workspaceId = workspaceId.toLowerCase();
-  groupId = groupId.toLowerCase();
-  materialVersionId = materialVersionId.toLowerCase();
+  workspaceId = material.normalizeDistributionId(workspaceId);
+  groupId = material.normalizeDistributionId(groupId);
+  materialVersionId = material.normalizeDistributionId(materialVersionId);
   if (idempotencyKey !== undefined && idempotencyKey !== null) {
     if (typeof idempotencyKey !== "string" || idempotencyKey.trim().length > 128) fail("CERTOPS_JOB_INVALID",422);
     idempotencyKey = idempotencyKey.trim() || null;
@@ -84,6 +85,8 @@ function rolloutRequestHash({groupId,materialVersionId,maxParallel=1,verificatio
 }
 async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUserId }) {
   if (!["paused","deploying","retired"].includes(state)) fail("CERTOPS_ROLLOUT_STATE_INVALID",422);
+  groupId = material.normalizeDistributionId(groupId);
+  rolloutId = material.normalizeDistributionId(rolloutId);
   return transaction(async (client) => {
     if(state==="deploying")await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     await material.lockGroup(client,workspaceId,groupId);
@@ -201,6 +204,7 @@ async function processDistributionIntent({client,row,payload}) {
 }
 
 async function retryDistributionJob({ workspaceId,jobId,actorUserId }) {
+  jobId = material.normalizeDistributionId(jobId);
   return transaction(async(client)=>{
     await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
     const job=(await client.query(`SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[workspaceId,jobId])).rows[0];

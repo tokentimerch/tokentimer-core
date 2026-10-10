@@ -329,6 +329,34 @@ test("distribution mutations require session managers through real upstream work
   );
 });
 
+test("malformed distribution identifiers return 422 without creating jobs", async () => {
+  const f = await fixture();
+  const count = async () => Number((await pool.query(
+    "SELECT count(*) FROM certificate_jobs WHERE workspace_id=$1", [f.workspaceId],
+  )).rows[0].count);
+  const before = await count();
+  const group = `${f.base}/distribution-groups/${f.groupId}`;
+  const cases = [
+    ["get", `${f.base}/distribution-groups/invalid/consumers`],
+    ["get", `${f.base}/distribution-groups/invalid/versions`],
+    ["put", `${group}/consumers/invalid`, f.binding],
+    ["put", `${f.base}/distribution-groups/invalid/consumers/${f.bindingId}`, f.binding],
+    ["post", `${f.base}/distribution-jobs/invalid/retry`, {}],
+    ["post", `${group}/rollouts/invalid/state`, {state:"paused"}],
+    ["post", `${f.base}/distribution-groups/invalid/rollouts/${uuid()}/state`, {state:"paused"}],
+    ...[undefined, null, 17, {}, [], "invalid"].map(materialVersionId =>
+      ["post", `${group}/rollouts`, {materialVersionId}]),
+    ["post", `${f.base}/distribution-groups/invalid/rollouts`, {materialVersionId:f.materialVersionId}],
+  ];
+  for (const [method, url, body] of cases) {
+    const response = await request(f.app)[method](url)
+      .set("X-Test-Session", String(f.actor)).send(body);
+    assert.equal(response.status, 422, `${method} ${url}`);
+    assert.equal(response.body.code, "CERTOPS_MATERIAL_CONTRACT_INVALID");
+  }
+  assert.equal(await count(), before);
+});
+
 test("a valid active rollout expires while waiting for its offline consumer", async () => {
   const f = await fixture({ validFor: "2 seconds" }),
     job = await f.approved();

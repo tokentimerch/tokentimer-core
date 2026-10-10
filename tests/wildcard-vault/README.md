@@ -101,10 +101,9 @@ databases, network and email capture with explicit container resource limits.
 For the production builds, start only this fixture's `registry` service with
 the `images` profile. Use a named `docker-container` Buildx builder with
 `buildkitd.toml`, the fixture network, at most two CPUs and a 4 GiB memory limit. The
-Cloud documentation build exceeded 2 GiB; its retry has a 5 GiB
-combined memory/swap ceiling. Keep the default builder unchanged. Full build,
-immutable base selection and registry scan commands are recorded in the Cloud
-candidate's `docs/wildcard-vault-images.md`. Build contexts are the Core root
+Cloud documentation build may need a 5 GiB combined memory/swap ceiling.
+Keep the default builder unchanged. Save build and registry scan logs under
+the ignored `.scratch/` directory. Build contexts are the Core root
 and each variant's `.build/stage/<variant>/runtime`, never an audit checkout.
 
 Stop only this project's services when finished:

@@ -1,11 +1,13 @@
-# Wildcard material distribution candidate
+# Certificate material distribution candidate
 
 Customer issuer → existing native ACME DNS-01 → customer Vault KV v2 →
 explicitly assigned Linux consumers → concrete TLS listeners → public receipts.
 The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
-deploying to every consumer. This candidate adds migrations 68–69; Cloud applies
-the same SQL as migrations 86–87 after main's inventory migration 85. Enterprise
+deploying to every consumer. The same certificate may be an ordinary, SAN, or
+wildcard certificate; sharing it is independent of its DNS names.
+This candidate adds migrations 68–70; Cloud applies
+the same SQL as migrations 86–88 after main's inventory migration 85. Enterprise
 inherits Core through staged composition.
 
 Rejected/cancelled publications release their allocation only when the database

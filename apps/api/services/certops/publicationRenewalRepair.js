@@ -1,7 +1,7 @@
 "use strict";
 
 const { pool } = require("../../db/database");
-const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
+const { assertDistributionPolicy: lockWorkspaceForCertOpsSideEffect } = require("./distributionPolicy");
 const material = require("./materialDistribution");
 const { parsePublicCertificateMaterial } = require("./parser");
 const { ensureDerivedRenewalProfile } = require("./renewalProfileDerivation");
