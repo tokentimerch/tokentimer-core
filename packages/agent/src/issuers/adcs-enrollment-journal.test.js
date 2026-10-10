@@ -272,6 +272,73 @@ describe("adcs-enrollment-journal", () => {
     );
   });
 
+  it("preserves RequestId, leafSha256, and validationDeadlineAt when later writes omit them", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "pending",
+      attempt: 1,
+      requestId: 10,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+    });
+    const { leafSha256 } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: LEAF_PEM,
+    });
+    // issued may omit requestId; the pending RequestId must survive.
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "issued",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      leafSha256,
+      jobId: "job:1",
+    });
+    let read = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(read.kind, "valid");
+    assert.equal(read.journal.requestId, 10);
+    assert.equal(read.journal.leafSha256, leafSha256);
+
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "validation_deferred",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      leafSha256,
+      validationDeadlineAt: "2099-01-01T00:00:00.000Z",
+      jobId: "job:1",
+    });
+    // installing omits requestId, leafSha256, and validationDeadlineAt.
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "installing",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      installStep: "accept",
+      jobId: "job:1",
+    });
+    read = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(read.kind, "valid");
+    assert.equal(read.journal.requestId, 10);
+    assert.equal(read.journal.leafSha256, leafSha256);
+    assert.equal(read.journal.validationDeadlineAt, "2099-01-01T00:00:00.000Z");
+  });
+
   it("persists issued leaf before validation_deferred can be journaled", async () => {
     const { csrSha256 } = await commitPrepared(stateDir);
     await commitSubmitting(stateDir, csrSha256);

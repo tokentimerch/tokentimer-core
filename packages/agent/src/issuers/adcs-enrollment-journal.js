@@ -666,10 +666,63 @@ async function writeIssuedCertificateArtifacts({
   return { leafSha256, chainSha256 };
 }
 
+/** Fields that, once recorded, must survive every later transition. */
+const IMMUTABLE_STRING_FIELDS = Object.freeze([
+  "containerName",
+  "snapshotSha256",
+  "csrSpkiSha256",
+  "templateOid",
+  "csrSha256",
+  "leafSha256",
+  "validationDeadlineAt",
+]);
+
+/**
+ * Carry forward established identity fields and reject mutations.
+ * Omission of a previously recorded immutable value preserves it.
+ */
+function mergeImmutableJournalFields(previousJournal, previousState, fields) {
+  const merged = { ...fields };
+  if (!previousJournal) return merged;
+
+  for (const field of IMMUTABLE_STRING_FIELDS) {
+    const prior = previousJournal[field];
+    if (typeof prior !== "string" || prior.length === 0) continue;
+    // containerName is immutable from keygen_intent onward; other identity
+    // fields only after prepared (or later) has been committed.
+    if (field !== "containerName" && previousState === "keygen_intent") continue;
+    const next = merged[field];
+    if (typeof next === "string" && next.length > 0) {
+      if (next !== prior) {
+        throw new Error(`journal field ${field} is immutable after commit`);
+      }
+    } else {
+      merged[field] = prior;
+    }
+  }
+
+  if (
+    previousState !== "keygen_intent" &&
+    Number.isInteger(previousJournal.requestId) &&
+    previousJournal.requestId >= 1
+  ) {
+    if (Number.isInteger(merged.requestId) && merged.requestId >= 1) {
+      if (merged.requestId !== previousJournal.requestId) {
+        throw new Error("journal field requestId is immutable after commit");
+      }
+    } else {
+      merged.requestId = previousJournal.requestId;
+    }
+  }
+
+  return merged;
+}
+
 /**
  * Commit a journal.json transition. Caller must hold the enrollment lock.
  * Enforces state-required fields, permitted transitions, and immutable
- * enrollment identity fields once committed past keygen_intent.
+ * enrollment identity fields once committed past keygen_intent. Previously
+ * recorded immutable values are preserved when a later write omits them.
  * @param {object} fields journal body fields (state-required)
  */
 async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
@@ -679,10 +732,6 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
   }
   if (typeof fields.state !== "string" || !JOURNAL_STATES.includes(fields.state)) {
     throw new TypeError(`invalid journal state ${JSON.stringify(fields?.state)}`);
-  }
-  const missing = missingRequiredFields(fields.state, fields);
-  if (missing) {
-    throw new TypeError(`journal state ${fields.state} is missing required field ${missing}`);
   }
 
   const existing = readEnrollmentJournal(stateDir, enrollmentId);
@@ -703,48 +752,19 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
     );
   }
 
-  if (previousJournal) {
-    if (
-      typeof previousJournal.containerName === "string" &&
-      typeof fields.containerName === "string" &&
-      previousJournal.containerName !== fields.containerName
-    ) {
-      throw new Error("journal field containerName is immutable after commit");
-    }
-    if (previousState !== "keygen_intent") {
-      for (const field of [
-        "snapshotSha256",
-        "csrSpkiSha256",
-        "templateOid",
-        "csrSha256",
-        "leafSha256",
-        "validationDeadlineAt",
-      ]) {
-        if (
-          typeof previousJournal[field] === "string" &&
-          typeof fields[field] === "string" &&
-          previousJournal[field] !== fields[field]
-        ) {
-          throw new Error(`journal field ${field} is immutable after commit`);
-        }
-      }
-      if (
-        Number.isInteger(previousJournal.requestId) &&
-        previousJournal.requestId >= 1 &&
-        Number.isInteger(fields.requestId) &&
-        fields.requestId >= 1 &&
-        fields.requestId !== previousJournal.requestId
-      ) {
-        throw new Error("journal field requestId is immutable after commit");
-      }
-    }
+  const mergedFields = mergeImmutableJournalFields(previousJournal, previousState, fields);
+  const missing = missingRequiredFields(mergedFields.state, mergedFields);
+  if (missing) {
+    throw new TypeError(
+      `journal state ${mergedFields.state} is missing required field ${missing}`,
+    );
   }
 
   ensureEnrollmentDir(stateDir, enrollmentId);
   const payload = {
     schemaVersion: JOURNAL_SCHEMA_VERSION,
     enrollmentId,
-    ...fields,
+    ...mergedFields,
     updatedAt: new Date().toISOString(),
   };
   await durableWriteFile(journalV2Path(stateDir, enrollmentId), `${JSON.stringify(payload)}\n`);
