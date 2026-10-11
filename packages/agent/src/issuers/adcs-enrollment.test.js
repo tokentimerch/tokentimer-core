@@ -167,9 +167,13 @@ describe("pinned CA cert cache and RequestId journal", () => {
       requestId: 99,
       snapshotSha256: "d".repeat(64),
       jobId: "job:1",
+      csrSpkiSha256: "e".repeat(64),
+      templateOid: "1.3.6.1.4.1.311.21.8.1.2.3",
     });
     const read = readEnrollmentRequestJournal(stateDir, enrollmentId);
     assert.equal(read.requestId, 99);
     assert.equal(read.attempt, 1);
+    assert.equal(read.csrSpkiSha256, "e".repeat(64));
+    assert.equal(read.templateOid, "1.3.6.1.4.1.311.21.8.1.2.3");
   });
 });

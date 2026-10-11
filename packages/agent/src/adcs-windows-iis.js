@@ -6,8 +6,8 @@
  * and (on issued) the deploy tail.
  *
  * Executable selection remains gated off in IMPLEMENTED_ISSUER_KINDS until
- * decision-6 validation, durable journal recovery, and continuation scheduling
- * land; this module is the non-executable wiring slice.
+ * durable journal recovery and continuation scheduling land; decision-6
+ * validation runs on the dormant path before accept.
  */
 
 const path = require("node:path");
@@ -20,9 +20,19 @@ const {
   mapSnapshotKeyAlgorithm,
   resolveAdcsCmcHelperPath,
   resolvePinnedCaCertPath,
+  resolveTemplateOid,
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
 } = require("./issuers");
+const {
+  validateIssuedCertificate,
+  extractSpkiFromCsr,
+  spkiSha256Hex,
+} = require("./issuers/issued-certificate-validation");
+const {
+  resolveAdcsChainHelperPath,
+  validateCertificateChain,
+} = require("./issuers/chain-helper");
 const {
   generateCsrViaCng,
   acquireEnrollmentLock,
@@ -32,6 +42,8 @@ const {
   buildEnrollmentContainerName,
   hasIssuedContainerRecord,
 } = require("./windows-cert-store");
+const { queryCurrentBinding } = require("./windows-iis");
+const { listMachineStoreCertificates } = require("./windows-discovery");
 
 const WINDOWS_CERT_STORE_WORK_DIR_NAME = "windows-cert-store-work";
 const CA_HRESULT_PATTERN = /^0x[0-9A-F]{8}$/;
@@ -155,9 +167,144 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
 
 function shouldRetainCngKey(outcome) {
   // not_submitted: transport proved the CA never saw the CSR, so free the
-  // container and let a later renew regenerate. pending/uncertain/issued keep
-  // the key for continue-enrollment retrieve/accept (never resubmit uncertain).
-  return outcome === "pending" || outcome === "uncertain" || outcome === "issued";
+  // container and let a later renew regenerate. pending/uncertain/issued and
+  // validation_deferred keep the key (decision 6); rejected_invalid frees it.
+  return (
+    outcome === "pending" ||
+    outcome === "uncertain" ||
+    outcome === "issued" ||
+    outcome === "validation_deferred"
+  );
+}
+
+/**
+ * Whether the CNG container created for this enrollment should be deleted.
+ * Independent of whether certificate PEM was received: rejected_invalid must
+ * free the key (ADR-0014 decision 6). Pre-submit aborts (key created, CA never
+ * contacted) must also free the key so renew is not blocked forever.
+ */
+function shouldCleanupAbandonedCngKey({ submitStarted, issuanceOutcome, containerCreated }) {
+  // Key exists but submit never started: lease abort / preflight after keygen.
+  if (!submitStarted) return containerCreated === true;
+  // Submit started with no classified outcome yet: retain (may be at the CA).
+  if (issuanceOutcome === null) return false;
+  return !shouldRetainCngKey(issuanceOutcome);
+}
+
+/**
+ * Write the leaf PEM into a private temporary directory under adcs-scratch.
+ * Concurrent validations must never share a filename.
+ */
+async function withUniqueValidationLeafFile(stateDir, certificatePem, fn) {
+  const scratchRoot = path.join(stateDir, "adcs-scratch");
+  await fsp.mkdir(scratchRoot, { recursive: true });
+  const workDir = await fsp.mkdtemp(path.join(scratchRoot, "validate-"));
+  const certPath = path.join(workDir, "leaf.pem");
+  try {
+    await fsp.writeFile(certPath, certificatePem, "utf8");
+    return await fn(certPath, workDir);
+  } finally {
+    try {
+      await fsp.rm(workDir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+}
+
+/**
+ * Observe the certificate currently bound at the IIS target (serial + notAfter).
+ * Missing binding is a first install (nulls), not an error.
+ */
+async function observeInstalledCertificateIdentity({
+  windowsTarget,
+  execFileImpl,
+  queryCurrentBindingImpl = queryCurrentBinding,
+  listMachineStoreCertificatesImpl = listMachineStoreCertificates,
+}) {
+  // Match deploy's selector: explicit address when present, else IIS wildcard "*".
+  const address =
+    typeof windowsTarget.binding.address === "string" && windowsTarget.binding.address.length > 0
+      ? windowsTarget.binding.address
+      : "*";
+  const binding = {
+    address,
+    port: windowsTarget.binding.port,
+    ...(windowsTarget.binding.sniHost ? { sniHost: windowsTarget.binding.sniHost } : {}),
+  };
+  const current = await queryCurrentBindingImpl({
+    binding,
+    ...(execFileImpl ? { execFileImpl } : {}),
+  });
+  if (!current.ok) {
+    return {
+      error: current.stderrExcerpt || "could not query the current IIS binding",
+    };
+  }
+  if (!current.thumbprint) {
+    return { existingNotAfter: null, existingSerialHex: null };
+  }
+  const listed = await listMachineStoreCertificatesImpl({
+    store: windowsTarget.store,
+    ...(execFileImpl ? { execFileImpl } : {}),
+  });
+  if (!listed.ok) {
+    return {
+      error: listed.stderrExcerpt || "could not list the machine certificate store",
+    };
+  }
+  const thumb = String(current.thumbprint).toUpperCase();
+  const match = listed.certificates.find(
+    (cert) => String(cert.thumbprint || "").toUpperCase() === thumb,
+  );
+  if (!match) {
+    return {
+      error: `bound thumbprint ${thumb} was not found in store ${windowsTarget.store}`,
+    };
+  }
+  const existingNotAfter = match.notAfter ?? null;
+  const existingSerialHex =
+    typeof match.serialNumber === "string" && match.serialNumber.length > 0
+      ? match.serialNumber
+      : null;
+  // Bound certificate present but unreadable metadata: fail closed. Do not
+  // pretend this is a first install and skip serial / requireLaterNotAfter.
+  if (existingNotAfter == null || existingSerialHex == null) {
+    return {
+      error: `bound certificate ${thumb} in store ${windowsTarget.store} is missing serial or notAfter metadata`,
+    };
+  }
+  return { existingNotAfter, existingSerialHex };
+}
+
+/**
+ * @param {object} validation validateIssuedCertificate result
+ * @param {{ enrollmentId: string, attempt: number }} enrollment
+ * @param {number} [requestId]
+ */
+function resultForValidationOutcome(validation, { enrollmentId, attempt }, requestId) {
+  const requestExtras =
+    Number.isInteger(requestId) && requestId >= 1 ? { requestId } : {};
+  if (validation.state === "validation_deferred") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(validation.detail || "revocation status unknown"),
+      enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "validation_deferred", {
+        errorCode: null,
+        ...requestExtras,
+      }),
+    };
+  }
+  return {
+    status: "failed",
+    keyRotated: null,
+    errorMessage: boundErrorMessage(validation.detail || "issued certificate failed validation"),
+    enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "rejected_invalid", {
+      errorCode: validation.errorCode || "ADCS_CERTIFICATE_INVALID",
+      ...requestExtras,
+    }),
+  };
 }
 
 async function resolveWindowsIisTarget(job) {
@@ -201,12 +348,111 @@ function createAdcsWindowsIisExecutors(deps) {
     resolveAgentStateDir,
     renewJobLeaseOrAbort,
     reportIssuanceEvidence,
+    reportStepEvidence,
     runWindowsIisDeployTail,
     emitInfo,
     emitLog,
     recordWindowsCngContainer,
     isValidCertificateId,
   } = deps;
+
+  async function runDecision6Validation({
+    certificatePem,
+    csrPem,
+    csrSpkiSha256,
+    snapshot,
+    requiredDnsName,
+    stateDir,
+    executionContext,
+    templateOid,
+    windowsTarget,
+  }) {
+    if (typeof templateOid !== "string" || !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(templateOid)) {
+      return {
+        ok: false,
+        state: "rejected_invalid",
+        errorCode: "ADCS_CERTIFICATE_INVALID",
+        detail: "templateOid is required and must be bound to this enrollment",
+      };
+    }
+
+    const observeImpl =
+      executionContext.adcsObserveInstalledIdentityImpl || observeInstalledCertificateIdentity;
+    const observed = await observeImpl({
+      windowsTarget,
+      execFileImpl: executionContext.windowsExecFileImpl,
+      queryCurrentBindingImpl: executionContext.adcsQueryCurrentBindingImpl,
+      listMachineStoreCertificatesImpl: executionContext.adcsListMachineStoreCertificatesImpl,
+    });
+    if (observed.error) {
+      return {
+        ok: false,
+        state: "rejected_invalid",
+        errorCode: "ADCS_CERTIFICATE_INVALID",
+        detail: observed.error,
+      };
+    }
+
+    const chainHelper = resolveAdcsChainHelperPath({
+      overridePath: executionContext.adcsChainHelperPath,
+    });
+    const chainValidateImpl =
+      executionContext.adcsChainValidateImpl ||
+      (async (args) => {
+        if (chainHelper.error) {
+          return { verdict: "invalid", detail: chainHelper.error };
+        }
+        return withUniqueValidationLeafFile(stateDir, args.certificatePem, async (certPath) =>
+          validateCertificateChain({
+            helperPath: chainHelper.path,
+            certPath,
+            caKeySha256: args.caKeySha256,
+            revocationCheck: args.revocationCheck,
+            caCertPath: args.caCertPath,
+            extraStorePath: args.extraStorePath,
+            execFileImpl: executionContext.adcsExecFileImpl || executionContext.windowsExecFileImpl,
+          }),
+        );
+      });
+
+    return validateIssuedCertificate({
+      certificatePem,
+      csrPem,
+      csrSpkiSha256,
+      authorizedDnsNames: snapshot.authorizedDnsNames,
+      requiredDnsName,
+      templateOid,
+      caKeySha256: snapshot.caKeySha256,
+      minimumRemainingValidity: snapshot.minimumRemainingValidity,
+      requireLaterNotAfter: snapshot.requireLaterNotAfter === true,
+      existingNotAfter: observed.existingNotAfter,
+      existingSerialHex: observed.existingSerialHex,
+      keyAlgorithm: snapshot.keyAlgorithm,
+      chainValidateImpl,
+      revocationCheck: executionContext.adcsRevocationCheck || "require",
+      caCertPath: executionContext.adcsCaCertPath,
+      helperPath: chainHelper.path,
+    });
+  }
+
+  async function reportBestEffortRevocationEvidence(client, jobId, validation) {
+    if (typeof reportStepEvidence !== "function") return;
+    if (!validation || validation.revocationBestEffort !== true) return;
+    await reportStepEvidence(client, jobId, [
+      {
+        eventType: "validation.passed",
+        observedAt: new Date().toISOString(),
+        summary:
+          "AD CS issued certificate accepted under best-effort revocation policy (revocation status unknown)",
+        metadata: [
+          { name: "step", value: "adcs-decision6" },
+          { name: "revocationCheck", value: "best-effort" },
+          { name: "revocationVerdict", value: "revocation_unknown" },
+          { name: "revocationBestEffort", value: true },
+        ],
+      },
+    ]);
+  }
 
   async function buildAdcsIssuerContext({ job, executionContext, stateDir }) {
     const decoded = decodeEnrollmentSnapshot(job);
@@ -376,6 +622,27 @@ function createAdcsWindowsIisExecutors(deps) {
         };
       }
 
+      const templateOidResolved = resolveTemplateOid({
+        stateDir,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+        templateOid: executionContext.adcsTemplateOid,
+      });
+      if (!templateOidResolved.ok) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(templateOidResolved.error),
+          enrollmentResult: enrollmentResultFor(
+            decoded.enrollmentId,
+            decoded.attempt,
+            "rejected_invalid",
+            { errorCode: "ADCS_CERTIFICATE_INVALID" },
+          ),
+        };
+      }
+      const templateOid = templateOidResolved.templateOid;
+
       if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
       emitInfo(
         `job ${jobId}: generating CNG-native key + CSR for AD CS enrollment ${decoded.enrollmentId}`,
@@ -475,6 +742,16 @@ function createAdcsWindowsIisExecutors(deps) {
       issuanceOutcome = issuance.outcome;
       await reportIssuanceEvidence(client, jobId, issuance);
 
+      let csrSpkiSha256;
+      try {
+        csrSpkiSha256 = spkiSha256Hex(extractSpkiFromCsr(csrResult.csrPem));
+      } catch (err) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(`could not hash CSR public key: ${err.message}`),
+        };
+      }
       if (issuance.outcome === "pending") {
         await writeEnrollmentRequestJournal({
           stateDir,
@@ -483,6 +760,8 @@ function createAdcsWindowsIisExecutors(deps) {
           requestId: issuance.requestId,
           snapshotSha256: decoded.snapshotSha256,
           jobId,
+          csrSpkiSha256,
+          templateOid,
         });
         return resultForAdcsOutcome(issuance, decoded);
       }
@@ -490,6 +769,24 @@ function createAdcsWindowsIisExecutors(deps) {
         return resultForAdcsOutcome(issuance, decoded);
       }
       certificatePem = issuance.certificatePem;
+
+      const validation = await runDecision6Validation({
+        certificatePem,
+        csrPem: csrResult.csrPem,
+        csrSpkiSha256,
+        snapshot,
+        requiredDnsName: commonName,
+        stateDir,
+        executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+        templateOid,
+        windowsTarget,
+      });
+      if (!validation.ok) {
+        issuanceOutcome =
+          validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
+        return resultForValidationOutcome(validation, decoded, issuance.requestId);
+      }
+      await reportBestEffortRevocationEvidence(client, jobId, validation);
 
       // Hold the enrollment lock through accept/deploy so continue-enrollment
       // cannot race retrieve/accept on the same enrollmentId.
@@ -509,9 +806,14 @@ function createAdcsWindowsIisExecutors(deps) {
       });
       return withInstalledEnrollmentResult(deployResult, decoded, issuance.requestId);
     } finally {
-      const retainAfterSubmit =
-        submitStarted && (issuanceOutcome === null || shouldRetainCngKey(issuanceOutcome));
-      if (certificatePem === undefined && containerName && !retainAfterSubmit) {
+      if (
+        containerName &&
+        shouldCleanupAbandonedCngKey({
+          submitStarted,
+          issuanceOutcome,
+          containerCreated: true,
+        })
+      ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
             containerName,
@@ -595,6 +897,7 @@ function createAdcsWindowsIisExecutors(deps) {
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
     const containerName = buildEnrollmentContainerName(decoded.enrollmentId);
+    let continueOutcome = null;
 
     try {
       {
@@ -634,6 +937,46 @@ function createAdcsWindowsIisExecutors(deps) {
         });
       }
 
+      if (typeof journal.csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(journal.csrSpkiSha256)) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `local RequestId journal for enrollment ${decoded.enrollmentId} is missing csrSpkiSha256; cannot validate before accept`,
+          ),
+        };
+      }
+      if (
+        typeof journal.templateOid !== "string" ||
+        !/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(journal.templateOid)
+      ) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `local RequestId journal for enrollment ${decoded.enrollmentId} is missing templateOid; cannot validate before accept`,
+          ),
+        };
+      }
+
+      const validation = await runDecision6Validation({
+        certificatePem: issuance.certificatePem,
+        csrSpkiSha256: journal.csrSpkiSha256,
+        snapshot,
+        requiredDnsName: windowsTarget.reference,
+        stateDir,
+        executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+        templateOid: journal.templateOid,
+        windowsTarget,
+      });
+      if (!validation.ok) {
+        continueOutcome =
+          validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
+        return resultForValidationOutcome(validation, decoded, journal.requestId);
+      }
+      await reportBestEffortRevocationEvidence(client, jobId, validation);
+      continueOutcome = "issued";
+
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -650,6 +993,30 @@ function createAdcsWindowsIisExecutors(deps) {
       });
       return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
     } finally {
+      if (
+        containerName &&
+        continueOutcome &&
+        shouldCleanupAbandonedCngKey({
+          submitStarted: true,
+          issuanceOutcome: continueOutcome,
+          containerCreated: true,
+        })
+      ) {
+        try {
+          const cleanup = await removeAbandonedKeyContainer({
+            containerName,
+            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+          });
+          if (cleanup.ok === true) {
+            removeIssuedContainerRecord({ stateDir, containerName });
+          }
+        } catch (err) {
+          emitLog(
+            log,
+            `job ${jobId}: failed to delete abandoned CNG key after AD CS validation failure: ${err.message}`,
+          );
+        }
+      }
       enrollmentLock.release();
     }
   }
@@ -663,5 +1030,9 @@ function createAdcsWindowsIisExecutors(deps) {
 module.exports = {
   createAdcsWindowsIisExecutors,
   resultForAdcsOutcome,
+  resultForValidationOutcome,
   shouldRetainCngKey,
+  shouldCleanupAbandonedCngKey,
+  observeInstalledCertificateIdentity,
+  withUniqueValidationLeafFile,
 };

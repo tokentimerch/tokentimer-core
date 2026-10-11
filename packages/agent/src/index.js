@@ -3032,6 +3032,7 @@ function getAdcsWindowsIisExecutors() {
       resolveAgentStateDir,
       renewJobLeaseOrAbort,
       reportIssuanceEvidence,
+      reportStepEvidence,
       runWindowsIisDeployTail,
       emitInfo,
       emitLog,
