@@ -58,6 +58,7 @@ const TERMINAL = new Set([
 const CONTINUATION_STATES = new Set([
   "pending_issuance",
   "submitting",
+  "submission_uncertain",
   "validation_deferred",
   "cancelled",
   "expired",
@@ -127,15 +128,29 @@ function freezeSnapshot(input) {
   };
 }
 
-function assertForwardTransition(from, to) {
-  if (from === to) return;
-  const allowed = FORWARD[from] || [];
-  if (!allowed.includes(to)) {
-    throw serviceError(
-      `enrollment cannot move from ${from} to ${to}`,
-      "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
-    );
+function canReachEnrollmentState(from, to) {
+  if (from === to) return true;
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const next of FORWARD[current] || []) {
+      if (next === to) return true;
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
   }
+  return false;
+}
+
+function assertForwardTransition(from, to) {
+  if (canReachEnrollmentState(from, to)) return;
+  throw serviceError(
+    `enrollment cannot move from ${from} to ${to}`,
+    "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+  );
 }
 
 function nextPollAt(now, seconds) {
@@ -152,6 +167,12 @@ function decideContinuation(enrollment, snapshot, now) {
   if (enrollment.nextPollAt && enrollment.nextPollAt.getTime() > now.getTime()) return null;
   if (enrollment.state === "submitting" && enrollment.lastErrorCode === UNREACHABLE_ERROR) {
     return { dispatch: true, reason: UNREACHABLE_ERROR };
+  }
+  if (enrollment.state === "submission_uncertain") {
+    if (!Number.isInteger(enrollment.operatorRequestId) || enrollment.operatorRequestId < 1) {
+      return null;
+    }
+    return { dispatch: true, reason: "reconcile" };
   }
   if (enrollment.state === "cancelled" || enrollment.state === "expired") {
     return { dispatch: true, reason: "free_key" };
@@ -196,7 +217,11 @@ function attachEnrollmentDispatch(stored, enrollment) {
     );
   }
   const metadata = Array.isArray(stored.metadata) ? stored.metadata.slice() : [];
-  if (Number.isInteger(enrollment.operatorRequestId) && enrollment.operatorRequestId >= 1) {
+  if (
+    Number.isInteger(enrollment.operatorRequestId) &&
+    enrollment.operatorRequestId >= 1 &&
+    !metadata.some((entry) => entry && entry.name === "adcs.reconcileRequestId")
+  ) {
     metadata.push({
       name: "adcs.reconcileRequestId",
       value: enrollment.operatorRequestId,
@@ -228,6 +253,7 @@ function assertPayloadHasNoEnrollmentFields(payload) {
 
 function confirmedKeyAllowed(preflight, caKeySha256) {
   if (!preflight || preflight.templateCheck?.verdict !== "safe") return false;
+  if (preflight.caCheck?.verdict !== "safe") return false;
   const certs = Array.isArray(preflight.caCertificates) ? preflight.caCertificates : [];
   return certs.some((cert) => cert && cert.keySha256 === caKeySha256);
 }
@@ -243,6 +269,7 @@ module.exports = {
   TERMINAL,
   UNREACHABLE_ERROR,
   assertForwardTransition,
+  canReachEnrollmentState,
   assertIssuerKind,
   assertPayloadHasNoEnrollmentFields,
   attachEnrollmentDispatch,

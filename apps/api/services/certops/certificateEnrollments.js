@@ -122,6 +122,7 @@ async function confirmIssuerKey({
   caConfig,
   template,
   actorUserId,
+  audit = writeAudit,
 }) {
   const db = dbOf(client);
   const issuer = await db.query(
@@ -143,6 +144,18 @@ async function confirmIssuerKey({
       "CERTOPS_SNAPSHOT_INVALID",
     );
   }
+  if (caConfig && caConfig !== preflight.caConfig) {
+    throw serviceError(
+      "caConfig does not match the preflight result",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  if (template && template !== preflight.template) {
+    throw serviceError(
+      "template does not match the preflight result",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
   const version = Number(row.current_version || 0) + 1;
   await db.query(
     `INSERT INTO certificate_issuer_versions (
@@ -153,8 +166,8 @@ async function confirmIssuerKey({
       workspaceId,
       issuerId,
       version,
-      caConfig || preflight.caConfig,
-      template || preflight.template,
+      preflight.caConfig,
+      preflight.template,
       caKeySha256,
       JSON.stringify({ caKeySha256, templateOid: preflight.templateCheck?.templateOid || null }),
     ],
@@ -165,7 +178,7 @@ async function confirmIssuerKey({
       WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, issuerId, version],
   );
-  await writeAudit({
+  await audit({
     client: db,
     actorUserId: actorUserId || null,
     subjectUserId: actorUserId || null,
@@ -203,6 +216,12 @@ async function createEnrollment({
   );
   const issuer = version.rows[0];
   if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
+  if (!target || target.type !== "windows-iis" || !target.binding) {
+    throw serviceError(
+      "enrollment target must be a windows-iis binding",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
   assertIssuerKind(issuer.kind);
   const frozen = freezeSnapshot({
     issuerId,
@@ -217,8 +236,8 @@ async function createEnrollment({
   const inserted = await db.query(
     `INSERT INTO certificate_enrollments (
        workspace_id, certificate_id, issuer_id, issuer_version, agent_id,
-       state, attempt, snapshot_bytes, snapshot_sha256
-     ) VALUES ($1,$2,$3,$4,$5,'requested',0,$6,$7)
+       state, attempt, snapshot_bytes, snapshot_sha256, deploy_target
+     ) VALUES ($1,$2,$3,$4,$5,'requested',0,$6,$7,$8::jsonb)
      RETURNING id`,
     [
       workspaceId,
@@ -228,6 +247,7 @@ async function createEnrollment({
       agentId,
       frozen.bytes,
       frozen.sha256,
+      JSON.stringify(target),
     ],
   );
   const enrollmentId = inserted.rows[0].id;
@@ -265,7 +285,7 @@ async function loadEnrollment(db, workspaceId, enrollmentId) {
     `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
             e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
-            j.status AS job_status
+            e.deploy_target, j.status AS job_status
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
          ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
@@ -290,6 +310,7 @@ function enrollmentView(row) {
     activeJob: Boolean(active),
     certificateId: row.certificate_id,
     agentId: row.agent_id,
+    deployTarget: row.deploy_target,
   };
 }
 
@@ -317,13 +338,21 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
     );
   }
   assertForwardTransition(row.state, enrollmentResult.state);
+  const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
+  const pollSeconds = snapshot.pollInterval || 900;
   let pendingSince = row.pending_since;
   let nextAt = row.next_poll_at;
   if (enrollmentResult.state === "pending_issuance" && !pendingSince) pendingSince = new Date();
-  if (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR) {
-    const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
-    nextAt = nextPollAt(new Date(), snapshot.pollInterval || 900);
+  if (
+    enrollmentResult.state === "pending_issuance" ||
+    enrollmentResult.state === "validation_deferred"
+  ) {
+    nextAt = nextPollAt(new Date(), pollSeconds);
   }
+  if (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR) {
+    nextAt = nextPollAt(new Date(), pollSeconds);
+  }
+  if (enrollmentResult.state === "submission_uncertain") nextAt = null;
   await db.query(
     `UPDATE certificate_enrollments
         SET state = $3,
@@ -367,7 +396,14 @@ async function recordPreflightResult(client, { workspaceId, job, preflightResult
   );
 }
 
-async function proposeReconcileRequestId({ client, workspaceId, enrollmentId, requestId, actorUserId }) {
+async function proposeReconcileRequestId({
+  client,
+  workspaceId,
+  enrollmentId,
+  requestId,
+  actorUserId,
+  audit = writeAudit,
+}) {
   const db = dbOf(client);
   const row = await loadEnrollment(db, workspaceId, enrollmentId);
   if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
@@ -383,7 +419,7 @@ async function proposeReconcileRequestId({ client, workspaceId, enrollmentId, re
       WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, enrollmentId, requestId],
   );
-  await writeAudit({
+  await audit({
     client: db,
     actorUserId: actorUserId || null,
     subjectUserId: actorUserId || null,
@@ -441,16 +477,31 @@ async function loadDispatchEnrollment(client, workspaceId, enrollmentId) {
   return { ...view, attempt };
 }
 
+async function claimDueEnrollment(db, workspaceId, enrollmentId, now) {
+  const claimed = await db.query(
+    `UPDATE certificate_enrollments
+        SET next_poll_at = NULL, updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2
+        AND next_poll_at IS NOT NULL
+        AND next_poll_at <= $3
+      RETURNING id`,
+    [workspaceId, enrollmentId, now],
+  );
+  return claimed.rows.length === 1;
+}
+
 async function scheduleDueEnrollments({ client, now = new Date(), createJob = createCertificateJob }) {
   const db = dbOf(client);
   const due = await db.query(
     `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at, e.last_error_code,
-            e.certificate_id, e.agent_id, e.current_job_id, j.status AS job_status
+            e.certificate_id, e.agent_id, e.current_job_id, e.deploy_target,
+            j.status AS job_status
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
          ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
-      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1`,
+      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1
+      FOR UPDATE OF e SKIP LOCKED`,
     [now],
   );
   const created = [];
@@ -459,19 +510,33 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
     const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
     const decision = decideContinuation(view, snapshot, now);
     if (!decision) continue;
+    const claimed = await claimDueEnrollment(db, row.workspace_id, row.id, now);
+    if (!claimed) continue;
     if (decision.state === "expired") {
       await db.query(
         `UPDATE certificate_enrollments
-            SET state = 'expired', next_poll_at = NOW(), updated_at = NOW()
+            SET state = 'expired', updated_at = NOW()
           WHERE workspace_id = $1 AND id = $2`,
         [row.workspace_id, row.id],
       );
     }
     if (!decision.dispatch && decision.state !== "expired") continue;
+    const target = row.deploy_target;
+    if (!target || target.type !== "windows-iis") {
+      throw serviceError(
+        "enrollment is missing its IIS deployment target",
+        "CERTOPS_SNAPSHOT_INVALID",
+      );
+    }
     const attempt = Number(row.attempt || 0) + 1;
+    const reconcileMetadata =
+      Number.isInteger(row.operator_request_id) && row.operator_request_id >= 1
+        ? [{ name: "adcs.reconcileRequestId", value: row.operator_request_id }]
+        : undefined;
     const payload = storedAdcsPayload({
       certificateId: row.certificate_id,
-      target: { type: "windows-iis", reference: snapshot.authorizedDnsNames[0], store: "My" },
+      target,
+      metadata: reconcileMetadata,
     });
     const job = await createJob({
       client: db,
@@ -486,11 +551,11 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
     });
     await db.query(
       `UPDATE certificate_enrollments
-          SET attempt = $3, current_job_id = $4, next_poll_at = NULL, updated_at = NOW()
+          SET attempt = $3, current_job_id = $4, updated_at = NOW()
         WHERE workspace_id = $1 AND id = $2`,
       [row.workspace_id, row.id, attempt, job.id],
     );
-    created.push({ enrollmentId: row.id, jobId: job.id, attempt });
+    created.push({ enrollmentId: row.id, jobId: job.id, attempt, target: payload.target });
   }
   return created;
 }

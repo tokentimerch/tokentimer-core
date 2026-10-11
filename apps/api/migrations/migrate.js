@@ -4703,6 +4703,7 @@ const migrations = [
         attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
         snapshot_bytes BYTEA NOT NULL,
         snapshot_sha256 TEXT NOT NULL CHECK (snapshot_sha256 ~ '^[a-f0-9]{64}$'),
+        deploy_target JSONB NOT NULL,
         request_id BIGINT NULL CHECK (request_id IS NULL OR request_id >= 1),
         operator_request_id BIGINT NULL CHECK (operator_request_id IS NULL OR operator_request_id >= 1),
         last_error_code TEXT NULL,
