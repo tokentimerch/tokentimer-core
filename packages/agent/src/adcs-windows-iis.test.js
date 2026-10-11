@@ -97,6 +97,20 @@ describe("AD CS renew evidence ordering", () => {
     );
   });
 
+  it("keeps the last renew install step when journaling install_failed", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
+    const renewSrc = src.slice(
+      renewFn,
+      src.indexOf("async function executeWindowsIisContinueEnrollmentJob"),
+    );
+    const failAt = renewSrc.lastIndexOf('state: "install_failed"');
+    assert.ok(failAt >= 0);
+    const block = renewSrc.slice(failAt, failAt + 600);
+    assert.match(block, /installStep:\s*currentInstallStep/);
+    assert.doesNotMatch(block, /installStep:\s*"accept"/);
+  });
+
   it("captures reconcileSearchFrom at the submitting barrier before CA contact", () => {
     const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
     const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
@@ -1047,5 +1061,361 @@ describe("reject-A then attach-B continue-enrollment executor", () => {
     } finally {
       await fsp.rm(stateDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("continue-enrollment recovery executor", () => {
+  const templateOid = "1.3.6.1.4.1.311.21.8.1";
+  const csrPem =
+    "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n";
+  const leafPem = "-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----\n";
+
+  async function seedEnrollment(stateDir, enrollmentId, states) {
+    const caPem = fs.readFileSync(
+      path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
+    );
+    const caKeySha256 = computeSpkiSha256Hex(caPem);
+    const caCertPath = path.join(stateDir, "ca.cer");
+    fs.writeFileSync(caCertPath, caPem);
+    const helperPath = path.join(stateDir, "tokentimer-adcs-cmc.exe");
+    fs.writeFileSync(helperPath, "");
+
+    const snapshot = {
+      kind: "adcs",
+      caConfig: "ca.example.com\\Example CA",
+      template: "WebServer",
+      caKeySha256,
+      authorizedDnsNames: ["app.example.com"],
+      keyAlgorithm: "ecdsa",
+      keySize: 256,
+    };
+    const snapshotBytes = Buffer.from(JSON.stringify(snapshot), "utf8");
+    const snapshotSha256 = crypto.createHash("sha256").update(snapshotBytes).digest("hex");
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    const { csrSha256 } = await writeCsrArtifact({ stateDir, enrollmentId, csrPem });
+    const journalBase = {
+      attempt: 1,
+      containerName,
+      snapshotSha256,
+      jobId: `job-${enrollmentId.slice(0, 8)}`,
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid,
+      caConfig: snapshot.caConfig,
+      template: snapshot.template,
+    };
+    await writeEnrollmentJournal(stateDir, enrollmentId, {
+      state: "prepared",
+      ...journalBase,
+    });
+    await writeEnrollmentJournal(stateDir, enrollmentId, {
+      state: "submitting",
+      ...journalBase,
+      reconcileSearchFrom: 100,
+    });
+    let leafSha256 = null;
+    if (states !== "submitting") {
+      const written = await writeIssuedCertificateArtifacts({
+        stateDir,
+        enrollmentId,
+        leafPem,
+      });
+      leafSha256 = written.leafSha256;
+    }
+    if (states === "issued" || states === "installing" || states === "validation_deferred") {
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "issued",
+        ...journalBase,
+        leafSha256,
+        requestId: 40,
+      });
+    }
+    if (states === "installing") {
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "installing",
+        ...journalBase,
+        leafSha256,
+        requestId: 40,
+        installStep: "accept",
+      });
+    }
+    if (states === "validation_deferred") {
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "validation_deferred",
+        ...journalBase,
+        leafSha256,
+        requestId: 40,
+        validationDeadlineAt: "2000-01-01T00:00:00.000Z",
+      });
+    }
+    if (states === "tier2-expired") {
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submission_uncertain",
+        ...journalBase,
+        reconcileSearchFrom: 100,
+        reconcileCandidateRequestId: 105,
+        leafSha256,
+        validationDeadlineAt: "2000-01-01T00:00:00.000Z",
+      });
+    }
+
+    const job = {
+      certificateId: "11111111-1111-4111-8111-111111111111",
+      keyMode: "os-store-managed",
+      issuerKind: "adcs",
+      target: {
+        type: "windows-iis",
+        reference: "app.example.com",
+        store: "WebHosting",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      enrollment: {
+        enrollmentId,
+        attempt: 1,
+        snapshotB64: snapshotBytes.toString("base64"),
+        snapshotSha256,
+      },
+    };
+    return { job, journalBase, helperPath, caCertPath, leafSha256 };
+  }
+
+  function executorsFor(stateDir, extraDeps = {}) {
+    return createAdcsWindowsIisExecutors({
+      resolveAgentStateDir: () => stateDir,
+      renewJobLeaseOrAbort: async () => ({ ok: true }),
+      reportIssuanceEvidence: async () => {},
+      reportStepEvidence: async () => {},
+      runWindowsIisDeployTail: async () => ({ status: "succeeded", keyRotated: null }),
+      finalizeWindowsIisDeployBookkeeping: async () => {},
+      emitInfo: () => {},
+      emitLog: () => {},
+      recordWindowsCngContainer: () => {},
+      isValidCertificateId: () => true,
+      ...extraDeps,
+    });
+  }
+
+  function contextFor(seed, extra = {}) {
+    return {
+      execution: { keysDir: path.join(path.dirname(seed.helperPath), "keys") },
+      adcsHelperPath: seed.helperPath,
+      adcsCaCertPath: seed.caCertPath,
+      adcsTemplateOid: templateOid,
+      ...extra,
+    };
+  }
+
+  async function withState(enrollmentId, fn) {
+    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-continue-"));
+    try {
+      await fn(stateDir);
+    } finally {
+      await fsp.rm(stateDir, { recursive: true, force: true });
+    }
+  }
+
+  it("rewrites a crashed submitting journal to submission_uncertain and does not submit again", async () => {
+    await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", async (stateDir) => {
+      const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
+      const seed = await seedEnrollment(stateDir, enrollmentId, "submitting");
+      const submitArgs = [];
+      let reconcileCalls = 0;
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      const result = await executeWindowsIisContinueEnrollmentJob({
+        job: seed.job,
+        jobId: seed.journalBase.jobId,
+        client: {},
+        log: {},
+        executionContext: contextFor(seed, {
+          windowsExecFileImpl: (file, args, opts, cb) => {
+            submitArgs.push(args);
+            const err = new Error("submit must not run");
+            if (typeof cb === "function") {
+              cb(err);
+              return { kill() {}, once() {}, pid: 1 };
+            }
+            return Promise.reject(err);
+          },
+          adcsTryReconcileUncertainSubmissionImpl: async () => {
+            reconcileCalls += 1;
+            return { status: "none", nextSearchFrom: 101, probed: 0 };
+          },
+        }),
+      });
+      assert.equal(result.status, "failed");
+      assert.equal(result.enrollmentResult.state, "submission_uncertain");
+      assert.equal(reconcileCalls, 1);
+      assert.equal(submitArgs.some((args) => Array.isArray(args) && args.includes("-submit")), false);
+      const read = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(read.kind, "valid");
+      assert.equal(read.journal.state, "submission_uncertain");
+      assert.equal(read.journal.reconcileSearchFrom, 101);
+    });
+  });
+
+  it("resumes an installing journal at the inspected step and does not re-run decision-6", async () => {
+    await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", async (stateDir) => {
+      const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
+      const seed = await seedEnrollment(stateDir, enrollmentId, "installing");
+      let startAtStep = null;
+      let decision6 = 0;
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+        runWindowsIisDeployTail: async (input) => {
+          startAtStep = input.startAtStep;
+          return { status: "succeeded", keyRotated: null };
+        },
+      });
+      const result = await executeWindowsIisContinueEnrollmentJob({
+        job: seed.job,
+        jobId: seed.journalBase.jobId,
+        client: {},
+        log: {},
+        executionContext: contextFor(seed, {
+          adcsInspectInstallProgressImpl: async () => ({
+            status: "resume",
+            startAtStep: "bind",
+            expectedThumbprint: "ab".repeat(20),
+          }),
+          adcsRunDecision6ValidationImpl: async () => {
+            decision6 += 1;
+            return { ok: true };
+          },
+        }),
+      });
+      assert.equal(result.status, "succeeded");
+      assert.equal(result.enrollmentResult.state, "installed");
+      assert.equal(startAtStep, "bind");
+      assert.equal(decision6, 0);
+      const read = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(read.journal.state, "installed");
+      assert.equal(read.journal.installStep, "complete");
+    });
+  });
+
+  it("leaves the journal installing when a lease or lock abort interrupts deploy", async () => {
+    await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3", async (stateDir) => {
+      const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
+      const seed = await seedEnrollment(stateDir, enrollmentId, "installing");
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+        runWindowsIisDeployTail: async () => ({
+          status: "blocked",
+          keyRotated: null,
+          errorMessage: "lease renew aborted",
+        }),
+      });
+      const result = await executeWindowsIisContinueEnrollmentJob({
+        job: seed.job,
+        jobId: seed.journalBase.jobId,
+        client: {},
+        log: {},
+        executionContext: contextFor(seed, {
+          adcsInspectInstallProgressImpl: async () => ({
+            status: "resume",
+            startAtStep: "accept",
+            expectedThumbprint: "ab".repeat(20),
+          }),
+        }),
+      });
+      assert.equal(result.status, "blocked");
+      assert.equal(result.enrollmentResult, undefined);
+      const read = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(read.kind, "valid");
+      assert.equal(read.journal.state, "installing");
+      assert.notEqual(read.journal.state, "install_failed");
+    });
+  });
+
+  it("journals install_failed at the step deploy had reached", async () => {
+    await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4", async (stateDir) => {
+      const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
+      const seed = await seedEnrollment(stateDir, enrollmentId, "installing");
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+        runWindowsIisDeployTail: async (input) => {
+          await input.onInstallStep("mirror");
+          return { status: "failed", keyRotated: null, errorMessage: "bind failed" };
+        },
+      });
+      const result = await executeWindowsIisContinueEnrollmentJob({
+        job: seed.job,
+        jobId: seed.journalBase.jobId,
+        client: {},
+        log: {},
+        executionContext: contextFor(seed, {
+          adcsInspectInstallProgressImpl: async () => ({
+            status: "resume",
+            startAtStep: "mirror",
+            expectedThumbprint: "ab".repeat(20),
+          }),
+        }),
+      });
+      assert.equal(result.status, "failed");
+      assert.equal(result.enrollmentResult.state, "install_failed");
+      const read = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(read.journal.state, "install_failed");
+      assert.equal(read.journal.installStep, "mirror");
+    });
+  });
+
+  it("expires a validation_deferred journal without installing", async () => {
+    await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5", async (stateDir) => {
+      const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5";
+      const seed = await seedEnrollment(stateDir, enrollmentId, "validation_deferred");
+      let deployCalls = 0;
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+        runWindowsIisDeployTail: async () => {
+          deployCalls += 1;
+          return { status: "succeeded", keyRotated: null };
+        },
+      });
+      const result = await executeWindowsIisContinueEnrollmentJob({
+        job: seed.job,
+        jobId: seed.journalBase.jobId,
+        client: {},
+        log: {},
+        executionContext: contextFor(seed, {
+          adcsRunDecision6ValidationImpl: async () => {
+            throw new Error("decision-6 must not run after the deadline");
+          },
+        }),
+      });
+      assert.equal(result.status, "failed");
+      assert.equal(result.enrollmentResult.state, "validation_expired");
+      assert.equal(deployCalls, 0);
+      const read = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(read.journal.state, "validation_expired");
+    });
+  });
+
+  it("drops an expired tier-2 candidate and stays submission_uncertain", async () => {
+    await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6", async (stateDir) => {
+      const enrollmentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6";
+      const seed = await seedEnrollment(stateDir, enrollmentId, "tier2-expired");
+      let reconcileCalls = 0;
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      const result = await executeWindowsIisContinueEnrollmentJob({
+        job: seed.job,
+        jobId: seed.journalBase.jobId,
+        client: {},
+        log: {},
+        executionContext: contextFor(seed, {
+          adcsTryReconcileUncertainSubmissionImpl: async () => {
+            reconcileCalls += 1;
+            return { status: "unique_candidate", requestId: 105, certificatePem: leafPem, attachmentEligible: true };
+          },
+          adcsRunDecision6ValidationImpl: async () => {
+            throw new Error("decision-6 must not run for an expired tier-2 candidate");
+          },
+        }),
+      });
+      assert.equal(result.status, "failed");
+      assert.equal(result.enrollmentResult.state, "submission_uncertain");
+      assert.equal(reconcileCalls, 0);
+      const read = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(read.kind, "valid");
+      assert.equal(read.journal.state, "submission_uncertain");
+      assert.equal(read.journal.reconcileCandidateRequestId == null, true);
+      assert.equal(read.journal.leafSha256 == null, true);
+      assert.equal(read.artifacts.leafPem, null);
+    });
   });
 });

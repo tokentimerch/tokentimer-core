@@ -1334,6 +1334,10 @@ function createAdcsWindowsIisExecutors(deps) {
 
       // Hold the enrollment lock through accept/deploy so continue-enrollment
       // cannot race retrieve/accept on the same enrollmentId.
+      // Remember the last step actually entered. A hard failure must not
+      // rewind the journal to accept, or the next resume looks like certreq
+      // -accept never ran.
+      let currentInstallStep = "accept";
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -1347,6 +1351,7 @@ function createAdcsWindowsIisExecutors(deps) {
         onBeforeMutation,
         retainKeyOnAcceptFailure: true,
         onInstallStep: async (step, meta = {}) => {
+          currentInstallStep = step;
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "installing",
             attempt: decoded.attempt,
@@ -1399,7 +1404,7 @@ function createAdcsWindowsIisExecutors(deps) {
           caConfig: snapshot.caConfig,
           template: snapshot.template,
           leafSha256,
-          installStep: "accept",
+          installStep: currentInstallStep,
           ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
         });
       }
