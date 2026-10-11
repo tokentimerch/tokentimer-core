@@ -158,6 +158,7 @@ describe("migration 70 certificate enrollments", () => {
     assert.match(migration.sql, /enrollment_id/);
     assert.match(migration.sql, /deploy_target/);
     assert.match(migration.sql, /last_preflight_job_id/);
+    assert.match(migration.sql, /preflight_seq/);
   });
 });
 

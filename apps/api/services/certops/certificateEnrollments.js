@@ -112,9 +112,11 @@ function dispatchPreflight({
   actorUserId,
   createJob = createCertificateJob,
   audit = writeAudit,
+  beforeLock,
 }) {
   const db = dbOf(client);
   return withTransaction(db, async (tx) => {
+    if (typeof beforeLock === "function") await beforeLock(tx);
     await tx.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [
       `adcs-preflight:${workspaceId}`,
     ]);
@@ -151,6 +153,23 @@ function dispatchPreflight({
         issuerId,
       },
     });
+    const sequenced = await tx.query(
+      `UPDATE certificate_issuers
+          SET preflight_seq = preflight_seq + 1, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2
+        RETURNING preflight_seq`,
+      [workspaceId, issuerId],
+    );
+    const preflightSeq = sequenced.rows[0]?.preflight_seq;
+    if (preflightSeq == null) {
+      throw serviceError("issuer not found", "CERTOPS_ISSUER_NOT_FOUND");
+    }
+    await tx.query(
+      `UPDATE certificate_jobs
+          SET preflight_seq = $3
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, job.id, preflightSeq],
+    );
     await audit({
       client: tx,
       actorUserId: actorUserId || null,
@@ -487,8 +506,10 @@ async function recordPreflightResult(client, { workspaceId, job, preflightResult
       "CERTOPS_SNAPSHOT_INVALID",
     );
   }
-  // last_preflight is the latest dispatched preflight that has completed.
-  // A slower older job must not replace a result from a job created after it.
+  // last_preflight follows dispatch order, which is preflight_seq assigned
+  // under the workspace lock. created_at is the transaction start and can
+  // be older for the job that was inserted later. Equal sequences keep the
+  // greater job id, and the same job may report again.
   await dbOf(client).query(
     `UPDATE certificate_issuers AS i
         SET last_preflight = $3::jsonb,
@@ -496,15 +517,34 @@ async function recordPreflightResult(client, { workspaceId, job, preflightResult
             updated_at = NOW()
       WHERE i.workspace_id = $1
         AND i.id = $2
-        AND NOT EXISTS (
+        AND EXISTS (
           SELECT 1
-            FROM certificate_jobs stored
-            JOIN certificate_jobs incoming
-              ON incoming.workspace_id = stored.workspace_id
+            FROM certificate_jobs incoming
+           WHERE incoming.workspace_id = i.workspace_id
              AND incoming.id = $4
-           WHERE stored.workspace_id = i.workspace_id
-             AND stored.id = i.last_preflight_job_id
-             AND stored.created_at > incoming.created_at
+             AND incoming.preflight_seq IS NOT NULL
+             AND (
+               i.last_preflight_job_id IS NULL
+               OR NOT EXISTS (
+                 SELECT 1
+                   FROM certificate_jobs stored
+                  WHERE stored.workspace_id = i.workspace_id
+                    AND stored.id = i.last_preflight_job_id
+               )
+               OR EXISTS (
+                 SELECT 1
+                   FROM certificate_jobs stored
+                  WHERE stored.workspace_id = i.workspace_id
+                    AND stored.id = i.last_preflight_job_id
+                    AND (
+                      incoming.preflight_seq > stored.preflight_seq
+                      OR (
+                        incoming.preflight_seq = stored.preflight_seq
+                        AND incoming.id >= stored.id
+                      )
+                    )
+               )
+             )
         )`,
     [workspaceId, issuerId, JSON.stringify(preflightResult), job.id],
   );
