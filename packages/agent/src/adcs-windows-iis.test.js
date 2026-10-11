@@ -8,7 +8,10 @@ const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 
+const crypto = require("node:crypto");
+
 const {
+  createAdcsWindowsIisExecutors,
   resultForAdcsOutcome,
   resultForValidationOutcome,
   terminalEnrollmentResultExtras,
@@ -21,6 +24,13 @@ const {
   withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
 const { computeSha1ThumbprintFromPem } = require("./windows-cert-store");
+const {
+  computeSpkiSha256Hex,
+  writeEnrollmentJournal,
+  writeCsrArtifact,
+  writeIssuedCertificateArtifacts,
+  readEnrollmentJournal,
+} = require("./issuers/adcs-enrollment");
 
 describe("AD CS renew evidence ordering", () => {
   it("persists classified CA outcomes before reportIssuanceEvidence and exposes fault injection", () => {
@@ -857,5 +867,185 @@ describe("terminalEnrollmentResultExtras", () => {
     assert.ok(terminalBlock >= 0, "terminal journal replay branch missing");
     const block = continueSrc.slice(terminalBlock, terminalBlock + 800);
     assert.match(block, /terminalEnrollmentResultExtras\(journal\)/);
+  });
+});
+
+describe("reject-A then attach-B continue-enrollment executor", () => {
+  it("clears provisional leaf A then attaches a later unique candidate B through install", async () => {
+    const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-reject-attach-"));
+    try {
+      const helperPath = path.join(stateDir, "tokentimer-adcs-cmc.exe");
+      fs.writeFileSync(helperPath, "");
+      const caPem = fs.readFileSync(
+        path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
+      );
+      const caKeySha256 = computeSpkiSha256Hex(caPem);
+      const caCertPath = path.join(stateDir, "ca.cer");
+      fs.writeFileSync(caCertPath, caPem);
+
+      const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+      const containerName = `tokentimer-enr-${enrollmentId}`;
+      const snapshot = {
+        kind: "adcs",
+        caConfig: "ca.example.com\\Example CA",
+        template: "WebServer",
+        caKeySha256,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "ecdsa",
+        keySize: 256,
+      };
+      const snapshotBytes = Buffer.from(JSON.stringify(snapshot), "utf8");
+      const snapshotSha256 = crypto.createHash("sha256").update(snapshotBytes).digest("hex");
+      const snapshotB64 = snapshotBytes.toString("base64");
+      const templateOid = "1.3.6.1.4.1.311.21.8.1";
+      const csrPem =
+        "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n";
+      const leafA = "-----BEGIN CERTIFICATE-----\nLEAF-A\n-----END CERTIFICATE-----\n";
+      const leafB = "-----BEGIN CERTIFICATE-----\nLEAF-B\n-----END CERTIFICATE-----\n";
+
+      const { csrSha256 } = await writeCsrArtifact({
+        stateDir,
+        enrollmentId,
+        csrPem,
+      });
+      const journalBase = {
+        attempt: 1,
+        containerName,
+        snapshotSha256,
+        jobId: "job:reject-attach",
+        csrSha256,
+        csrSpkiSha256: "c".repeat(64),
+        templateOid,
+        caConfig: snapshot.caConfig,
+        template: snapshot.template,
+      };
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "prepared",
+        ...journalBase,
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submitting",
+        ...journalBase,
+        reconcileSearchFrom: 100,
+      });
+      const { leafSha256: hashA } = await writeIssuedCertificateArtifacts({
+        stateDir,
+        enrollmentId,
+        leafPem: leafA,
+      });
+      await writeEnrollmentJournal(stateDir, enrollmentId, {
+        state: "submission_uncertain",
+        ...journalBase,
+        reconcileSearchFrom: 100,
+        reconcileCandidateRequestId: 105,
+        leafSha256: hashA,
+        validationDeadlineAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      });
+
+      let deployCalls = 0;
+      const { executeWindowsIisContinueEnrollmentJob } = createAdcsWindowsIisExecutors({
+        resolveAgentStateDir: () => stateDir,
+        renewJobLeaseOrAbort: async () => ({ ok: true }),
+        reportIssuanceEvidence: async () => {},
+        reportStepEvidence: async () => {},
+        runWindowsIisDeployTail: async () => {
+          deployCalls += 1;
+          return { status: "succeeded", keyRotated: null };
+        },
+        finalizeWindowsIisDeployBookkeeping: async () => {},
+        emitInfo: () => {},
+        emitLog: () => {},
+        recordWindowsCngContainer: () => {},
+        isValidCertificateId: () => true,
+      });
+
+      const job = {
+        certificateId: "11111111-1111-4111-8111-111111111111",
+        keyMode: "os-store-managed",
+        issuerKind: "adcs",
+        target: {
+          type: "windows-iis",
+          reference: "app.example.com",
+          store: "WebHosting",
+          binding: { site: "Default Web Site", port: 443 },
+        },
+        enrollment: {
+          enrollmentId,
+          attempt: 1,
+          snapshotB64,
+          snapshotSha256,
+        },
+      };
+      const client = {};
+      const executionContext = {
+        execution: { keysDir: path.join(stateDir, "keys") },
+        adcsHelperPath: helperPath,
+        adcsCaCertPath: caCertPath,
+        adcsTemplateOid: templateOid,
+        adcsRunDecision6ValidationImpl: async ({ certificatePem }) => {
+          if (certificatePem.includes("LEAF-A")) {
+            return {
+              ok: false,
+              state: "rejected_invalid",
+              errorCode: "ADCS_CERTIFICATE_INVALID",
+              detail: "reject provisional A",
+            };
+          }
+          if (certificatePem.includes("LEAF-B")) {
+            return { ok: true };
+          }
+          return {
+            ok: false,
+            state: "rejected_invalid",
+            errorCode: "ADCS_CERTIFICATE_INVALID",
+            detail: "unexpected leaf",
+          };
+        },
+        adcsTryReconcileUncertainSubmissionImpl: async () => ({
+          status: "unique_candidate",
+          requestId: 110,
+          certificatePem: leafB,
+          nextSearchFrom: 111,
+          probed: 1,
+          attachmentEligible: true,
+        }),
+      };
+
+      const rejectResult = await executeWindowsIisContinueEnrollmentJob({
+        job,
+        jobId: "job:reject-attach",
+        client,
+        executionContext,
+        log: {},
+      });
+      assert.equal(rejectResult.status, "failed");
+      assert.equal(rejectResult.enrollmentResult.state, "submission_uncertain");
+      const afterReject = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(afterReject.kind, "valid");
+      assert.equal(afterReject.journal.state, "submission_uncertain");
+      assert.equal(afterReject.journal.reconcileCandidateRequestId == null, true);
+      assert.equal(afterReject.journal.leafSha256 == null, true);
+      assert.equal(afterReject.artifacts.leafPem, null);
+
+      const attachResult = await executeWindowsIisContinueEnrollmentJob({
+        job,
+        jobId: "job:reject-attach",
+        client,
+        executionContext,
+        log: {},
+      });
+      assert.equal(attachResult.status, "succeeded");
+      assert.equal(attachResult.enrollmentResult.state, "installed");
+      assert.equal(attachResult.enrollmentResult.requestId, 110);
+      assert.equal(deployCalls, 1);
+      const afterAttach = readEnrollmentJournal(stateDir, enrollmentId);
+      assert.equal(afterAttach.kind, "valid");
+      assert.equal(afterAttach.journal.state, "installed");
+      assert.equal(afterAttach.journal.requestId, 110);
+      assert.notEqual(afterAttach.journal.leafSha256, hashA);
+      assert.equal(afterAttach.artifacts.leafPem, leafB);
+    } finally {
+      await fsp.rm(stateDir, { recursive: true, force: true });
+    }
   });
 });

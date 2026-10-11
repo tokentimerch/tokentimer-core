@@ -1691,6 +1691,107 @@ describe("execWithoutShell AbortSignal", () => {
     assert.equal(result.stage, "addstore");
     assert.equal(result.reason, "aborted");
   });
+
+  it("kills an in-flight certreq -new when ENROLLMENT_LOCK_LOST aborts mid-call", async () => {
+    const workDir = makeTempDir();
+    const ac = new AbortController();
+    let killed = false;
+    const result = await generateCsrViaCng({
+      commonName: "host.example.com",
+      jobId: "job-inflight-new",
+      workDir,
+      signal: ac.signal,
+      execFileImpl: (file, args, opts, cb) => {
+        const fakeChild = {
+          kill() {
+            killed = true;
+            process.nextTick(() =>
+              cb(Object.assign(new Error("killed"), { code: "ABORT_ERR" }), "", ""),
+            );
+          },
+        };
+        setTimeout(
+          () =>
+            ac.abort(
+              Object.assign(new Error("enrollment lock lost"), { code: "ENROLLMENT_LOCK_LOST" }),
+            ),
+          15,
+        );
+        setTimeout(() => cb(null, "late", ""), 500);
+        return fakeChild;
+      },
+    });
+    assert.equal(killed, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "aborted");
+  });
+
+  it("kills an in-flight certreq -accept when ENROLLMENT_LOCK_LOST aborts mid-call", async () => {
+    const workDir = makeTempDir();
+    const ac = new AbortController();
+    let killed = false;
+    const result = await acceptCertificateViaCng({
+      certificatePem: FIXTURE_CERT_PEM,
+      workDir,
+      signal: ac.signal,
+      execFileImpl: (file, args, opts, cb) => {
+        const fakeChild = {
+          kill() {
+            killed = true;
+            process.nextTick(() =>
+              cb(Object.assign(new Error("killed"), { code: "ABORT_ERR" }), "", ""),
+            );
+          },
+        };
+        setTimeout(
+          () =>
+            ac.abort(
+              Object.assign(new Error("enrollment lock lost"), { code: "ENROLLMENT_LOCK_LOST" }),
+            ),
+          15,
+        );
+        setTimeout(() => cb(null, "late", ""), 500);
+        return fakeChild;
+      },
+    });
+    assert.equal(killed, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "aborted");
+  });
+
+  it("kills an in-flight mirror addstore when STORE_LOCK_LOST aborts mid-call", async () => {
+    const workDir = makeTempDir();
+    const certPath = path.join(workDir, "mirror-inflight.cer");
+    fs.writeFileSync(certPath, FIXTURE_CERT_PEM, "utf8");
+    const ac = new AbortController();
+    let killed = false;
+    const result = await mirrorAcceptedCertificateToStore({
+      certPath,
+      thumbprint: FIXTURE_THUMBPRINT,
+      targetStore: "WebHosting",
+      signal: ac.signal,
+      execFileImpl: (file, args, opts, cb) => {
+        const fakeChild = {
+          kill() {
+            killed = true;
+            process.nextTick(() =>
+              cb(Object.assign(new Error("killed"), { code: "ABORT_ERR" }), "", ""),
+            );
+          },
+        };
+        setTimeout(
+          () => ac.abort(Object.assign(new Error("store lock lost"), { code: "STORE_LOCK_LOST" })),
+          15,
+        );
+        setTimeout(() => cb(null, "late", ""), 500);
+        return fakeChild;
+      },
+    });
+    assert.equal(killed, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "addstore");
+    assert.equal(result.reason, "aborted");
+  });
 });
 
 describe("removeAbandonedKeyContainer", () => {

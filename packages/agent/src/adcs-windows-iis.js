@@ -623,6 +623,20 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
 
+    if (typeof executionContext.adcsRunDecision6ValidationImpl === "function") {
+      return executionContext.adcsRunDecision6ValidationImpl({
+        certificatePem,
+        csrPem,
+        csrSpkiSha256,
+        snapshot,
+        requiredDnsName,
+        stateDir,
+        executionContext,
+        templateOid,
+        windowsTarget,
+      });
+    }
+
     const observeImpl =
       executionContext.adcsObserveInstalledIdentityImpl || observeInstalledCertificateIdentity;
     const observed = await observeImpl({
@@ -2388,7 +2402,11 @@ function createAdcsWindowsIisExecutors(deps) {
           };
         }
 
-        const reconciled = await tryReconcileUncertainSubmission({
+        const reconcileImpl =
+          typeof executionContext.adcsTryReconcileUncertainSubmissionImpl === "function"
+            ? executionContext.adcsTryReconcileUncertainSubmissionImpl
+            : tryReconcileUncertainSubmission;
+        const reconciled = await reconcileImpl({
           issuer,
           stateDir,
           caConfig: snapshot.caConfig,

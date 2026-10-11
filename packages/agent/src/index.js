@@ -3364,6 +3364,7 @@ async function runWindowsIisDeployTail({
         let predecessorThumbprint = null;
         const currentBinding = await queryCurrentBinding({
           binding,
+          signal,
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
         storeLock.assertHeld();
@@ -3380,12 +3381,16 @@ async function runWindowsIisDeployTail({
     const deployResult = await deployIisBinding({
       binding,
       certificatePem,
+      signal,
       ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       ...(windowsConnectImpl ? { connectImpl: windowsConnectImpl } : {}),
     });
     storeLock.assertHeld();
 
     if (deployResult.ok !== true) {
+      if (deployResult.code === "ABORTED") {
+        storeLock.assertHeld();
+      }
       await reportStepEvidence(client, jobId, [
         buildEvidenceItem({
           eventType: "validation.failed",
@@ -3401,6 +3406,7 @@ async function runWindowsIisDeployTail({
       return {
         status: "failed",
         keyRotated: null,
+        ...(deployResult.code === "ABORTED" ? { retryableInterrupt: true } : {}),
         errorMessage: boundErrorMessage(
           `IIS binding deploy failed (${deployResult.code}): ${deployResult.detail} ` +
             `(rolledBack: ${deployResult.rolledBack === true})`,
