@@ -60,12 +60,12 @@ describe('WorkspaceProvider last-workspace restore', () => {
     writeLastWorkspaceId('user-a', 'ws-b');
     renderProvider({ path: '/dashboard' });
 
-    await waitFor(() =>
-      expect(screen.getByTestId('ws').textContent).toBe('ws-b')
-    );
-    expect(screen.getByTestId('search').textContent).toContain(
-      'workspace=ws-b'
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId('ws').textContent).toBe('ws-b');
+      expect(screen.getByTestId('search').textContent).toContain(
+        'workspace=ws-b'
+      );
+    });
   });
 
   it('lets an explicit URL workspace win over the stored last workspace', async () => {

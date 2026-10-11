@@ -22,7 +22,6 @@ const {
   resolvePinnedCaCertPath,
   resolveTemplateOid,
   writeEnrollmentRequestJournal,
-  readEnrollmentRequestJournal,
   writeKeygenIntent,
   writeCsrArtifact,
   writeEnrollmentJournal,

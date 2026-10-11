@@ -1250,7 +1250,6 @@ async function mirrorAcceptedCertificateToStore({
 const EXCLUSIVE_LOCK_STATE_PENDING = 0;
 const EXCLUSIVE_LOCK_STATE_HELD = 1;
 const EXCLUSIVE_LOCK_STATE_BUSY = 2;
-const EXCLUSIVE_LOCK_STATE_RELEASED = 4;
 const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 /** Graceful close wait; terminate() always follows and drops the listen. */
 const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
