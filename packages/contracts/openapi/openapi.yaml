@@ -7427,13 +7427,13 @@ paths:
         "413":
           description: Serialized batch exceeds 64 KiB
         "422":
-          description: Private key material was rejected
+          description: Private key material was rejected on the log stream
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
-                error: Agent log batch rejected
+                error: Private key material is not accepted on CertOps agent routes
                 code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL
         "429":
           description: Agent log rate limit exceeded
@@ -12070,6 +12070,81 @@ components:
           format: date-time
           nullable: true
           description: Extended dispatch-nonce expiry after this renew (B7).
+    CertOpsAgentLogLine:
+      type: object
+      additionalProperties: false
+      required: [seq, ts, level, step, message]
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+        ts:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [info, warn, error]
+        step:
+          type: string
+          enum: [claim, acme, dns, deploy, reload, verify, discovery, trust, other]
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        fields:
+          type: object
+          maxProperties: 8
+          additionalProperties:
+            oneOf:
+              - type: string
+                maxLength: 256
+              - type: number
+              - type: boolean
+              - enum: [null]
+                nullable: true
+    CertOpsAgentLogBody:
+      type: object
+      additionalProperties: false
+      required: [jobId, claimId, final]
+      description: >-
+        Execution-console batch for one claim. Lines are contiguous from firstSeq.
+        An empty lines array is valid only when final is true. This message omits
+        the control-channel sequence.
+      properties:
+        jobId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_.:-]+$'
+        claimId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_.:-]+$'
+        firstSeq:
+          type: integer
+          minimum: 1
+        lines:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/CertOpsAgentLogLine"
+        droppedBefore:
+          type: integer
+          minimum: 0
+        final:
+          type: boolean
+      allOf:
+        - if:
+            properties:
+              final:
+                const: false
+            required: [final]
+          then:
+            required: [firstSeq, lines]
+            properties:
+              lines:
+                minItems: 1
     CertOpsAgentLogRequest:
       allOf:
         - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
@@ -12080,24 +12155,7 @@ components:
               type: string
               enum: [log]
             body:
-              type: object
-              required: [jobId, claimId, final]
-              properties:
-                jobId:
-                  type: string
-                claimId:
-                  type: string
-                firstSeq:
-                  type: integer
-                  minimum: 1
-                lines:
-                  type: array
-                  maxItems: 200
-                droppedBefore:
-                  type: integer
-                  minimum: 0
-                final:
-                  type: boolean
+              $ref: "#/components/schemas/CertOpsAgentLogBody"
     CertOpsAgentLogAck:
       type: object
       additionalProperties: false

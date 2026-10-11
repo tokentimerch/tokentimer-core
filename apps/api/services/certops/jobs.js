@@ -24,6 +24,7 @@ const {
 } = require("./agentJobEligibility");
 const { attachJobPendingReasons } = require("./jobPendingReason");
 const { attachUserDisplayNames } = require("./userDisplayNames");
+const { normalizeCertificateSearchQuery } = require("./certificateIdentity");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -469,7 +470,9 @@ function normalizeJobSearchQuery(value) {
   const q = String(value || "")
     .trim()
     .slice(0, 128);
-  return q || null;
+  if (!q) return null;
+  const { fingerprintNeedle } = normalizeCertificateSearchQuery(q);
+  return { q, fingerprintNeedle };
 }
 
 /** Escape `\`, `%`, and `_` so ILIKE treats the query as a literal substring. */
@@ -2276,8 +2279,29 @@ async function listCertificateJobs(options) {
 
   const search = normalizeJobSearchQuery(options.q);
   if (search) {
-    params.push(escapeIlikePattern(search));
+    params.push(escapeIlikePattern(search.q));
     const idx = params.length;
+    let fingerprintIdx = null;
+    if (search.fingerprintNeedle) {
+      params.push(search.fingerprintNeedle);
+      fingerprintIdx = params.length;
+    }
+    const mcFingerprintMatch =
+      fingerprintIdx === null
+        ? ""
+        : `
+             OR (
+               mc.fingerprint_sha256 IS NOT NULL AND
+               position($${fingerprintIdx} in mc.fingerprint_sha256) > 0
+             )`;
+    const taFingerprintMatch =
+      fingerprintIdx === null
+        ? ""
+        : `
+             OR (
+               ta.fingerprint_sha256 IS NOT NULL AND
+               position($${fingerprintIdx} in ta.fingerprint_sha256) > 0
+             )`;
     // ESCAPE '\' keeps %, _, and \ literal (Certificates search is substring-literal).
     conditions.push(`(
       id::text ILIKE '%' || $${idx} || '%' ESCAPE '\\'
@@ -2290,7 +2314,7 @@ async function listCertificateJobs(options) {
            AND mc.id::text = certificate_jobs.subject_id
            AND (
              COALESCE(mc.common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
-             OR COALESCE(mc.source_ref, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(mc.source_ref, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'${mcFingerprintMatch}
            )
       )
       OR EXISTS (
@@ -2309,7 +2333,7 @@ async function listCertificateJobs(options) {
            AND ta.id::text = certificate_jobs.subject_id
            AND (
              COALESCE(ta.name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
-             OR COALESCE(ta.subject_common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(ta.subject_common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'${taFingerprintMatch}
            )
       )
     )`);

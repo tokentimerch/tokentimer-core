@@ -510,6 +510,7 @@ describe("CertOps agent protocol contracts", () => {
       [ROUTES.HEARTBEAT]: "agentCredentialAuth",
       [ROUTES.CLAIM]: "agentCredentialAuth",
       [ROUTES.RESULTS]: "agentCredentialAuth",
+      [ROUTES.LOGS]: "agentCredentialAuth",
     };
 
     for (const [routePath, auth] of Object.entries(expectedAuth)) {

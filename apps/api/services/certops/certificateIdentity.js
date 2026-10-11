@@ -993,6 +993,7 @@ async function readdManagingSource({
 
 module.exports = {
   normalizeFingerprint,
+  normalizeCertificateSearchQuery,
   listCertificateIdentities,
   retireCertificateIdentity,
   stopManagingSource,

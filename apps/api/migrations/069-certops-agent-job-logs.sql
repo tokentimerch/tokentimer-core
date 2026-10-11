@@ -68,7 +68,10 @@ CREATE TABLE IF NOT EXISTS certops_agent_log_daily_quota (
   quota_day DATE NOT NULL,
   used_bytes BIGINT NOT NULL DEFAULT 0,
   used_lines INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (workspace_id, quota_day)
+  PRIMARY KEY (workspace_id, quota_day),
+  CONSTRAINT fk_certops_agent_log_daily_quota_workspace
+    FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS certops_agent_job_log (
@@ -85,7 +88,7 @@ CREATE TABLE IF NOT EXISTS certops_agent_job_log (
   fields JSONB NULL,
   redaction_count INTEGER NOT NULL DEFAULT 0,
   content_hash TEXT NOT NULL,
-  ingest_order BIGINT NOT NULL,
+  ingest_order BIGINT NOT NULL CHECK (ingest_order > 0),
   CONSTRAINT uq_certops_agent_job_log_seq
     UNIQUE (workspace_id, job_id, claim_id, seq),
   CONSTRAINT fk_certops_agent_job_log_stream
@@ -94,7 +97,7 @@ CREATE TABLE IF NOT EXISTS certops_agent_job_log (
     ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_certops_agent_job_log_cursor
+CREATE UNIQUE INDEX IF NOT EXISTS idx_certops_agent_job_log_cursor
   ON certops_agent_job_log (workspace_id, job_id, ingest_order);
 
 CREATE INDEX IF NOT EXISTS idx_certops_agent_job_log_received

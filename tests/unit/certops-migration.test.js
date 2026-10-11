@@ -1463,6 +1463,70 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
   });
 });
 
+describe("migration 69 CertOps agent job logs", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_agent_job_logs",
+  );
+
+  it("exists at version 69 and creates agent log storage tables", () => {
+    assert.ok(migration, "migration 69 expected");
+    assert.equal(migration.version, 69);
+    for (const tableName of [
+      "certops_agent_log_job_state",
+      "certops_agent_log_stream",
+      "certops_agent_log_daily_quota",
+      "certops_agent_job_log",
+    ]) {
+      assert.match(
+        migration.sql,
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName}\\b`),
+      );
+    }
+  });
+
+  it("links job-scoped rows to certificate_jobs and daily quota to workspaces", () => {
+    assert.match(migration.sql, /fk_certops_agent_log_job_state_job/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id, job_id\)\s*\n\s*REFERENCES certificate_jobs \(workspace_id, id\)/,
+    );
+    assert.match(migration.sql, /fk_certops_agent_log_stream_job/);
+    assert.match(migration.sql, /fk_certops_agent_log_daily_quota_workspace/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id\) REFERENCES workspaces \(id\)\s*\n\s*ON DELETE CASCADE/,
+    );
+    assert.match(migration.sql, /fk_certops_agent_job_log_stream/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id, job_id, claim_id\)\s*\n\s*REFERENCES certops_agent_log_stream \(workspace_id, job_id, claim_id\)/,
+    );
+  });
+
+  it("dedupes log lines on claim seq and job ingest cursor position", () => {
+    assert.match(
+      migration.sql,
+      /CONSTRAINT uq_certops_agent_job_log_seq\s*\n\s*UNIQUE \(workspace_id, job_id, claim_id, seq\)/,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS idx_certops_agent_job_log_cursor\s*\n\s*ON certops_agent_job_log \(workspace_id, job_id, ingest_order\)/,
+    );
+    assert.doesNotMatch(
+      migration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_certops_agent_job_log_cursor\s/,
+    );
+  });
+
+  it("requires positive ingest_order on stored log lines", () => {
+    assert.match(migration.sql, /ingest_order BIGINT NOT NULL CHECK \(ingest_order > 0\)/);
+  });
+
+  it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
+  });
+});
+
 describe("migration 44 trust-anchor job operation and subject type", () => {
   const migration = migrations.find(
     (entry) => entry.name === "certops_trust_anchor_jobs",
