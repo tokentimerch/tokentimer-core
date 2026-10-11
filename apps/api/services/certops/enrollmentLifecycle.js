@@ -167,6 +167,14 @@ function assertForwardTransition(from, to) {
   );
 }
 
+function assertDirectTransition(from, to) {
+  if ((FORWARD[from] || []).includes(to)) return;
+  throw serviceError(
+    `enrollment cannot move from ${from} to ${to}`,
+    "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+  );
+}
+
 const REQUEST_ID_MAX = 4294967295;
 
 function parseRequestId(value) {
@@ -303,6 +311,7 @@ module.exports = {
   PREFLIGHT_PER_HOUR,
   TERMINAL,
   UNREACHABLE_ERROR,
+  assertDirectTransition,
   assertForwardTransition,
   canReachEnrollmentState,
   assertIssuerKind,

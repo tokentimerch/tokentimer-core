@@ -3751,6 +3751,7 @@ router.patch(
         renewBeforeDays: req.body?.renewBeforeDays,
         renewalProfile: req.body?.renewalProfile,
         description: req.body?.description,
+        issuerId: req.body?.issuerId,
         actorUserId: req.user?.id || null,
       });
       return res.json(profile);
@@ -3761,6 +3762,9 @@ router.patch(
       // something different ("the patch you sent would produce an unusable
       // profile"). Keeping the mapping local avoids changing the existing
       // contract for every other caller.
+      if (err?.code === "CERTOPS_PROFILE_ISSUER_NOT_FOUND") {
+        return res.status(404).json({ error: err.message, code: err.code });
+      }
       if (
         err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
         err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE

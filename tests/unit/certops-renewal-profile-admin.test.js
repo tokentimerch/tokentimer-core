@@ -300,6 +300,7 @@ function createUpdatePool({
   row,
   auditFails = false,
   captured = {},
+  issuers = [],
 } = {}) {
   captured.queries = [];
   captured.audits = [];
@@ -314,6 +315,9 @@ function createUpdatePool({
       }
       if (normalized.startsWith("UPDATE certificate_profiles")) {
         return { rows: [{ id: row.id }] };
+      }
+      if (normalized.startsWith("SELECT id FROM certificate_issuers")) {
+        return { rows: issuers.includes(params[1]) ? [{ id: params[1] }] : [] };
       }
       return { rows: [] };
     },
@@ -407,6 +411,54 @@ describe("CertOps renewal-profile update transaction", () => {
     assert.equal(metadata[OPERATOR_OWNED_METADATA_KEY], true);
     assert.ok(metadata.renewalProfile, "the edited body must be preserved");
     assert.equal(pool.captured.audits[0].metadata.changes.operatorOwned, true);
+  });
+
+  it("stores a workspace issuer and can clear it back to ACME", async () => {
+    const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const pool = createUpdatePool({ row: profileRow(), issuers: [issuerId] });
+    await updateRenewalProfile({
+      dbPool: pool,
+      workspaceId: "ws-1",
+      profileId: "11111111-0000-4000-8000-000000000001",
+      issuerId,
+      auditWriter: pool.auditWriter,
+    });
+    const update = pool.captured.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_profiles"),
+    );
+    assert.equal(update.params[6], issuerId);
+    assert.equal(pool.captured.audits[0].metadata.changes.issuerId.to, issuerId);
+
+    const clearing = createUpdatePool({
+      row: profileRow({ issuer_id: issuerId }),
+      issuers: [issuerId],
+    });
+    await updateRenewalProfile({
+      dbPool: clearing,
+      workspaceId: "ws-1",
+      profileId: "11111111-0000-4000-8000-000000000001",
+      issuerId: null,
+      auditWriter: clearing.auditWriter,
+    });
+    const cleared = clearing.captured.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_profiles"),
+    );
+    assert.equal(cleared.params[6], null);
+  });
+
+  it("refuses an issuer that is not in the workspace", async () => {
+    const pool = createUpdatePool({ row: profileRow(), issuers: [] });
+    await assert.rejects(
+      () =>
+        updateRenewalProfile({
+          dbPool: pool,
+          workspaceId: "ws-1",
+          profileId: "11111111-0000-4000-8000-000000000001",
+          issuerId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          auditWriter: pool.auditWriter,
+        }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_NOT_FOUND",
+    );
   });
 
   it("does not take ownership through a patch that changes nothing", async () => {

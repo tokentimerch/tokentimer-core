@@ -4772,6 +4772,21 @@ const migrations = [
         );
     `,
   },
+  {
+    version: 72,
+    name: "certops_profile_issuer",
+    sql: `
+      ALTER TABLE certificate_profiles
+        ADD COLUMN IF NOT EXISTS issuer_id UUID NULL;
+      ALTER TABLE certificate_profiles
+        DROP CONSTRAINT IF EXISTS fk_certificate_profiles_issuer;
+      ALTER TABLE certificate_profiles
+        ADD CONSTRAINT fk_certificate_profiles_issuer
+          FOREIGN KEY (workspace_id, issuer_id)
+          REFERENCES certificate_issuers(workspace_id, id)
+          ON DELETE SET NULL;
+    `,
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

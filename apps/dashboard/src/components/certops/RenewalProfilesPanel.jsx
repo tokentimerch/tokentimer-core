@@ -16,6 +16,7 @@ import {
   NumberInput,
   NumberInputField,
   NumberInputStepper,
+  Select,
   Spinner,
   Table,
   TableContainer,
@@ -43,6 +44,8 @@ import {
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import { showSuccess } from '../../utils/toast.js';
+import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import { listIssuers } from './certopsEnrollmentsApi';
 import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
 import {
   useCertOpsRenewalProfiles,
@@ -62,8 +65,8 @@ import {
  *
  * The profile is what the scheduler hands an agent at renewal time, so this
  * panel is deliberately narrow: it shows the whole stored contract read-only and
- * exposes only the two controls that cannot change what executes on a host,
- * namely the automatic-renewal switch and the lead time.
+ * exposes the automatic-renewal switch, the lead time, and which workspace
+ * issuer an AD CS enrollment uses. No issuer keeps the ACME path.
  *
  * Editing paths, reload units, ACME commands, CA endpoints or DNS providers is
  * not offered because those values were derived from an issuance that provably
@@ -230,6 +233,8 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
+  const { workspaceId } = useWorkspace();
+  const [issuers, setIssuers] = useState([]);
   // Both lists on this tab page independently, so each scopes its own search
   // params; sharing `offset` would move them together.
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -248,6 +253,21 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     clearError,
     save,
   } = useUpdateRenewalProfile();
+  useEffect(() => {
+    if (!isAdmin || !workspaceId) return undefined;
+    let cancelled = false;
+    listIssuers(workspaceId)
+      .then(page => {
+        if (!cancelled) setIssuers(page.items || []);
+      })
+      .catch(() => {
+        if (!cancelled) setIssuers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, workspaceId]);
+
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
 
@@ -385,6 +405,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                       onSort={handleSort}
                     />
                   ))}
+                  <Th>Issuer</Th>
                   <Th textAlign='right' {...stickyActions}>
                     Actions
                   </Th>
@@ -466,6 +487,40 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             ? `${String(renewal.keyAlgorithm).toUpperCase()} ${renewal.keySize || ''}`.trim()
                             : '--'}
                         </Text>
+                      </Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Issuer
+                        </CertOpsMobileFieldLabel>
+                        {isAdmin && !archived ? (
+                          <Select
+                            size='sm'
+                            aria-label={`Issuer for ${profile.name}`}
+                            value={profile.issuerId || ''}
+                            isDisabled={rowSaving}
+                            onChange={event => {
+                              const value = event.target.value;
+                              applyChange(
+                                profile,
+                                { issuerId: value || null },
+                                value
+                                  ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
+                                  : 'Profile stays on ACME'
+                              );
+                            }}
+                          >
+                            <option value=''>ACME</option>
+                            {issuers.map(issuer => (
+                              <option key={issuer.id} value={issuer.id}>
+                                {issuer.name}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : (
+                          <Text fontSize='sm'>
+                            {profile.issuerId ? 'AD CS issuer' : 'ACME'}
+                          </Text>
+                        )}
                       </Td>
                       <Td
                         {...tableStyles.actionCellProps}

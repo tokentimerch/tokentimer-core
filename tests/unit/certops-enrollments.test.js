@@ -681,6 +681,76 @@ describe("enrollment rows", () => {
     assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at, null);
   });
 
+  it("refuses to abandon an enrollment that has not reached an uncertain submission", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "pending_issuance", { attempt: 1 }));
+    await assert.rejects(
+      abandonEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        audit,
+      }),
+      (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).state, "pending_issuance");
+  });
+
+  it("keeps ACME profiles off the AD CS enrollment path", async () => {
+    const db = {
+      async query(sql) {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+        if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: null }] };
+        throw new Error(sql);
+      },
+    };
+    await assert.rejects(
+      createEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        profileId: "33333333-3333-4333-8333-333333333333",
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        audit,
+        createJob: async () => ({ id: "job-should-not-exist" }),
+      }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_NOT_SELECTED",
+    );
+  });
+
+  it("refuses an enrollment whose issuer does not match the profile", async () => {
+    const other = "99999999-9999-4999-8999-999999999999";
+    const db = {
+      async query(sql) {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+        if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: other }] };
+        throw new Error(sql);
+      },
+    };
+    await assert.rejects(
+      createEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        profileId: "33333333-3333-4333-8333-333333333333",
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        audit,
+        createJob: async () => ({ id: "job-should-not-exist" }),
+      }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_MISMATCH",
+    );
+  });
+
   it("rolls back an issuer version when confirmation audit fails", async () => {
     const db = rowDb();
     const key = "cd".repeat(32);

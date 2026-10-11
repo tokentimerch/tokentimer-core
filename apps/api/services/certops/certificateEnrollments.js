@@ -22,6 +22,7 @@ const { createCertificateJob } = require("./jobs");
 const {
   PREFLIGHT_PER_HOUR,
   UNREACHABLE_ERROR,
+  assertDirectTransition,
   assertForwardTransition,
   assertIssuerKind,
   attachEnrollmentDispatch,
@@ -271,6 +272,7 @@ function createEnrollment({
   authorizedDnsNames,
   keyAlgorithm,
   keySize,
+  profileId,
   actorUserId,
   createJob = createCertificateJob,
   audit = writeAudit,
@@ -283,6 +285,35 @@ function createEnrollment({
   }
   const db = dbOf(client);
   return withTransaction(db, async (tx) => {
+    let resolvedIssuerId = issuerId;
+    if (profileId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(profileId))) {
+        throw serviceError("renewal profile not found", "CERTOPS_PROFILE_NOT_FOUND");
+      }
+      const profile = await tx.query(
+        `SELECT issuer_id
+           FROM certificate_profiles
+          WHERE workspace_id = $1 AND id = $2`,
+        [workspaceId, profileId],
+      );
+      if (!profile.rows[0]) {
+        throw serviceError("renewal profile not found", "CERTOPS_PROFILE_NOT_FOUND");
+      }
+      const profileIssuerId = profile.rows[0].issuer_id;
+      if (!profileIssuerId) {
+        throw serviceError(
+          "this profile uses ACME; select an AD CS issuer before enrolling",
+          "CERTOPS_PROFILE_ISSUER_NOT_SELECTED",
+        );
+      }
+      if (issuerId && issuerId !== profileIssuerId) {
+        throw serviceError(
+          "enrollment issuer does not match the renewal profile",
+          "CERTOPS_PROFILE_ISSUER_MISMATCH",
+        );
+      }
+      resolvedIssuerId = profileIssuerId;
+    }
     const version = await tx.query(
       `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, i.kind,
               i.revalidation_required
@@ -294,7 +325,7 @@ function createEnrollment({
           AND v.version = i.current_version
           AND v.ca_key_sha256 IS NOT NULL
         FOR UPDATE OF i`,
-      [workspaceId, issuerId],
+      [workspaceId, resolvedIssuerId],
     );
     const issuer = version.rows[0];
     if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
@@ -306,7 +337,7 @@ function createEnrollment({
     }
     assertIssuerKind(issuer.kind);
     const frozen = freezeSnapshot({
-      issuerId,
+      issuerId: resolvedIssuerId,
       issuerVersion: issuer.version,
       caConfig: issuer.ca_config,
       caKeySha256: issuer.ca_key_sha256,
@@ -324,7 +355,7 @@ function createEnrollment({
       [
         workspaceId,
         certificateId,
-        issuerId,
+        resolvedIssuerId,
         issuer.version,
         agentId,
         frozen.bytes,
@@ -357,7 +388,7 @@ function createEnrollment({
       action: "certops.enrollment.created",
       targetType: "certificate_enrollment",
       workspaceId,
-      metadata: { enrollmentId, issuerId, jobId: job.id },
+      metadata: { enrollmentId, issuerId: resolvedIssuerId, jobId: job.id },
     });
     return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id };
   });
@@ -601,7 +632,7 @@ async function abandonEnrollment({
   const db = dbOf(client);
   const row = await loadEnrollment(db, workspaceId, enrollmentId);
   if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
-  assertForwardTransition(row.state, "abandoned");
+  assertDirectTransition(row.state, "abandoned");
   await db.query(
     `UPDATE certificate_enrollments
         SET state = 'abandoned', next_poll_at = NOW(), updated_at = NOW()

@@ -20,7 +20,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function fail(res, err) {
   const code = err?.code || "INTERNAL_ERROR";
-  if (code === "CERTOPS_ISSUER_NOT_FOUND" || code === "CERTOPS_ENROLLMENT_NOT_FOUND") {
+  if (
+    code === "CERTOPS_ISSUER_NOT_FOUND" ||
+    code === "CERTOPS_ENROLLMENT_NOT_FOUND" ||
+    code === "CERTOPS_PROFILE_NOT_FOUND"
+  ) {
     return res.status(404).json({ error: err.message, code });
   }
   if (code === "CERTOPS_PREFLIGHT_RATE_LIMITED") {
@@ -153,6 +157,7 @@ router.post(
         authorizedDnsNames: req.body?.authorizedDnsNames,
         keyAlgorithm: req.body?.keyAlgorithm,
         keySize: req.body?.keySize,
+        profileId: req.body?.profileId,
         actorUserId: req.user?.id || null,
       });
       return res.status(201).json(created);

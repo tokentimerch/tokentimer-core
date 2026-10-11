@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Input, Select, Stack, Text } from '@chakra-ui/react';
 import { listAgents } from '../../components/certops/certopsAgentsApi';
 import {
@@ -22,8 +22,25 @@ import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 
+const PREFLIGHT_POLL_MS = 3000;
+const PREFLIGHT_POLL_ATTEMPTS = 8;
+
 function errorText(err, fallback) {
   return err?.response?.data?.error || fallback;
+}
+
+function preflightSignature(preflight) {
+  if (!preflight) return '';
+  const certs = (preflight.caCertificates || [])
+    .map(cert => cert.keySha256)
+    .join(',');
+  return [
+    preflight.caConfig,
+    preflight.template,
+    preflight.templateCheck?.verdict,
+    preflight.caCheck?.verdict,
+    certs,
+  ].join('|');
 }
 
 function IssuerNotices({ issuer }) {
@@ -74,6 +91,16 @@ export default function CertOpsAdcs() {
   const [name, setName] = useState('');
   const [kind, setKind] = useState('adcs');
   const [busy, setBusy] = useState(false);
+  const [waitingForPreflight, setWaitingForPreflight] = useState(false);
+  const pollRef = useRef(null);
+
+  const stopPreflightPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setWaitingForPreflight(false);
+  }, []);
 
   const reload = useCallback(async () => {
     if (!workspaceId || !isAdmin) return;
@@ -107,6 +134,37 @@ export default function CertOpsAdcs() {
     };
   }, [isAdmin, reload]);
 
+  useEffect(() => () => stopPreflightPoll(), [stopPreflightPoll]);
+
+  const startPreflightPoll = useCallback(
+    (issuerId, previousSignature) => {
+      stopPreflightPoll();
+      setWaitingForPreflight(true);
+      let attempts = 0;
+      pollRef.current = setInterval(async () => {
+        attempts += 1;
+        try {
+          const page = await listIssuers(workspaceId);
+          const items = page.items || [];
+          setIssuers(items);
+          const current = items.find(item => item.id === issuerId);
+          const changed =
+            preflightSignature(current?.lastPreflight) !== previousSignature;
+          if (changed || attempts >= PREFLIGHT_POLL_ATTEMPTS) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setWaitingForPreflight(false);
+          }
+        } catch {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setWaitingForPreflight(false);
+        }
+      }, PREFLIGHT_POLL_MS);
+    },
+    [stopPreflightPoll, workspaceId]
+  );
+
   if (!isAdmin) {
     return (
       <DashboardState
@@ -136,6 +194,8 @@ export default function CertOpsAdcs() {
   async function handlePreflight(event, issuerId) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const previous = issuers.find(item => item.id === issuerId);
+    const previousSignature = preflightSignature(previous?.lastPreflight);
     setBusy(true);
     try {
       await dispatchIssuerPreflight(workspaceId, issuerId, {
@@ -147,6 +207,7 @@ export default function CertOpsAdcs() {
         'Preflight dispatched. The verdict appears after the agent reports.'
       );
       await reload();
+      startPreflightPoll(issuerId, previousSignature);
     } catch (err) {
       showError(errorText(err, 'Could not dispatch preflight.'));
     } finally {
@@ -209,7 +270,25 @@ export default function CertOpsAdcs() {
         <DashboardPanelHeader
           title='Issuers'
           description='Creating an AD CS issuer does not enable enrollment. The agent still refuses adcs until the release gate passes. Preflight is read-only and only runs when the agent allowlists that CA and template.'
+          action={
+            <DashboardActionButton
+              variant='outline'
+              isLoading={busy}
+              onClick={() =>
+                reload().catch(err =>
+                  showError(errorText(err, 'Could not refresh AD CS issuers.'))
+                )
+              }
+            >
+              Refresh
+            </DashboardActionButton>
+          }
         />
+        {waitingForPreflight ? (
+          <Text fontSize='sm' color={muted} mb={3}>
+            Waiting for the agent to report the preflight verdict.
+          </Text>
+        ) : null}
         <form onSubmit={handleCreate}>
           <Stack spacing={2} maxW='md'>
             <Select
@@ -371,8 +450,7 @@ export default function CertOpsAdcs() {
                         </Stack>
                       </form>
                     ) : null}
-                    {enrollment.state !== 'abandoned' &&
-                    enrollment.state !== 'installed' ? (
+                    {enrollment.state === 'submission_uncertain' ? (
                       <DashboardActionButton
                         variant='outline'
                         isLoading={busy}

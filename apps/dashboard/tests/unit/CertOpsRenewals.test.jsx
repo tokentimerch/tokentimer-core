@@ -76,6 +76,10 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   }),
 }));
 
+vi.mock('../../src/components/certops/certopsEnrollmentsApi.js', () => ({
+  listIssuers: vi.fn().mockResolvedValue({ items: [] }),
+}));
+
 vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   const actual = await vi.importActual(
     '../../src/components/certops/certopsRenewalApi.js'

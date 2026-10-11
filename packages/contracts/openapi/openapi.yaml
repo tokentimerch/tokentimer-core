@@ -4579,6 +4579,11 @@ paths:
                   type: string
                   nullable: true
                   maxLength: 1024
+                issuerId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Workspace issuer for AD CS enrollment. Null keeps the ACME issuance path.
                 renewalProfile:
                   type: object
                   additionalProperties: false
@@ -5282,6 +5287,8 @@ paths:
         Freezes the confirmed issuer version into an enrollment snapshot and
         creates the first job in the same transaction. Refused while the
         issuer requires revalidation or the snapshot does not match its contract.
+        When profileId is set, the profile's issuer is used. A profile with no
+        issuer stays on ACME and this call is refused.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
       requestBody:
@@ -5303,6 +5310,7 @@ paths:
                   items: { type: string }
                 keyAlgorithm: { type: string, enum: [rsa, ecdsa] }
                 keySize: { type: integer }
+                profileId: { type: string, format: uuid }
       responses:
         "201":
           description: Enrollment and first job created
@@ -8214,6 +8222,11 @@ components:
         keyMode:
           type: string
           nullable: true
+        issuerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Workspace issuer used when this profile enrolls through AD CS. Null keeps ACME.
         renewalProfile:
           type: object
           nullable: true

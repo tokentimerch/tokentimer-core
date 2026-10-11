@@ -182,6 +182,7 @@ function profileRecord(row) {
     renewBeforeDays:
       row.renew_before_days == null ? null : Number(row.renew_before_days),
     keyMode: row.key_mode || null,
+    issuerId: row.issuer_id || null,
     renewalProfile,
     // Machine-derived profiles are the norm now, so say so explicitly rather
     // than making an operator infer it from the name prefix.
@@ -202,6 +203,7 @@ const PROFILE_SELECT = `
          cp.source,
          cp.renew_before_days,
          cp.key_mode,
+         cp.issuer_id,
          cp.public_metadata,
          cp.created_at,
          cp.updated_at,
@@ -378,6 +380,7 @@ async function updateRenewalProfile({
   renewBeforeDays,
   renewalProfile,
   description,
+  issuerId,
   actorUserId = null,
   auditWriter = writeAudit,
 } = {}) {
@@ -388,7 +391,7 @@ async function updateRenewalProfile({
     transactionStarted = true;
 
     const existing = await client.query(
-      `SELECT id, name, status, renew_before_days, description, public_metadata
+      `SELECT id, name, status, renew_before_days, description, public_metadata, issuer_id
          FROM certificate_profiles
         WHERE workspace_id = $1 AND id = $2::uuid
         FOR UPDATE`,
@@ -452,6 +455,33 @@ async function updateRenewalProfile({
       if (nextDescription !== row.description) changes.description = true;
     }
 
+    let nextIssuerId = row.issuer_id || null;
+    if (issuerId !== undefined) {
+      if (issuerId === null) {
+        nextIssuerId = null;
+      } else if (
+        typeof issuerId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(issuerId)
+      ) {
+        throw profileError("issuerId must be a uuid or null");
+      } else {
+        const found = await client.query(
+          `SELECT id FROM certificate_issuers WHERE workspace_id = $1 AND id = $2::uuid`,
+          [workspaceId, issuerId],
+        );
+        if (found.rows.length === 0) {
+          throw profileError(
+            "Issuer was not found in this workspace",
+            "CERTOPS_PROFILE_ISSUER_NOT_FOUND",
+          );
+        }
+        nextIssuerId = issuerId;
+      }
+      if (nextIssuerId !== (row.issuer_id || null)) {
+        changes.issuerId = { from: row.issuer_id || null, to: nextIssuerId };
+      }
+    }
+
     if (Object.keys(changes).length === 0) {
       throw profileError(
         "No supported changes were requested",
@@ -476,6 +506,7 @@ async function updateRenewalProfile({
               renew_before_days = $4,
               description = $5,
               public_metadata = $6::jsonb,
+              issuer_id = $7,
               updated_at = NOW()
         WHERE workspace_id = $1 AND id = $2::uuid
         RETURNING id`,
@@ -486,6 +517,7 @@ async function updateRenewalProfile({
         nextRenewBeforeDays,
         nextDescription,
         JSON.stringify(nextMetadata),
+        nextIssuerId,
       ],
     );
 

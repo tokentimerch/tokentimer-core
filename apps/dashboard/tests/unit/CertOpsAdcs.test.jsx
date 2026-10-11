@@ -12,6 +12,7 @@ const {
   listEnrollmentsMock,
   listAgentsMock,
   createIssuerMock,
+  dispatchIssuerPreflightMock,
   proposeEnrollmentRequestIdMock,
   showSuccessMock,
 } = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ const {
   listEnrollmentsMock: vi.fn(),
   listAgentsMock: vi.fn(),
   createIssuerMock: vi.fn(),
+  dispatchIssuerPreflightMock: vi.fn(),
   proposeEnrollmentRequestIdMock: vi.fn(),
   showSuccessMock: vi.fn(),
 }));
@@ -51,6 +53,7 @@ vi.mock('../../src/components/certops/certopsEnrollmentsApi.js', async () => {
     listEnrollments: listEnrollmentsMock,
     listAgents: listAgentsMock,
     createIssuer: createIssuerMock,
+    dispatchIssuerPreflight: dispatchIssuerPreflightMock,
     proposeEnrollmentRequestId: proposeEnrollmentRequestIdMock,
   };
 });
@@ -98,6 +101,7 @@ beforeEach(() => {
   listEnrollmentsMock.mockReset();
   listAgentsMock.mockReset();
   createIssuerMock.mockReset();
+  dispatchIssuerPreflightMock.mockReset();
   proposeEnrollmentRequestIdMock.mockReset();
   showSuccessMock.mockReset();
   listAgentsMock.mockResolvedValue({ items: [] });
@@ -174,6 +178,7 @@ describe('CertOpsAdcs', () => {
     expect(
       screen.queryByRole('button', { name: /Confirm key/ })
     ).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Abandon' })).toHaveLength(1);
     expect(screen.queryByText(/MIIB/)).not.toBeInTheDocument();
   });
 
@@ -217,5 +222,33 @@ describe('CertOpsAdcs', () => {
     expect(showSuccessMock).toHaveBeenCalledWith(
       expect.stringContaining('stays disabled until the release gate passes')
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      expect(listIssuersMock.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  it('keeps asking for a preflight verdict after dispatch', async () => {
+    isAdminMock.mockReturnValue(true);
+    listIssuersMock.mockResolvedValue({ items: [issuer()] });
+    dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
+
+    renderPage();
+    await screen.findByRole('button', { name: 'Run preflight' });
+    fireEvent.change(screen.getByLabelText('CA config'), {
+      target: { value: 'ca01\\Corp CA' },
+    });
+    fireEvent.change(screen.getByLabelText('Template'), {
+      target: { value: 'TokenTimerWebServer' },
+    });
+    fireEvent.submit(
+      screen.getByRole('button', { name: 'Run preflight' }).closest('form')
+    );
+
+    expect(
+      await screen.findByText(
+        'Waiting for the agent to report the preflight verdict.'
+      )
+    ).toBeInTheDocument();
   });
 });
