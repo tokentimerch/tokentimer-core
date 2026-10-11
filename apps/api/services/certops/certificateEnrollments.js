@@ -807,10 +807,15 @@ async function listIssuers({ client, workspaceId, limit = 50, offset = 0 }) {
   const pageOffset = clampPage(offset, 0);
   const [rows, total] = await Promise.all([
     db.query(
-      `SELECT id, kind, name, current_version, revalidation_required, last_preflight, updated_at
-         FROM certificate_issuers
-        WHERE workspace_id = $1
-        ORDER BY name ASC, id ASC
+      `SELECT i.id, i.kind, i.name, i.current_version, i.revalidation_required,
+              i.last_preflight, i.updated_at, v.ca_key_sha256 AS confirmed_key_sha256
+         FROM certificate_issuers i
+         LEFT JOIN certificate_issuer_versions v
+           ON v.workspace_id = i.workspace_id
+          AND v.issuer_id = i.id
+          AND v.version = i.current_version
+        WHERE i.workspace_id = $1
+        ORDER BY i.name ASC, i.id ASC
         LIMIT $2 OFFSET $3`,
       [workspaceId, pageLimit, pageOffset],
     ),
@@ -826,6 +831,7 @@ async function listIssuers({ client, workspaceId, limit = 50, offset = 0 }) {
       name: row.name,
       currentVersion: row.current_version,
       revalidationRequired: row.revalidation_required === true,
+      confirmedKeySha256: row.confirmed_key_sha256 || null,
       lastPreflight: publicPreflight(row.last_preflight),
       updatedAt: row.updated_at,
     })),

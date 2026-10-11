@@ -11,7 +11,7 @@ import {
   listIssuers,
   proposeEnrollmentRequestId,
 } from '../../components/certops/certopsEnrollmentsApi';
-import { useCertOpsIsWorkspaceAdmin } from '../../components/certops/useCertOps.js';
+import { useCertOpsWorkspaceAdminState } from '../../components/certops/useCertOps.js';
 import {
   DashboardActionButton,
   DashboardPanel,
@@ -53,6 +53,15 @@ function IssuerNotices({ issuer }) {
   );
 }
 
+function checkSummary(check) {
+  const verdict = check?.verdict || 'unknown';
+  const reasons = Array.isArray(check?.reasons)
+    ? check.reasons.filter(Boolean)
+    : [];
+  if (verdict === 'safe' || reasons.length === 0) return verdict;
+  return `${verdict} (${reasons.join(', ')})`;
+}
+
 function EnrollmentNotices({ enrollment }) {
   const notes = [];
   if (
@@ -65,7 +74,7 @@ function EnrollmentNotices({ enrollment }) {
   }
   if (enrollment.snapshotStale) {
     notes.push(
-      `This enrollment is frozen at issuer version ${enrollment.issuerVersion}. The issuer is now version ${enrollment.issuerCurrentVersion}. Cancel and re-enroll to pick up the new version.`
+      `This enrollment stays on issuer version ${enrollment.issuerVersion}. The issuer is now version ${enrollment.issuerCurrentVersion}. It keeps the CA and template from that version.`
     );
   }
   if (notes.length === 0) return null;
@@ -80,8 +89,46 @@ function EnrollmentNotices({ enrollment }) {
   );
 }
 
+const PAGE_LIMIT = 100;
+
+function ConfirmKeys({ issuer, busy, onConfirm }) {
+  const certs = issuer.lastPreflight?.caCertificates || [];
+  const alreadyPinned =
+    !issuer.revalidationRequired && issuer.currentVersion > 0;
+  const pending = certs.filter(
+    cert => !alreadyPinned || cert.keySha256 !== issuer.confirmedKeySha256
+  );
+  if (pending.length === 0) {
+    return (
+      <Text fontSize='sm' mt={3}>
+        This CA key is already confirmed on version {issuer.currentVersion}.
+      </Text>
+    );
+  }
+  return (
+    <Stack spacing={2} mt={3}>
+      {pending.map(cert => (
+        <DashboardActionButton
+          key={cert.keySha256}
+          variant='outline'
+          isLoading={busy}
+          onClick={() =>
+            onConfirm(issuer.id, cert.keySha256, issuer.lastPreflight)
+          }
+        >
+          Confirm key {cert.keySha256?.slice(0, 12)}
+        </DashboardActionButton>
+      ))}
+    </Stack>
+  );
+}
+
 export default function CertOpsAdcs() {
-  const isAdmin = useCertOpsIsWorkspaceAdmin();
+  const {
+    status: adminStatus,
+    isAdmin,
+    retry: retryAdmin,
+  } = useCertOpsWorkspaceAdminState();
   const { workspaceId } = useWorkspace();
   const { muted } = useDashboardThemeColors();
   const [issuers, setIssuers] = useState([]);
@@ -107,8 +154,8 @@ export default function CertOpsAdcs() {
   const reload = useCallback(async () => {
     if (!workspaceId || !isAdmin) return;
     const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
-      listIssuers(workspaceId),
-      listEnrollments(workspaceId),
+      listIssuers(workspaceId, { limit: PAGE_LIMIT }),
+      listEnrollments(workspaceId, { limit: PAGE_LIMIT }),
       listAgents(workspaceId),
     ]);
     setIssuers(issuerPage.items || []);
@@ -156,6 +203,7 @@ export default function CertOpsAdcs() {
         try {
           const page = await listIssuers(workspaceId, {
             signal: poll.controller.signal,
+            limit: PAGE_LIMIT,
           });
           if (poll.cancelled || pollRef.current !== poll) return;
           const items = page.items || [];
@@ -186,6 +234,26 @@ export default function CertOpsAdcs() {
     },
     [stopPreflightPoll, workspaceId]
   );
+
+  if (adminStatus === 'loading') {
+    return (
+      <DashboardState type='loading' title='Checking your workspace role...' />
+    );
+  }
+
+  if (adminStatus === 'error') {
+    return (
+      <DashboardState
+        title='Could not check your workspace role'
+        description='The issuer page stays closed until the role lookup succeeds.'
+        action={
+          <DashboardActionButton onClick={retryAdmin}>
+            Try again
+          </DashboardActionButton>
+        }
+      />
+    );
+  }
 
   if (!isAdmin) {
     return (
@@ -355,11 +423,11 @@ export default function CertOpsAdcs() {
               />
               <IssuerNotices issuer={issuer} />
               {issuer.lastPreflight ? (
-                <Text fontSize='sm' color={muted}>
+                <Text fontSize='sm' color={muted} overflowWrap='anywhere'>
                   Preflight {issuer.lastPreflight.caConfig} /{' '}
                   {issuer.lastPreflight.template}: template{' '}
-                  {issuer.lastPreflight.templateCheck?.verdict || 'unknown'}, CA{' '}
-                  {issuer.lastPreflight.caCheck?.verdict || 'unknown'}.
+                  {checkSummary(issuer.lastPreflight.templateCheck)}, CA{' '}
+                  {checkSummary(issuer.lastPreflight.caCheck)}.
                 </Text>
               ) : null}
               <form onSubmit={event => handlePreflight(event, issuer.id)}>
@@ -400,24 +468,11 @@ export default function CertOpsAdcs() {
               </form>
               {issuer.lastPreflight?.templateCheck?.verdict === 'safe' &&
               issuer.lastPreflight?.caCheck?.verdict === 'safe' ? (
-                <Stack spacing={2} mt={3}>
-                  {(issuer.lastPreflight.caCertificates || []).map(cert => (
-                    <DashboardActionButton
-                      key={cert.keySha256}
-                      variant='outline'
-                      isLoading={busy}
-                      onClick={() =>
-                        handleConfirm(
-                          issuer.id,
-                          cert.keySha256,
-                          issuer.lastPreflight
-                        )
-                      }
-                    >
-                      Confirm key {cert.keySha256?.slice(0, 12)}
-                    </DashboardActionButton>
-                  ))}
-                </Stack>
+                <ConfirmKeys
+                  issuer={issuer}
+                  busy={busy}
+                  onConfirm={handleConfirm}
+                />
               ) : null}
             </DashboardPanel>
           ))}
@@ -429,7 +484,8 @@ export default function CertOpsAdcs() {
             />
             {enrollments.length === 0 ? (
               <Text fontSize='sm' color={muted}>
-                No enrollments yet.
+                No enrollments yet. This page does not start one. AD CS
+                enrollment stays off until the release gate passes.
               </Text>
             ) : (
               <Stack spacing={4}>

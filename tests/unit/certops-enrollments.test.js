@@ -951,7 +951,7 @@ describe("enrollment rows", () => {
     const frozen = freezeSnapshot(snapshotInput());
     const db = {
       async query(sql) {
-        if (sql.includes("ORDER BY name")) {
+        if (sql.includes("ORDER BY i.name")) {
           return {
             rows: [{
               id: ISSUER,

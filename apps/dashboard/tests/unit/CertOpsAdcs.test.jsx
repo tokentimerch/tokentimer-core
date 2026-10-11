@@ -37,6 +37,11 @@ vi.mock('../../src/utils/toast.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsIsWorkspaceAdmin: isAdminMock,
+  useCertOpsWorkspaceAdminState: () => ({
+    status: 'ready',
+    isAdmin: isAdminMock(),
+    retry: vi.fn(),
+  }),
 }));
 
 vi.mock('../../src/components/certops/certopsAgentsApi.js', () => ({
@@ -163,7 +168,8 @@ describe('CertOpsAdcs', () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/RequestId\s+42/)).toBeInTheDocument();
     expect(screen.getAllByText(/key abababababab/)).toHaveLength(2);
-    expect(screen.getByText(/frozen at issuer version 1/)).toBeInTheDocument();
+    expect(screen.getByText(/stays on issuer version 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/Cancel and re-enroll/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/CA key changed/).length).toBeGreaterThan(0);
     expect(
       screen.getByText(
@@ -207,7 +213,7 @@ describe('CertOpsAdcs', () => {
     createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-2' } });
 
     renderPage();
-    await screen.findByText('No enrollments yet.');
+    await screen.findByText(/No enrollments yet/);
     fireEvent.change(screen.getByLabelText('Issuer name'), {
       target: { value: 'Corp CA' },
     });

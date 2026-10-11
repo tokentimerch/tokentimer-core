@@ -36,9 +36,10 @@ export async function confirmIssuerKey(workspaceId, issuerId, body) {
   return res.data;
 }
 
-export async function listEnrollments(workspaceId, { signal } = {}) {
+export async function listEnrollments(workspaceId, { signal, limit } = {}) {
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/enrollments`, {
     signal,
+    params: limit ? { limit } : undefined,
   });
   return res.data;
 }
