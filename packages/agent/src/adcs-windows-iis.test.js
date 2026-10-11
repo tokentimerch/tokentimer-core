@@ -709,6 +709,32 @@ describe("resultForValidationOutcome", () => {
   });
 });
 
+describe("AD CS keygen_intent and observation retryability", () => {
+  it("continues keygen_intent by generating CSR and journals denied from pending retrieve", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const continueFn = src.indexOf("async function executeWindowsIisContinueEnrollmentJob");
+    assert.ok(continueFn >= 0);
+    const continueSrc = src.slice(continueFn);
+    assert.match(continueSrc, /journal\.state === "keygen_intent"/);
+    assert.match(continueSrc, /enrollment_container_exists/);
+    assert.match(continueSrc, /state: "prepared"/);
+    const pendingRetrieve = continueSrc.indexOf("// Pending retrieve path");
+    assert.ok(pendingRetrieve >= 0);
+    const pendingSrc = continueSrc.slice(pendingRetrieve, pendingRetrieve + 2500);
+    assert.match(pendingSrc, /issuance\.outcome === "denied"/);
+    assert.match(pendingSrc, /writeEnrollmentJournal/);
+  });
+
+  it("maps installed-identity observation failures to retryable validation", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const observeFail = src.indexOf("if (observed.error)");
+    assert.ok(observeFail >= 0);
+    const block = src.slice(observeFail, observeFail + 350);
+    assert.match(block, /retryable:\s*true/);
+    assert.doesNotMatch(block, /rejected_invalid/);
+  });
+});
+
 describe("terminalEnrollmentResultExtras", () => {
   it("replays contract-required denied and rejected_invalid fields", () => {
     assert.deepEqual(

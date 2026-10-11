@@ -15,6 +15,24 @@ const { acquireExclusiveLockFile } = require("../windows-cert-store");
 const WATERMARK_DIR = "adcs-ca-watermarks";
 const DEFAULT_RECONCILE_WINDOW = 16;
 const DIR_MODE = 0o700;
+/** E_ACCESSDENIED: RequestId belongs to another requester; never our leaf. */
+const RECONCILE_SKIP_CA_HRESULT = new Set(["0x80070005"]);
+
+/**
+ * Outcomes that cannot become this enrollment's leaf later. Skip them for
+ * attachmentEligible / nextSearchFrom so a later unique SPKI match can attach.
+ */
+function isSkippableReconcileProbe(issuance) {
+  if (issuance.outcome === "denied" || issuance.outcome === "refused") return true;
+  if (
+    issuance.outcome === "uncertain" &&
+    typeof issuance.caHresult === "string" &&
+    RECONCILE_SKIP_CA_HRESULT.has(issuance.caHresult)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Per-CA watermark mutex via the shared exclusive lock helper (kernel
@@ -203,11 +221,13 @@ async function tryReconcileUncertainSubmission({
       : DEFAULT_RECONCILE_WINDOW;
 
   const start = reconcileSearchFrom;
+  // Extend past the live watermark so ids allocated after capture remain reachable.
+  const scanEnd = Math.max(start + window, watermark.highestRequestId + 1 + window);
   const matches = [];
   let firstOpenId = null;
   let probed = 0;
 
-  for (let requestId = start; requestId < start + window; requestId += 1) {
+  for (let requestId = start; requestId < scanEnd; requestId += 1) {
     probed += 1;
     let issuance;
     try {
@@ -239,11 +259,15 @@ async function tryReconcileUncertainSubmission({
       continue;
     }
 
-    // pending / denied / uncertain / refused: keep eligible for a later scan.
+    if (isSkippableReconcileProbe(issuance)) {
+      continue;
+    }
+
+    // pending / PROPERTY_EMPTY / other uncertain: may still become our leaf.
     if (firstOpenId === null) firstOpenId = requestId;
   }
 
-  const nextSearchFrom = firstOpenId !== null ? firstOpenId : start + window;
+  const nextSearchFrom = firstOpenId !== null ? firstOpenId : scanEnd;
 
   if (matches.length === 1) {
     const match = matches[0];

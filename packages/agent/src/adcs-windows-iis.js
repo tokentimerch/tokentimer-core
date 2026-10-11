@@ -29,10 +29,12 @@ const {
   writeIssuedCertificateArtifacts,
   clearProvisionalLeafArtifacts,
   readEnrollmentJournal,
+  keygenIntentPath,
   recordHighestRequestId,
   captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
 } = require("./issuers");
+const fs = require("node:fs");
 const {
   validateIssuedCertificate,
   extractSpkiFromCsr,
@@ -618,10 +620,11 @@ function createAdcsWindowsIisExecutors(deps) {
       listMachineStoreCertificatesImpl: executionContext.adcsListMachineStoreCertificatesImpl,
     });
     if (observed.error) {
+      // Binding/store list failures are transient; do not terminal-reject or
+      // free the CNG key (install inspect treats the same class as retryable).
       return {
         ok: false,
-        state: "rejected_invalid",
-        errorCode: "ADCS_CERTIFICATE_INVALID",
+        retryable: true,
         detail: observed.error,
       };
     }
@@ -928,6 +931,21 @@ function createAdcsWindowsIisExecutors(deps) {
         ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       });
       if (!csrResult.ok) {
+        // Clear keygen intent so renew can retry; finally deletes any orphan key.
+        containerName =
+          typeof csrResult.containerName === "string" && csrResult.containerName.length > 0
+            ? csrResult.containerName
+            : enrollmentContainer;
+        try {
+          fs.unlinkSync(keygenIntentPath(stateDir, decoded.enrollmentId));
+        } catch (err) {
+          if (!err || err.code !== "ENOENT") {
+            emitLog(
+              log,
+              `job ${jobId}: failed to clear keygen intent after CNG CSR failure: ${err.message}`,
+            );
+          }
+        }
         return {
           status: "failed",
           keyRotated: null,
@@ -1219,6 +1237,16 @@ function createAdcsWindowsIisExecutors(deps) {
         windowsTarget,
       });
       if (!validation.ok) {
+        if (validation.retryable === true) {
+          return {
+            status: "failed",
+            keyRotated: null,
+            retryableInterrupt: true,
+            errorMessage: boundErrorMessage(
+              validation.detail || "could not observe the installed certificate identity",
+            ),
+          };
+        }
         issuanceOutcome =
           validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
         if (validation.state === "validation_deferred") {
@@ -1607,6 +1635,16 @@ function createAdcsWindowsIisExecutors(deps) {
       windowsTarget,
     });
     if (!validation.ok) {
+      if (validation.retryable === true) {
+        return {
+          status: "failed",
+          keyRotated: null,
+          retryableInterrupt: true,
+          errorMessage: boundErrorMessage(
+            validation.detail || "could not observe the installed certificate identity",
+          ),
+        };
+      }
       continueOutcomeRef.value =
         validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
       if (validation.state === "validation_deferred") {
@@ -1706,7 +1744,7 @@ function createAdcsWindowsIisExecutors(deps) {
         errorMessage: boundErrorMessage(ctx.error),
       };
     }
-    const { decoded, helperPath, caCertPath, snapshot } = ctx;
+    const { decoded, helperPath, caCertPath, snapshot, domains, keyMapped } = ctx;
 
     let enrollmentLock;
     try {
@@ -1805,6 +1843,106 @@ function createAdcsWindowsIisExecutors(deps) {
             terminalEnrollmentResultExtras(journal),
           ),
         };
+      }
+
+      // Crash between keygen intent and prepared: finish CSR then resume-submit.
+      if (journal.state === "keygen_intent") {
+        const templateOidResolved = resolveTemplateOid({
+          stateDir,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          templateOid: executionContext.adcsTemplateOid,
+        });
+        if (!templateOidResolved.ok) {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(templateOidResolved.error),
+          };
+        }
+        if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
+        let csrResult = await generateCsrViaCng({
+          commonName: windowsTarget.reference,
+          altNames: domains,
+          jobId: job.certificateId,
+          enrollmentId: decoded.enrollmentId,
+          algorithm: keyMapped.algorithm,
+          workDir: cngWorkDir,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        if (!csrResult.ok && csrResult.reason === "enrollment_container_exists") {
+          const cleanup = await removeAbandonedKeyContainer({
+            containerName,
+            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+          });
+          if (cleanup.ok !== true) {
+            return {
+              status: "failed",
+              keyRotated: null,
+              errorMessage: boundErrorMessage(
+                `enrollment ${decoded.enrollmentId} has a stranded CNG container that could not be cleared for keygen resume`,
+              ),
+            };
+          }
+          removeIssuedContainerRecord({ stateDir, containerName });
+          csrResult = await generateCsrViaCng({
+            commonName: windowsTarget.reference,
+            altNames: domains,
+            jobId: job.certificateId,
+            enrollmentId: decoded.enrollmentId,
+            algorithm: keyMapped.algorithm,
+            workDir: cngWorkDir,
+            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+          });
+        }
+        if (!csrResult.ok) {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `CNG CSR generation failed on keygen resume (exit code ${csrResult.exitCode}): ${csrResult.stderrExcerpt}`,
+            ),
+          };
+        }
+        const csrSpkiSha256 = spkiSha256Hex(extractSpkiFromCsr(csrResult.csrPem));
+        const csrWritten = await writeCsrArtifact({
+          stateDir,
+          enrollmentId: decoded.enrollmentId,
+          csrPem: csrResult.csrPem,
+        });
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "prepared",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: csrWritten.csrSha256,
+          csrSpkiSha256,
+          templateOid: templateOidResolved.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+        });
+        journal = {
+          ...journal,
+          state: "prepared",
+          csrSha256: csrWritten.csrSha256,
+          csrSpkiSha256,
+          templateOid: templateOidResolved.templateOid,
+        };
+        artifacts = { ...artifacts, csrPem: csrResult.csrPem };
+        try {
+          recordIssuedContainer({
+            stateDir,
+            containerName,
+            jobId,
+            certificateId: job.certificateId,
+          });
+        } catch (err) {
+          emitLog(
+            log,
+            `job ${jobId}: failed to record CNG container issuance on keygen resume (non-fatal): ${err.message}`,
+          );
+        }
       }
 
       const scratchRoot = path.join(stateDir, "adcs-scratch");
@@ -2155,6 +2293,16 @@ function createAdcsWindowsIisExecutors(deps) {
               retryValidation,
             );
           }
+          if (retryValidation.retryable === true) {
+            return {
+              status: "failed",
+              keyRotated: null,
+              retryableInterrupt: true,
+              errorMessage: boundErrorMessage(
+                retryValidation.detail || "could not observe the installed certificate identity",
+              ),
+            };
+          }
           if (retryValidation.state === "validation_deferred") {
             const deadline =
               typeof journal.validationDeadlineAt === "string"
@@ -2282,6 +2430,17 @@ function createAdcsWindowsIisExecutors(deps) {
           windowsTarget,
         });
         if (!candidateValidation.ok) {
+          if (candidateValidation.retryable === true) {
+            return {
+              status: "failed",
+              keyRotated: null,
+              retryableInterrupt: true,
+              errorMessage: boundErrorMessage(
+                candidateValidation.detail ||
+                  "could not observe the installed certificate identity",
+              ),
+            };
+          }
           if (candidateValidation.state === "validation_deferred") {
             const written = await writeIssuedCertificateArtifacts({
               stateDir,
@@ -2386,6 +2545,39 @@ function createAdcsWindowsIisExecutors(deps) {
       await reportIssuanceEvidence(client, jobId, issuance);
 
       if (issuance.outcome === "pending") {
+        return resultForAdcsOutcome(issuance, decoded, {
+          knownRequestId: journal.requestId,
+        });
+      }
+      if (issuance.outcome === "denied" || issuance.outcome === "refused") {
+        const caHresult =
+          issuance.outcome === "denied" &&
+          typeof issuance.caHresult === "string" &&
+          CA_HRESULT_PATTERN.test(issuance.caHresult)
+            ? issuance.caHresult
+            : null;
+        if (issuance.outcome === "denied" && !caHresult) {
+          // Contract requires caHresult for denied; keep reconcilable locally.
+          return resultForAdcsOutcome(issuance, decoded, {
+            knownRequestId: journal.requestId,
+          });
+        }
+        continueOutcomeRef.value = issuance.outcome;
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: issuance.outcome,
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          requestId: journal.requestId,
+          ...(caHresult ? { caHresult } : {}),
+          ...(typeof issuance.errorCode === "string" ? { errorCode: issuance.errorCode } : {}),
+        });
         return resultForAdcsOutcome(issuance, decoded, {
           knownRequestId: journal.requestId,
         });

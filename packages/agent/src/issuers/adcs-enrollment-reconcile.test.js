@@ -60,7 +60,7 @@ describe("adcs-enrollment-reconcile", () => {
     assert.equal(captureEnrollmentReconcileSearchFrom(stateDir, "CA\\Lab"), 105);
   });
 
-  it("keeps enrollment A's captured cursor when enrollment B advances the watermark", async () => {
+  it("keeps enrollment A's captured start while extending the scan past a later watermark", async () => {
     await recordHighestRequestId(stateDir, "CA\\Lab", 104);
     const enrollmentACursor = captureEnrollmentReconcileSearchFrom(stateDir, "CA\\Lab");
     assert.equal(enrollmentACursor, 105);
@@ -85,7 +85,9 @@ describe("adcs-enrollment-reconcile", () => {
       assertIssuanceOutcome: (v) => v,
     });
     assert.equal(result.status, "unresolved");
-    assert.deepEqual(probed, [105, 106, 107]);
+    // Start stays enrollment-scoped; end reaches live watermark + window.
+    assert.equal(probed[0], 105);
+    assert.deepEqual(probed, [105, 106, 107, 108, 109, 110, 111, 112, 113]);
     assert.equal(result.nextSearchFrom, 105);
   });
 
@@ -281,6 +283,96 @@ describe("adcs-enrollment-reconcile", () => {
     assert.equal(result.status, "unresolved");
     assert.equal(result.probed, 3);
     assert.equal(result.nextSearchFrom, 2);
+  });
+
+  it("does not keep E_ACCESSDENIED or denied probes as open for attachmentEligible", async () => {
+    const issuer = {
+      async retrieve(requestId) {
+        if (requestId === 1) {
+          return { outcome: "uncertain", detail: "foreign", caHresult: "0x80070005" };
+        }
+        if (requestId === 2) {
+          return { outcome: "denied", detail: "admin deny", caHresult: "0x80094014" };
+        }
+        return { outcome: "uncertain", detail: "empty", caHresult: "0x80094004" };
+      },
+    };
+    const result = await tryReconcileUncertainSubmission({
+      issuer,
+      stateDir,
+      caConfig: "CA\\Lab",
+      csrSpkiSha256: "a".repeat(64),
+      reconcileSearchFrom: 1,
+      windowSize: 3,
+      assertIssuanceOutcome: (v) => v,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.equal(result.nextSearchFrom, 3);
+    assert.equal(result.probed, 3);
+  });
+
+  it("skips E_ACCESSDENIED and denied probes so a later unique match can attach", async (t) => {
+    const keyPath = path.join(stateDir, "k-access.pem");
+    const certPath = path.join(stateDir, "c-access.pem");
+    const openssl = spawnSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-keyout",
+        keyPath,
+        "-out",
+        certPath,
+        "-days",
+        "1",
+        "-nodes",
+        "-subj",
+        "/CN=access.denied.test",
+      ],
+      { encoding: "utf8" },
+    );
+    if (openssl.status !== 0) {
+      t.skip("openssl unavailable");
+      return;
+    }
+    const certificatePem = fs.readFileSync(certPath, "utf8");
+    const cert = new X509Certificate(certificatePem);
+    const spki = cert.publicKey.export({ type: "spki", format: "der" });
+    const csrSpkiSha256 = crypto.createHash("sha256").update(spki).digest("hex");
+
+    const issuer = {
+      async retrieve(requestId) {
+        if (requestId === 1) {
+          return {
+            outcome: "uncertain",
+            detail: "foreign",
+            caHresult: "0x80070005",
+          };
+        }
+        if (requestId === 2) {
+          return { outcome: "denied", detail: "admin deny", caHresult: "0x80094014" };
+        }
+        if (requestId === 3) {
+          return { outcome: "issued", certificatePem, requestId: 3 };
+        }
+        return { outcome: "uncertain", detail: "empty", caHresult: "0x80094004" };
+      },
+    };
+    const result = await tryReconcileUncertainSubmission({
+      issuer,
+      stateDir,
+      caConfig: "CA\\Lab",
+      csrSpkiSha256,
+      reconcileSearchFrom: 1,
+      windowSize: 3,
+      assertIssuanceOutcome: (v) => v,
+    });
+    assert.equal(result.status, "unique_candidate");
+    assert.equal(result.requestId, 3);
+    assert.equal(result.attachmentEligible, true);
+    assert.equal(result.nextSearchFrom, 3);
   });
 
   it("recovers a watermark lock after the holder worker crashes", async () => {

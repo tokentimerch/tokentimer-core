@@ -434,8 +434,21 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   // install_failed → installed: recovery inspector found deploy already complete.
   installed: new Set(["installing", "installed", "install_failed"]),
   install_failed: new Set(["installing", "install_failed"]),
-  denied: new Set(["submitting", "denied"]),
-  refused: new Set(["submitting", "prepared", "refused"]),
+  denied: new Set([
+    "submitting",
+    "pending",
+    "pending_issuance",
+    "submission_uncertain",
+    "denied",
+  ]),
+  refused: new Set([
+    "submitting",
+    "prepared",
+    "pending",
+    "pending_issuance",
+    "submission_uncertain",
+    "refused",
+  ]),
   rejected_invalid: new Set([
     "prepared",
     "submitting",

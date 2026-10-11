@@ -802,6 +802,7 @@ async function generateCsrViaCng({
       return {
         ok: false,
         exitCode,
+        containerName,
         stdoutExcerpt: boundAndRedactExcerpt(stdout),
         stderrExcerpt: boundAndRedactExcerpt(stderr),
       };
