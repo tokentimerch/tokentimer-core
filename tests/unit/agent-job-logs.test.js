@@ -419,8 +419,10 @@ describe("agent job log ingest", () => {
       { warn: (message) => warnings.push(message) },
     );
     assert.equal(warnings.length, 2);
-    assert.match(warnings[0], /RETENTION_DAYS.*"3651".*using 30/);
-    assert.match(warnings[1], /DAILY_BYTES.*"9007199254740992".*using 0/);
+    assert.match(warnings[0], /CERTOPS_AGENT_LOG_RETENTION_DAYS is invalid; using 30/);
+    assert.match(warnings[1], /CERTOPS_AGENT_LOG_DAILY_BYTES is invalid; using 0/);
+    assert.doesNotMatch(warnings[0], /3651/);
+    assert.doesNotMatch(warnings[1], /9007199254740992/);
 
     const quiet = [];
     warnInvalidAgentLogEnv(

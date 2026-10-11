@@ -124,6 +124,8 @@ function resolveDailyByteLimit(env = process.env) {
  * Compose still reaches process.env, so surface the mismatch at boot.
  */
 function warnInvalidAgentLogEnv(env = process.env, { warn = console.warn } = {}) {
+  // Do not echo the raw env value: CodeQL treats process.env as sensitive
+  // clear-text logging even for non-secret numeric knobs.
   const retentionRaw = env.CERTOPS_AGENT_LOG_RETENTION_DAYS;
   if (
     retentionRaw != null &&
@@ -131,8 +133,8 @@ function warnInvalidAgentLogEnv(env = process.env, { warn = console.warn } = {})
     !isExactNonNegativeIntEnv(retentionRaw, { max: MAX_AGENT_LOG_RETENTION_DAYS })
   ) {
     warn(
-      `CERTOPS_AGENT_LOG_RETENTION_DAYS=${JSON.stringify(String(retentionRaw))} is invalid; ` +
-        `using ${resolveRetentionDays(env)} (valid range 0–${MAX_AGENT_LOG_RETENTION_DAYS})`,
+      `CERTOPS_AGENT_LOG_RETENTION_DAYS is invalid; using ${resolveRetentionDays(env)} ` +
+        `(valid range 0–${MAX_AGENT_LOG_RETENTION_DAYS})`,
     );
   }
   const dailyRaw = env.CERTOPS_AGENT_LOG_DAILY_BYTES;
@@ -142,8 +144,8 @@ function warnInvalidAgentLogEnv(env = process.env, { warn = console.warn } = {})
     !isExactNonNegativeIntEnv(dailyRaw, { max: Number.MAX_SAFE_INTEGER })
   ) {
     warn(
-      `CERTOPS_AGENT_LOG_DAILY_BYTES=${JSON.stringify(String(dailyRaw))} is invalid; ` +
-        `using ${resolveDailyByteLimit(env)} (0 = unlimited; must be a safe non-negative integer)`,
+      `CERTOPS_AGENT_LOG_DAILY_BYTES is invalid; using ${resolveDailyByteLimit(env)} ` +
+        `(0 = unlimited; must be a safe non-negative integer)`,
     );
   }
 }
