@@ -410,9 +410,15 @@ const REQUIRED_FIELDS_BY_STATE = Object.freeze({
   ],
   installed: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "leafSha256"],
   install_failed: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "leafSha256"],
-  denied: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid"],
+  denied: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid", "caHresult"],
   refused: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid"],
-  rejected_invalid: ["containerName", "snapshotSha256", "csrSpkiSha256", "templateOid"],
+  rejected_invalid: [
+    "containerName",
+    "snapshotSha256",
+    "csrSpkiSha256",
+    "templateOid",
+    "errorCode",
+  ],
 });
 
 /** Allowed previous states for a write (null = no prior journal.json). */
@@ -458,6 +464,14 @@ function missingRequiredFields(state, parsed) {
     }
     if (field === "templateOid") {
       if (typeof value !== "string" || !OID_PATTERN.test(value)) return field;
+      continue;
+    }
+    if (field === "caHresult") {
+      if (typeof value !== "string" || !/^0x[0-9A-F]{8}$/.test(value)) return field;
+      continue;
+    }
+    if (field === "errorCode") {
+      if (typeof value !== "string" || value.length === 0) return field;
       continue;
     }
     if (typeof value !== "string" || value.length === 0) return field;
@@ -813,6 +827,31 @@ function mergeImmutableJournalFields(previousJournal, previousState, fields) {
     previousJournal.predecessorThumbprint.length > 0
   ) {
     merged.predecessorThumbprint = previousJournal.predecessorThumbprint;
+  }
+
+  // Terminal contract fields: once recorded, omit-on-rewrite preserves them.
+  if (
+    typeof previousJournal.caHresult === "string" &&
+    /^0x[0-9A-F]{8}$/.test(previousJournal.caHresult)
+  ) {
+    const next = merged.caHresult;
+    if (typeof next === "string" && next.length > 0) {
+      if (next !== previousJournal.caHresult) {
+        throw new Error("journal field caHresult is immutable after commit");
+      }
+    } else {
+      merged.caHresult = previousJournal.caHresult;
+    }
+  }
+  if (typeof previousJournal.errorCode === "string" && previousJournal.errorCode.length > 0) {
+    const next = merged.errorCode;
+    if (typeof next === "string" && next.length > 0) {
+      if (next !== previousJournal.errorCode) {
+        throw new Error("journal field errorCode is immutable after commit");
+      }
+    } else {
+      merged.errorCode = previousJournal.errorCode;
+    }
   }
 
   // Allow explicit clear of validationDeadlineAt (tier-2 deferred candidate abandon).

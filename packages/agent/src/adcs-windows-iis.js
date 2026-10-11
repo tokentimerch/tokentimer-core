@@ -81,6 +81,24 @@ function enrollmentResultFor(enrollmentId, attempt, state, extras = {}) {
   };
 }
 
+/**
+ * Contract-required extras when replaying a terminal journal on continue.
+ * denied needs caHresult; rejected_invalid needs errorCode.
+ */
+function terminalEnrollmentResultExtras(journal) {
+  const extras = {};
+  if (Number.isInteger(journal.requestId) && journal.requestId >= 1) {
+    extras.requestId = journal.requestId;
+  }
+  if (typeof journal.caHresult === "string" && CA_HRESULT_PATTERN.test(journal.caHresult)) {
+    extras.caHresult = journal.caHresult;
+  }
+  if (typeof journal.errorCode === "string" && journal.errorCode.length > 0) {
+    extras.errorCode = journal.errorCode;
+  }
+  return extras;
+}
+
 function installedEnrollmentResult(enrollmentId, attempt, requestId) {
   const extras = { errorCode: null, caHresult: null };
   if (Number.isInteger(requestId) && requestId >= 1) {
@@ -1233,6 +1251,7 @@ function createAdcsWindowsIisExecutors(deps) {
             caConfig: snapshot.caConfig,
             template: snapshot.template,
             leafSha256,
+            errorCode: validation.errorCode || "ADCS_CERTIFICATE_INVALID",
             ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
           });
         }
@@ -1604,6 +1623,7 @@ function createAdcsWindowsIisExecutors(deps) {
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "rejected_invalid",
           ...journalBase,
+          errorCode: validation.errorCode || "ADCS_CERTIFICATE_INVALID",
         });
       }
       return resultForValidationOutcome(validation, decoded, journal.requestId);
@@ -1782,7 +1802,7 @@ function createAdcsWindowsIisExecutors(deps) {
             decoded.enrollmentId,
             decoded.attempt,
             journal.state,
-            Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {},
+            terminalEnrollmentResultExtras(journal),
           ),
         };
       }
@@ -2479,6 +2499,7 @@ module.exports = {
   createAdcsWindowsIisExecutors,
   resultForAdcsOutcome,
   resultForValidationOutcome,
+  terminalEnrollmentResultExtras,
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
   resolveCleanupOutcome,

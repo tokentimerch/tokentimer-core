@@ -11,6 +11,7 @@ const path = require("node:path");
 const {
   resultForAdcsOutcome,
   resultForValidationOutcome,
+  terminalEnrollmentResultExtras,
   shouldRetainCngKey,
   shouldCleanupAbandonedCngKey,
   resolveCleanupOutcome,
@@ -705,5 +706,38 @@ describe("resultForValidationOutcome", () => {
     );
     assert.equal(result.enrollmentResult.state, "rejected_invalid");
     assert.equal(result.enrollmentResult.errorCode, "ADCS_CERTIFICATE_INVALID");
+  });
+});
+
+describe("terminalEnrollmentResultExtras", () => {
+  it("replays contract-required denied and rejected_invalid fields", () => {
+    assert.deepEqual(
+      terminalEnrollmentResultExtras({
+        state: "denied",
+        caHresult: "0x80094012",
+        requestId: 42,
+      }),
+      { requestId: 42, caHresult: "0x80094012" },
+    );
+    assert.deepEqual(
+      terminalEnrollmentResultExtras({
+        state: "rejected_invalid",
+        errorCode: "ADCS_CERTIFICATE_INVALID",
+      }),
+      { errorCode: "ADCS_CERTIFICATE_INVALID" },
+    );
+  });
+
+  it("continue-enrollment terminal replay uses terminalEnrollmentResultExtras", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const continueFn = src.indexOf("async function executeWindowsIisContinueEnrollmentJob");
+    assert.ok(continueFn >= 0);
+    const continueSrc = src.slice(continueFn);
+    const terminalBlock = continueSrc.indexOf(
+      '["denied", "refused", "rejected_invalid", "validation_expired", "abandoned"]',
+    );
+    assert.ok(terminalBlock >= 0, "terminal journal replay branch missing");
+    const block = continueSrc.slice(terminalBlock, terminalBlock + 800);
+    assert.match(block, /terminalEnrollmentResultExtras\(journal\)/);
   });
 });

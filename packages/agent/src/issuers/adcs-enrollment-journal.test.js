@@ -632,6 +632,91 @@ describe("adcs-enrollment-journal", () => {
     assert.equal(read.journal.requestId, 110);
   });
 
+  it("requires caHresult for denied and errorCode for rejected_invalid", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await assert.rejects(
+      () =>
+        writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+          state: "denied",
+          attempt: 1,
+          containerName: CONTAINER,
+          snapshotSha256: "b".repeat(64),
+          csrSha256,
+          csrSpkiSha256: "c".repeat(64),
+          templateOid: TEMPLATE_OID,
+          jobId: "job:1",
+        }),
+      /missing required field caHresult/,
+    );
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "denied",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      caHresult: "0x80094012",
+    });
+    const denied = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(denied.kind, "valid");
+    assert.equal(denied.journal.caHresult, "0x80094012");
+  });
+
+  it("requires errorCode when transitioning to rejected_invalid", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    const { leafSha256 } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: LEAF_PEM,
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "issued",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      leafSha256,
+      requestId: 7,
+    });
+    await assert.rejects(
+      () =>
+        writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+          state: "rejected_invalid",
+          attempt: 1,
+          containerName: CONTAINER,
+          snapshotSha256: "b".repeat(64),
+          csrSha256,
+          csrSpkiSha256: "c".repeat(64),
+          templateOid: TEMPLATE_OID,
+          jobId: "job:1",
+          leafSha256,
+        }),
+      /missing required field errorCode/,
+    );
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "rejected_invalid",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      leafSha256,
+      errorCode: "ADCS_CERTIFICATE_INVALID",
+    });
+    const rejected = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(rejected.kind, "valid");
+    assert.equal(rejected.journal.errorCode, "ADCS_CERTIFICATE_INVALID");
+  });
+
   it("preserves the first predecessorThumbprint across verify-stage journal updates", async () => {
     const { csrSha256 } = await commitPrepared(stateDir);
     await commitSubmitting(stateDir, csrSha256);
