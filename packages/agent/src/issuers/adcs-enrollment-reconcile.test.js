@@ -334,6 +334,7 @@ describe("adcs-enrollment-reconcile", () => {
       { encoding: "utf8" },
     );
     if (openssl.status !== 0) {
+      // skip-reason: no-host - needs a real openssl binary on PATH
       t.skip("openssl unavailable");
       return;
     }
