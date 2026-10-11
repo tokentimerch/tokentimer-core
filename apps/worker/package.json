@@ -32,6 +32,8 @@
     "@tokentimer/log-scrub": "workspace:*",
     "@tokentimer/node-compat": "workspace:*",
     "@tokentimer/webhook-safety": "workspace:*",
+    "ajv": "8.18.0",
+    "ajv-formats": "3.0.1",
     "asn1js": "3.0.10",
     "axios": "1.20.0",
     "pkijs": "3.4.0",
