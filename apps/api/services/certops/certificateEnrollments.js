@@ -7,7 +7,7 @@ const enrollmentResultSchema = require("../../../../packages/contracts/certops/e
 const preflightResultSchema = require("../../../../packages/contracts/certops/adcs-preflight-result-contract.schema.json");
 const snapshotSchema = require("../../../../packages/contracts/certops/enrollment-snapshot.schema.json");
 
-const ajv = new Ajv({ allErrors: true, strict: false });
+const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 ajv.addSchema(snapshotSchema);
 const validateEnrollmentResult = ajv.compile(enrollmentResultSchema);
@@ -448,8 +448,37 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
   }
 }
 
-async function recordPreflightResult(client, { workspaceId, job, preflightResult }) {
+function preflightPayloadOf(job) {
+  const payload = job && job.payload;
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload);
+    } catch (_error) {
+      return null;
+    }
+  }
+  return payload && typeof payload === "object" ? payload : null;
+}
+
+async function recordPreflightResult(client, { workspaceId, job, preflightResult, resultStatus }) {
   assertSchema(validatePreflightResult, preflightResult, "CERTOPS_SNAPSHOT_INVALID");
+  if (resultStatus !== "succeeded" || !job || job.operation !== "adcs-preflight") {
+    throw serviceError(
+      "preflightResult requires a succeeded adcs-preflight job",
+      "CERTOPS_AGENT_RESULT_STATUS_INVALID",
+    );
+  }
+  const payload = preflightPayloadOf(job);
+  if (
+    !payload ||
+    payload.caConfig !== preflightResult.caConfig ||
+    payload.template !== preflightResult.template
+  ) {
+    throw serviceError(
+      "preflightResult does not match the job CA and template",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
   const issuerId = job.subject_id;
   if (!issuerId) return;
   await dbOf(client).query(

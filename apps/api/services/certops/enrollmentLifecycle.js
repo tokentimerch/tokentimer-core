@@ -4,7 +4,8 @@ const crypto = require("node:crypto");
 const Ajv = require("ajv");
 const snapshotSchema = require("../../../../packages/contracts/certops/enrollment-snapshot.schema.json");
 
-const ajv = new Ajv({ allErrors: true, strict: false });
+// First error only. Collecting every error is unbounded work on caller-supplied input.
+const ajv = new Ajv({ strict: false });
 const validateSnapshot = ajv.compile(snapshotSchema);
 
 const ISSUER_KINDS = Object.freeze(["acme", "adcs"]);

@@ -14,6 +14,7 @@ const {
 const CA = "ca01.corp.example.com\\Corp Issuing CA 01";
 const TEMPLATE = "TokenTimerWebServer";
 const SAFE_TEMPLATE = [
+  "cn = TokenTimerWebServer",
   "msPKI-Cert-Template-OID = 1.3.6.1.4.1.311.21.8.1.2.3.4.5.6",
   "msPKI-Template-Schema-Version = 2",
   "pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.1",
@@ -132,5 +133,59 @@ describe("adcs-preflight certutil parsing", () => {
     assert.equal(outcome.preflightResult.templateCheck.verdict, "safe");
     assert.equal(outcome.preflightResult.caCheck.verdict, "safe");
     assert.equal(JSON.stringify(outcome).includes(SAFE_TEMPLATE), false);
+    const templateCall = argv.find((call) => call[1].includes("-dstemplate"));
+    assert.deepEqual(templateCall[1], ["-config", CA, "-dstemplate", TEMPLATE]);
+  });
+
+  it("queries the named template and does not treat another template's dump as safe", async () => {
+    const unsafeName = "ClientAuthTemplate";
+    const clientAuth = "1.3.6.1.5.5.7.3.2";
+    function dump(name, eku) {
+      return [
+        `cn = ${name}`,
+        "msPKI-Cert-Template-OID = 1.3.6.1.4.1.311.21.8.1.2.3.4.5.6",
+        "msPKI-Template-Schema-Version = 2",
+        `pKIExtendedKeyUsage = ${eku}`,
+        `msPKI-Certificate-Application-Policy = ${eku}`,
+        "msPKI-Minimal-Key-Size = 2048",
+      ].join("\n");
+    }
+    function execFor(selected) {
+      return function execFileImpl(_file, args) {
+        const requested = args[args.indexOf("-dstemplate") + 1];
+        if (args.includes("-dstemplate")) {
+          if (selected) return { stdout: dump(selected, "1.3.6.1.5.5.7.3.1") };
+          if (requested === TEMPLATE) return { stdout: dump(TEMPLATE, "1.3.6.1.5.5.7.3.1") };
+          if (requested === unsafeName) return { stdout: dump(unsafeName, clientAuth) };
+        }
+        if (args.includes("EditFlags")) return { stdout: "EditFlags REG_DWORD = 0x10000 (65536)" };
+        if (args.includes("InterfaceFlags")) return { stdout: "InterfaceFlags REG_DWORD = 0x200 (512)" };
+        if (args.includes("certcount")) return { stdout: "Cert count: 0" };
+        return { stdout: "" };
+      };
+    }
+    const safe = await runCertutilPreflight({
+      caConfig: CA,
+      template: TEMPLATE,
+      execFileImpl: execFor(null),
+    });
+    const unsafe = await runCertutilPreflight({
+      caConfig: CA,
+      template: unsafeName,
+      execFileImpl: execFor(null),
+    });
+    assert.equal(safe.preflightResult.templateCheck.verdict, "safe");
+    assert.equal(safe.preflightResult.template, TEMPLATE);
+    assert.equal(unsafe.preflightResult.templateCheck.verdict, "unsafe");
+    assert.equal(unsafe.preflightResult.template, unsafeName);
+    assert.ok(unsafe.preflightResult.templateCheck.reasons.includes("eku_not_server_auth_only"));
+
+    const confused = await runCertutilPreflight({
+      caConfig: CA,
+      template: unsafeName,
+      execFileImpl: execFor(TEMPLATE),
+    });
+    assert.equal(confused.preflightResult.templateCheck.verdict, "unreadable");
+    assert.ok(confused.preflightResult.templateCheck.reasons.includes("template_unreadable"));
   });
 });

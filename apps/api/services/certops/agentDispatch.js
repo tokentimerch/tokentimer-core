@@ -2343,6 +2343,7 @@ async function ingestResult({
         workspaceId: agent.workspaceId,
         job,
         preflightResult: body.preflightResult,
+        resultStatus: jobStatus,
       });
     }
 

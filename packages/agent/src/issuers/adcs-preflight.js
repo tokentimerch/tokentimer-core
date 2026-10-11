@@ -70,19 +70,43 @@ function exactlyServerAuth(oids) {
   return oids.length === 1 && oids[0] === SERVER_AUTH_OID;
 }
 
-function parseTemplateDump(text) {
+function templateIdentities(text) {
+  const names = [];
+  const seen = new Set();
+  for (const key of ["cn", "TemplatePropCommonName"]) {
+    for (const value of attributeValues(text, key)) {
+      const token = String(value).split(/[\s,;]+/)[0];
+      if (!TEMPLATE_PATTERN.test(token) || seen.has(token)) continue;
+      seen.add(token);
+      names.push(token);
+    }
+  }
+  return names;
+}
+
+function unreadableTemplate() {
+  return {
+    verdict: "unreadable",
+    reasons: ["template_unreadable"],
+    schemaVersion: null,
+    templateOid: null,
+    minimalKeySize: null,
+    asymmetricAlgorithm: null,
+    enrolleeSuppliesSubject: null,
+  };
+}
+
+function parseTemplateDump(text, expectedTemplate) {
+  if (typeof expectedTemplate === "string") {
+    const identities = templateIdentities(text);
+    if (identities.length !== 1 || identities[0] !== expectedTemplate) {
+      return unreadableTemplate();
+    }
+  }
   const schemaRaw = attributeValues(text, "msPKI-Template-Schema-Version");
   const ekuRaw = attributeValues(text, "pKIExtendedKeyUsage");
   if (schemaRaw.length === 0 && ekuRaw.length === 0) {
-    return {
-      verdict: "unreadable",
-      reasons: ["template_unreadable"],
-      schemaVersion: null,
-      templateOid: null,
-      minimalKeySize: null,
-      asymmetricAlgorithm: null,
-      enrolleeSuppliesSubject: null,
-    };
+    return unreadableTemplate();
   }
   const reasons = [];
   const schemaVersion = /^\d+$/.test(schemaRaw[0] || "") ? Number(schemaRaw[0]) : null;
@@ -208,7 +232,7 @@ async function runCertutilPreflight({
   let interfaceText = "";
   let countText = "";
   try {
-    templateText = textOf(await call(["-config", caConfig, "-dstemplate"]));
+    templateText = textOf(await call(["-config", caConfig, "-dstemplate", template]));
     editText = textOf(await call(["-config", caConfig, "-getreg", "policy\\EditFlags"]));
     interfaceText = textOf(await call(["-config", caConfig, "-getreg", "CA\\InterfaceFlags"]));
     countText = textOf(await call(["-config", caConfig, "-cainfo", "certcount"]));
@@ -217,7 +241,7 @@ async function runCertutilPreflight({
       preflightResult: {
         caConfig,
         template,
-        templateCheck: parseTemplateDump(templateText),
+        templateCheck: parseTemplateDump(templateText, template),
         caCheck: {
           verdict: "unreadable",
           reasons: ["ca_unreachable"],
@@ -254,7 +278,7 @@ async function runCertutilPreflight({
     preflightResult: {
       caConfig,
       template,
-      templateCheck: parseTemplateDump(templateText),
+      templateCheck: parseTemplateDump(templateText, template),
       caCheck: parseCaCheck(editText, interfaceText, operatorAttested),
       caCertificates,
     },

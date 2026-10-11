@@ -400,8 +400,14 @@ describe("CertOps AD CS enrollments (real database)", function () {
     expect(outcome.status).to.equal("succeeded");
     await recordPreflightResult(pool, {
       workspaceId,
-      job: { subject_id: issuerId, operation: "adcs-preflight", id: job.id },
+      job: {
+        subject_id: issuerId,
+        operation: "adcs-preflight",
+        id: job.id,
+        payload: { caConfig: CA, template: TEMPLATE },
+      },
       preflightResult: outcome.preflightResult,
+      resultStatus: "succeeded",
     });
     const stored = await TestUtils.execQuery(
       "SELECT last_preflight->>'template' AS template FROM certificate_issuers WHERE id = $1",

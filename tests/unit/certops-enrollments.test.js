@@ -19,6 +19,7 @@ const {
   dispatchPreflight,
   proposeReconcileRequestId,
   recordEnrollmentResult,
+  recordPreflightResult,
   scheduleDueEnrollments,
 } = require("../../apps/api/services/certops/certificateEnrollments");
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
@@ -725,5 +726,82 @@ describe("enrollment rows", () => {
       }),
       (error) => error.code === "CERTOPS_PREFLIGHT_RATE_LIMITED",
     );
+  });
+
+  it("stores a preflight result only for the succeeded job's CA and template", async () => {
+    const caConfig = "ca01.corp.example.com\\Corp Issuing CA 01";
+    const template = "TokenTimerWebServer";
+    const stored = { last: null };
+    const db = {
+      async query(sql, params) {
+        if (sql.includes("SET last_preflight")) {
+          stored.last = JSON.parse(params[2]);
+          return { rows: [] };
+        }
+        throw new Error(sql);
+      },
+    };
+    const matching = {
+      caConfig,
+      template,
+      templateCheck: {
+        verdict: "safe",
+        reasons: [],
+        schemaVersion: 2,
+        templateOid: "1.3.6.1.4.1.311.21.8.1.2.3.4.5.6",
+        minimalKeySize: 2048,
+        asymmetricAlgorithm: null,
+        enrolleeSuppliesSubject: true,
+      },
+      caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+      caCertificates: [{
+        certificateB64: "MIIB",
+        keySha256: "ab".repeat(32),
+        thumbprintSha1: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+        notBefore: "2026-01-01T00:00:00.000Z",
+        notAfter: "2031-01-01T00:00:00.000Z",
+      }],
+    };
+    const job = {
+      subject_id: ISSUER,
+      operation: "adcs-preflight",
+      payload: { caConfig, template },
+    };
+    await recordPreflightResult(db, {
+      workspaceId: WORKSPACE,
+      job,
+      preflightResult: matching,
+      resultStatus: "succeeded",
+    });
+    assert.equal(stored.last.template, template);
+    await assert.rejects(
+      recordPreflightResult(db, {
+        workspaceId: WORKSPACE,
+        job,
+        preflightResult: { ...matching, template: "OtherTemplate" },
+        resultStatus: "succeeded",
+      }),
+      (error) => error.code === "CERTOPS_SNAPSHOT_INVALID",
+    );
+    await assert.rejects(
+      recordPreflightResult(db, {
+        workspaceId: WORKSPACE,
+        job: { ...job, payload: { caConfig, template: "OtherTemplate" } },
+        preflightResult: matching,
+        resultStatus: "succeeded",
+      }),
+      (error) => error.code === "CERTOPS_SNAPSHOT_INVALID",
+    );
+    await assert.rejects(
+      recordPreflightResult(db, {
+        workspaceId: WORKSPACE,
+        job,
+        preflightResult: matching,
+        resultStatus: "failed",
+      }),
+      (error) => error.code === "CERTOPS_AGENT_RESULT_STATUS_INVALID",
+    );
+    assert.equal(stored.last.template, template);
+    assert.equal(stored.last.caConfig, caConfig);
   });
 });

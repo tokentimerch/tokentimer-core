@@ -5066,6 +5066,273 @@ paths:
                 code: PRIVATE_KEY_MATERIAL_REJECTED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/certops/issuers:
+    post:
+      tags: [CertOps]
+      summary: Create a certificate issuer
+      operationId: createCertOpsIssuer
+      description: >-
+        Creates an issuer record for kind acme or adcs. Requires
+        certops.issuer.manage. Creating the record does not enable AD CS
+        enrollment.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, name]
+              properties:
+                kind:
+                  type: string
+                  enum: [acme, adcs]
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+      responses:
+        "201":
+          description: Issuer created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [issuer]
+                properties:
+                  issuer:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                      id: { type: string, format: uuid }
+                      kind: { type: string, enum: [acme, adcs] }
+                      name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/issuers/{issuerId}/preflight:
+    post:
+      tags: [CertOps]
+      summary: Dispatch a read-only AD CS issuer preflight
+      operationId: dispatchCertOpsIssuerPreflight
+      description: >-
+        Dispatches an adcs-preflight job to the chosen agent. The agent
+        contacts the CA only when its local enrollment rules name that exact
+        caConfig and template. Limited to 20 dispatches per workspace per hour.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: issuerId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [agentId, caConfig, template]
+              properties:
+                agentId: { type: string, format: uuid }
+                caConfig: { type: string, minLength: 3, maxLength: 320 }
+                template: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "201":
+          description: Preflight job created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [job]
+                properties:
+                  job:
+                    $ref: "#/components/schemas/CertOpsJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429":
+          description: Workspace preflight rate limit exceeded (CERTOPS_PREFLIGHT_RATE_LIMITED)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/issuers/{issuerId}/confirm:
+    post:
+      tags: [CertOps]
+      summary: Confirm an AD CS issuer key
+      operationId: confirmCertOpsIssuerKey
+      description: >-
+        Records a new issuer version from a key the operator selects out of
+        the latest safe preflight. Caller caConfig and template must match
+        that preflight. Clears revalidation_required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: issuerId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [caKeySha256]
+              properties:
+                caKeySha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                caConfig: { type: string }
+                template: { type: string }
+      responses:
+        "200":
+          description: Issuer version confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [issuerId, version, caKeySha256]
+                properties:
+                  issuerId: { type: string, format: uuid }
+                  version: { type: integer, minimum: 1 }
+                  caKeySha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments:
+    post:
+      tags: [CertOps]
+      summary: Create an AD CS enrollment
+      operationId: createCertOpsEnrollment
+      description: >-
+        Freezes the confirmed issuer version into an enrollment snapshot and
+        creates the first job in the same transaction. Refused while the
+        issuer requires revalidation or the snapshot does not match its contract.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [issuerId, certificateId, agentId, target, authorizedDnsNames, keyAlgorithm, keySize]
+              properties:
+                issuerId: { type: string, format: uuid }
+                certificateId: { type: string, format: uuid }
+                agentId: { type: string, format: uuid }
+                target: { type: object, additionalProperties: true }
+                authorizedDnsNames:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+                keyAlgorithm: { type: string, enum: [rsa, ecdsa] }
+                keySize: { type: integer }
+      responses:
+        "201":
+          description: Enrollment and first job created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enrollmentId, snapshotSha256, jobId]
+                properties:
+                  enrollmentId: { type: string, format: uuid }
+                  snapshotSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                  jobId: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/meter:
+    get:
+      tags: [CertOps]
+      summary: Count installed AD CS enrollments
+      operationId: getCertOpsEnrollmentMeter
+      description: Returns the number of enrollments in state installed for the workspace.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Installed enrollment count
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enrollmentCount]
+                properties:
+                  enrollmentCount: { type: integer, minimum: 0 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/reconcile:
+    post:
+      tags: [CertOps]
+      summary: Propose a RequestId for an uncertain enrollment
+      operationId: reconcileCertOpsEnrollment
+      description: >-
+        Accepts a Windows RequestId from 1 through 4294967295 while the
+        enrollment is submission_uncertain, then schedules a reconciliation
+        continuation.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId]
+              properties:
+                requestId: { type: integer, minimum: 1, maximum: 4294967295 }
+      responses:
+        "204": { description: RequestId recorded and reconciliation scheduled }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/abandon:
+    post:
+      tags: [CertOps]
+      summary: Abandon an enrollment
+      operationId: abandonCertOpsEnrollment
+      description: >-
+        Marks the enrollment abandoned and schedules a final continuation
+        that frees the local key.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Enrollment abandoned }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/jobs:
     get:
       tags: [CertOps]
