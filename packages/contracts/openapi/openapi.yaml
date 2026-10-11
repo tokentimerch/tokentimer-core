@@ -9813,7 +9813,7 @@ components:
           nullable: true
         evidenceType:
           type: string
-          enum: [certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, policy.checked]
+          enum: [certificate.observed, deployment.checked, deployment.updated, validation.passed, validation.failed, policy.checked, adcs-template-verdict, adcs-submitted, adcs-pending, adcs-issued, adcs-denied, adcs-uncertain, adcs-validation-deferred, adcs-rejected-invalid]
         subjectType:
           type: string
           nullable: true
@@ -10204,6 +10204,14 @@ components:
             - validation.passed
             - validation.failed
             - policy.checked
+            - adcs-template-verdict
+            - adcs-submitted
+            - adcs-pending
+            - adcs-issued
+            - adcs-denied
+            - adcs-uncertain
+            - adcs-validation-deferred
+            - adcs-rejected-invalid
         source:
           type: string
           enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]
@@ -10303,6 +10311,14 @@ components:
             - validation.passed
             - validation.failed
             - policy.checked
+            - adcs-template-verdict
+            - adcs-submitted
+            - adcs-pending
+            - adcs-issued
+            - adcs-denied
+            - adcs-uncertain
+            - adcs-validation-deferred
+            - adcs-rejected-invalid
         source:
           type: string
           enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]
@@ -12683,6 +12699,14 @@ components:
                           - validation.passed
                           - validation.failed
                           - policy.checked
+                          - adcs-template-verdict
+                          - adcs-submitted
+                          - adcs-pending
+                          - adcs-issued
+                          - adcs-denied
+                          - adcs-uncertain
+                          - adcs-validation-deferred
+                          - adcs-rejected-invalid
                       observedAt:
                         type: string
                         format: date-time

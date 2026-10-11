@@ -42,6 +42,14 @@ const EVIDENCE_TYPES = Object.freeze([
   // subject_type 'trust_anchor' (SUBJECT_TYPES, imported from jobs.js).
   "trust.distributed",
   "trust.revoked",
+  "adcs-template-verdict",
+  "adcs-submitted",
+  "adcs-pending",
+  "adcs-issued",
+  "adcs-denied",
+  "adcs-uncertain",
+  "adcs-validation-deferred",
+  "adcs-rejected-invalid",
 ]);
 const EVIDENCE_TYPE_SET = new Set(EVIDENCE_TYPES);
 const SUBJECT_TYPE_SET = new Set(SUBJECT_TYPES);

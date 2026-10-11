@@ -48,6 +48,14 @@ const EVENT_TYPES = Object.freeze([
   "policy.checked",
   "trust.distributed",
   "trust.revoked",
+  "adcs-template-verdict",
+  "adcs-submitted",
+  "adcs-pending",
+  "adcs-issued",
+  "adcs-denied",
+  "adcs-uncertain",
+  "adcs-validation-deferred",
+  "adcs-rejected-invalid",
 ]);
 
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);

@@ -4753,6 +4753,25 @@ const migrations = [
         WHERE next_poll_at IS NOT NULL;
     `,
   },
+  {
+    version: 71,
+    name: "certops_adcs_evidence_types",
+    sql: `
+      ALTER TABLE certificate_evidence
+        DROP CONSTRAINT IF EXISTS certificate_evidence_evidence_type_check;
+      ALTER TABLE certificate_evidence
+        ADD CONSTRAINT certificate_evidence_evidence_type_check CHECK (
+          evidence_type IN (
+            'certificate.observed', 'deployment.checked', 'deployment.updated',
+            'validation.passed', 'validation.failed', 'policy.checked',
+            'trust.distributed', 'trust.revoked',
+            'adcs-template-verdict', 'adcs-submitted', 'adcs-pending',
+            'adcs-issued', 'adcs-denied', 'adcs-uncertain',
+            'adcs-validation-deferred', 'adcs-rejected-invalid'
+          )
+        );
+    `,
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

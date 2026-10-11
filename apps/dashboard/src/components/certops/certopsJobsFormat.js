@@ -69,6 +69,14 @@ const EVIDENCE_TYPE_LABELS = {
   'validation.passed': 'Validation passed',
   'validation.failed': 'Validation failed',
   'policy.checked': 'Policy checked',
+  'adcs-template-verdict': 'AD CS template verdict',
+  'adcs-submitted': 'AD CS submitted',
+  'adcs-pending': 'AD CS pending',
+  'adcs-issued': 'AD CS issued',
+  'adcs-denied': 'AD CS denied',
+  'adcs-uncertain': 'AD CS uncertain',
+  'adcs-validation-deferred': 'AD CS validation deferred',
+  'adcs-rejected-invalid': 'AD CS rejected',
 };
 
 const EVIDENCE_TYPE_SCHEMES = {
@@ -78,6 +86,14 @@ const EVIDENCE_TYPE_SCHEMES = {
   'validation.passed': 'green',
   'validation.failed': 'red',
   'policy.checked': 'gray',
+  'adcs-template-verdict': 'gray',
+  'adcs-submitted': 'blue',
+  'adcs-pending': 'blue',
+  'adcs-issued': 'green',
+  'adcs-denied': 'red',
+  'adcs-uncertain': 'gray',
+  'adcs-validation-deferred': 'gray',
+  'adcs-rejected-invalid': 'red',
 };
 
 const SUBJECT_TYPE_LABELS = {
