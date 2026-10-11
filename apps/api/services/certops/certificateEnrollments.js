@@ -481,11 +481,32 @@ async function recordPreflightResult(client, { workspaceId, job, preflightResult
   }
   const issuerId = job.subject_id;
   if (!issuerId) return;
+  if (!job.id) {
+    throw serviceError(
+      "preflightResult requires the reporting job",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  // last_preflight is the latest dispatched preflight that has completed.
+  // A slower older job must not replace a result from a job created after it.
   await dbOf(client).query(
-    `UPDATE certificate_issuers
-        SET last_preflight = $3::jsonb, updated_at = NOW()
-      WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, issuerId, JSON.stringify(preflightResult)],
+    `UPDATE certificate_issuers AS i
+        SET last_preflight = $3::jsonb,
+            last_preflight_job_id = $4,
+            updated_at = NOW()
+      WHERE i.workspace_id = $1
+        AND i.id = $2
+        AND NOT EXISTS (
+          SELECT 1
+            FROM certificate_jobs stored
+            JOIN certificate_jobs incoming
+              ON incoming.workspace_id = stored.workspace_id
+             AND incoming.id = $4
+           WHERE stored.workspace_id = i.workspace_id
+             AND stored.id = i.last_preflight_job_id
+             AND stored.created_at > incoming.created_at
+        )`,
+    [workspaceId, issuerId, JSON.stringify(preflightResult), job.id],
   );
 }
 

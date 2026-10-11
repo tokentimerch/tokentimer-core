@@ -4663,10 +4663,14 @@ const migrations = [
         current_version INTEGER NOT NULL DEFAULT 0,
         revalidation_required BOOLEAN NOT NULL DEFAULT false,
         last_preflight JSONB NULL,
+        last_preflight_job_id UUID NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CONSTRAINT uq_certificate_issuers_workspace_id UNIQUE (workspace_id, id)
       );
+
+      ALTER TABLE certificate_issuers
+        ADD COLUMN IF NOT EXISTS last_preflight_job_id UUID NULL;
 
       CREATE TABLE IF NOT EXISTS certificate_issuer_versions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

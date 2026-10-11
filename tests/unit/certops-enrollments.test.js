@@ -157,6 +157,7 @@ describe("migration 70 certificate enrollments", () => {
     assert.match(migration.sql, /'adcs-preflight'/);
     assert.match(migration.sql, /enrollment_id/);
     assert.match(migration.sql, /deploy_target/);
+    assert.match(migration.sql, /last_preflight_job_id/);
   });
 });
 
@@ -763,6 +764,7 @@ describe("enrollment rows", () => {
       }],
     };
     const job = {
+      id: "66666666-6666-4666-8666-666666666666",
       subject_id: ISSUER,
       operation: "adcs-preflight",
       payload: { caConfig, template },

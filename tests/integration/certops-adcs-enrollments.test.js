@@ -415,4 +415,81 @@ describe("CertOps AD CS enrollments (real database)", function () {
     );
     expect(stored.rows[0].template).to.equal(TEMPLATE);
   });
+
+  it("keeps the latest dispatched preflight when an older job finishes later", async () => {
+    function resultFor(template) {
+      return {
+        caConfig: CA,
+        template,
+        templateCheck: {
+          verdict: "safe",
+          reasons: [],
+          schemaVersion: 2,
+          templateOid: "1.3.6.1.4.1.311.21.8.1.2.3.4.5.6",
+          minimalKeySize: 2048,
+          asymmetricAlgorithm: null,
+          enrolleeSuppliesSubject: true,
+        },
+        caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+        caCertificates: [{
+          certificateB64: "MIIB",
+          keySha256: KEY,
+          thumbprintSha1: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+          notBefore: "2026-01-01T00:00:00.000Z",
+          notAfter: "2031-01-01T00:00:00.000Z",
+        }],
+      };
+    }
+    async function insertJob(template, createdAt) {
+      const inserted = await TestUtils.execQuery(
+        `INSERT INTO certificate_jobs
+           (workspace_id, operation, status, executor_kind, mode,
+            subject_type, subject_id, payload, requested_by_user_id, created_at)
+         VALUES ($1, 'adcs-preflight', 'succeeded', 'agent', 'real',
+                 'external', $2, $3::jsonb, $4, $5)
+         RETURNING id`,
+        [
+          workspaceId,
+          issuerId,
+          JSON.stringify({ caConfig: CA, template }),
+          ownerId,
+          createdAt,
+        ],
+      );
+      return inserted.rows[0].id;
+    }
+    await TestUtils.execQuery(
+      `UPDATE certificate_issuers
+          SET last_preflight = NULL, last_preflight_job_id = NULL
+        WHERE id = $1`,
+      [issuerId],
+    );
+    const olderTemplate = "OlderTemplate";
+    const newerTemplate = "NewerTemplate";
+    const olderId = await insertJob(olderTemplate, new Date(Date.now() - 120000));
+    const newerId = await insertJob(newerTemplate, new Date(Date.now() - 60000));
+    async function report(jobId, template) {
+      await recordPreflightResult(pool, {
+        workspaceId,
+        job: {
+          id: jobId,
+          subject_id: issuerId,
+          operation: "adcs-preflight",
+          payload: { caConfig: CA, template },
+        },
+        preflightResult: resultFor(template),
+        resultStatus: "succeeded",
+      });
+    }
+    await report(olderId, olderTemplate);
+    await report(newerId, newerTemplate);
+    await report(olderId, olderTemplate);
+    const stored = await TestUtils.execQuery(
+      `SELECT last_preflight->>'template' AS template, last_preflight_job_id
+         FROM certificate_issuers WHERE id = $1`,
+      [issuerId],
+    );
+    expect(stored.rows[0].template).to.equal(newerTemplate);
+    expect(stored.rows[0].last_preflight_job_id).to.equal(newerId);
+  });
 });
