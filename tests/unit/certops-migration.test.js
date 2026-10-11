@@ -42,6 +42,7 @@ describe("operational notifications migration", () => {
       /'adcs-template-verdict', 'adcs-submitted', 'adcs-pending'/,
     );
     assert.match(migrations.at(-1).sql, /fk_certificate_profiles_issuer/);
+    assert.match(migrations.at(-1).sql, /ON DELETE SET NULL \(issuer_id\)/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
       Array.from({ length: 72 }, (_, index) => index + 1),

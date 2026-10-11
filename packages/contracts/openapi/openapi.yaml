@@ -10324,14 +10324,6 @@ components:
             - validation.passed
             - validation.failed
             - policy.checked
-            - adcs-template-verdict
-            - adcs-submitted
-            - adcs-pending
-            - adcs-issued
-            - adcs-denied
-            - adcs-uncertain
-            - adcs-validation-deferred
-            - adcs-rejected-invalid
         source:
           type: string
           enum: [executor, domain-monitor, endpoint-monitor, control-plane, external]

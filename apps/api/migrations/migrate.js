@@ -4784,7 +4784,7 @@ const migrations = [
         ADD CONSTRAINT fk_certificate_profiles_issuer
           FOREIGN KEY (workspace_id, issuer_id)
           REFERENCES certificate_issuers(workspace_id, id)
-          ON DELETE SET NULL;
+          ON DELETE SET NULL (issuer_id);
     `,
   },
 ];

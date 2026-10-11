@@ -172,6 +172,36 @@ const WEBHOSTING = {
   binding: { site: "Shop", port: 443, sniHost: "app.example.com" },
 };
 
+function profileEnrollmentDb(versionRow) {
+  return {
+    async query(sql) {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: ISSUER }] };
+      if (sql.includes("FROM certificate_issuer_versions")) {
+        return { rows: versionRow ? [versionRow] : [] };
+      }
+      throw new Error(sql);
+    },
+  };
+}
+
+function enrollThroughProfile(db) {
+  return createEnrollment({
+    client: db,
+    workspaceId: WORKSPACE,
+    issuerId: ISSUER,
+    profileId: "33333333-3333-4333-8333-333333333333",
+    certificateId: "33333333-3333-4333-8333-333333333333",
+    agentId: "22222222-2222-4222-8222-222222222222",
+    target: WEBHOSTING,
+    authorizedDnsNames: ["app.example.com"],
+    keyAlgorithm: "rsa",
+    keySize: 2048,
+    audit: async () => {},
+    createJob: async () => ({ id: "job-should-not-exist" }),
+  });
+}
+
 function rowDb() {
   const enrollments = new Map();
   const issuers = new Map();
@@ -694,6 +724,43 @@ describe("enrollment rows", () => {
       (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
     );
     assert.equal(db.enrollments.get(ENROLLMENT).state, "pending_issuance");
+    for (const state of ["requested", "prepared", "submitting"]) {
+      const early = rowDb();
+      early.putEnrollment(storedEnrollment(ENROLLMENT, state, { attempt: 1 }));
+      await assert.rejects(
+        abandonEnrollment({
+          client: early,
+          workspaceId: WORKSPACE,
+          enrollmentId: ENROLLMENT,
+          audit,
+        }),
+        (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+      );
+      assert.equal(early.enrollments.get(ENROLLMENT).state, state);
+    }
+  });
+
+  it("refuses a profile enrollment while that issuer requires revalidation", async () => {
+    const db = profileEnrollmentDb({
+      version: 1,
+      ca_config: "ca01.corp.example.com\\Corp Issuing CA 01",
+      template: "TokenTimerWebServer",
+      ca_key_sha256: "ab".repeat(32),
+      kind: "adcs",
+      revalidation_required: true,
+    });
+    await assert.rejects(
+      enrollThroughProfile(db),
+      (error) => error.code === "CERTOPS_ISSUER_REVALIDATION_REQUIRED",
+    );
+  });
+
+  it("refuses a profile enrollment when the issuer key is not confirmed", async () => {
+    const db = profileEnrollmentDb(null);
+    await assert.rejects(
+      enrollThroughProfile(db),
+      (error) => error.code === "CERTOPS_ISSUER_NOT_FOUND",
+    );
   });
 
   it("keeps ACME profiles off the AD CS enrollment path", async () => {

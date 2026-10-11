@@ -4,9 +4,10 @@ function workspaceBase(workspaceId) {
   return `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/certops`;
 }
 
-export async function listIssuers(workspaceId, { signal } = {}) {
+export async function listIssuers(workspaceId, { signal, limit } = {}) {
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/issuers`, {
     signal,
+    params: limit ? { limit } : undefined,
   });
   return res.data;
 }

@@ -75,6 +75,40 @@ import {
  * anyway would be refused.
  */
 
+function IssuerChoice({ profile, issuers, disabled, onSave }) {
+  const [value, setValue] = useState(profile.issuerId || '');
+
+  useEffect(() => {
+    setValue(profile.issuerId || '');
+  }, [profile.issuerId]);
+
+  const known = !value || issuers.some(issuer => issuer.id === value);
+
+  return (
+    <Select
+      size='sm'
+      aria-label={`Issuer for ${profile.name}`}
+      value={value}
+      isDisabled={disabled}
+      onChange={async event => {
+        const next = event.target.value;
+        const previous = value;
+        setValue(next);
+        const saved = await onSave(next || null);
+        if (!saved) setValue(previous);
+      }}
+    >
+      <option value=''>ACME</option>
+      {known ? null : <option value={value}>AD CS issuer</option>}
+      {issuers.map(issuer => (
+        <option key={issuer.id} value={issuer.id}>
+          {issuer.name}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 function statusBadge(profile) {
   if (profile.autoRenewEnabled) {
     return { label: 'On', scheme: 'green' };
@@ -256,7 +290,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   useEffect(() => {
     if (!isAdmin || !workspaceId) return undefined;
     let cancelled = false;
-    listIssuers(workspaceId)
+    listIssuers(workspaceId, { limit: 100 })
       .then(page => {
         if (!cancelled) setIssuers(page.items || []);
       })
@@ -493,29 +527,20 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                           Issuer
                         </CertOpsMobileFieldLabel>
                         {isAdmin && !archived ? (
-                          <Select
-                            size='sm'
-                            aria-label={`Issuer for ${profile.name}`}
-                            value={profile.issuerId || ''}
-                            isDisabled={rowSaving}
-                            onChange={event => {
-                              const value = event.target.value;
+                          <IssuerChoice
+                            profile={profile}
+                            issuers={issuers}
+                            disabled={rowSaving}
+                            onSave={next =>
                               applyChange(
                                 profile,
-                                { issuerId: value || null },
-                                value
+                                { issuerId: next },
+                                next
                                   ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
                                   : 'Profile stays on ACME'
-                              );
-                            }}
-                          >
-                            <option value=''>ACME</option>
-                            {issuers.map(issuer => (
-                              <option key={issuer.id} value={issuer.id}>
-                                {issuer.name}
-                              </option>
-                            ))}
-                          </Select>
+                              )
+                            }
+                          />
                         ) : (
                           <Text fontSize='sm'>
                             {profile.issuerId ? 'AD CS issuer' : 'ACME'}
