@@ -63,7 +63,12 @@ const {
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
 const { readLedgerRow, createLedgerRow } = require("./windows-retention");
-const { recordIssuedContainer, markIssuedContainerAccepted, acquireStoreLock } = require("./windows-cert-store");
+const {
+  recordIssuedContainer,
+  markIssuedContainerAccepted,
+  acquireStoreLock,
+  execWithoutShell,
+} = require("./windows-cert-store");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
   ensureConfigDir,
@@ -4763,6 +4768,81 @@ describe("windows-iis renew job (os-store-managed)", () => {
       } finally {
         targetLock.release();
       }
+    });
+
+    it("two-store run drains an aborted child before releasing the surviving store lock", async () => {
+      const { execFile } = require("node:child_process");
+      const dir = stateDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const locks = acquireWindowsStoreLocks(dir, "WebHosting");
+      assert.equal(locks._locksForTests.length, 2);
+
+      /** @type {number|null} */
+      let childPid = null;
+      let successorSawLiveOnWebHosting = false;
+      let successorAcquiredWebHosting = false;
+
+      const work = locks.run(async (signal) =>
+        execWithoutShell(
+          (file, args, opts, cb) => {
+            const child = execFile(file, args, opts, cb);
+            childPid = child.pid ?? null;
+            return child;
+          },
+          [process.execPath, "-e", "setTimeout(() => {}, 60000)"],
+          15000,
+          signal,
+        ),
+      );
+
+      for (let i = 0; i < 50 && childPid == null; i += 1) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.ok(childPid, "child pid should be assigned before lock loss");
+
+      // Lose My while the child is active; WebHosting must stay held until drain.
+      await locks._locksForTests[0]._workerForTests.terminate();
+
+      const successorProbe = (async () => {
+        for (let i = 0; i < 400; i += 1) {
+          try {
+            const next = acquireStoreLock(dir, "WebHosting");
+            successorAcquiredWebHosting = true;
+            try {
+              process.kill(childPid, 0);
+              successorSawLiveOnWebHosting = true;
+            } catch {
+              // predecessor already gone — expected ordering
+            }
+            next.release();
+            return;
+          } catch {
+            await new Promise((r) => setTimeout(r, 10));
+          }
+        }
+      })();
+
+      await assert.rejects(work, (err) => {
+        assert.match(String(err && err.code), /LOCK_LOST|STORE_LOCK_LOST/);
+        return true;
+      });
+      await successorProbe;
+      try {
+        locks.release();
+      } catch {
+        // already released on loss path
+      }
+
+      assert.equal(
+        successorSawLiveOnWebHosting,
+        false,
+        "WebHosting must not be acquirable while the predecessor child is still alive",
+      );
+      assert.equal(
+        successorAcquiredWebHosting,
+        true,
+        "WebHosting must become acquirable after the composite run drains and releases",
+      );
     });
   });
 });

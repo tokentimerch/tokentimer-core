@@ -3870,6 +3870,9 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  *   set cannot be locked. `assertHeld` throws if any lock worker exited
  *   unexpectedly.
  */
+/** After multi-store lock loss, wait this long for cooperative cancel before release. */
+const WINDOWS_STORE_LOCKS_ABORT_DRAIN_MS = 5_000;
+
 function acquireWindowsStoreLocks(stateDir, targetStore) {
   const storeNames = [...new Set(["My", targetStore])];
   const locks = [];
@@ -3885,16 +3888,23 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
     assertHeld() {
       for (const lock of locks) lock.assertHeld();
     },
+    /**
+     * Race `work` against loss of any store lock. Matches single-lock
+     * `run`: abort cooperative work first, wait a bounded drain for
+     * subprocess exit, then release surviving locks. Do not release a
+     * still-held store before canceling its protected work.
+     * @template T
+     * @param {((signal: AbortSignal) => Promise<T>)|(() => Promise<T>)} work
+     * @returns {Promise<T>}
+     */
     async run(work) {
-      // Compose per-store run fences so any single lock loss aborts and
-      // terminates that worker; remaining locks are released in finally.
       if (locks.length === 1) {
         return locks[0].run(work);
       }
       this.assertHeld();
       let settled = false;
       const ac = new AbortController();
-      const lossWatch = new Promise((_, reject) => {
+      const lossWatch = new Promise((resolve) => {
         const timer = setInterval(() => {
           if (settled) {
             clearInterval(timer);
@@ -3904,35 +3914,64 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
             this.assertHeld();
           } catch (err) {
             clearInterval(timer);
-            for (const lock of locks) {
-              try {
-                lock.release();
-              } catch {
-                // best-effort drop listens
-              }
-            }
+            // Abort first; keep surviving IPC listens so cooperative cancel
+            // can drain subprocesses before a successor acquires those stores.
+            // A lock whose worker already died has already dropped its listen
+            // (fail-open for that store; real-host qualification).
             try {
               ac.abort(err);
             } catch {
               // ignore
             }
-            reject(err);
+            resolve(err);
           }
         }, 50);
         if (typeof timer.unref === "function") timer.unref();
       });
-      const invoke = () => {
+      const workPromise = Promise.resolve().then(() => {
         if (typeof work === "function" && work.length >= 1) {
           return work(ac.signal);
         }
         return work();
-      };
+      });
       try {
-        return await Promise.race([Promise.resolve().then(invoke), lossWatch]);
+        const outcome = await Promise.race([
+          workPromise.then(
+            (value) => ({ type: "ok", value }),
+            (err) => ({ type: "work-err", err }),
+          ),
+          lossWatch.then((err) => ({ type: "lost", err })),
+        ]);
+        if (outcome.type === "ok") {
+          return outcome.value;
+        }
+        if (outcome.type === "work-err") {
+          throw outcome.err;
+        }
+        try {
+          await Promise.race([
+            workPromise.then(
+              () => undefined,
+              () => undefined,
+            ),
+            new Promise((r) => setTimeout(r, WINDOWS_STORE_LOCKS_ABORT_DRAIN_MS)),
+          ]);
+        } finally {
+          for (const lock of locks) {
+            try {
+              lock.release();
+            } catch {
+              // best-effort
+            }
+          }
+        }
+        throw outcome.err;
       } finally {
         settled = true;
       }
     },
+    /** Exposed for crash-boundary tests: underlying per-store lock handles. */
+    _locksForTests: locks,
     release() {
       for (const lock of locks) lock.release();
     },
