@@ -27,12 +27,34 @@ function extractExportArray(source, exportName) {
     .filter(Boolean);
 }
 
+function extractOpenApiListJobsEnum(openapiSource, paramName) {
+  const jobsGet = openapiSource.match(
+    /operationId: listCertOpsJobs[\s\S]*?\n    post:/,
+  );
+  assert.ok(jobsGet, "listCertOpsJobs GET block missing");
+  const param = jobsGet[0].match(
+    new RegExp(
+      `name: ${paramName}\\n[\\s\\S]*?enum:\\s*(?:\\[([^\\]]+)\\]|((?:\\n\\s+- [^\\n]+)+))`,
+    ),
+  );
+  assert.ok(param, `listCertOpsJobs query param ${paramName} enum missing`);
+  const raw = param[1] || param[2];
+  return raw
+    .split(/[\n,]/)
+    .map((part) => part.replace(/^[\s\-:]+/, "").trim())
+    .filter(Boolean);
+}
+
 describe("Jobs filter vocabulary parity", () => {
   const dashboardApi = fs.readFileSync(
     path.join(
       __dirname,
       "../../apps/dashboard/src/components/certops/certopsJobsApi.js",
     ),
+    "utf8",
+  );
+  const openapiSource = fs.readFileSync(
+    path.join(__dirname, "../../packages/contracts/openapi/openapi.yaml"),
     "utf8",
   );
 
@@ -44,6 +66,30 @@ describe("Jobs filter vocabulary parity", () => {
     assert.deepEqual(
       extractExportArray(dashboardApi, "CERTOPS_JOB_OPERATIONS"),
       [...JOB_OPERATIONS],
+    );
+  });
+
+  it("OpenAPI listCertOpsJobs filters match the jobs service vocabulary", () => {
+    assert.deepEqual(
+      extractOpenApiListJobsEnum(openapiSource, "status"),
+      [...JOB_STATUSES],
+    );
+    assert.deepEqual(
+      extractOpenApiListJobsEnum(openapiSource, "operation"),
+      [...JOB_OPERATIONS],
+    );
+    assert.deepEqual(extractOpenApiListJobsEnum(openapiSource, "createdSince"), [
+      "24h",
+      "7d",
+      "30d",
+    ]);
+    assert.match(
+      openapiSource,
+      /operationId: listCertOpsJobs[\s\S]*?\n\s+- in: query\n\s+name: q\n/,
+    );
+    assert.match(
+      openapiSource,
+      /CertOpsAgentLogBody:[\s\S]*?oneOf:[\s\S]*?CertOpsAgentLogLine/,
     );
   });
 

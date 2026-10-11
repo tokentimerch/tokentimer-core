@@ -5084,12 +5084,39 @@ paths:
           name: status
           schema:
             type: string
-            enum: [pending_approval, approved, rejected, pending, claimed, running, succeeded, failed, blocked, cancelled]
+            enum:
+              [
+                pending_approval,
+                approved,
+                rejected,
+                pending,
+                claimed,
+                running,
+                succeeded,
+                failed,
+                blocked,
+                cancelled,
+                dry_run_complete,
+                orphaned_unknown_effect,
+                awaiting_issuer,
+              ]
         - in: query
           name: operation
           schema:
             type: string
-            enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust]
+            enum:
+              [
+                issue,
+                renew,
+                deploy,
+                reload,
+                revoke,
+                noop,
+                protocol_smoke,
+                distribute-trust,
+                revoke-trust,
+                continue-enrollment,
+              ]
         - in: query
           name: source
           schema:
@@ -5105,6 +5132,20 @@ paths:
           schema:
             type: string
             maxLength: 128
+        - in: query
+          name: q
+          description: >-
+            Case-insensitive substring match on job id, subject id, operation,
+            status, and related public job fields (max 128 characters).
+          schema:
+            type: string
+            maxLength: 128
+        - in: query
+          name: createdSince
+          description: Restrict results to jobs created within the given window.
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
       responses:
         "200":
           description: Job list
