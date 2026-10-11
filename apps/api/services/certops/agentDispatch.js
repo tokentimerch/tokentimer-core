@@ -1414,7 +1414,8 @@ async function claimJobs({
                 updated_at = NOW()
           WHERE id = $1
           RETURNING id, claim_id, lease_expires_at, attempt_count, operation,
-                    subject_type, subject_id, payload, mode, created_at, status`,
+                    subject_type, subject_id, payload, mode, created_at, status,
+                    enrollment_id`,
         [row.id, agent.id, leaseSeconds],
       );
       const job = claimed.rows[0];
@@ -1520,6 +1521,18 @@ async function claimJobs({
         // so a per-call timestamp would break idempotent replay). The job
         // row's created_at is stable across every re-dispatch.
         basePayload.requestedAt = dateToIso(job.created_at);
+      }
+
+      if (job.enrollment_id) {
+        const { loadDispatchEnrollment, attachEnrollmentDispatch } = require("./certificateEnrollments");
+        const enrollment = await loadDispatchEnrollment(client, agent.workspaceId, job.enrollment_id);
+        if (!enrollment) {
+          throw serviceError(
+            "claimed job is bound to a missing enrollment",
+            CERTOPS_AGENT_JOB_NOT_FOUND,
+          );
+        }
+        Object.assign(basePayload, attachEnrollmentDispatch(payload, enrollment));
       }
 
       const signedJob = await signJob({
@@ -2270,7 +2283,8 @@ async function ingestResult({
     const locked = await client.query(
       `SELECT id, status, claimed_by_agent_id, claim_id, operation,
               subject_type, subject_id, error_code, completed_at, mode,
-              source, payload, assigned_agent_id, management_period_id, certificate_identity_id
+              source, payload, assigned_agent_id, management_period_id, certificate_identity_id,
+              enrollment_id
          FROM certificate_jobs
         WHERE id = $1
           AND workspace_id = $2
@@ -2324,22 +2338,32 @@ async function ingestResult({
         CERTOPS_AGENT_RESULT_STATUS_INVALID,
       );
     }
-    // Status vocabulary and migration 68 land before the durable enrollment
-    // row and binding validation. Until those exist, refuse awaiting_issuer
-    // and any enrollmentResult at ingestion so an ordinary ACME job cannot
-    // complete as a non-alerting pending enrollment, or persist unverified
-    // enrollment claims on succeeded/failed results that job detail exposes.
-    if (jobStatus === "awaiting_issuer") {
-      throw serviceError(
-        "awaiting_issuer is not accepted until enrollment binding validation is implemented",
-        CERTOPS_AGENT_RESULT_STATUS_INVALID,
-      );
+    if (jobStatus === "awaiting_issuer" || body.enrollmentResult != null) {
+      if (!job.enrollment_id) {
+        throw serviceError(
+          jobStatus === "awaiting_issuer"
+            ? "awaiting_issuer requires a bound enrollment"
+            : "enrollmentResult requires a bound enrollment",
+          CERTOPS_AGENT_RESULT_STATUS_INVALID,
+        );
+      }
+      if (body.enrollmentResult != null) {
+        const { recordEnrollmentResult } = require("./certificateEnrollments");
+        await recordEnrollmentResult(client, {
+          workspaceId: agent.workspaceId,
+          job,
+          enrollmentResult: body.enrollmentResult,
+        });
+      }
     }
-    if (body.enrollmentResult != null) {
-      throw serviceError(
-        "enrollmentResult is not accepted until enrollment binding validation is implemented",
-        CERTOPS_AGENT_RESULT_STATUS_INVALID,
-      );
+    if (body.preflightResult != null && job.operation === "adcs-preflight") {
+      const { recordPreflightResult } = require("./certificateEnrollments");
+      await recordPreflightResult(client, {
+        workspaceId: agent.workspaceId,
+        job,
+        preflightResult: body.preflightResult,
+        resultStatus: jobStatus,
+      });
     }
 
     // Single-use nonce consumption (replay ledger), bound to the workspace

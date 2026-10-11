@@ -116,7 +116,7 @@ describe(
       ({ pool: workerPool } = await import("../../apps/worker/src/db.js"));
       runs = await import("../../apps/worker/src/shared/autoSyncRuns.js");
       assert.equal(
-        (await pool.query("SELECT 1 FROM migrations WHERE version=71"))
+        (await pool.query("SELECT 1 FROM migrations WHERE version=73 AND name='certops_distribution_transfer'"))
           .rowCount,
         1,
       );

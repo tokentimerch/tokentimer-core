@@ -74,6 +74,9 @@ const actionPolicy = {
   // same admin level as the kill switch and renewal profile management
   // rather than the workspace_manager level ordinary job creation uses.
   "certops.trust_anchor.manage": "admin",
+  // Creating or confirming an issuer changes what a later enrollment will
+  // ask an agent to submit. Same admin bar as renewal profiles.
+  "certops.issuer.manage": "admin",
   // Execution-console text is diagnostic. Viewers see stream status only.
   "certops.agent_logs.read": "workspace_manager",
   // Scan and import both mutate workspace inventory (or probe provider

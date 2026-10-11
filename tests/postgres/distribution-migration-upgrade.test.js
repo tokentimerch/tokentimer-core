@@ -13,9 +13,9 @@ const {
   runMigrations,
 } = require("../../apps/api/migrations/migrate");
 
-test("an installation at main's AD CS migration 68 upgrades to distribution without changing its history", async () => {
+test("an installation at main's enrollment migration 70 upgrades to distribution without changing its history", async () => {
   const pending = migrations.splice(
-    migrations.findIndex((entry) => entry.version === 69),
+    migrations.findIndex((entry) => entry.version === 71),
   );
   try {
     assert.equal(
@@ -29,11 +29,11 @@ test("an installation at main's AD CS migration 68 upgrades to distribution with
     );
     await runMigrations();
     const before = await pool.query(
-      "SELECT version, name FROM migrations WHERE version=68",
+      "SELECT version, name FROM migrations WHERE version=70",
     );
     assert.equal(
       before.rows[0].name,
-      "certops_adcs_awaiting_issuer_and_continue_enrollment",
+      "certops_certificate_enrollments",
     );
     migrations.push(...pending);
     await runMigrations();
@@ -45,9 +45,11 @@ test("an installation at main's AD CS migration 68 upgrades to distribution with
         version: 68,
         name: "certops_adcs_awaiting_issuer_and_continue_enrollment",
       },
-      { version: 69, name: "certops_material_distribution" },
-      { version: 70, name: "certops_distribution_review" },
-      { version: 71, name: "certops_distribution_transfer" },
+      { version: 69, name: "certops_agent_job_logs" },
+      { version: 70, name: "certops_certificate_enrollments" },
+      { version: 71, name: "certops_material_distribution" },
+      { version: 72, name: "certops_distribution_review" },
+      { version: 73, name: "certops_distribution_transfer" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
@@ -57,6 +59,11 @@ test("an installation at main's AD CS migration 68 upgrades to distribution with
       constraints.rows.find((row) => row.conname.endsWith("operation_check"))
         .definition,
       /continue-enrollment/,
+    );
+    assert.match(
+      constraints.rows.find((row) => row.conname.endsWith("operation_check"))
+        .definition,
+      /adcs-preflight/,
     );
     assert.match(
       constraints.rows.find((row) => row.conname.endsWith("operation_check"))
@@ -77,7 +84,7 @@ test("an installation at main's AD CS migration 68 upgrades to distribution with
       "certops_distribution_groups",
     );
   } finally {
-    if (migrations.at(-1).version === 68) migrations.push(...pending);
+    if (migrations.at(-1).version === 70) migrations.push(...pending);
     await pool.end();
   }
 });

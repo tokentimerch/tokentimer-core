@@ -2842,7 +2842,7 @@ describe("agentDispatch.ingestResult", () => {
       }),
       (error) =>
         error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID &&
-        /awaiting_issuer is not accepted until enrollment binding validation/i.test(
+        /awaiting_issuer requires a bound enrollment/i.test(
           error.message,
         ),
     );
@@ -2885,7 +2885,7 @@ describe("agentDispatch.ingestResult", () => {
         }),
         (error) =>
           error.code === CERTOPS_AGENT_RESULT_STATUS_INVALID &&
-          /enrollmentResult is not accepted until enrollment binding validation/i.test(
+          /enrollmentResult requires a bound enrollment/i.test(
             error.message,
           ),
       );

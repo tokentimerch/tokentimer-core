@@ -195,6 +195,8 @@ const JOB_OPERATIONS = Object.freeze([
   // only by the enrollment scheduler (allowEnrollmentContinuation), never
   // through the general createCertificateJob path.
   "continue-enrollment",
+  // Read-only AD CS issuer validation. Created only by the issuer service.
+  "adcs-preflight",
 ]);
 const JOB_OPERATION_SET = new Set(JOB_OPERATIONS);
 
@@ -1820,6 +1822,12 @@ async function createCertificateJob(options) {
       CERTOPS_JOB_OPERATION_INVALID,
     );
   }
+  if (operation === "adcs-preflight" && options.allowIssuerPreflight !== true) {
+    throw serviceError(
+      "adcs-preflight jobs can only be created by the CertOps issuer service",
+      CERTOPS_JOB_OPERATION_INVALID,
+    );
+  }
   // protocol_smoke is always dispatched dry-run (ADR-0012 decision 7): this
   // is what makes assertModeAllowsTerminalStatus below reject a later
   // "succeeded" report for this job, the same guard that already stops any
@@ -1879,6 +1887,12 @@ async function createCertificateJob(options) {
     "status",
     requiresApproval ? "pending_approval" : "pending",
   );
+  if (status === "awaiting_issuer" && !options.enrollmentId) {
+    throw serviceError(
+      "awaiting_issuer requires a bound enrollment",
+      CERTOPS_JOB_STATUS_INVALID,
+    );
+  }
   const mode = normalizeJobMode(options.mode);
   const source = normalizeEnum(
     options.source,
@@ -2099,6 +2113,15 @@ async function createCertificateJob(options) {
       if (payload.publication) {
         await require("./materialDistribution").allocateMaterialVersion({ client: db, workspaceId,
           groupId: payload.publication.groupId, job: { ...result.rows[0], payload } });
+      }
+      if (options.enrollmentId) {
+        await db.query(
+          `UPDATE certificate_jobs
+              SET enrollment_id = $3
+            WHERE workspace_id = $1 AND id = $2`,
+          [workspaceId, job.id, options.enrollmentId],
+        );
+        job.enrollmentId = options.enrollmentId;
       }
       return options.returnOutcome === true ? { job, created: true } : job;
     }
@@ -2450,6 +2473,28 @@ async function updateCertificateJobStatus(options) {
     CERTOPS_JOB_STATUS_INVALID,
     "status",
   );
+  if (status === "awaiting_issuer") {
+    if (!options.enrollmentId) {
+      throw serviceError(
+        "awaiting_issuer requires a bound enrollment",
+        CERTOPS_JOB_STATUS_INVALID,
+      );
+    }
+    const bound = await db.query(
+      `SELECT enrollment_id
+         FROM certificate_jobs
+        WHERE workspace_id = $1
+          AND id = $2
+        LIMIT 1`,
+      [workspaceId, jobId],
+    );
+    if (bound.rows[0]?.enrollment_id !== options.enrollmentId) {
+      throw serviceError(
+        "awaiting_issuer requires a bound enrollment",
+        CERTOPS_JOB_STATUS_INVALID,
+      );
+    }
+  }
   const hasResultMetadata = Object.prototype.hasOwnProperty.call(
     options,
     "resultMetadata",

@@ -129,6 +129,7 @@ const {
   createAcmeIssuer,
 } = require("./issuers");
 const { createAdcsWindowsIisExecutors } = require("./adcs-windows-iis");
+const { executeAdcsPreflight } = require("./issuers/adcs-preflight");
 const {
   deployCertificate,
   deployCertificateAndKey,
@@ -324,6 +325,7 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
   "reload",
   "distribute-trust",
   "revoke-trust",
+  "adcs-preflight",
 ]);
 
 /**
@@ -2105,6 +2107,9 @@ async function handleSignedJob({
         ...(outcome.enrollmentResult
           ? { enrollmentResult: outcome.enrollmentResult }
           : {}),
+        ...(outcome.preflightResult
+          ? { preflightResult: outcome.preflightResult }
+          : {}),
       },
       evidence: evidenceBodies,
       log,
@@ -2310,6 +2315,15 @@ async function executeJob({
       return { status: "dry_run_complete", keyRotated: null };
     }
     return { status: "succeeded", keyRotated: null };
+  }
+
+  if (action === "adcs-preflight") {
+    return executeAdcsPreflight({
+      job,
+      rules: executionContext.adcsEnrollmentRules,
+      probe: executionContext.adcsPreflightImpl,
+      execFileImpl: executionContext.windowsExecFileImpl,
+    });
   }
 
   if (action === "revoke") {
@@ -6586,6 +6600,9 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,
+    adcsEnrollmentRules: Array.isArray(config.adcs?.enrollmentRules)
+      ? config.adcs.enrollmentRules
+      : [],
   };
 }
 

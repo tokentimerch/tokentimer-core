@@ -1108,7 +1108,9 @@ export default function CreateManualJobModal({
                   value={operation}
                   onChange={handleOperationChange}
                 >
-                  {CERTOPS_JOB_OPERATIONS.map(op => (
+                  {CERTOPS_JOB_OPERATIONS.filter(
+                    op => op !== 'adcs-preflight'
+                  ).map(op => (
                     <option key={op} value={op}>
                       {jobOperationLabel(op)}
                     </option>

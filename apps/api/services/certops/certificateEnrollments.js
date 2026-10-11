@@ -1,0 +1,747 @@
+"use strict";
+
+const Ajv = require("ajv");
+const addFormats = require("ajv-formats");
+const { pool } = require("../../db/database");
+const enrollmentResultSchema = require("../../../../packages/contracts/certops/enrollment-result-contract.schema.json");
+const preflightResultSchema = require("../../../../packages/contracts/certops/adcs-preflight-result-contract.schema.json");
+const snapshotSchema = require("../../../../packages/contracts/certops/enrollment-snapshot.schema.json");
+
+const ajv = new Ajv({ strict: false });
+addFormats(ajv);
+ajv.addSchema(snapshotSchema);
+const validateEnrollmentResult = ajv.compile(enrollmentResultSchema);
+const validatePreflightResult = ajv.compile(preflightResultSchema);
+
+function assertSchema(validate, value, code) {
+  if (validate(value)) return;
+  throw serviceError("enrollment report does not match its contract", code);
+}
+const { writeAudit } = require("../audit");
+const { createCertificateJob } = require("./jobs");
+const {
+  PREFLIGHT_PER_HOUR,
+  UNREACHABLE_ERROR,
+  assertForwardTransition,
+  assertIssuerKind,
+  attachEnrollmentDispatch,
+  confirmedKeyAllowed,
+  decideContinuation,
+  freezeSnapshot,
+  nextPollAt,
+  parseRequestId,
+  serviceError,
+  storedAdcsPayload,
+} = require("./enrollmentLifecycle");
+
+function dbOf(client) {
+  return client || pool;
+}
+
+function isPool(db) {
+  return Boolean(db) && typeof db.connect === "function" && typeof db.idleCount === "number";
+}
+
+async function inTransaction(db, fn) {
+  await db.query("BEGIN");
+  try {
+    const result = await fn();
+    await db.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // The original error is the one the caller can act on.
+    }
+    throw error;
+  }
+}
+
+async function withTransaction(db, fn) {
+  if (!isPool(db)) return inTransaction(db, () => fn(db));
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    try {
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // The original error is the one the caller can act on.
+      }
+      throw error;
+    }
+  } finally {
+    client.release();
+  }
+}
+
+async function createIssuer({ client, workspaceId, kind, name, actorUserId }) {
+  assertIssuerKind(kind);
+  const db = dbOf(client);
+  const inserted = await db.query(
+    `INSERT INTO certificate_issuers (workspace_id, kind, name)
+     VALUES ($1, $2, $3)
+     RETURNING id, workspace_id, kind, name, current_version, revalidation_required`,
+    [workspaceId, kind, name],
+  );
+  const row = inserted.rows[0];
+  await writeAudit({
+    client: db,
+    actorUserId: actorUserId || null,
+    subjectUserId: actorUserId || null,
+    action: "certops.issuer.created",
+    targetType: "certificate_issuer",
+    workspaceId,
+    metadata: { issuerId: row.id, kind },
+  });
+  return row;
+}
+
+function dispatchPreflight({
+  client,
+  workspaceId,
+  issuerId,
+  agentId,
+  caConfig,
+  template,
+  actorUserId,
+  createJob = createCertificateJob,
+  audit = writeAudit,
+  beforeLock,
+}) {
+  const db = dbOf(client);
+  return withTransaction(db, async (tx) => {
+    if (typeof beforeLock === "function") await beforeLock(tx);
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [
+      `adcs-preflight:${workspaceId}`,
+    ]);
+    const recent = await tx.query(
+      `SELECT count(*)::int AS n
+         FROM certificate_jobs
+        WHERE workspace_id = $1
+          AND operation = 'adcs-preflight'
+          AND created_at > NOW() - INTERVAL '1 hour'`,
+      [workspaceId],
+    );
+    if (Number(recent.rows[0]?.n || 0) >= PREFLIGHT_PER_HOUR) {
+      throw serviceError(
+        "AD CS preflight rate limit exceeded for this workspace",
+        "CERTOPS_PREFLIGHT_RATE_LIMITED",
+      );
+    }
+    const job = await createJob({
+      client: tx,
+      workspaceId,
+      operation: "adcs-preflight",
+      allowIssuerPreflight: true,
+      source: "api",
+      subjectType: "external",
+      subjectId: issuerId,
+      assignedAgentId: agentId,
+      payload: {
+        schemaVersion: 1,
+        action: "adcs-preflight",
+        mode: "real",
+        caConfig,
+        template,
+        transport: "dcom",
+        issuerId,
+      },
+    });
+    const sequenced = await tx.query(
+      `UPDATE certificate_issuers
+          SET preflight_seq = preflight_seq + 1, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2
+        RETURNING preflight_seq`,
+      [workspaceId, issuerId],
+    );
+    const preflightSeq = sequenced.rows[0]?.preflight_seq;
+    if (preflightSeq == null) {
+      throw serviceError("issuer not found", "CERTOPS_ISSUER_NOT_FOUND");
+    }
+    await tx.query(
+      `UPDATE certificate_jobs
+          SET preflight_seq = $3
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, job.id, preflightSeq],
+    );
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "certops.issuer.preflight_dispatched",
+      targetType: "certificate_issuer",
+      workspaceId,
+      metadata: { issuerId, jobId: job.id, agentId },
+    });
+    return job;
+  });
+}
+
+function confirmIssuerKey({
+  client,
+  workspaceId,
+  issuerId,
+  caKeySha256,
+  caConfig,
+  template,
+  actorUserId,
+  audit = writeAudit,
+}) {
+  const db = dbOf(client);
+  return withTransaction(db, async (tx) => {
+  const issuer = await tx.query(
+    `SELECT id, kind, current_version, last_preflight
+       FROM certificate_issuers
+      WHERE workspace_id = $1 AND id = $2
+      FOR UPDATE`,
+    [workspaceId, issuerId],
+  );
+  const row = issuer.rows[0];
+  if (!row) throw serviceError("issuer not found", "CERTOPS_ISSUER_NOT_FOUND");
+  if (row.kind !== "adcs") {
+    throw serviceError("only an adcs issuer confirms a CA key", "CERTOPS_ISSUER_KIND_INVALID");
+  }
+  const preflight = row.last_preflight;
+  if (!confirmedKeyAllowed(preflight, caKeySha256)) {
+    throw serviceError(
+      "caKeySha256 must be a key from a safe preflight result",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  if (caConfig && caConfig !== preflight.caConfig) {
+    throw serviceError(
+      "caConfig does not match the preflight result",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  if (template && template !== preflight.template) {
+    throw serviceError(
+      "template does not match the preflight result",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  const version = Number(row.current_version || 0) + 1;
+  await tx.query(
+    `INSERT INTO certificate_issuer_versions (
+       workspace_id, issuer_id, version, ca_config, template, transport,
+       ca_key_sha256, confirmed_at, config
+     ) VALUES ($1,$2,$3,$4,$5,'dcom',$6,NOW(),$7::jsonb)`,
+    [
+      workspaceId,
+      issuerId,
+      version,
+      preflight.caConfig,
+      preflight.template,
+      caKeySha256,
+      JSON.stringify({ caKeySha256, templateOid: preflight.templateCheck?.templateOid || null }),
+    ],
+  );
+  await tx.query(
+    `UPDATE certificate_issuers
+        SET current_version = $3, revalidation_required = false, updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, issuerId, version],
+  );
+  await audit({
+    client: tx,
+    actorUserId: actorUserId || null,
+    subjectUserId: actorUserId || null,
+    action: "certops.issuer.key_confirmed",
+    targetType: "certificate_issuer",
+    workspaceId,
+    metadata: { issuerId, version, caKeySha256 },
+  });
+  return { issuerId, version, caKeySha256 };
+  });
+}
+
+function createEnrollment({
+  client,
+  workspaceId,
+  issuerId,
+  certificateId,
+  agentId,
+  target,
+  authorizedDnsNames,
+  keyAlgorithm,
+  keySize,
+  actorUserId,
+  createJob = createCertificateJob,
+  audit = writeAudit,
+}) {
+  if (!target || target.type !== "windows-iis" || !target.binding) {
+    throw serviceError(
+      "enrollment target must be a windows-iis binding",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  const db = dbOf(client);
+  return withTransaction(db, async (tx) => {
+    const version = await tx.query(
+      `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, i.kind,
+              i.revalidation_required
+         FROM certificate_issuer_versions v
+         JOIN certificate_issuers i
+           ON i.workspace_id = v.workspace_id AND i.id = v.issuer_id
+        WHERE v.workspace_id = $1
+          AND v.issuer_id = $2
+          AND v.version = i.current_version
+          AND v.ca_key_sha256 IS NOT NULL
+        FOR UPDATE OF i`,
+      [workspaceId, issuerId],
+    );
+    const issuer = version.rows[0];
+    if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
+    if (issuer.revalidation_required === true) {
+      throw serviceError(
+        "issuer requires revalidation before new enrollments",
+        "CERTOPS_ISSUER_REVALIDATION_REQUIRED",
+      );
+    }
+    assertIssuerKind(issuer.kind);
+    const frozen = freezeSnapshot({
+      issuerId,
+      issuerVersion: issuer.version,
+      caConfig: issuer.ca_config,
+      caKeySha256: issuer.ca_key_sha256,
+      template: issuer.template,
+      authorizedDnsNames,
+      keyAlgorithm,
+      keySize,
+    });
+    const inserted = await tx.query(
+      `INSERT INTO certificate_enrollments (
+         workspace_id, certificate_id, issuer_id, issuer_version, agent_id,
+         state, attempt, snapshot_bytes, snapshot_sha256, deploy_target
+       ) VALUES ($1,$2,$3,$4,$5,'requested',0,$6,$7,$8::jsonb)
+       RETURNING id`,
+      [
+        workspaceId,
+        certificateId,
+        issuerId,
+        issuer.version,
+        agentId,
+        frozen.bytes,
+        frozen.sha256,
+        JSON.stringify(target),
+      ],
+    );
+    const enrollmentId = inserted.rows[0].id;
+    const payload = storedAdcsPayload({ certificateId, target });
+    const job = await createJob({
+      client: tx,
+      workspaceId,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: certificateId,
+      assignedAgentId: agentId,
+      payload,
+      enrollmentId,
+    });
+    await tx.query(
+      `UPDATE certificate_enrollments
+          SET current_job_id = $3, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, enrollmentId, job.id],
+    );
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "certops.enrollment.created",
+      targetType: "certificate_enrollment",
+      workspaceId,
+      metadata: { enrollmentId, issuerId, jobId: job.id },
+    });
+    return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id };
+  });
+}
+
+async function loadEnrollment(db, workspaceId, enrollmentId) {
+  const result = await db.query(
+    `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
+            e.operator_request_id, e.pending_since, e.next_poll_at,
+            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
+            e.deploy_target, j.status AS job_status
+       FROM certificate_enrollments e
+       LEFT JOIN certificate_jobs j
+         ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
+      WHERE e.workspace_id = $1 AND e.id = $2`,
+    [workspaceId, enrollmentId],
+  );
+  return result.rows[0] || null;
+}
+
+function enrollmentView(row) {
+  const active = row.job_status && ["pending_approval", "approved", "pending", "claimed", "running"].includes(row.job_status);
+  return {
+    id: row.id,
+    state: row.state,
+    attempt: row.attempt,
+    snapshotB64: Buffer.from(row.snapshot_bytes).toString("base64"),
+    snapshotSha256: row.snapshot_sha256,
+    operatorRequestId: parseRequestId(row.operator_request_id),
+    pendingSince: row.pending_since,
+    nextPollAt: row.next_poll_at,
+    lastErrorCode: row.last_error_code,
+    activeJob: Boolean(active),
+    certificateId: row.certificate_id,
+    agentId: row.agent_id,
+    deployTarget: row.deploy_target,
+  };
+}
+
+async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResult }) {
+  const db = dbOf(client);
+  assertSchema(validateEnrollmentResult, enrollmentResult, "CERTOPS_ENROLLMENT_TRANSITION_INVALID");
+  if (!job.enrollment_id) {
+    throw serviceError(
+      "awaiting_issuer requires a bound enrollment",
+      "CERTOPS_ENROLLMENT_UNBOUND",
+    );
+  }
+  if (enrollmentResult.enrollmentId !== job.enrollment_id) {
+    throw serviceError(
+      "enrollmentResult.enrollmentId does not match the job",
+      "CERTOPS_ENROLLMENT_UNBOUND",
+    );
+  }
+  const row = await loadEnrollment(db, workspaceId, job.enrollment_id);
+  if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+  if (enrollmentResult.attempt !== row.attempt && row.attempt !== 0) {
+    throw serviceError(
+      "enrollmentResult.attempt does not match the enrollment",
+      "CERTOPS_ENROLLMENT_UNBOUND",
+    );
+  }
+  assertForwardTransition(row.state, enrollmentResult.state);
+  const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
+  const pollSeconds = snapshot.pollInterval || 900;
+  let pendingSince = row.pending_since;
+  let nextAt = row.next_poll_at;
+  if (enrollmentResult.state === "pending_issuance" && !pendingSince) pendingSince = new Date();
+  if (
+    enrollmentResult.state === "pending_issuance" ||
+    enrollmentResult.state === "validation_deferred"
+  ) {
+    nextAt = nextPollAt(new Date(), pollSeconds);
+  }
+  if (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR) {
+    nextAt = nextPollAt(new Date(), pollSeconds);
+  }
+  if (enrollmentResult.state === "submission_uncertain") nextAt = null;
+  await db.query(
+    `UPDATE certificate_enrollments
+        SET state = $3,
+            request_id = COALESCE($4, request_id),
+            last_error_code = $5,
+            pending_since = $6,
+            next_poll_at = $7,
+            installed_at = CASE WHEN $3 = 'installed' THEN COALESCE(installed_at, NOW()) ELSE installed_at END,
+            updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2`,
+    [
+      workspaceId,
+      job.enrollment_id,
+      enrollmentResult.state,
+      Number.isInteger(enrollmentResult.requestId) ? enrollmentResult.requestId : null,
+      enrollmentResult.errorCode || null,
+      pendingSince,
+      nextAt,
+    ],
+  );
+  if (enrollmentResult.errorCode === "ADCS_CA_KEY_CHANGED") {
+    await db.query(
+      `UPDATE certificate_issuers
+          SET revalidation_required = true, updated_at = NOW()
+        WHERE workspace_id = $1
+          AND id = (SELECT issuer_id FROM certificate_enrollments WHERE workspace_id = $1 AND id = $2)`,
+      [workspaceId, job.enrollment_id],
+    );
+  }
+}
+
+function preflightPayloadOf(job) {
+  const payload = job && job.payload;
+  if (typeof payload === "string") {
+    try {
+      return JSON.parse(payload);
+    } catch (_error) {
+      return null;
+    }
+  }
+  return payload && typeof payload === "object" ? payload : null;
+}
+
+async function recordPreflightResult(client, { workspaceId, job, preflightResult, resultStatus }) {
+  assertSchema(validatePreflightResult, preflightResult, "CERTOPS_SNAPSHOT_INVALID");
+  if (resultStatus !== "succeeded" || !job || job.operation !== "adcs-preflight") {
+    throw serviceError(
+      "preflightResult requires a succeeded adcs-preflight job",
+      "CERTOPS_AGENT_RESULT_STATUS_INVALID",
+    );
+  }
+  const payload = preflightPayloadOf(job);
+  if (
+    !payload ||
+    payload.caConfig !== preflightResult.caConfig ||
+    payload.template !== preflightResult.template
+  ) {
+    throw serviceError(
+      "preflightResult does not match the job CA and template",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  const issuerId = job.subject_id;
+  if (!issuerId) return;
+  if (!job.id) {
+    throw serviceError(
+      "preflightResult requires the reporting job",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
+  // last_preflight follows dispatch order, which is preflight_seq assigned
+  // under the workspace lock. created_at is the transaction start and can
+  // be older for the job that was inserted later. Equal sequences keep the
+  // greater job id, and the same job may report again.
+  await dbOf(client).query(
+    `UPDATE certificate_issuers AS i
+        SET last_preflight = $3::jsonb,
+            last_preflight_job_id = $4,
+            updated_at = NOW()
+      WHERE i.workspace_id = $1
+        AND i.id = $2
+        AND EXISTS (
+          SELECT 1
+            FROM certificate_jobs incoming
+           WHERE incoming.workspace_id = i.workspace_id
+             AND incoming.id = $4
+             AND incoming.preflight_seq IS NOT NULL
+             AND (
+               i.last_preflight_job_id IS NULL
+               OR NOT EXISTS (
+                 SELECT 1
+                   FROM certificate_jobs stored
+                  WHERE stored.workspace_id = i.workspace_id
+                    AND stored.id = i.last_preflight_job_id
+               )
+               OR EXISTS (
+                 SELECT 1
+                   FROM certificate_jobs stored
+                  WHERE stored.workspace_id = i.workspace_id
+                    AND stored.id = i.last_preflight_job_id
+                    AND (
+                      incoming.preflight_seq > stored.preflight_seq
+                      OR (
+                        incoming.preflight_seq = stored.preflight_seq
+                        AND incoming.id >= stored.id
+                      )
+                    )
+               )
+             )
+        )`,
+    [workspaceId, issuerId, JSON.stringify(preflightResult), job.id],
+  );
+}
+
+async function proposeReconcileRequestId({
+  client,
+  workspaceId,
+  enrollmentId,
+  requestId,
+  actorUserId,
+  audit = writeAudit,
+}) {
+  const db = dbOf(client);
+  const row = await loadEnrollment(db, workspaceId, enrollmentId);
+  if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+  if (row.state !== "submission_uncertain") {
+    throw serviceError(
+      "a RequestId can be proposed only while submission_uncertain",
+      "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+  }
+  const parsedRequestId = parseRequestId(requestId);
+  if (parsedRequestId == null) {
+    throw serviceError(
+      "RequestId must be an integer from 1 to 4294967295",
+      "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+  }
+  await db.query(
+    `UPDATE certificate_enrollments
+        SET operator_request_id = $3, next_poll_at = NOW(), updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, enrollmentId, parsedRequestId],
+  );
+  await audit({
+    client: db,
+    actorUserId: actorUserId || null,
+    subjectUserId: actorUserId || null,
+    action: "certops.enrollment.reconcile_proposed",
+    targetType: "certificate_enrollment",
+    workspaceId,
+    metadata: { enrollmentId, requestId: parsedRequestId },
+  });
+}
+
+async function abandonEnrollment({
+  client,
+  workspaceId,
+  enrollmentId,
+  actorUserId,
+  audit = writeAudit,
+}) {
+  const db = dbOf(client);
+  const row = await loadEnrollment(db, workspaceId, enrollmentId);
+  if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+  assertForwardTransition(row.state, "abandoned");
+  await db.query(
+    `UPDATE certificate_enrollments
+        SET state = 'abandoned', next_poll_at = NOW(), updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, enrollmentId],
+  );
+  await audit({
+    client: db,
+    actorUserId: actorUserId || null,
+    subjectUserId: actorUserId || null,
+    action: "certops.enrollment.abandoned",
+    targetType: "certificate_enrollment",
+    workspaceId,
+    metadata: { enrollmentId },
+  });
+}
+
+async function countInstalledEnrollments({ client, workspaceId }) {
+  const result = await dbOf(client).query(
+    `SELECT count(*)::int AS n
+       FROM certificate_enrollments
+      WHERE workspace_id = $1 AND state = 'installed'`,
+    [workspaceId],
+  );
+  return { enrollmentCount: Number(result.rows[0]?.n || 0) };
+}
+
+async function loadDispatchEnrollment(client, workspaceId, enrollmentId) {
+  const row = await loadEnrollment(dbOf(client), workspaceId, enrollmentId);
+  if (!row) return null;
+  const view = enrollmentView(row);
+  const attempt = view.attempt > 0 ? view.attempt : 1;
+  if (view.attempt === 0) {
+    await dbOf(client).query(
+      `UPDATE certificate_enrollments SET attempt = 1, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2 AND attempt = 0`,
+      [workspaceId, enrollmentId],
+    );
+  }
+  return { ...view, attempt };
+}
+
+async function claimDueEnrollment(db, workspaceId, enrollmentId, now) {
+  const claimed = await db.query(
+    `UPDATE certificate_enrollments
+        SET next_poll_at = NULL, updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2
+        AND next_poll_at IS NOT NULL
+        AND next_poll_at <= $3
+      RETURNING id`,
+    [workspaceId, enrollmentId, now],
+  );
+  return claimed.rows.length === 1;
+}
+
+async function scheduleDueEnrollments({ client, now = new Date(), createJob = createCertificateJob }) {
+  const db = dbOf(client);
+  const due = await db.query(
+    `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
+            e.operator_request_id, e.pending_since, e.next_poll_at, e.last_error_code,
+            e.certificate_id, e.agent_id, e.current_job_id, e.deploy_target,
+            j.status AS job_status
+       FROM certificate_enrollments e
+       LEFT JOIN certificate_jobs j
+         ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
+      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1
+      FOR UPDATE OF e SKIP LOCKED`,
+    [now],
+  );
+  const created = [];
+  for (const row of due.rows) {
+    const view = enrollmentView(row);
+    const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
+    const decision = decideContinuation(view, snapshot, now);
+    if (!decision) continue;
+    if (!decision.dispatch && decision.state !== "expired") continue;
+    const target = row.deploy_target;
+    if (!target || target.type !== "windows-iis") {
+      throw serviceError(
+        "enrollment is missing its IIS deployment target",
+        "CERTOPS_SNAPSHOT_INVALID",
+      );
+    }
+    const dispatched = await inTransaction(db, async () => {
+      const claimed = await claimDueEnrollment(db, row.workspace_id, row.id, now);
+      if (!claimed) return null;
+      if (decision.state === "expired") {
+        await db.query(
+          `UPDATE certificate_enrollments
+              SET state = 'expired', updated_at = NOW()
+            WHERE workspace_id = $1 AND id = $2`,
+          [row.workspace_id, row.id],
+        );
+      }
+      const attempt = Number(row.attempt || 0) + 1;
+      const requestId = parseRequestId(row.operator_request_id);
+      const reconcileMetadata =
+        requestId != null
+          ? [{ name: "adcs.reconcileRequestId", value: requestId }]
+          : undefined;
+      const payload = storedAdcsPayload({
+        certificateId: row.certificate_id,
+        target,
+        metadata: reconcileMetadata,
+      });
+      const job = await createJob({
+        client: db,
+        workspaceId: row.workspace_id,
+        operation: "continue-enrollment",
+        allowEnrollmentContinuation: true,
+        subjectType: "managed_certificate",
+        subjectId: row.certificate_id,
+        assignedAgentId: row.agent_id,
+        payload,
+        enrollmentId: row.id,
+      });
+      await db.query(
+        `UPDATE certificate_enrollments
+            SET attempt = $3, current_job_id = $4, updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2`,
+        [row.workspace_id, row.id, attempt, job.id],
+      );
+      return { enrollmentId: row.id, jobId: job.id, attempt, target: payload.target };
+    });
+    if (dispatched) created.push(dispatched);
+  }
+  return created;
+}
+
+module.exports = {
+  abandonEnrollment,
+  attachEnrollmentDispatch,
+  confirmIssuerKey,
+  countInstalledEnrollments,
+  createEnrollment,
+  createIssuer,
+  dispatchPreflight,
+  loadDispatchEnrollment,
+  proposeReconcileRequestId,
+  recordEnrollmentResult,
+  recordPreflightResult,
+  scheduleDueEnrollments,
+};

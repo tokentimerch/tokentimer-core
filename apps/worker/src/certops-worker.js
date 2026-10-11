@@ -91,6 +91,7 @@ const {
   isTerminalJobStatus,
   isTrustAnchorOperation,
 } = require("../../api/services/certops/jobs.js");
+const { scheduleDueEnrollments } = require("../../api/services/certops/certificateEnrollments.js");
 
 const {
   sweepInactiveDiagnosticAgents,
@@ -197,6 +198,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
     enableEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_TIMEOUT_MS",
   }),
+  "enrollment-continuations": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_TIMEOUT_MS",
+  }),
 });
 
 export const DEFAULT_OUTBOX_DRAIN_BATCH_SIZE = 50;
@@ -284,6 +289,7 @@ const ADOPTION_NON_SUCCESS_TERMINAL_REASONS = Object.freeze({
   // in fact have been deployed with nobody able to confirm it, which is exactly
   // the run a renewal profile must not be built from.
   orphaned_unknown_effect: "orphaned_unknown_effect",
+  awaiting_issuer: "awaiting_issuer",
 });
 
 function deferredOutcome(reason, retryInMs) {
@@ -1548,6 +1554,16 @@ export async function runCertOpsMaintenance({
     safeGaugeSet(gCertopsLeaseReaped, { outcome: "requeued" }, requeued);
     safeGaugeSet(gCertopsLeaseReaped, { outcome: "failed" }, failed);
   }
+
+  results.enrollmentContinuations = await runIsolated(
+    "enrollment-continuations",
+    log,
+    () => withClientFn((client) => scheduleDueEnrollments({ client })),
+    {
+      enabled: isSweepEnabled("enrollment-continuations", env),
+      timeoutMs: resolveSweepTimeoutMs("enrollment-continuations", env),
+    },
+  );
 
   results.staleAgents = await runIsolated(
     "stale-agents",

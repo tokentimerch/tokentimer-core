@@ -429,6 +429,30 @@ jobs:
         run: node apps/api/migrations/migrate.js
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
         run: node --test tests/postgres/vault-material-cleanup.test.js
+      - name: Upgrade main enrollment history to distribution without rewriting migrations
+        env:
+          DB_NAME: pr329_distribution_upgrade_ci_test
+        run: |
+          node - <<'NODE'
+          const { Client } = require('pg');
+          async function main() {
+            const client = new Client({
+              host: process.env.DB_HOST,
+              port: Number(process.env.DB_PORT),
+              user: process.env.DB_USER,
+              password: process.env.DB_PASSWORD,
+              database: 'postgres',
+            });
+            await client.connect();
+            try {
+              await client.query('CREATE DATABASE pr329_distribution_upgrade_ci_test');
+            } finally {
+              await client.end();
+            }
+          }
+          main().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+          node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
 
   helm_chart:
     name: Helm Chart Validation
