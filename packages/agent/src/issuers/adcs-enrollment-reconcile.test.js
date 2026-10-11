@@ -13,6 +13,7 @@ const {
   readHighestRequestId,
   recordHighestRequestId,
   readWatermark,
+  captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
   watermarkPath,
 } = require("./adcs-enrollment-reconcile");
@@ -50,6 +51,55 @@ describe("adcs-enrollment-reconcile", () => {
       assert.equal(err.code, "ADCS_REQUESTID_WATERMARK_CORRUPT");
       return true;
     });
+  });
+
+  it("captures an enrollment cursor from the watermark before CA contact", async () => {
+    assert.equal(captureEnrollmentReconcileSearchFrom(stateDir, "CA\\Lab"), 1);
+    await recordHighestRequestId(stateDir, "CA\\Lab", 104);
+    assert.equal(captureEnrollmentReconcileSearchFrom(stateDir, "CA\\Lab"), 105);
+  });
+
+  it("keeps enrollment A's captured cursor when enrollment B advances the watermark", async () => {
+    await recordHighestRequestId(stateDir, "CA\\Lab", 104);
+    const enrollmentACursor = captureEnrollmentReconcileSearchFrom(stateDir, "CA\\Lab");
+    assert.equal(enrollmentACursor, 105);
+    // Enrollment B confirms a higher RequestId on the same CA.
+    await recordHighestRequestId(stateDir, "CA\\Lab", 110);
+    assert.equal(readHighestRequestId(stateDir, "CA\\Lab"), 110);
+
+    const probed = [];
+    const issuer = {
+      async retrieve(requestId) {
+        probed.push(requestId);
+        return { outcome: "uncertain", detail: "pending" };
+      },
+    };
+    const result = await tryReconcileUncertainSubmission({
+      issuer,
+      stateDir,
+      caConfig: "CA\\Lab",
+      csrSpkiSha256: "a".repeat(64),
+      reconcileSearchFrom: enrollmentACursor,
+      windowSize: 3,
+      assertIssuanceOutcome: (v) => v,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.deepEqual(probed, [105, 106, 107]);
+    assert.equal(result.nextSearchFrom, 105);
+  });
+
+  it("requires reconcileSearchFrom and does not fall back to the live watermark", async () => {
+    await recordHighestRequestId(stateDir, "CA\\Lab", 50);
+    const result = await tryReconcileUncertainSubmission({
+      issuer: { async retrieve() { return { outcome: "uncertain" }; } },
+      stateDir,
+      caConfig: "CA\\Lab",
+      csrSpkiSha256: "a".repeat(64),
+      windowSize: 3,
+      assertIssuanceOutcome: (v) => v,
+    });
+    assert.equal(result.status, "error");
+    assert.match(result.error, /reconcileSearchFrom is required/);
   });
 
   it("returns unique_candidate without advancing the CA watermark on uncertain probes", async () => {
@@ -96,56 +146,67 @@ describe("adcs-enrollment-reconcile", () => {
       stateDir,
       caConfig: "CA\\Lab",
       csrSpkiSha256,
+      reconcileSearchFrom: 5,
       windowSize: 4,
       assertIssuanceOutcome: (v) => v,
     });
     assert.equal(result.status, "unique_candidate");
     assert.equal(result.requestId, 5);
-    // Uncertain probes and the candidate itself must not advance the watermark;
-    // only a confirmed attach (caller) may call recordHighestRequestId.
+    assert.equal(result.attachmentEligible, true);
     assert.equal(readHighestRequestId(stateDir, "CA\\Lab"), 4);
-    // Enrollment cursor stays on the first unresolved/open id (the match).
     assert.equal(result.nextSearchFrom, 5);
   });
 
-  it("does not skip unresolved RequestIds when the watermark advances elsewhere", async () => {
-    await recordHighestRequestId(stateDir, "CA\\Lab", 100);
-    const probed = [];
+  it("marks unique_candidate attachment-ineligible when earlier RequestIds remain open", async () => {
+    const keyPath = path.join(stateDir, "k3.pem");
+    const certPath = path.join(stateDir, "c3.pem");
+    const openssl = spawnSync(
+      "openssl",
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-keyout",
+        keyPath,
+        "-out",
+        certPath,
+        "-days",
+        "1",
+        "-nodes",
+        "-subj",
+        "/CN=open-pred.test",
+      ],
+      { encoding: "utf8" },
+    );
+    if (openssl.status !== 0) {
+      return;
+    }
+    const certificatePem = fs.readFileSync(certPath, "utf8");
+    const cert = new X509Certificate(certificatePem);
+    const spki = cert.publicKey.export({ type: "spki", format: "der" });
+    const csrSpkiSha256 = crypto.createHash("sha256").update(spki).digest("hex");
+
     const issuer = {
       async retrieve(requestId) {
-        probed.push(requestId);
-        return { outcome: "uncertain", detail: "pending or inaccessible" };
+        if (requestId === 1) return { outcome: "uncertain", detail: "pending" };
+        if (requestId === 2) return { outcome: "issued", certificatePem, requestId: 2 };
+        return { outcome: "uncertain", detail: "not found" };
       },
     };
-    const first = await tryReconcileUncertainSubmission({
+    const result = await tryReconcileUncertainSubmission({
       issuer,
       stateDir,
       caConfig: "CA\\Lab",
-      csrSpkiSha256: "a".repeat(64),
-      reconcileSearchFrom: 105,
+      csrSpkiSha256,
+      reconcileSearchFrom: 1,
       windowSize: 3,
       assertIssuanceOutcome: (v) => v,
     });
-    assert.equal(first.status, "unresolved");
-    assert.deepEqual(probed, [105, 106, 107]);
-    assert.equal(first.nextSearchFrom, 105);
-    // Another enrollment confirms a higher RequestId on the same CA.
-    await recordHighestRequestId(stateDir, "CA\\Lab", 200);
-    assert.equal(readHighestRequestId(stateDir, "CA\\Lab"), 200);
-
-    probed.length = 0;
-    const second = await tryReconcileUncertainSubmission({
-      issuer,
-      stateDir,
-      caConfig: "CA\\Lab",
-      csrSpkiSha256: "a".repeat(64),
-      reconcileSearchFrom: first.nextSearchFrom,
-      windowSize: 3,
-      assertIssuanceOutcome: (v) => v,
-    });
-    assert.equal(second.status, "unresolved");
-    assert.deepEqual(probed, [105, 106, 107]);
-    assert.equal(second.nextSearchFrom, 105);
+    assert.equal(result.status, "unique_candidate");
+    assert.equal(result.requestId, 2);
+    assert.equal(result.attachmentEligible, false);
+    assert.equal(result.nextSearchFrom, 1);
   });
 
   it("reports ambiguous when more than one SPKI match appears in the window", async () => {
@@ -202,7 +263,6 @@ describe("adcs-enrollment-reconcile", () => {
   });
 
   it("leaves submission unresolved when no SPKI match is found", async () => {
-    await recordHighestRequestId(stateDir, "CA\\Lab", 1);
     const issuer = {
       async retrieve() {
         return { outcome: "uncertain", detail: "denied access" };
@@ -213,12 +273,12 @@ describe("adcs-enrollment-reconcile", () => {
       stateDir,
       caConfig: "CA\\Lab",
       csrSpkiSha256: "a".repeat(64),
+      reconcileSearchFrom: 2,
       windowSize: 3,
       assertIssuanceOutcome: (v) => v,
     });
     assert.equal(result.status, "unresolved");
     assert.equal(result.probed, 3);
     assert.equal(result.nextSearchFrom, 2);
-    assert.equal(readHighestRequestId(stateDir, "CA\\Lab"), 1);
   });
 });

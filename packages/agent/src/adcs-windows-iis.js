@@ -29,6 +29,7 @@ const {
   writeIssuedCertificateArtifacts,
   readEnrollmentJournal,
   recordHighestRequestId,
+  captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
 } = require("./issuers");
 const {
@@ -555,11 +556,19 @@ function createAdcsWindowsIisExecutors(deps) {
     reportIssuanceEvidence,
     reportStepEvidence,
     runWindowsIisDeployTail,
+    finalizeWindowsIisDeployBookkeeping,
     emitInfo,
     emitLog,
     recordWindowsCngContainer,
     isValidCertificateId,
   } = deps;
+
+  function reconcileSearchFromForSubmit(stateDir, caConfig, journal) {
+    if (Number.isInteger(journal?.reconcileSearchFrom) && journal.reconcileSearchFrom >= 1) {
+      return journal.reconcileSearchFrom;
+    }
+    return captureEnrollmentReconcileSearchFrom(stateDir, caConfig);
+  }
 
   async function runDecision6Validation({
     certificatePem,
@@ -992,7 +1001,11 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
       // Durable submitting barrier: must succeed before certreq -submit.
+      // Capture enrollment reconcile cursor from the CA watermark here so later
+      // watermark advances by other enrollments cannot skip this request's range.
+      let reconcileSearchFrom;
       try {
+        reconcileSearchFrom = reconcileSearchFromForSubmit(stateDir, snapshot.caConfig, null);
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "submitting",
           attempt: decoded.attempt,
@@ -1004,6 +1017,7 @@ function createAdcsWindowsIisExecutors(deps) {
           templateOid,
           caConfig: snapshot.caConfig,
           template: snapshot.template,
+          reconcileSearchFrom,
         });
       } catch (err) {
         return {
@@ -1251,6 +1265,29 @@ function createAdcsWindowsIisExecutors(deps) {
         containerName,
         leaseOpts,
         onBeforeMutation,
+        requireStoreAbsenceBeforeKeyDelete: true,
+        onInstallStep: async (step, meta = {}) => {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "installing",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256,
+            csrSpkiSha256,
+            templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            leafSha256,
+            installStep: step,
+            ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
+            ...(typeof meta.predecessorThumbprint === "string"
+              ? { predecessorThumbprint: meta.predecessorThumbprint }
+              : meta.predecessorThumbprint === null
+                ? { predecessorThumbprint: null }
+                : {}),
+          });
+        },
         windowsExecFileImpl,
         windowsConnectImpl,
       });
@@ -1409,6 +1446,25 @@ function createAdcsWindowsIisExecutors(deps) {
         };
       }
       if (progress.status === "complete") {
+        // Replay idempotent evidence + retention bookkeeping that may have
+        // been skipped by a crash after TLS verify but before journal installed.
+        if (typeof finalizeWindowsIisDeployBookkeeping === "function") {
+          await finalizeWindowsIisDeployBookkeeping({
+            jobId,
+            client,
+            certificatePem,
+            target: windowsTarget,
+            stateDir,
+            log,
+            boundThumbprint: progress.expectedThumbprint,
+            outgoingThumbprint:
+              typeof journal.predecessorThumbprint === "string"
+                ? journal.predecessorThumbprint
+                : null,
+            skippedMutation: true,
+            windowsExecFileImpl,
+          });
+        }
         continueOutcomeRef.value = "installed";
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "installed",
@@ -1446,12 +1502,18 @@ function createAdcsWindowsIisExecutors(deps) {
         leaseOpts,
         onBeforeMutation,
         startAtStep: progress.startAtStep,
-        onInstallStep: async (step) => {
+        requireStoreAbsenceBeforeKeyDelete: true,
+        onInstallStep: async (step, meta = {}) => {
           currentInstallStep = step;
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "installing",
             ...journalBase,
             installStep: step,
+            ...(typeof meta.predecessorThumbprint === "string"
+              ? { predecessorThumbprint: meta.predecessorThumbprint }
+              : meta.predecessorThumbprint === null
+                ? { predecessorThumbprint: null }
+                : {}),
           });
         },
         windowsExecFileImpl,
@@ -1553,12 +1615,18 @@ function createAdcsWindowsIisExecutors(deps) {
       leaseOpts,
       onBeforeMutation,
       startAtStep: "accept",
-      onInstallStep: async (step) => {
+      requireStoreAbsenceBeforeKeyDelete: true,
+      onInstallStep: async (step, meta = {}) => {
         currentInstallStep = step;
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "installing",
           ...journalBase,
           installStep: step,
+          ...(typeof meta.predecessorThumbprint === "string"
+            ? { predecessorThumbprint: meta.predecessorThumbprint }
+            : meta.predecessorThumbprint === null
+              ? { predecessorThumbprint: null }
+              : {}),
         });
       },
       windowsExecFileImpl,
@@ -1748,6 +1816,22 @@ function createAdcsWindowsIisExecutors(deps) {
             ),
           };
         }
+        let resumeReconcileSearchFrom;
+        try {
+          resumeReconcileSearchFrom = reconcileSearchFromForSubmit(
+            stateDir,
+            snapshot.caConfig,
+            journal,
+          );
+        } catch (err) {
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `failed to capture reconcileSearchFrom before resume-submit: ${err.message}`,
+            ),
+          };
+        }
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "submitting",
           attempt: decoded.attempt,
@@ -1759,6 +1843,7 @@ function createAdcsWindowsIisExecutors(deps) {
           templateOid: journal.templateOid,
           caConfig: snapshot.caConfig,
           template: snapshot.template,
+          reconcileSearchFrom: resumeReconcileSearchFrom,
         });
         if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
         let issuance;
@@ -1919,6 +2004,164 @@ function createAdcsWindowsIisExecutors(deps) {
       // Tier-2 reconcile for uncertain submission (never resubmit).
       if (journal.state === "submission_uncertain") {
         if (typeof onBeforeMutation === "function") onBeforeMutation("adcs-reconcile");
+
+        const uncertainBase = {
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+        };
+
+        const persistUncertain = async (fields) => {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "submission_uncertain",
+            ...uncertainBase,
+            ...fields,
+          });
+        };
+
+        const attachIssuedCandidate = async (certificatePem, requestId, validation) => {
+          const written = await writeIssuedCertificateArtifacts({
+            stateDir,
+            enrollmentId: decoded.enrollmentId,
+            leafPem: certificatePem,
+          });
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "issued",
+            ...uncertainBase,
+            leafSha256: written.leafSha256,
+            requestId,
+            reconcileCandidateRequestId: null,
+            validationDeadlineAt: null,
+          });
+          await recordHighestRequestId(stateDir, snapshot.caConfig, requestId);
+          await reportBestEffortRevocationEvidence(client, jobId, validation);
+          journal = {
+            ...journal,
+            state: "issued",
+            leafSha256: written.leafSha256,
+            requestId,
+          };
+          return validateAndInstallFromLeaf({
+            certificatePem,
+            journal,
+            decoded,
+            snapshot,
+            windowsTarget,
+            stateDir,
+            caCertPath,
+            executionContext,
+            jobId,
+            client,
+            cngWorkDir,
+            containerName,
+            log,
+            leaseOpts,
+            onBeforeMutation,
+            windowsExecFileImpl,
+            windowsConnectImpl,
+            continueOutcomeRef,
+          });
+        };
+
+        // Retry a previously deferred unique candidate before scanning again.
+        if (
+          Number.isInteger(journal.reconcileCandidateRequestId) &&
+          journal.reconcileCandidateRequestId >= 1 &&
+          typeof artifacts.leafPem === "string" &&
+          artifacts.leafPem.includes("BEGIN")
+        ) {
+          if (typeof journal.validationDeadlineAt === "string") {
+            const deadlineMs = Date.parse(journal.validationDeadlineAt);
+            if (Number.isFinite(deadlineMs) && Date.now() > deadlineMs) {
+              await persistUncertain({
+                reconcileSearchFrom: journal.reconcileSearchFrom,
+                reconcileCandidateRequestId: null,
+                validationDeadlineAt: null,
+              });
+              return {
+                status: "failed",
+                keyRotated: null,
+                errorMessage: boundErrorMessage(
+                  `tier-2 candidate RequestId ${journal.reconcileCandidateRequestId} validation deadline expired; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+                ),
+                enrollmentResult: enrollmentResultFor(
+                  decoded.enrollmentId,
+                  decoded.attempt,
+                  "submission_uncertain",
+                  { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+                ),
+              };
+            }
+          }
+          const retryValidation = await runDecision6Validation({
+            certificatePem: artifacts.leafPem,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            snapshot,
+            requiredDnsName: windowsTarget.reference,
+            stateDir,
+            executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+            templateOid: journal.templateOid,
+            windowsTarget,
+          });
+          if (retryValidation.ok) {
+            return attachIssuedCandidate(
+              artifacts.leafPem,
+              journal.reconcileCandidateRequestId,
+              retryValidation,
+            );
+          }
+          if (retryValidation.state === "validation_deferred") {
+            const deadline =
+              typeof journal.validationDeadlineAt === "string"
+                ? journal.validationDeadlineAt
+                : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            await persistUncertain({
+              reconcileSearchFrom: journal.reconcileSearchFrom,
+              reconcileCandidateRequestId: journal.reconcileCandidateRequestId,
+              leafSha256: journal.leafSha256,
+              validationDeadlineAt: deadline,
+            });
+            return {
+              status: "failed",
+              keyRotated: null,
+              errorMessage: boundErrorMessage(
+                `tier-2 candidate RequestId ${journal.reconcileCandidateRequestId} still validation_deferred; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+              ),
+              enrollmentResult: enrollmentResultFor(
+                decoded.enrollmentId,
+                decoded.attempt,
+                "submission_uncertain",
+                { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+              ),
+            };
+          }
+          // Hard rejection of this candidate: clear it, keep earliest unresolved cursor.
+          await persistUncertain({
+            reconcileSearchFrom: journal.reconcileSearchFrom,
+            reconcileCandidateRequestId: null,
+            validationDeadlineAt: null,
+          });
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `tier-2 candidate RequestId ${journal.reconcileCandidateRequestId} failed validation; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+            ),
+            enrollmentResult: enrollmentResultFor(
+              decoded.enrollmentId,
+              decoded.attempt,
+              "submission_uncertain",
+              { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+            ),
+          };
+        }
+
         const reconciled = await tryReconcileUncertainSubmission({
           issuer,
           stateDir,
@@ -1930,23 +2173,6 @@ function createAdcsWindowsIisExecutors(deps) {
           windowSize: executionContext.adcsReconcileWindowSize,
           assertIssuanceOutcome,
         });
-
-        const persistUncertainCursor = async (nextSearchFrom) => {
-          if (!Number.isInteger(nextSearchFrom) || nextSearchFrom < 1) return;
-          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
-            state: "submission_uncertain",
-            attempt: decoded.attempt,
-            containerName,
-            snapshotSha256: decoded.snapshotSha256,
-            jobId,
-            csrSha256: journal.csrSha256,
-            csrSpkiSha256: journal.csrSpkiSha256,
-            templateOid: journal.templateOid,
-            caConfig: snapshot.caConfig,
-            template: snapshot.template,
-            reconcileSearchFrom: nextSearchFrom,
-          });
-        };
 
         if (reconciled.status === "error") {
           return {
@@ -1965,7 +2191,7 @@ function createAdcsWindowsIisExecutors(deps) {
         }
 
         if (reconciled.status !== "unique_candidate") {
-          await persistUncertainCursor(reconciled.nextSearchFrom);
+          await persistUncertain({ reconcileSearchFrom: reconciled.nextSearchFrom });
           return {
             status: "failed",
             keyRotated: null,
@@ -1973,6 +2199,24 @@ function createAdcsWindowsIisExecutors(deps) {
               reconciled.status === "ambiguous"
                 ? `AD CS tier-2 reconcile found ${reconciled.matchCount} SPKI matches for enrollment ${decoded.enrollmentId}; operator RequestId or abandon required`
                 : `AD CS submission remains uncertain for enrollment ${decoded.enrollmentId}; operator RequestId or abandon required`,
+            ),
+            enrollmentResult: enrollmentResultFor(
+              decoded.enrollmentId,
+              decoded.attempt,
+              "submission_uncertain",
+              { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+            ),
+          };
+        }
+
+        // Visible uniqueness is not attachment eligibility when earlier ids remain open.
+        if (reconciled.attachmentEligible !== true) {
+          await persistUncertain({ reconcileSearchFrom: reconciled.nextSearchFrom });
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `AD CS tier-2 found RequestId ${reconciled.requestId} but earlier unresolved RequestIds remain; enrollment ${decoded.enrollmentId} stays submission_uncertain`,
             ),
             enrollmentResult: enrollmentResultFor(
               decoded.enrollmentId,
@@ -1995,11 +2239,36 @@ function createAdcsWindowsIisExecutors(deps) {
           windowsTarget,
         });
         if (!candidateValidation.ok) {
-          // Invalid/ambiguous attachment must not bind RequestId; keep scanning.
-          const skipPast = Number.isInteger(reconciled.requestId)
-            ? reconciled.requestId + 1
-            : reconciled.nextSearchFrom;
-          await persistUncertainCursor(skipPast);
+          if (candidateValidation.state === "validation_deferred") {
+            const written = await writeIssuedCertificateArtifacts({
+              stateDir,
+              enrollmentId: decoded.enrollmentId,
+              leafPem: reconciled.certificatePem,
+            });
+            const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            await persistUncertain({
+              // Keep earliest unresolved cursor (includes this candidate).
+              reconcileSearchFrom: reconciled.nextSearchFrom,
+              reconcileCandidateRequestId: reconciled.requestId,
+              leafSha256: written.leafSha256,
+              validationDeadlineAt: deadline,
+            });
+            return {
+              status: "failed",
+              keyRotated: null,
+              errorMessage: boundErrorMessage(
+                `AD CS tier-2 candidate RequestId ${reconciled.requestId} is validation_deferred; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+              ),
+              enrollmentResult: enrollmentResultFor(
+                decoded.enrollmentId,
+                decoded.attempt,
+                "submission_uncertain",
+                { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+              ),
+            };
+          }
+          // Hard validation failure: do not skip unresolved ids.
+          await persistUncertain({ reconcileSearchFrom: reconciled.nextSearchFrom });
           return {
             status: "failed",
             keyRotated: null,
@@ -2015,53 +2284,11 @@ function createAdcsWindowsIisExecutors(deps) {
           };
         }
 
-        const written = await writeIssuedCertificateArtifacts({
-          stateDir,
-          enrollmentId: decoded.enrollmentId,
-          leafPem: reconciled.certificatePem,
-        });
-        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
-          state: "issued",
-          attempt: decoded.attempt,
-          containerName,
-          snapshotSha256: decoded.snapshotSha256,
-          jobId,
-          csrSha256: journal.csrSha256,
-          csrSpkiSha256: journal.csrSpkiSha256,
-          templateOid: journal.templateOid,
-          caConfig: snapshot.caConfig,
-          template: snapshot.template,
-          leafSha256: written.leafSha256,
-          requestId: reconciled.requestId,
-        });
-        await recordHighestRequestId(stateDir, snapshot.caConfig, reconciled.requestId);
-        await reportBestEffortRevocationEvidence(client, jobId, candidateValidation);
-        journal = {
-          ...journal,
-          state: "issued",
-          leafSha256: written.leafSha256,
-          requestId: reconciled.requestId,
-        };
-        return validateAndInstallFromLeaf({
-          certificatePem: reconciled.certificatePem,
-          journal,
-          decoded,
-          snapshot,
-          windowsTarget,
-          stateDir,
-          caCertPath,
-          executionContext,
-          jobId,
-          client,
-          cngWorkDir,
-          containerName,
-          log,
-          leaseOpts,
-          onBeforeMutation,
-          windowsExecFileImpl,
-          windowsConnectImpl,
-          continueOutcomeRef,
-        });
+        return attachIssuedCandidate(
+          reconciled.certificatePem,
+          reconciled.requestId,
+          candidateValidation,
+        );
       }
 
       // Issued / deferred / installing / install_failed: use durable leaf (RequestId optional).

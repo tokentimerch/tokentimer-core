@@ -56,19 +56,51 @@ describe("AD CS renew evidence ordering", () => {
     assert.ok(inspectAt >= 0, "install recovery must inspect live progress");
     assert.ok(decision6At > inspectAt, "decision-6 must not run before install inspection on resume");
     assert.match(validateSrc, /startAtStep:\s*progress\.startAtStep/);
+    assert.match(validateSrc, /finalizeWindowsIisDeployBookkeeping/);
 
     const continueFn = src.indexOf("async function executeWindowsIisContinueEnrollmentJob");
     const continueSrc = src.slice(continueFn);
     const tier2 = continueSrc.indexOf('journal.state === "submission_uncertain"');
     assert.ok(tier2 >= 0);
-    const tier2Src = continueSrc.slice(tier2, tier2 + 4500);
+    const tier2End = continueSrc.indexOf(
+      "// Issued / deferred / installing / install_failed",
+      tier2,
+    );
+    const tier2Src = continueSrc.slice(tier2, tier2End > tier2 ? tier2End : tier2 + 20000);
     assert.match(tier2Src, /unique_candidate/);
-    assert.match(tier2Src, /runDecision6Validation/);
-    assert.match(tier2Src, /reconcileSearchFrom/);
-    const candidateValidation = tier2Src.indexOf("candidateValidation");
-    const issuedJournal = tier2Src.indexOf('state: "issued"', candidateValidation);
+    assert.match(tier2Src, /attachmentEligible/);
+    assert.match(tier2Src, /reconcileCandidateRequestId/);
+    assert.match(tier2Src, /validation_deferred/);
+    assert.match(tier2Src, /reconcileSearchFrom:\s*reconciled\.nextSearchFrom/);
+    assert.doesNotMatch(tier2Src, /requestId \+ 1/);
+    const candidateValidation = tier2Src.indexOf("const candidateValidation");
     assert.ok(candidateValidation >= 0);
-    assert.ok(issuedJournal > candidateValidation, "decision-6 must precede issued journal attach");
+    const attachAfterValidate = tier2Src.indexOf(
+      "return attachIssuedCandidate(",
+      candidateValidation,
+    );
+    assert.ok(attachAfterValidate > candidateValidation, "decision-6 must precede issued attach");
+    assert.match(
+      tier2Src.slice(attachAfterValidate, attachAfterValidate + 200),
+      /candidateValidation/,
+    );
+  });
+
+  it("captures reconcileSearchFrom at the submitting barrier before CA contact", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
+    const renewSrc = src.slice(
+      renewFn,
+      src.indexOf("async function executeWindowsIisContinueEnrollmentJob"),
+    );
+    const barrier = renewSrc.indexOf("Durable submitting barrier");
+    assert.ok(barrier >= 0);
+    const barrierSrc = renewSrc.slice(barrier, barrier + 1200);
+    assert.match(barrierSrc, /reconcileSearchFromForSubmit|captureEnrollmentReconcileSearchFrom/);
+    assert.match(barrierSrc, /reconcileSearchFrom/);
+    const submitCall = renewSrc.indexOf("issuer.submit", barrier);
+    const reconcileAt = renewSrc.indexOf("reconcileSearchFrom", barrier);
+    assert.ok(reconcileAt >= 0 && reconcileAt < submitCall);
   });
 });
 
@@ -616,6 +648,31 @@ describe("withUniqueValidationLeafFile", () => {
       assert.equal(fs.existsSync(certPath), false);
     }
     await fsp.rm(stateDir, { recursive: true, force: true });
+  });
+});
+
+describe("AD CS accept-failure key retention", () => {
+  it("inspects stores before deleting CNG keys after bare certreq -accept failure", () => {
+    const src = fs.readFileSync(require.resolve("./index.js"), "utf8");
+    assert.match(src, /async function cngKeyAbsentFromStoresAfterAcceptFailure/);
+    assert.match(src, /requireStoreAbsenceBeforeKeyDelete/);
+    const acceptFail = src.indexOf("if (!acceptResult.ok)");
+    assert.ok(acceptFail >= 0);
+    const branch = src.slice(acceptFail, acceptFail + 2500);
+    assert.match(branch, /cngKeyAbsentFromStoresAfterAcceptFailure/);
+    assert.match(branch, /retaining CNG key container/);
+  });
+
+  it("journals predecessorThumbprint before IIS cutover and finalizes bookkeeping on complete recovery", () => {
+    const src = fs.readFileSync(require.resolve("./index.js"), "utf8");
+    assert.match(src, /async function finalizeWindowsIisDeployBookkeeping/);
+    assert.match(src, /predecessorThumbprint/);
+    const bindRegion = src.indexOf("Journal predecessor identity before cutover");
+    assert.ok(bindRegion >= 0);
+    const region = src.slice(bindRegion, bindRegion + 4000);
+    assert.match(region, /queryCurrentBinding/);
+    assert.match(region, /onInstallStep/);
+    assert.match(region, /await finalizeWindowsIisDeployBookkeeping/);
   });
 });
 

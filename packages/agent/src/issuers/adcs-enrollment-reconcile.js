@@ -148,15 +148,33 @@ async function recordHighestRequestId(stateDir, caConfig, requestId) {
 }
 
 /**
+ * Enrollment-specific tier-2 start cursor: one past the CA watermark captured
+ * before CA contact. Later watermark advances by other enrollments must not
+ * move this enrollment's recovery starting point.
+ */
+function captureEnrollmentReconcileSearchFrom(stateDir, caConfig) {
+  const watermark = readWatermark(stateDir, caConfig);
+  if (!watermark.ok) {
+    const err = new Error(watermark.error);
+    err.code = "ADCS_REQUESTID_WATERMARK_CORRUPT";
+    throw err;
+  }
+  return watermark.highestRequestId + 1;
+}
+
+/**
  * Probe a bounded RequestId window for leaves whose SPKI matches the CSR.
  *
  * Does not advance the per-CA watermark on uncertain/failed probes.
- * Returns a unique candidate only; the caller must run decision-6 before
- * attaching the RequestId to the enrollment journal.
+ * `unique_candidate` means one visible SPKI match in this window only; earlier
+ * pending/inaccessible ids may still match later (`attachmentEligible` is
+ * false when any earlier open id remains). Caller must run decision-6 before
+ * attaching RequestId, and must never advance the enrollment cursor past the
+ * earliest unresolved id merely because a candidate failed validation.
  *
- * @param {number} [params.reconcileSearchFrom] enrollment-specific cursor
+ * @param {number} params.reconcileSearchFrom enrollment-specific cursor (required)
  * @returns {Promise<
- *   | { status: "unique_candidate", requestId: number, certificatePem: string, nextSearchFrom: number, probed: number }
+ *   | { status: "unique_candidate", requestId: number, certificatePem: string, nextSearchFrom: number, probed: number, attachmentEligible: boolean }
  *   | { status: "ambiguous", matchCount: number, nextSearchFrom: number, probed: number }
  *   | { status: "unresolved", probed: number, nextSearchFrom: number }
  *   | { status: "error", error: string }
@@ -167,13 +185,21 @@ async function tryReconcileUncertainSubmission({
   stateDir,
   caConfig,
   csrSpkiSha256,
-  reconcileSearchFrom = null,
+  reconcileSearchFrom,
   windowSize = DEFAULT_RECONCILE_WINDOW,
   assertIssuanceOutcome,
 }) {
   if (typeof csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(csrSpkiSha256)) {
     return { status: "error", error: "csrSpkiSha256 is required for tier-2 reconcile" };
   }
+  if (!Number.isInteger(reconcileSearchFrom) || reconcileSearchFrom < 1) {
+    return {
+      status: "error",
+      error:
+        "reconcileSearchFrom is required; enrollment must capture the CA watermark before submit",
+    };
+  }
+  // Watermark is read only to fail closed on corruption; scan start is enrollment-scoped.
   const watermark = readWatermark(stateDir, caConfig);
   if (!watermark.ok) {
     return { status: "error", error: watermark.error };
@@ -183,14 +209,7 @@ async function tryReconcileUncertainSubmission({
       ? windowSize
       : DEFAULT_RECONCILE_WINDOW;
 
-  const start =
-    Number.isInteger(reconcileSearchFrom) && reconcileSearchFrom >= 1
-      ? reconcileSearchFrom
-      : watermark.highestRequestId + 1;
-  if (start < 1) {
-    return { status: "unresolved", probed: 0, nextSearchFrom: 1 };
-  }
-
+  const start = reconcileSearchFrom;
   const matches = [];
   let firstOpenId = null;
   let probed = 0;
@@ -218,7 +237,7 @@ async function tryReconcileUncertainSubmission({
           requestId: Number.isInteger(issuance.requestId) ? issuance.requestId : requestId,
           certificatePem: issuance.certificatePem,
         });
-        // Matching candidate stays open until decision-6 confirms uniqueness.
+        // Matching candidate stays open until decision-6 confirms attachment.
         if (firstOpenId === null) firstOpenId = requestId;
         continue;
       }
@@ -234,12 +253,15 @@ async function tryReconcileUncertainSubmission({
   const nextSearchFrom = firstOpenId !== null ? firstOpenId : start + window;
 
   if (matches.length === 1) {
+    const match = matches[0];
     return {
       status: "unique_candidate",
-      requestId: matches[0].requestId,
-      certificatePem: matches[0].certificatePem,
+      requestId: match.requestId,
+      certificatePem: match.certificatePem,
       nextSearchFrom,
       probed,
+      // True only when no earlier unresolved id remains in the scanned range.
+      attachmentEligible: firstOpenId === match.requestId,
     };
   }
   if (matches.length > 1) {
@@ -258,6 +280,7 @@ module.exports = {
   readWatermark,
   readHighestRequestId,
   recordHighestRequestId,
+  captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
   watermarkPath,
   leafSpkiSha256Hex,

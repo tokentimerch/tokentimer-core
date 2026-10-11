@@ -174,7 +174,7 @@ const {
   readIssuedContainerRecord,
   removeIssuedContainerRecord,
 } = require("./windows-cert-store");
-const { deployIisBinding, resolveVerificationTarget } = require("./windows-iis");
+const { deployIisBinding, resolveVerificationTarget, queryCurrentBinding } = require("./windows-iis");
 const {
   createLedgerRow,
   readLedgerRow,
@@ -2974,6 +2974,7 @@ function getAdcsWindowsIisExecutors() {
       reportIssuanceEvidence,
       reportStepEvidence,
       runWindowsIisDeployTail,
+      finalizeWindowsIisDeployBookkeeping,
       emitInfo,
       emitLog,
       recordWindowsCngContainer,
@@ -2984,6 +2985,139 @@ function getAdcsWindowsIisExecutors() {
 }
 
 /**
+ * Idempotent post-cutover evidence + retention ledger. Safe to re-run after a
+ * crash that completed IIS TLS verify but not bookkeeping.
+ */
+async function finalizeWindowsIisDeployBookkeeping({
+  jobId,
+  client,
+  certificatePem,
+  target,
+  stateDir,
+  log,
+  boundThumbprint,
+  outgoingThumbprint = null,
+  skippedMutation = false,
+  precedenceWarning = undefined,
+  windowsExecFileImpl,
+}) {
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: "deployment.updated",
+      observedAt: new Date().toISOString(),
+      summary: skippedMutation === true
+        ? `IIS binding deploy skipped for job ${jobId}: binding already pointed at this certificate (idempotent); TLS handshake re-verified.`
+        : `IIS binding deploy succeeded for job ${jobId}: certificate rebound and TLS-verified.`,
+      metadata: [
+        { name: "step", value: "iis-bind" },
+        { name: "idempotentSkip", value: skippedMutation === true },
+        { name: "boundThumbprint", value: boundThumbprint },
+        ...(precedenceWarning
+          ? [{ name: "precedenceWarning", value: precedenceWarning }]
+          : []),
+      ],
+    }),
+  ]);
+
+  const deployedFacts = describeDeployedCertificate(certificatePem);
+  const verifyFingerprint = computeCertificateFingerprint(certificatePem);
+  const verifyMetadata = [{ name: "step", value: "verify" }];
+  if (deployedFacts) {
+    for (const [name, value] of [
+      ["serialNumber", deployedFacts.serialNumber],
+      ["validFrom", deployedFacts.validFrom],
+      ["validTo", deployedFacts.validTo],
+      ["subject", deployedFacts.subject],
+      ["issuer", deployedFacts.issuer],
+      [
+        "subjectAltNames",
+        deployedFacts.dnsSans.length > 0 ? deployedFacts.dnsSans.join(",") : null,
+      ],
+    ]) {
+      if (value !== null) verifyMetadata.push({ name, value });
+    }
+  }
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: "validation.passed",
+      observedAt: new Date().toISOString(),
+      fingerprintSha256: verifyFingerprint,
+      summary: `Verified deployed certificate fingerprint for job ${jobId} against the live IIS endpoint.`,
+      metadata: verifyMetadata,
+    }),
+  ]);
+
+  if (
+    isNonEmptyStringValue(outgoingThumbprint) &&
+    outgoingThumbprint !== boundThumbprint
+  ) {
+    try {
+      await recordSupersededWindowsCertificate({
+        jobId,
+        stateDir,
+        store: target.store,
+        oldThumbprint: outgoingThumbprint,
+        replacementThumbprint: boundThumbprint,
+        log,
+        ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `job ${jobId}: failed to record retention-ledger row for ` +
+          `superseded thumbprint ${outgoingThumbprint}; predecessor material ` +
+          `remains in the store (safe failure mode): ${err.message}`,
+      );
+    }
+  }
+}
+
+/**
+ * True only when no store entry references this container or leaf thumbprint.
+ * List failures and any association → retain the key (fail closed).
+ */
+async function cngKeyAbsentFromStoresAfterAcceptFailure({
+  containerName,
+  expectedThumbprint,
+  targetStore,
+  execFileImpl,
+  listMachineStoreCertificatesImpl = listMachineStoreCertificates,
+}) {
+  const stores = new Set([CERTREQ_ACCEPT_DEFAULT_STORE, targetStore].filter(Boolean));
+  for (const store of stores) {
+    let listed;
+    try {
+      listed = await listMachineStoreCertificatesImpl({
+        store,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+    } catch {
+      return false;
+    }
+    if (!listed || listed.ok !== true) return false;
+    for (const cert of listed.certificates || []) {
+      const thumb = String(cert.thumbprint || "").toUpperCase();
+      if (
+        typeof expectedThumbprint === "string" &&
+        expectedThumbprint.length > 0 &&
+        thumb === expectedThumbprint
+      ) {
+        return false;
+      }
+      if (
+        typeof containerName === "string" &&
+        containerName.length > 0 &&
+        typeof cert.keyContainer === "string" &&
+        cert.keyContainer === containerName
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
  * Complete CNG accept (+ optional mirror) then IIS bind/verify.
  *
  * `startAtStep` lets AD CS install recovery skip steps that inspection
@@ -2991,7 +3125,9 @@ function getAdcsWindowsIisExecutors() {
  * be in the store: a bare certreq -accept failure deletes the CNG key.
  *
  * @param {"accept"|"mirror"|"bind"|"verify"} [startAtStep="accept"]
- * @param {(step: string) => void|Promise<void>} [onInstallStep]
+ * @param {(step: string, meta?: object) => void|Promise<void>} [onInstallStep]
+ * @param {boolean} [requireStoreAbsenceBeforeKeyDelete=false] AD CS: inspect
+ *   stores before deleting CNG key on bare accept failure.
  */
 async function runWindowsIisDeployTail({
   jobId,
@@ -3006,6 +3142,7 @@ async function runWindowsIisDeployTail({
   onBeforeMutation = null,
   onInstallStep = null,
   startAtStep = "accept",
+  requireStoreAbsenceBeforeKeyDelete = false,
   windowsExecFileImpl,
   windowsConnectImpl,
 }) {
@@ -3050,39 +3187,50 @@ async function runWindowsIisDeployTail({
         ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       });
       if (!acceptResult.ok) {
-        // Only a bare-accept failure (no `stage`) leaves the CNG key
-        // container genuinely orphaned: `certreq -accept` itself never ran,
-        // or ran and failed before binding any certificate to the key, so
-        // there is no enrolled certificate anywhere referencing this
-        // container yet. A failure at the addstore/repairstore/delstore
-        // mirroring stage is different -- accept already SUCCEEDED, so the
-        // key is bound to a real certificate sitting in the store (at least
-        // in "My"); deleting the container there would corrupt that
-        // certificate's key reference instead of freeing dead weight. Same
-        // best-effort, non-fatal cleanup discipline as the ACME-failure path
-        // in executeWindowsIisRenewJob's finally block.
+        // Bare-accept failure (no `stage`): ACME may delete an orphaned CNG
+        // key. For durable AD CS enrollments a nonzero exit alone does not
+        // prove accept had no store side effects — inspect first and retain
+        // the key when the result is ambiguous.
         if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
-          try {
-            const cleanup = await removeAbandonedKeyContainer({
+          let safeToDelete = !requireStoreAbsenceBeforeKeyDelete;
+          if (requireStoreAbsenceBeforeKeyDelete) {
+            safeToDelete = await cngKeyAbsentFromStoresAfterAcceptFailure({
               containerName,
-              ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+              expectedThumbprint: acceptedThumbprint,
+              targetStore: target.store,
+              execFileImpl: windowsExecFileImpl,
             });
-            if (cleanup.ok !== true) {
+            if (!safeToDelete) {
+              emitLog(
+                log,
+                `job ${jobId}: retaining CNG key container ${containerName} after ` +
+                  `certreq -accept failure; store inspection found the leaf/key or was inconclusive`,
+              );
+            }
+          }
+          if (safeToDelete) {
+            try {
+              const cleanup = await removeAbandonedKeyContainer({
+                containerName,
+                ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+              });
+              if (cleanup.ok !== true) {
+                emitLog(
+                  log,
+                  `job ${jobId}: failed to delete abandoned CNG key container ` +
+                    `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
+                    `it will remain orphaned in the CNG key store until manually removed.`,
+                );
+              } else {
+                removeIssuedContainerRecord({ stateDir, containerName });
+              }
+            } catch (err) {
               emitLog(
                 log,
                 `job ${jobId}: failed to delete abandoned CNG key container ` +
-                  `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
-                  `it will remain orphaned in the CNG key store until manually removed.`,
+                  `${containerName} after certreq -accept failure: ${err.message}`,
               );
-            } else {
-              removeIssuedContainerRecord({ stateDir, containerName });
             }
-          } catch (err) {
-            emitLog(
-              log,
-              `job ${jobId}: failed to delete abandoned CNG key container ` +
-                `${containerName} after certreq -accept failure: ${err.message}`,
-            );
           }
         }
         await reportStepEvidence(client, jobId, [
@@ -3196,8 +3344,22 @@ async function runWindowsIisDeployTail({
       site: target.binding.site,
     };
 
+    // Journal predecessor identity before cutover so install-complete recovery
+    // can finish retention bookkeeping after a crash.
+    let predecessorThumbprint = null;
+    {
+      const currentBinding = await queryCurrentBinding({
+        binding,
+        ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+      });
+      if (currentBinding.ok) {
+        predecessorThumbprint = currentBinding.thumbprint;
+      }
+    }
     if (typeof onInstallStep === "function") {
-      await onInstallStep(shouldRun("bind") ? "bind" : "verify");
+      await onInstallStep(shouldRun("bind") ? "bind" : "verify", {
+        predecessorThumbprint,
+      });
     }
     emitInfo(`job ${jobId}: deploying IIS binding at ${binding.address}:${binding.port}`);
     const deployResult = await deployIisBinding({
@@ -3234,95 +3396,19 @@ async function runWindowsIisDeployTail({
     if (deployResult.precedenceWarning) {
       emitInfo(`job ${jobId}: WARNING: ${deployResult.precedenceWarning}`);
     }
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "deployment.updated",
-        observedAt: new Date().toISOString(),
-        summary: deployResult.skippedMutation === true
-          ? `IIS binding deploy skipped for job ${jobId}: binding already pointed at this certificate (idempotent); TLS handshake re-verified.`
-          : `IIS binding deploy succeeded for job ${jobId}: certificate rebound and TLS-verified.`,
-        metadata: [
-          { name: "step", value: "iis-bind" },
-          { name: "idempotentSkip", value: deployResult.skippedMutation === true },
-          { name: "boundThumbprint", value: deployResult.boundThumbprint },
-          ...(deployResult.precedenceWarning
-            ? [{ name: "precedenceWarning", value: deployResult.precedenceWarning }]
-            : []),
-        ],
-      }),
-    ]);
-
-    // The control plane's reconciliation (apps/api's reconcileProvisionedCertificate
-    // for an "issue" job, refreshRenewedCertificateEvidence for a later "renew")
-    // looks for a claim-bound validation.passed event with metadata.step === "verify"
-    // carrying fingerprintSha256 and validTo -- the file-based path's runDeployTail
-    // always emits this after a successful live-endpoint check, but deployIisBinding's
-    // own TLS handshake verification above was never surfaced in that shape, so a
-    // windows-iis certificate would deploy correctly on the host and then sit
-    // forever in status 'provisioning' (or with a frozen not_after after a later
-    // renewal), invisible to expiry tracking and the renewal scheduler. Emitting the
-    // same evidence shape here, from the same already-verified certificatePem, closes
-    // that gap without re-running any verification deployIisBinding already did.
-    const deployedFacts = describeDeployedCertificate(certificatePem);
-    const verifyFingerprint = computeCertificateFingerprint(certificatePem);
-    const verifyMetadata = [{ name: "step", value: "verify" }];
-    if (deployedFacts) {
-      for (const [name, value] of [
-        ["serialNumber", deployedFacts.serialNumber],
-        ["validFrom", deployedFacts.validFrom],
-        ["validTo", deployedFacts.validTo],
-        ["subject", deployedFacts.subject],
-        ["issuer", deployedFacts.issuer],
-        [
-          "subjectAltNames",
-          deployedFacts.dnsSans.length > 0 ? deployedFacts.dnsSans.join(",") : null,
-        ],
-      ]) {
-        if (value !== null) verifyMetadata.push({ name, value });
-      }
-    }
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "validation.passed",
-        observedAt: new Date().toISOString(),
-        fingerprintSha256: verifyFingerprint,
-        summary: `Verified deployed certificate fingerprint for job ${jobId} against the live IIS endpoint.`,
-        metadata: verifyMetadata,
-      }),
-    ]);
-
-    // Retention ledger row (decision 18): only for a genuine predecessor
-    // this deploy just superseded. A first-ever bind (outgoingThumbprint
-    // null) or an idempotent skip (outgoing === new) has nothing to retire.
-    if (
-      isNonEmptyStringValue(deployResult.outgoingThumbprint) &&
-      deployResult.outgoingThumbprint !== deployResult.boundThumbprint
-    ) {
-      try {
-        await recordSupersededWindowsCertificate({
-          jobId,
-          stateDir,
-          store: target.store,
-          oldThumbprint: deployResult.outgoingThumbprint,
-          replacementThumbprint: deployResult.boundThumbprint,
-          log,
-          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-        });
-      } catch (err) {
-        // A ledger-write failure must never turn an already-succeeded,
-        // TLS-verified cutover into a reported job failure: decision 18's
-        // ledger governs LATER cleanup timing, not whether this renewal
-        // succeeded. The predecessor material simply stays in the store
-        // (the safe failure mode) until an operator or a future sweep
-        // notices; this is logged, not swallowed silently.
-        emitLog(
-          log,
-          `job ${jobId}: failed to record retention-ledger row for ` +
-            `superseded thumbprint ${deployResult.outgoingThumbprint}; predecessor material ` +
-            `remains in the store (safe failure mode): ${err.message}`,
-        );
-      }
-    }
+    await finalizeWindowsIisDeployBookkeeping({
+      jobId,
+      client,
+      certificatePem,
+      target,
+      stateDir,
+      log,
+      boundThumbprint: deployResult.boundThumbprint,
+      outgoingThumbprint: deployResult.outgoingThumbprint,
+      skippedMutation: deployResult.skippedMutation === true,
+      precedenceWarning: deployResult.precedenceWarning,
+      windowsExecFileImpl,
+    });
 
     return { status: "succeeded", keyRotated: null };
   } finally {
@@ -6566,6 +6652,8 @@ module.exports = {
   executeWindowsIisRenewJob,
   executeTrustJob,
   runWindowsIisDeployTail,
+  finalizeWindowsIisDeployBookkeeping,
+  cngKeyAbsentFromStoresAfterAcceptFailure,
   recordSupersededWindowsCertificate,
   runDeployReloadVerify,
   runDeployReloadVerifyForTargets,

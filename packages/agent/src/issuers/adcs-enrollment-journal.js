@@ -716,6 +716,53 @@ function mergeImmutableJournalFields(previousJournal, previousState, fields) {
     }
   }
 
+  // Enrollment tier-2 cursor: preserve when omitted; allow explicit updates.
+  if (
+    Number.isInteger(previousJournal.reconcileSearchFrom) &&
+    previousJournal.reconcileSearchFrom >= 1
+  ) {
+    if (!Number.isInteger(merged.reconcileSearchFrom) || merged.reconcileSearchFrom < 1) {
+      merged.reconcileSearchFrom = previousJournal.reconcileSearchFrom;
+    }
+  }
+
+  // Tier-2 deferred candidate identity: preserve when omitted; null clears.
+  if (Object.hasOwn(fields, "reconcileCandidateRequestId")) {
+    if (
+      !(
+        Number.isInteger(fields.reconcileCandidateRequestId) &&
+        fields.reconcileCandidateRequestId >= 1
+      )
+    ) {
+      delete merged.reconcileCandidateRequestId;
+    }
+  } else if (
+    Number.isInteger(previousJournal.reconcileCandidateRequestId) &&
+    previousJournal.reconcileCandidateRequestId >= 1
+  ) {
+    merged.reconcileCandidateRequestId = previousJournal.reconcileCandidateRequestId;
+  }
+
+  // Predecessor thumbprint journalled before IIS cutover for retention recovery.
+  if (Object.hasOwn(fields, "predecessorThumbprint")) {
+    if (
+      typeof fields.predecessorThumbprint !== "string" ||
+      fields.predecessorThumbprint.length === 0
+    ) {
+      delete merged.predecessorThumbprint;
+    }
+  } else if (
+    typeof previousJournal.predecessorThumbprint === "string" &&
+    previousJournal.predecessorThumbprint.length > 0
+  ) {
+    merged.predecessorThumbprint = previousJournal.predecessorThumbprint;
+  }
+
+  // Allow explicit clear of validationDeadlineAt (tier-2 deferred candidate abandon).
+  if (Object.hasOwn(fields, "validationDeadlineAt") && fields.validationDeadlineAt == null) {
+    delete merged.validationDeadlineAt;
+  }
+
   return merged;
 }
 
