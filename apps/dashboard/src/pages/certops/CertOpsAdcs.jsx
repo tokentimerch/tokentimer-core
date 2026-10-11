@@ -95,10 +95,12 @@ export default function CertOpsAdcs() {
   const pollRef = useRef(null);
 
   const stopPreflightPoll = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+    const poll = pollRef.current;
+    if (!poll) return;
+    poll.cancelled = true;
+    clearInterval(poll.timer);
+    poll.controller.abort();
+    pollRef.current = null;
     setWaitingForPreflight(false);
   }, []);
 
@@ -134,31 +136,51 @@ export default function CertOpsAdcs() {
     };
   }, [isAdmin, reload]);
 
-  useEffect(() => () => stopPreflightPoll(), [stopPreflightPoll]);
+  useEffect(() => () => stopPreflightPoll(), [workspaceId, stopPreflightPoll]);
 
   const startPreflightPoll = useCallback(
     (issuerId, previousSignature) => {
       stopPreflightPoll();
+      const poll = {
+        cancelled: false,
+        controller: new AbortController(),
+        timer: null,
+        attempts: 0,
+      };
+      pollRef.current = poll;
       setWaitingForPreflight(true);
-      let attempts = 0;
-      pollRef.current = setInterval(async () => {
-        attempts += 1;
+      poll.timer = setInterval(async () => {
+        if (poll.cancelled || pollRef.current !== poll) return;
+        poll.attempts += 1;
+        const attempt = poll.attempts;
         try {
-          const page = await listIssuers(workspaceId);
+          const page = await listIssuers(workspaceId, {
+            signal: poll.controller.signal,
+          });
+          if (poll.cancelled || pollRef.current !== poll) return;
           const items = page.items || [];
           setIssuers(items);
           const current = items.find(item => item.id === issuerId);
           const changed =
             preflightSignature(current?.lastPreflight) !== previousSignature;
-          if (changed || attempts >= PREFLIGHT_POLL_ATTEMPTS) {
-            if (pollRef.current) clearInterval(pollRef.current);
+          if (
+            (changed || attempt >= PREFLIGHT_POLL_ATTEMPTS) &&
+            pollRef.current === poll
+          ) {
+            poll.cancelled = true;
+            clearInterval(poll.timer);
             pollRef.current = null;
             setWaitingForPreflight(false);
           }
-        } catch {
-          if (pollRef.current) clearInterval(pollRef.current);
+        } catch (err) {
+          if (poll.cancelled || pollRef.current !== poll) return;
+          if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError')
+            return;
+          poll.cancelled = true;
+          clearInterval(poll.timer);
           pollRef.current = null;
           setWaitingForPreflight(false);
+          showError(errorText(err, 'Could not refresh the preflight verdict.'));
         }
       }, PREFLIGHT_POLL_MS);
     },
