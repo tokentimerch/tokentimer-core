@@ -858,7 +858,7 @@ function createAdcsWindowsIisExecutors(deps) {
     let submitStarted = false;
     let preparedJournalCommitted = false;
     try {
-      return await enrollmentLock.run(async () => {
+      return await enrollmentLock.run(async (signal) => {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -940,8 +940,12 @@ function createAdcsWindowsIisExecutors(deps) {
         enrollmentId: decoded.enrollmentId,
         algorithm: keyMapped.algorithm,
         workDir: cngWorkDir,
+        signal,
         ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       });
+      if (!csrResult.ok && csrResult.reason === "aborted") {
+        enrollmentLock.assertHeld();
+      }
       if (!csrResult.ok) {
         // Clear keygen intent so renew can retry; finally deletes any orphan key.
         containerName =
@@ -1836,7 +1840,7 @@ function createAdcsWindowsIisExecutors(deps) {
     const continueOutcomeRef = { value: null };
 
     try {
-      return await enrollmentLock.run(async () => {
+      return await enrollmentLock.run(async (signal) => {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -1894,14 +1898,17 @@ function createAdcsWindowsIisExecutors(deps) {
           enrollmentId: decoded.enrollmentId,
           algorithm: keyMapped.algorithm,
           workDir: cngWorkDir,
+          signal,
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
         if (!csrResult.ok && csrResult.reason === "enrollment_container_exists") {
           const cleanup = await removeAbandonedKeyContainer({
             containerName,
+            signal,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
           });
           if (cleanup.ok !== true) {
+            if (cleanup.reason === "aborted") enrollmentLock.assertHeld();
             return {
               status: "failed",
               keyRotated: null,
@@ -1918,10 +1925,12 @@ function createAdcsWindowsIisExecutors(deps) {
             enrollmentId: decoded.enrollmentId,
             algorithm: keyMapped.algorithm,
             workDir: cngWorkDir,
+            signal,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
           });
         }
         if (!csrResult.ok) {
+          if (csrResult.reason === "aborted") enrollmentLock.assertHeld();
           return {
             status: "failed",
             keyRotated: null,

@@ -789,6 +789,30 @@ describe("AD CS keygen_intent and observation retryability", () => {
   });
 });
 
+describe("reject-A then attach-B provisional leaf replacement", () => {
+  it("clears provisional leafSha256 and artifacts before a later unique candidate can attach", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const continueFn = src.indexOf("async function executeWindowsIisContinueEnrollmentJob");
+    assert.ok(continueFn >= 0);
+    const continueSrc = src.slice(continueFn);
+    const rejectBlock = continueSrc.indexOf(
+      "Hard rejection: clear provisional candidate + leaf so a later",
+    );
+    assert.ok(rejectBlock >= 0, "hard-reject provisional clear block missing");
+    const block = continueSrc.slice(rejectBlock, rejectBlock + 900);
+    assert.match(block, /reconcileCandidateRequestId:\s*null/);
+    assert.match(block, /leafSha256:\s*null/);
+    assert.match(block, /clearProvisionalLeafArtifacts/);
+    // Attach path must rewrite leaf artifacts under issued after uniqueness.
+    const attachFn = continueSrc.indexOf("const attachIssuedCandidate = async");
+    assert.ok(attachFn >= 0);
+    const attachSrc = continueSrc.slice(attachFn, attachFn + 1200);
+    assert.match(attachSrc, /writeIssuedCertificateArtifacts/);
+    assert.match(attachSrc, /state:\s*"issued"/);
+    assert.match(attachSrc, /leafSha256:\s*written\.leafSha256/);
+  });
+});
+
 describe("terminalEnrollmentResultExtras", () => {
   it("replays contract-required denied and rejected_invalid fields", () => {
     assert.deepEqual(

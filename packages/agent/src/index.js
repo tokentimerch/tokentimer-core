@@ -3185,7 +3185,7 @@ async function runWindowsIisDeployTail({
   }
 
   try {
-    return await storeLock.run(async () => {
+    return await storeLock.run(async (signal) => {
     let acceptedThumbprint = computeSha1ThumbprintFromPem(certificatePem);
 
     if (shouldRun("accept")) {
@@ -3196,6 +3196,7 @@ async function runWindowsIisDeployTail({
         certificatePem,
         workDir: cngWorkDir,
         store: target.store,
+        signal,
         ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       });
       storeLock.assertHeld();
@@ -3216,6 +3217,7 @@ async function runWindowsIisDeployTail({
             try {
               const cleanup = await removeAbandonedKeyContainer({
                 containerName,
+                signal,
                 ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
               });
               if (cleanup.ok !== true) {
@@ -4052,38 +4054,73 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     }
 
     try {
-      let enrolled = false;
-      let queryFailure = null;
-      for (const storeName of storesToCheck) {
-        const storeResult = await listMachineStoreCertificates({
-          store: storeName,
+      await storeLocks.run(async (signal) => {
+        let enrolled = false;
+        let queryFailure = null;
+        for (const storeName of storesToCheck) {
+          storeLocks.assertHeld();
+          const storeResult = await listMachineStoreCertificates({
+            store: storeName,
+            ...(execFileImpl ? { execFileImpl } : {}),
+          });
+          storeLocks.assertHeld();
+          if (storeResult.ok !== true) {
+            queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
+            break;
+          }
+          if (storeResult.certificates.some((cert) => cert.keyContainer === containerName)) {
+            enrolled = true;
+            break;
+          }
+        }
+
+        if (queryFailure) {
+          // Fail closed: a store lookup that could not be completed is NOT
+          // evidence the container is unused there, so this entry must be
+          // deferred rather than treated as safe to delete.
+          skipped.push({ containerName, reason: queryFailure });
+          return;
+        }
+
+        if (enrolled) {
+          // A later attempt (or an operator) legitimately enrolled a
+          // certificate to this container -- either in "My" (e.g. certreq
+          // -accept succeeded but a crash interrupted the later mirror step
+          // into targetStore) or in targetStore itself -- since the journal
+          // entry was written; never free a container backing a real
+          // certificate.
+          try {
+            markWindowsCngContainerReconciled({
+              stateDir,
+              jobId: entry.jobId,
+              attemptId: entry.attemptId,
+            });
+          } catch {
+            // Best-effort; the container itself is safe either way, and an
+            // un-marked entry is simply re-checked (and again found
+            // enrolled, hence still skipped) on the next startup.
+          }
+          skipped.push({ containerName, reason: "enrolled" });
+          return;
+        }
+
+        storeLocks.assertHeld();
+        const cleanup = await removeAbandonedKeyContainer({
+          containerName,
           ...(execFileImpl ? { execFileImpl } : {}),
+          signal,
         });
-        if (storeResult.ok !== true) {
-          queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
-          break;
+        storeLocks.assertHeld();
+        if (cleanup.ok !== true) {
+          skipped.push({
+            containerName,
+            reason:
+              cleanup.reason === "aborted"
+                ? "store lock lost during delkey"
+                : `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+          });
+          return;
         }
-        if (storeResult.certificates.some((cert) => cert.keyContainer === containerName)) {
-          enrolled = true;
-          break;
-        }
-      }
-
-      if (queryFailure) {
-        // Fail closed: a store lookup that could not be completed is NOT
-        // evidence the container is unused there, so this entry must be
-        // deferred rather than treated as safe to delete.
-        skipped.push({ containerName, reason: queryFailure });
-        return;
-      }
-
-      if (enrolled) {
-        // A later attempt (or an operator) legitimately enrolled a
-        // certificate to this container -- either in "My" (e.g. certreq
-        // -accept succeeded but a crash interrupted the later mirror step
-        // into targetStore) or in targetStore itself -- since the journal
-        // entry was written; never free a container backing a real
-        // certificate.
         try {
           markWindowsCngContainerReconciled({
             stateDir,
@@ -4091,36 +4128,20 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
             attemptId: entry.attemptId,
           });
         } catch {
-          // Best-effort; the container itself is safe either way, and an
-          // un-marked entry is simply re-checked (and again found
-          // enrolled, hence still skipped) on the next startup.
+          // Best-effort; the container is already freed regardless.
         }
-        skipped.push({ containerName, reason: "enrolled" });
-        return;
-      }
-
-      const cleanup = await removeAbandonedKeyContainer({
-        containerName,
-        ...(execFileImpl ? { execFileImpl } : {}),
+        removeIssuedContainerRecord({ stateDir, containerName });
+        freed.push(containerName);
       });
-      if (cleanup.ok !== true) {
+    } catch (err) {
+      if (err && (err.code === "STORE_LOCK_LOST" || err.code === "LOCK_LOST")) {
         skipped.push({
           containerName,
-          reason: `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+          reason: `store lock lost: ${err.message}`,
         });
         return;
       }
-      try {
-        markWindowsCngContainerReconciled({
-          stateDir,
-          jobId: entry.jobId,
-          attemptId: entry.attemptId,
-        });
-      } catch {
-        // Best-effort; the container is already freed regardless.
-      }
-      removeIssuedContainerRecord({ stateDir, containerName });
-      freed.push(containerName);
+      throw err;
     } finally {
       storeLocks.release();
     }
@@ -4170,15 +4191,28 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
         continue;
       }
       try {
-        const recheck = isEnrollmentContainerProtected(stateDir, enrollmentId, containerName);
-        if (recheck.protected) {
+        await enrollmentLock.run(async () => {
+          enrollmentLock.assertHeld();
+          const recheck = isEnrollmentContainerProtected(stateDir, enrollmentId, containerName);
+          if (recheck.protected) {
+            skipped.push({
+              containerName,
+              reason: recheck.reason || "open AD CS enrollment journal protects this container",
+            });
+            return;
+          }
+          await attemptOrphanContainerDelete(entry, containerName, targetStore);
+          enrollmentLock.assertHeld();
+        });
+      } catch (err) {
+        if (err && (err.code === "ENROLLMENT_LOCK_LOST" || err.code === "LOCK_LOST")) {
           skipped.push({
             containerName,
-            reason: recheck.reason || "open AD CS enrollment journal protects this container",
+            reason: `enrollment lock lost: ${err.message}`,
           });
-          continue;
+        } else {
+          throw err;
         }
-        await attemptOrphanContainerDelete(entry, containerName, targetStore);
       } finally {
         enrollmentLock.release();
       }

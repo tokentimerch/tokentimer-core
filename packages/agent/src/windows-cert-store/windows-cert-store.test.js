@@ -1525,6 +1525,54 @@ describe("removeCertificateAndKeyContainer", () => {
 // reached acceptCertificateViaCng (ACME failure/rejection between the two).
 // ---------------------------------------------------------------------------
 
+describe("execWithoutShell AbortSignal", () => {
+  const { execWithoutShell } = require("./index");
+
+  it("resolves with ABORT_ERR when the signal is already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" }));
+    const calls = [];
+    const result = await execWithoutShell(
+      (file, args, opts, cb) => {
+        calls.push({ file, args });
+        cb(null, "", "");
+      },
+      ["certutil.exe", "-delkey", "x"],
+      1000,
+      ac.signal,
+    );
+    assert.equal(calls.length, 0);
+    assert.equal(result.execError && result.execError.code, "STORE_LOCK_LOST");
+  });
+
+  it("kills an in-flight child when the signal aborts", async () => {
+    const ac = new AbortController();
+    let killed = false;
+    const resultPromise = execWithoutShell(
+      (file, args, opts, cb) => {
+        const fakeChild = {
+          kill() {
+            killed = true;
+            process.nextTick(() =>
+              cb(Object.assign(new Error("killed"), { code: "ABORT_ERR" }), "", ""),
+            );
+          },
+        };
+        setTimeout(() => ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" })), 20);
+        setTimeout(() => cb(null, "late", ""), 500);
+        return fakeChild;
+      },
+      ["certutil.exe", "-delkey", "x"],
+      5000,
+      ac.signal,
+    );
+    const result = await resultPromise;
+    assert.equal(killed, true);
+    assert.ok(result.execError);
+    assert.equal(result.execError.code === "ABORT_ERR" || result.execError.code === "STORE_LOCK_LOST", true);
+  });
+});
+
 describe("removeAbandonedKeyContainer", () => {
   it("invokes certutil -csp <KSP> -delkey <containerName> without a shell", async () => {
     const execFileImpl = makeExecStub({});

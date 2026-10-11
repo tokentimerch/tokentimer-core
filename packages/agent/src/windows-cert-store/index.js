@@ -637,15 +637,40 @@ function normalizeCsrPemLabel(raw) {
  * acme/index.js's execWithoutShell: never rejects on nonzero exit/timeout
  * (operational outcomes), only on a genuine spawn/programmer error via the
  * resolved execError field for the caller to inspect.
+ * When `signal` aborts, the child is killed (if the impl returned one) and
+ * the promise resolves with execError.code === "ABORT_ERR".
  * @param {Function} execFileImpl
  * @param {string[]} argv argv[0] is the executable
  * @param {number} timeoutMs
+ * @param {AbortSignal} [signal]
  * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null}>}
  */
-function execWithoutShell(execFileImpl, argv, timeoutMs) {
+function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
   const [file, ...args] = argv;
   return new Promise((resolve) => {
-    execFileImpl(
+    if (signal && signal.aborted) {
+      const abortErr =
+        signal.reason instanceof Error
+          ? signal.reason
+          : Object.assign(new Error("aborted"), { code: "ABORT_ERR" });
+      if (!abortErr.code) abortErr.code = "ABORT_ERR";
+      resolve({ exitCode: null, stdout: "", stderr: "", execError: abortErr });
+      return;
+    }
+
+    let settled = false;
+    /** @type {(() => void)|null} */
+    let onAbort = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve(result);
+    };
+
+    const child = execFileImpl(
       file,
       args,
       {
@@ -656,12 +681,29 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
       (error, stdout, stderr) => {
         if (error) {
           const exitCode = typeof error.code === "number" ? error.code : null;
-          resolve({ exitCode, stdout, stderr, execError: error });
+          finish({ exitCode, stdout, stderr, execError: error });
           return;
         }
-        resolve({ exitCode: 0, stdout, stderr, execError: null });
+        finish({ exitCode: 0, stdout, stderr, execError: null });
       },
     );
+
+    if (signal && child && typeof child.kill === "function") {
+      onAbort = () => {
+        try {
+          child.kill();
+        } catch {
+          // best-effort
+        }
+        const abortErr =
+          signal.reason instanceof Error
+            ? signal.reason
+            : Object.assign(new Error("aborted"), { code: "ABORT_ERR" });
+        if (!abortErr.code) abortErr.code = "ABORT_ERR";
+        finish({ exitCode: null, stdout: "", stderr: "", execError: abortErr });
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
@@ -727,6 +769,7 @@ async function generateCsrViaCng({
   certreqPath = "certreq.exe",
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(workDir)) {
     throw buildError("generateCsrViaCng requires a non-empty workDir string");
@@ -751,7 +794,17 @@ async function generateCsrViaCng({
     assertSafeArgvElements("certutilPath", [certutilPath]);
     const listArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-key"];
     assertSafeArgvElements("listArgv", listArgv);
-    const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs);
+    const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs, signal);
+    if (listing.execError && listing.execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        containerName,
+        stdoutExcerpt: "",
+        stderrExcerpt: "",
+      };
+    }
     if (listing.exitCode !== 0) {
       return {
         ok: false,
@@ -796,7 +849,23 @@ async function generateCsrViaCng({
     // certreq too, so -new and -accept can never disagree under LocalSystem.
     const argv = [certreqPath, "-q", "-machine", "-new", infPath, reqPath];
     assertSafeArgvElements("argv", argv);
-    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+    const { exitCode, stdout, stderr, execError } = await execWithoutShell(
+      execFileImpl,
+      argv,
+      timeoutMs,
+      signal,
+    );
+
+    if (execError && execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        containerName,
+        stdoutExcerpt: "",
+        stderrExcerpt: "",
+      };
+    }
 
     if (exitCode !== 0) {
       return {
@@ -884,6 +953,7 @@ async function acceptCertificateViaCng({
   certreqPath = "certreq.exe",
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(certificatePem)) {
     throw buildError("acceptCertificateViaCng requires a non-empty certificatePem string");
@@ -909,7 +979,22 @@ async function acceptCertificateViaCng({
   try {
     const argv = [certreqPath, "-q", "-machine", "-accept", certPath];
     assertSafeArgvElements("argv", argv);
-    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+    const { exitCode, stdout, stderr, execError } = await execWithoutShell(
+      execFileImpl,
+      argv,
+      timeoutMs,
+      signal,
+    );
+
+    if (execError && execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        stdoutExcerpt: "",
+        stderrExcerpt: "",
+      };
+    }
 
     if (exitCode !== 0) {
       return {
@@ -928,6 +1013,7 @@ async function acceptCertificateViaCng({
         execFileImpl,
         certutilPath,
         timeoutMs,
+        signal,
       });
       if (!mirrored.ok) return mirrored;
     }
@@ -994,12 +1080,23 @@ async function mirrorAcceptedCertificateToStore({
   execFileImpl,
   certutilPath,
   timeoutMs,
+  signal = undefined,
 }) {
   assertSafeArgvElements("certutilPath", [certutilPath]);
 
   const addstoreArgv = [certutilPath, "-addstore", targetStore, certPath];
   assertSafeArgvElements("addstoreArgv", addstoreArgv);
-  const addstoreResult = await execWithoutShell(execFileImpl, addstoreArgv, timeoutMs);
+  const addstoreResult = await execWithoutShell(execFileImpl, addstoreArgv, timeoutMs, signal);
+  if (addstoreResult.execError && addstoreResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "addstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (addstoreResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1012,7 +1109,22 @@ async function mirrorAcceptedCertificateToStore({
 
   const repairstoreArgv = [certutilPath, "-repairstore", targetStore, thumbprint];
   assertSafeArgvElements("repairstoreArgv", repairstoreArgv);
-  const repairstoreResult = await execWithoutShell(execFileImpl, repairstoreArgv, timeoutMs);
+  const repairstoreResult = await execWithoutShell(
+    execFileImpl,
+    repairstoreArgv,
+    timeoutMs,
+    signal,
+  );
+  if (repairstoreResult.execError && repairstoreResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "repairstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (repairstoreResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1025,7 +1137,17 @@ async function mirrorAcceptedCertificateToStore({
 
   const delstoreArgv = [certutilPath, "-delstore", CERTREQ_ACCEPT_DEFAULT_STORE, thumbprint];
   assertSafeArgvElements("delstoreArgv", delstoreArgv);
-  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs);
+  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs, signal);
+  if (delstoreResult.execError && delstoreResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "delstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (delstoreResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1041,7 +1163,17 @@ async function mirrorAcceptedCertificateToStore({
   // this function's doc comment, step 4).
   const verifyArgv = [certutilPath, "-store", targetStore, thumbprint];
   assertSafeArgvElements("verifyArgv", verifyArgv);
-  const verifyResult = await execWithoutShell(execFileImpl, verifyArgv, timeoutMs);
+  const verifyResult = await execWithoutShell(execFileImpl, verifyArgv, timeoutMs, signal);
+  if (verifyResult.execError && verifyResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "verify",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (verifyResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1546,6 +1678,7 @@ async function removeAbandonedKeyContainer({
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(containerName) || !CONTAINER_NAME_PATTERN.test(containerName)) {
     throw buildError(`containerName must match ${CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`);
@@ -1557,7 +1690,16 @@ async function removeAbandonedKeyContainer({
 
   const delkeyArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-delkey", containerName];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
-  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs);
+  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);
+  if (delkeyResult.execError && delkeyResult.execError.code === "ABORT_ERR") {
+    return guardReturnValue({
+      ok: false,
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    });
+  }
   if (delkeyResult.exitCode !== 0) {
     return guardReturnValue({
       ok: false,
