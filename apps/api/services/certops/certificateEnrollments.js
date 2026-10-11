@@ -477,6 +477,22 @@ async function loadDispatchEnrollment(client, workspaceId, enrollmentId) {
   return { ...view, attempt };
 }
 
+async function inTransaction(db, fn) {
+  await db.query("BEGIN");
+  try {
+    const result = await fn();
+    await db.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // The original error is the one the next sweep can act on.
+    }
+    throw error;
+  }
+}
+
 async function claimDueEnrollment(db, workspaceId, enrollmentId, now) {
   const claimed = await db.query(
     `UPDATE certificate_enrollments
@@ -510,16 +526,6 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
     const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
     const decision = decideContinuation(view, snapshot, now);
     if (!decision) continue;
-    const claimed = await claimDueEnrollment(db, row.workspace_id, row.id, now);
-    if (!claimed) continue;
-    if (decision.state === "expired") {
-      await db.query(
-        `UPDATE certificate_enrollments
-            SET state = 'expired', updated_at = NOW()
-          WHERE workspace_id = $1 AND id = $2`,
-        [row.workspace_id, row.id],
-      );
-    }
     if (!decision.dispatch && decision.state !== "expired") continue;
     const target = row.deploy_target;
     if (!target || target.type !== "windows-iis") {
@@ -528,34 +534,47 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         "CERTOPS_SNAPSHOT_INVALID",
       );
     }
-    const attempt = Number(row.attempt || 0) + 1;
-    const reconcileMetadata =
-      Number.isInteger(row.operator_request_id) && row.operator_request_id >= 1
-        ? [{ name: "adcs.reconcileRequestId", value: row.operator_request_id }]
-        : undefined;
-    const payload = storedAdcsPayload({
-      certificateId: row.certificate_id,
-      target,
-      metadata: reconcileMetadata,
+    const dispatched = await inTransaction(db, async () => {
+      const claimed = await claimDueEnrollment(db, row.workspace_id, row.id, now);
+      if (!claimed) return null;
+      if (decision.state === "expired") {
+        await db.query(
+          `UPDATE certificate_enrollments
+              SET state = 'expired', updated_at = NOW()
+            WHERE workspace_id = $1 AND id = $2`,
+          [row.workspace_id, row.id],
+        );
+      }
+      const attempt = Number(row.attempt || 0) + 1;
+      const reconcileMetadata =
+        Number.isInteger(row.operator_request_id) && row.operator_request_id >= 1
+          ? [{ name: "adcs.reconcileRequestId", value: row.operator_request_id }]
+          : undefined;
+      const payload = storedAdcsPayload({
+        certificateId: row.certificate_id,
+        target,
+        metadata: reconcileMetadata,
+      });
+      const job = await createJob({
+        client: db,
+        workspaceId: row.workspace_id,
+        operation: "continue-enrollment",
+        allowEnrollmentContinuation: true,
+        subjectType: "managed_certificate",
+        subjectId: row.certificate_id,
+        assignedAgentId: row.agent_id,
+        payload,
+        enrollmentId: row.id,
+      });
+      await db.query(
+        `UPDATE certificate_enrollments
+            SET attempt = $3, current_job_id = $4, updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2`,
+        [row.workspace_id, row.id, attempt, job.id],
+      );
+      return { enrollmentId: row.id, jobId: job.id, attempt, target: payload.target };
     });
-    const job = await createJob({
-      client: db,
-      workspaceId: row.workspace_id,
-      operation: "continue-enrollment",
-      allowEnrollmentContinuation: true,
-      subjectType: "managed_certificate",
-      subjectId: row.certificate_id,
-      assignedAgentId: row.agent_id,
-      payload,
-      enrollmentId: row.id,
-    });
-    await db.query(
-      `UPDATE certificate_enrollments
-          SET attempt = $3, current_job_id = $4, updated_at = NOW()
-        WHERE workspace_id = $1 AND id = $2`,
-      [row.workspace_id, row.id, attempt, job.id],
-    );
-    created.push({ enrollmentId: row.id, jobId: job.id, attempt, target: payload.target });
+    if (dispatched) created.push(dispatched);
   }
   return created;
 }

@@ -166,6 +166,14 @@ const WEBHOSTING = {
 function rowDb() {
   const enrollments = new Map();
   const issuers = new Map();
+  let checkpoint = null;
+  function cloneRows() {
+    return new Map([...enrollments.entries()].map(([id, row]) => [id, { ...row }]));
+  }
+  function restore(saved) {
+    enrollments.clear();
+    for (const [id, row] of saved) enrollments.set(id, row);
+  }
   return {
     enrollments,
     issuers,
@@ -176,7 +184,20 @@ function rowDb() {
       issuers.set(row.id, { ...row });
     },
     async query(sql, params = []) {
-      const text = sql.replace(/\s+/g, " ");
+      const text = sql.replace(/\s+/g, " ").trim();
+      if (text === "BEGIN") {
+        checkpoint = cloneRows();
+        return { rows: [] };
+      }
+      if (text === "COMMIT") {
+        checkpoint = null;
+        return { rows: [] };
+      }
+      if (text === "ROLLBACK") {
+        if (checkpoint) restore(checkpoint);
+        checkpoint = null;
+        return { rows: [] };
+      }
       if (text.includes("FROM certificate_enrollments e") && text.includes("FOR UPDATE OF e SKIP LOCKED")) {
         const now = params[0];
         const rows = [...enrollments.values()].filter(
@@ -357,6 +378,37 @@ describe("enrollment rows", () => {
     assert.equal(created.length, 1);
     assert.equal(jobs[0].target.store, "WebHosting");
     assert.equal(jobs[0].metadata[0].value, 77);
+  });
+
+  it("restores the due date when continuation job creation fails", async () => {
+    const db = rowDb();
+    const id = ENROLLMENT;
+    const due = new Date("2026-10-11T12:00:00.000Z");
+    db.putEnrollment(storedEnrollment(id, "pending_issuance", {
+      attempt: 1,
+      next_poll_at: due,
+    }));
+    const now = new Date("2026-10-11T12:05:00.000Z");
+    await assert.rejects(
+      scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => {
+          throw new Error("job insert failed");
+        },
+      }),
+      /job insert failed/,
+    );
+    assert.equal(db.enrollments.get(id).next_poll_at, due);
+    assert.equal(db.enrollments.get(id).current_job_id, null);
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now,
+      createJob: async () => ({ id: "job-retry-1" }),
+    });
+    assert.equal(created.length, 1);
+    assert.equal(created[0].jobId, "job-retry-1");
+    assert.equal(db.enrollments.get(id).current_job_id, "job-retry-1");
   });
 
   it("lets only one scheduler claim a due enrollment", async () => {
