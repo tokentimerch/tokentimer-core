@@ -735,6 +735,20 @@ describe("AD CS accept-failure key retention", () => {
     assert.match(region, /onInstallStep\("verify", \{\}\)/);
     assert.match(region, /await finalizeWindowsIisDeployBookkeeping/);
   });
+
+  it("passes AbortSignal into mirror-stage recovery as well as accept+mirror", () => {
+    const src = fs.readFileSync(require.resolve("./index.js"), "utf8");
+    const mirrorResume = src.indexOf("mirroring accepted certificate into store");
+    assert.ok(mirrorResume >= 0);
+    const block = src.slice(mirrorResume, mirrorResume + 1200);
+    assert.match(block, /mirrorAcceptedCertificateToStore\(\{/);
+    assert.match(block, /\bsignal\b/);
+    const retention = src.indexOf("async function performCleanup(row)");
+    assert.ok(retention >= 0);
+    const retentionBlock = src.slice(retention, retention + 900);
+    assert.match(retentionBlock, /storeLock\.run\(async \(signal\)/);
+    assert.match(retentionBlock, /removeCertificateAndKeyContainer\(\{[\s\S]*?signal,/);
+  });
 });
 
 describe("resultForValidationOutcome", () => {

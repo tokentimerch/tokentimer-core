@@ -1487,6 +1487,66 @@ describe("removeCertificateAndKeyContainer", () => {
     assert.equal(calls[0].args[0], "-delstore");
   });
 
+  it("does not start -delkey when -delstore is aborted by STORE_LOCK_LOST", async () => {
+    const calls = [];
+    const ac = new AbortController();
+    ac.abort(Object.assign(new Error("store lock lost"), { code: "STORE_LOCK_LOST" }));
+    const execFileImpl = (file, args, options, callback) => {
+      calls.push({ file, args });
+      process.nextTick(() => callback(null, "", ""));
+    };
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      containerName: buildContainerName("job-abort-delstore"),
+      execFileImpl,
+      signal: ac.signal,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "delstore");
+    assert.equal(result.reason, "aborted");
+    assert.equal(calls.length, 0);
+  });
+
+  it("does not start -delkey when lock is lost mid -delstore", async () => {
+    const calls = [];
+    const ac = new AbortController();
+    const execFileImpl = (file, args, options, callback) => {
+      calls.push({ file, args: [...args] });
+      const fakeChild = {
+        kill() {
+          process.nextTick(() =>
+            callback(Object.assign(new Error("killed"), { code: "ABORT_ERR" }), "", ""),
+          );
+        },
+      };
+      if (args[0] === "-delstore") {
+        setTimeout(
+          () => ac.abort(Object.assign(new Error("store lock lost"), { code: "STORE_LOCK_LOST" })),
+          10,
+        );
+        setTimeout(() => callback(null, "late", ""), 500);
+        return fakeChild;
+      }
+      process.nextTick(() => callback(null, "", ""));
+      return fakeChild;
+    };
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      containerName: buildContainerName("job-abort-mid-delstore"),
+      execFileImpl,
+      signal: ac.signal,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "delstore");
+    assert.equal(result.reason, "aborted");
+    assert.equal(
+      calls.some((c) => c.args.includes("-delkey")),
+      false,
+    );
+  });
+
   it("rejects an invalid thumbprint/store/containerName before invoking execFile", async () => {
     const execFileImpl = makeExecStub({});
     await assert.rejects(
@@ -1526,11 +1586,14 @@ describe("removeCertificateAndKeyContainer", () => {
 // ---------------------------------------------------------------------------
 
 describe("execWithoutShell AbortSignal", () => {
-  const { execWithoutShell } = require("./index");
+  const { execWithoutShell, mirrorAcceptedCertificateToStore } = require("./index");
 
-  it("resolves with ABORT_ERR when the signal is already aborted", async () => {
+  it("normalizes lock-loss abort reasons to ABORT_ERR with cause", async () => {
     const ac = new AbortController();
-    ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" }));
+    const lost = Object.assign(new Error("enrollment lock lost"), {
+      code: "ENROLLMENT_LOCK_LOST",
+    });
+    ac.abort(lost);
     const calls = [];
     const result = await execWithoutShell(
       (file, args, opts, cb) => {
@@ -1542,7 +1605,8 @@ describe("execWithoutShell AbortSignal", () => {
       ac.signal,
     );
     assert.equal(calls.length, 0);
-    assert.equal(result.execError && result.execError.code, "STORE_LOCK_LOST");
+    assert.equal(result.execError && result.execError.code, "ABORT_ERR");
+    assert.equal(result.execError.cause && result.execError.cause.code, "ENROLLMENT_LOCK_LOST");
   });
 
   it("kills an in-flight child when the signal aborts", async () => {
@@ -1558,7 +1622,10 @@ describe("execWithoutShell AbortSignal", () => {
             );
           },
         };
-        setTimeout(() => ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" })), 20);
+        setTimeout(
+          () => ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" })),
+          20,
+        );
         setTimeout(() => cb(null, "late", ""), 500);
         return fakeChild;
       },
@@ -1568,8 +1635,61 @@ describe("execWithoutShell AbortSignal", () => {
     );
     const result = await resultPromise;
     assert.equal(killed, true);
-    assert.ok(result.execError);
-    assert.equal(result.execError.code === "ABORT_ERR" || result.execError.code === "STORE_LOCK_LOST", true);
+    assert.equal(result.execError && result.execError.code, "ABORT_ERR");
+    assert.equal(result.execError.cause && result.execError.cause.code, "STORE_LOCK_LOST");
+  });
+
+  it("maps ENROLLMENT_LOCK_LOST abort during certreq -new to reason aborted", async () => {
+    const workDir = makeTempDir();
+    const ac = new AbortController();
+    ac.abort(
+      Object.assign(new Error("enrollment lock lost"), { code: "ENROLLMENT_LOCK_LOST" }),
+    );
+    const result = await generateCsrViaCng({
+      commonName: "host.example.com",
+      jobId: "job-abort-new",
+      workDir,
+      signal: ac.signal,
+      execFileImpl: makeExecStub({
+        stdout: "-----BEGIN NEW CERTIFICATE REQUEST-----\nMIIB\n-----END NEW CERTIFICATE REQUEST-----\n",
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "aborted");
+  });
+
+  it("maps ENROLLMENT_LOCK_LOST abort during certreq -accept to reason aborted", async () => {
+    const workDir = makeTempDir();
+    const ac = new AbortController();
+    ac.abort(
+      Object.assign(new Error("enrollment lock lost"), { code: "ENROLLMENT_LOCK_LOST" }),
+    );
+    const result = await acceptCertificateViaCng({
+      certificatePem: FIXTURE_CERT_PEM,
+      workDir,
+      signal: ac.signal,
+      execFileImpl: makeExecStub({}),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "aborted");
+  });
+
+  it("maps STORE_LOCK_LOST abort during mirror addstore to reason aborted", async () => {
+    const workDir = makeTempDir();
+    const certPath = path.join(workDir, "mirror.cer");
+    fs.writeFileSync(certPath, FIXTURE_CERT_PEM, "utf8");
+    const ac = new AbortController();
+    ac.abort(Object.assign(new Error("store lock lost"), { code: "STORE_LOCK_LOST" }));
+    const result = await mirrorAcceptedCertificateToStore({
+      certPath,
+      thumbprint: FIXTURE_THUMBPRINT,
+      targetStore: "WebHosting",
+      signal: ac.signal,
+      execFileImpl: makeExecStub({}),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "addstore");
+    assert.equal(result.reason, "aborted");
   });
 });
 

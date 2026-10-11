@@ -645,16 +645,36 @@ function normalizeCsrPemLabel(raw) {
  * @param {AbortSignal} [signal]
  * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null}>}
  */
+/**
+ * CNG helpers key cancellation on `execError.code === "ABORT_ERR"`.
+ * `lock.run` aborts with STORE_/ENROLLMENT_LOCK_LOST — normalize here and
+ * keep the original reason as `cause`.
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {Error & { code: string, cause?: Error }}
+ */
+function abortExecError(signal) {
+  const cause =
+    signal && signal.reason instanceof Error
+      ? signal.reason
+      : signal && signal.reason != null
+        ? new Error(String(signal.reason))
+        : undefined;
+  const abortErr = new Error(cause ? cause.message : "aborted");
+  abortErr.code = "ABORT_ERR";
+  if (cause) abortErr.cause = cause;
+  return abortErr;
+}
+
 function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
   const [file, ...args] = argv;
   return new Promise((resolve) => {
     if (signal && signal.aborted) {
-      const abortErr =
-        signal.reason instanceof Error
-          ? signal.reason
-          : Object.assign(new Error("aborted"), { code: "ABORT_ERR" });
-      if (!abortErr.code) abortErr.code = "ABORT_ERR";
-      resolve({ exitCode: null, stdout: "", stderr: "", execError: abortErr });
+      resolve({
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        execError: abortExecError(signal),
+      });
       return;
     }
 
@@ -695,12 +715,12 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
         } catch {
           // best-effort
         }
-        const abortErr =
-          signal.reason instanceof Error
-            ? signal.reason
-            : Object.assign(new Error("aborted"), { code: "ABORT_ERR" });
-        if (!abortErr.code) abortErr.code = "ABORT_ERR";
-        finish({ exitCode: null, stdout: "", stderr: "", execError: abortErr });
+        finish({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          execError: abortExecError(signal),
+        });
       };
       signal.addEventListener("abort", onAbort, { once: true });
     }
@@ -1077,9 +1097,9 @@ async function mirrorAcceptedCertificateToStore({
   certPath,
   thumbprint,
   targetStore,
-  execFileImpl,
-  certutilPath,
-  timeoutMs,
+  execFileImpl = childProcess.execFile,
+  certutilPath = "certutil.exe",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
   signal = undefined,
 }) {
   assertSafeArgvElements("certutilPath", [certutilPath]);
@@ -1579,6 +1599,7 @@ async function removeCertificateAndKeyContainer({
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(thumbprint) || !THUMBPRINT_PATTERN.test(thumbprint)) {
     throw buildError(`thumbprint must be a 40-hex-char SHA-1 string (got ${JSON.stringify(thumbprint)})`);
@@ -1596,7 +1617,17 @@ async function removeCertificateAndKeyContainer({
 
   const delstoreArgv = [certutilPath, "-delstore", store, thumbprint];
   assertSafeArgvElements("delstoreArgv", delstoreArgv);
-  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs);
+  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs, signal);
+  if (delstoreResult.execError && delstoreResult.execError.code === "ABORT_ERR") {
+    return guardReturnValue({
+      ok: false,
+      stage: "delstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    });
+  }
   if (delstoreResult.exitCode !== 0) {
     return guardReturnValue({
       ok: false,
@@ -1615,7 +1646,17 @@ async function removeCertificateAndKeyContainer({
     containerName,
   ];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
-  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs);
+  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);
+  if (delkeyResult.execError && delkeyResult.execError.code === "ABORT_ERR") {
+    return guardReturnValue({
+      ok: false,
+      stage: "delkey",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    });
+  }
   if (delkeyResult.exitCode !== 0) {
     // Real-host finding (interrupted-cleanup repro, 2026-08-09): unlike
     // `-delstore` (which silently no-ops with exit 0 for a thumbprint that is

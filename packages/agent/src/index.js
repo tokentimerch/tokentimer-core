@@ -3280,6 +3280,7 @@ async function runWindowsIisDeployTail({
           certPath,
           thumbprint: acceptedThumbprint,
           targetStore: target.store,
+          signal,
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
         storeLock.assertHeld();
@@ -3301,7 +3302,9 @@ async function runWindowsIisDeployTail({
             status: "failed",
             keyRotated: null,
             errorMessage: boundErrorMessage(
-              `CNG certificate mirror failed at ${mirrored.stage} (exit code ${mirrored.exitCode}): ${mirrored.stderrExcerpt}`,
+              mirrored.reason === "aborted"
+                ? `CNG certificate mirror aborted at ${mirrored.stage}: store lock lost`
+                : `CNG certificate mirror failed at ${mirrored.stage} (exit code ${mirrored.exitCode}): ${mirrored.stderrExcerpt}`,
             ),
           };
         }
@@ -3793,15 +3796,24 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
     const store = row.store || "My";
     const storeLock = acquireStoreLock(stateDir, store);
     try {
-      await storeLock.run(async () => {
+      await storeLock.run(async (signal) => {
         const result = await removeCertificateAndKeyContainer({
           thumbprint: row.oldThumbprint,
           store,
           containerName: row.cngKeyContainerId,
+          signal,
           ...(execFileImpl ? { execFileImpl } : {}),
         });
         storeLock.assertHeld();
         if (result.ok !== true) {
+          if (result.reason === "aborted") {
+            throw Object.assign(
+              new Error(
+                `removeCertificateAndKeyContainer aborted at stage ${result.stage}: store lock lost`,
+              ),
+              { code: "STORE_LOCK_LOST" },
+            );
+          }
           throw new Error(
             `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
               result.stderrExcerpt,
