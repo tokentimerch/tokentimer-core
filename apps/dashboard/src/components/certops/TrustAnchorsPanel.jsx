@@ -58,6 +58,10 @@ import {
   useCertOpsTrustAnchors,
 } from './useCertOpsTrustAnchors.js';
 import { formatDateTime, truncateId } from './certopsJobsFormat';
+import {
+  matchesCertOpsFocusId,
+  scrollCertOpsFocusedNode,
+} from './certopsResourceLinks.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { showSuccess } from '../../utils/toast.js';
 
@@ -547,7 +551,7 @@ const TRUST_ANCHOR_ADMIN_ONLY =
  * and viewers still see the panel title and why they cannot act, matching
  * the kill switch and job-approval copy, instead of an empty card.
  */
-export default function TrustAnchorsPanel() {
+export default function TrustAnchorsPanel({ focusTrustAnchorId } = {}) {
   const { workspaceId } = useWorkspace();
   const { enabled, isAdmin, anchors, loading, error, refresh } =
     useCertOpsTrustAnchors();
@@ -555,6 +559,21 @@ export default function TrustAnchorsPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [retireTarget, setRetireTarget] = useState(null);
   const [jobModalTarget, setJobModalTarget] = useState(null);
+
+  useEffect(() => {
+    if (!focusTrustAnchorId) return;
+    const match = anchors.find(
+      anchor => String(anchor.id) === String(focusTrustAnchorId)
+    );
+    if (match) setExpandedId(match.id);
+  }, [focusTrustAnchorId, anchors]);
+
+  useEffect(() => {
+    if (!focusTrustAnchorId || loading) return undefined;
+    return scrollCertOpsFocusedNode(
+      `[data-trust-anchor-id="${CSS.escape(String(focusTrustAnchorId))}"]`
+    );
+  }, [focusTrustAnchorId, loading, anchors]);
 
   const { muted, dashboard } = useDashboardThemeColors();
   const titleColor = dashboard.text.primary;
@@ -642,8 +661,19 @@ export default function TrustAnchorsPanel() {
         <VStack align='stretch' spacing={1}>
           {anchors.map(anchor => {
             const isOpen = expandedId === anchor.id;
+            const isFocused = matchesCertOpsFocusId(
+              focusTrustAnchorId,
+              anchor.id
+            );
             return (
-              <Box key={anchor.id}>
+              <Box
+                key={anchor.id}
+                data-trust-anchor-id={anchor.id}
+                outline={isFocused ? '2px solid' : undefined}
+                outlineColor={isFocused ? infoBorder : undefined}
+                outlineOffset={isFocused ? '0' : undefined}
+                borderRadius='md'
+              >
                 <HStack
                   w='full'
                   spacing={2}
@@ -654,6 +684,7 @@ export default function TrustAnchorsPanel() {
                   role='button'
                   tabIndex={0}
                   aria-expanded={isOpen}
+                  bg={isFocused ? infoBg : undefined}
                   onClick={() =>
                     setExpandedId(current =>
                       current === anchor.id ? null : anchor.id

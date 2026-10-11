@@ -59,6 +59,8 @@ function executableProfile(reference = "host/web") {
   };
 }
 
+const REAPER_CLAIM_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+
 function createReaperClient(rows) {
   const queries = [];
   return {
@@ -67,6 +69,25 @@ function createReaperClient(rows) {
       const normalized = normalizeSql(sql);
       queries.push({ sql: normalized, params });
       if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK") {
+        return { rows: [] };
+      }
+      if (
+        normalized.startsWith("SAVEPOINT") ||
+        normalized.startsWith("RELEASE SAVEPOINT") ||
+        normalized.startsWith("ROLLBACK TO SAVEPOINT")
+      ) {
+        return { rows: [] };
+      }
+      if (normalized.includes("certops_agent_log_job_state")) {
+        if (normalized.includes("FOR UPDATE")) {
+          return { rows: [{ next_ingest_order: 0 }] };
+        }
+        return { rows: [] };
+      }
+      if (normalized.includes("UPDATE certops_agent_log_stream")) {
+        return { rows: [{ claim_id: params[2] }] };
+      }
+      if (normalized.includes("INSERT INTO certops_agent_log_stream")) {
         return { rows: [] };
       }
       if (normalized.startsWith("SELECT cj.id, cj.workspace_id")) {
@@ -161,6 +182,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-1",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 1,
         max_attempts: 3,
@@ -195,6 +217,20 @@ describe("certops maintenance worker", () => {
     assert.match(update.sql, /next_attempt_at = NOW\(\)/);
     assert.deepStrictEqual(update.params, ["job-1", "60000"]);
 
+    const updateIndex = client.queries.indexOf(update);
+    const savepointIndex = client.queries.findIndex(
+      (q) => q.sql === "SAVEPOINT agent_log_close",
+    );
+    assert.ok(savepointIndex >= 0, "expected agent log stream close savepoint");
+    assert.ok(
+      savepointIndex < updateIndex,
+      "stream close must run before claim_id is cleared",
+    );
+    assert.ok(
+      client.queries.some((q) => q.sql.includes("UPDATE certops_agent_log_stream")),
+      "expected agent log stream UPDATE",
+    );
+
     const logInsert = client.queries.find((q) =>
       q.sql.startsWith("INSERT INTO certificate_job_log"),
     );
@@ -213,6 +249,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-alive",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 1,
         max_attempts: 3,
@@ -246,6 +283,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-hung-never-renewed",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 1,
         max_attempts: 3,
@@ -278,6 +316,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-renewed",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "running",
         attempt_count: 1,
         max_attempts: 3,
@@ -350,6 +389,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-2",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
@@ -404,6 +444,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-trust",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
@@ -450,6 +491,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-renew",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
@@ -479,6 +521,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-trust-broken",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
@@ -511,6 +554,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-3",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "running",
         attempt_count: 0,
         max_attempts: 3,
@@ -550,6 +594,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-alive-regression",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "running",
         attempt_count: 1,
         max_attempts: 3,
@@ -582,6 +627,7 @@ describe("certops maintenance worker", () => {
       {
         id: "job-offline-regression",
         workspace_id: "ws-1",
+        claim_id: REAPER_CLAIM_ID,
         status: "claimed",
         attempt_count: 3,
         max_attempts: 3,
@@ -1439,6 +1485,8 @@ describe("certops maintenance worker", () => {
       CERTOPS_SWEEP_NONCE_ENABLED: "true",
         CERTOPS_SWEEP_REGISTRATION_REPLAY_ENABLED: "false",
         CERTOPS_SWEEP_RENEWAL_SCHEDULER_ENABLED: "off",
+        CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
+        CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
       },
       log: silentLogger,
       withClientFn: async (fn) => {
@@ -1618,6 +1666,8 @@ describe("certops maintenance worker", () => {
             CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
             CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
             CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
+            CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
+            CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
           },
           log: silentLogger,
           withClientFn: async () => {
@@ -1653,6 +1703,8 @@ describe("certops maintenance worker", () => {
         CERTOPS_SWEEP_OUTBOX_DRAIN_ENABLED: "false",
         CERTOPS_SWEEP_DIAGNOSTIC_AGENT_INACTIVITY_ENABLED: "false",
         CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED: "false",
+        CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED: "false",
+        CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED: "false",
       },
       log: silentLogger,
       dbPool: { marker: "pool" },

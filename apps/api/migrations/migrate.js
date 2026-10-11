@@ -4648,18 +4648,23 @@ const migrations = [
   },
   {
     version: 69,
-    name: "certops_material_distribution",
-    sql: fs.readFileSync(require("path").join(__dirname, "069-certops-material-distribution.sql"), "utf8"),
+    name: "certops_agent_job_logs",
+    sql: fs.readFileSync(require("path").join(__dirname, "069-certops-agent-job-logs.sql"), "utf8"),
   },
   {
     version: 70,
-    name: "certops_distribution_review",
-    sql: fs.readFileSync(require("path").join(__dirname, "070-certops-distribution-review.sql"), "utf8"),
+    name: "certops_material_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "070-certops-material-distribution.sql"), "utf8"),
   },
   {
     version: 71,
+    name: "certops_distribution_review",
+    sql: fs.readFileSync(require("path").join(__dirname, "071-certops-distribution-review.sql"), "utf8"),
+  },
+  {
+    version: 72,
     name: "certops_distribution_transfer",
-    sql: fs.readFileSync(require("path").join(__dirname, "071-certops-distribution-transfer.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "072-certops-distribution-transfer.sql"), "utf8"),
   },
 ];
 

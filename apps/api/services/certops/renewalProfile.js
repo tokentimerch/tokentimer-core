@@ -74,7 +74,11 @@ const ACME_KIND_SET = new Set(ACME_KINDS);
 const COMMAND_REF_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const DNS_PROVIDER_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/;
 const RELOAD_SERVICE_PATTERN = /^[A-Za-z0-9_.:@-]{1,128}$/;
-const ABSOLUTE_POSIX_PATH_PATTERN = /^\//;
+// POSIX, Windows drive, or UNC — same shape as issuance isAbsoluteHostPath
+// and the agent isAbsolutePathLike. A profile derived from a Windows file-
+// based issue must round-trip; POSIX-only used to decline every such profile.
+const ABSOLUTE_HOST_PATH_PATTERN =
+  /^(?:\/|[A-Za-z]:[\\/]|\\\\)/;
 const OWNER_GROUP_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,31}$/;
 const FILE_MODE_STRING_PATTERN = /^0?[0-7]{3}$/;
 
@@ -159,7 +163,7 @@ function parseFileMode(value, fieldName) {
 
 function optionalAbsolutePath(value, fieldName) {
   if (value === undefined || value === null) return null;
-  const pathValue = requireString(value, fieldName, 512, ABSOLUTE_POSIX_PATH_PATTERN);
+  const pathValue = requireString(value, fieldName, 512, ABSOLUTE_HOST_PATH_PATTERN);
   return pathValue;
 }
 
@@ -249,7 +253,12 @@ function validateTarget(value, fieldName) {
   const certPath =
     value.certPath === undefined || value.certPath === null
       ? null
-      : requireString(value.certPath, `${fieldName}.certPath`, 512);
+      : requireString(
+          value.certPath,
+          `${fieldName}.certPath`,
+          512,
+          ABSOLUTE_HOST_PATH_PATTERN,
+        );
   const result = { type: value.type, reference, certPath };
   if (Object.prototype.hasOwnProperty.call(value, "reloadService")) {
     result.reloadService =
@@ -269,7 +278,12 @@ function validateTarget(value, fieldName) {
     result.chainPath =
       value.chainPath === undefined || value.chainPath === null
         ? null
-        : requireString(value.chainPath, `${fieldName}.chainPath`, 512);
+        : requireString(
+            value.chainPath,
+            `${fieldName}.chainPath`,
+            512,
+            ABSOLUTE_HOST_PATH_PATTERN,
+          );
   }
   if (Object.prototype.hasOwnProperty.call(value, "certMode")) {
     result.certMode = parseFileMode(value.certMode, `${fieldName}.certMode`);

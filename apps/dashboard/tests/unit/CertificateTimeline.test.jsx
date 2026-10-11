@@ -5,12 +5,24 @@ import { ChakraProvider } from '@chakra-ui/react';
 import CertificateTimeline from '../../src/components/certops/CertificateTimeline.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
-const { useCertOpsJobsMock } = vi.hoisted(() => ({
+const { useCertOpsJobsMock, useCertOpsAgentsMock } = vi.hoisted(() => ({
   useCertOpsJobsMock: vi.fn(),
+  useCertOpsAgentsMock: vi.fn(() => ({
+    enabled: true,
+    agents: [],
+    pagination: null,
+    loading: false,
+    error: '',
+    refresh: vi.fn(),
+  })),
 }));
 
 vi.mock('../../src/components/certops/useCertOpsJobs.js', () => ({
   useCertOpsJobs: useCertOpsJobsMock,
+}));
+
+vi.mock('../../src/components/certops/useCertOpsAgents.js', () => ({
+  useCertOpsAgents: useCertOpsAgentsMock,
 }));
 
 vi.mock('../../src/components/certops/EvidenceTimeline.jsx', () => ({

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AssetFilters, {
   ASSET_SEARCH_DEBOUNCE_MS,
+  AssetSearchInput,
 } from '../../src/components/AssetFilters.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -87,5 +88,36 @@ describe('AssetFilters search', () => {
     expect(props.onGlobalSearchChange).toHaveBeenCalledTimes(1);
     expect(props.onGlobalSearchChange).toHaveBeenCalledWith('token');
     expect(props.onFilterReset).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a pending search draft when resetSignal bumps before debounce', () => {
+    const onCommit = vi.fn();
+    const { rerender } = render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <AssetSearchInput value='' onCommit={onCommit} resetSignal={0} />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+
+    const input = screen.getByPlaceholderText(
+      'Search assets, domains, owners...'
+    );
+    fireEvent.change(input, { target: { value: 'pending-query' } });
+    expect(input).toHaveValue('pending-query');
+
+    rerender(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <AssetSearchInput value='' onCommit={onCommit} resetSignal={1} />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+
+    expect(input).toHaveValue('');
+    act(() => {
+      vi.advanceTimersByTime(ASSET_SEARCH_DEBOUNCE_MS);
+    });
+    expect(onCommit).not.toHaveBeenCalled();
   });
 });

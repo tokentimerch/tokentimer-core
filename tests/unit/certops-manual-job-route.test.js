@@ -284,6 +284,22 @@ describe("CertOps handleCertOpsError status mapping", () => {
     });
   }
 
+  it("surfaces the service message for job validation errors", () => {
+    const res = record();
+    const handled = certOpsRouter._test.handleCertOpsError(res, {
+      code: "CERTOPS_JOB_EXECUTION_FIELD_INVALID",
+      message:
+        "CertOps job payload field caEndpoint is invalid: must be a valid http(s) URL",
+    });
+    assert.notEqual(handled, null);
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(res.body, {
+      error:
+        "CertOps job payload field caEndpoint is invalid: must be a valid http(s) URL",
+      code: "CERTOPS_JOB_EXECUTION_FIELD_INVALID",
+    });
+  });
+
   it("still falls through to null for genuinely unmapped codes", () => {
     const res = record();
     const handled = certOpsRouter._test.handleCertOpsError(res, {

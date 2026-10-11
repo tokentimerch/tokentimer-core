@@ -36,6 +36,31 @@ const {
 
 const WORKSPACE_A = "11111111-1111-4111-8111-111111111111";
 const VALID_REGISTRATION_ENCRYPTION_KEY = "a".repeat(64);
+const JOB_LOG_STREAM_CAPABILITY = "job-log-stream-v1";
+
+function isAgentLogSavepointSql(trimmed) {
+  return (
+    trimmed.startsWith("SAVEPOINT") ||
+    trimmed.startsWith("RELEASE SAVEPOINT") ||
+    trimmed.startsWith("ROLLBACK TO SAVEPOINT")
+  );
+}
+
+function respondAgentLogStreamSql(sql, params) {
+  if (sql.includes("certops_agent_log_job_state")) {
+    if (sql.includes("FOR UPDATE")) {
+      return { rows: [{ next_ingest_order: 0 }] };
+    }
+    return { rows: [] };
+  }
+  if (sql.includes("certops_agent_log_stream")) {
+    if (sql.includes("UPDATE certops_agent_log_stream")) {
+      return { rows: [{ claim_id: params?.[2] ?? null }] };
+    }
+    return { rows: [] };
+  }
+  return null;
+}
 
 function createMockPool(handler) {
   const state = {
@@ -58,6 +83,13 @@ function createMockPool(handler) {
       ) {
         state.transaction.push(trimmed);
         return { rows: [] };
+      }
+      if (isAgentLogSavepointSql(trimmed)) {
+        return { rows: [] };
+      }
+      const agentLogResponse = respondAgentLogStreamSql(sql, params);
+      if (agentLogResponse) {
+        return agentLogResponse;
       }
       // Audit inserts are absorbed here rather than in each per-test handler, and
       // the real writeAudit is left in the call path deliberately: that is what
@@ -1195,6 +1227,8 @@ describe("agentDispatch.claimJobs", () => {
               declared_target_selectors: ["*.example.com"],
               declared_command_profile_names: ["nginx-reload"],
               supported_dns_providers: ["route53"],
+              declared_capabilities: [JOB_LOG_STREAM_CAPABILITY],
+              capabilities_updated_at: new Date().toISOString(),
             },
           ],
         };
@@ -1271,7 +1305,116 @@ describe("agentDispatch.claimJobs", () => {
       1,
       "claiming must advance the agent's last_seen_at (liveness signal)",
     );
+    assert.equal(result.logStreams.length, 1);
+    assert.equal(result.logStreams[0].enabled, true);
+    assert.ok(
+      dbPool.state.queries.some((q) => q.text === "SAVEPOINT agent_log_stream"),
+    );
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("returns log stream offers for capable, incapable, and storage-off agents", async () => {
+    const cases = [
+      {
+        label: "capable",
+        capabilityRows: {
+          declared_capabilities: [JOB_LOG_STREAM_CAPABILITY],
+          capabilities_updated_at: new Date().toISOString(),
+        },
+        env: {},
+        expectEnabled: true,
+        expectOpenSavepoint: true,
+      },
+      {
+        label: "incapable",
+        capabilityRows: {},
+        env: {},
+        expectEnabled: false,
+        expectOpenSavepoint: true,
+      },
+      {
+        label: "storage-off",
+        capabilityRows: {
+          declared_capabilities: [JOB_LOG_STREAM_CAPABILITY],
+          capabilities_updated_at: new Date().toISOString(),
+        },
+        env: { CERTOPS_AGENT_LOG_RETENTION_DAYS: "0" },
+        expectEnabled: false,
+        expectOpenSavepoint: false,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("SELECT last_sequence")) {
+          return { rows: [{ last_sequence: 0 }] };
+        }
+        if (sql.includes("SET last_seen_at = NOW()")) {
+          return { rows: [] };
+        }
+        if (sql.includes("SELECT declared_target_selectors")) {
+          return {
+            rows: [
+              {
+                declared_target_selectors: [],
+                declared_command_profile_names: [],
+                supported_dns_providers: [],
+                ...testCase.capabilityRows,
+              },
+            ],
+          };
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+          return {
+            rows: [
+              {
+                id: 42,
+                workspace_id: WORKSPACE_A,
+                operation: "renew",
+                subject_type: "certificate",
+                subject_id: "cert-1",
+                payload: { domain: "example.com" },
+                executor_kind: "agent",
+              },
+            ],
+          };
+        }
+        if (sql.includes("SET status = 'claimed'")) {
+          return {
+            rows: [
+              {
+                id: 42,
+                claim_id: "claim-uuid-1",
+                lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
+                attempt_count: 1,
+                operation: "renew",
+                subject_type: "certificate",
+                subject_id: "cert-1",
+                payload: { domain: "example.com" },
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected query (${testCase.label}): ${sql}`);
+      });
+
+      const result = await claimJobs({
+        dbPool,
+        agent: agentFixture(),
+        body: { maxJobs: 1, supportedActions: ["renew"] },
+        env: testCase.env,
+        deps: CLAIM_DEPS_BASE,
+      });
+
+      assert.equal(result.jobs.length, 1, testCase.label);
+      assert.equal(result.logStreams.length, 1, testCase.label);
+      assert.equal(result.logStreams[0].enabled, testCase.expectEnabled, testCase.label);
+      assert.equal(
+        dbPool.state.queries.some((q) => q.text === "SAVEPOINT agent_log_stream"),
+        testCase.expectOpenSavepoint,
+        testCase.label,
+      );
+    }
   });
 
   it("honors CERTOPS_JOB_LEASE_SECONDS from env", async () => {
@@ -1371,7 +1514,7 @@ describe("agentDispatch.claimJobs", () => {
       env: {},
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
@@ -1438,7 +1581,7 @@ describe("agentDispatch.claimJobs", () => {
       env: {},
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(casParams, ["agent-row-1", 9]);
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
@@ -1680,7 +1823,7 @@ describe("agentDispatch.claimJobs", () => {
       env: {},
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.equal(blocked, true);
   });
 
@@ -1751,7 +1894,7 @@ describe("agentDispatch.claimJobs", () => {
       },
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
@@ -1788,7 +1931,7 @@ describe("agentDispatch.claimJobs", () => {
       },
       deps: CLAIM_DEPS_BASE,
     });
-    assert.deepEqual(result, { jobs: [] });
+    assert.deepEqual(result, { jobs: [], logStreams: [] });
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
@@ -2272,6 +2415,17 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(updateParams[1], "failed");
     assert.equal(updateParams[2], "AGENT_RESULT_FAILED");
     assert.equal(updateParams[3], "renewal timed out");
+    const jobUpdateIndex = dbPool.state.queries.findIndex((q) =>
+      q.text.includes("UPDATE certificate_jobs"),
+    );
+    const savepointIndex = dbPool.state.queries.findIndex(
+      (q) => q.text === "SAVEPOINT agent_log_close",
+    );
+    assert.ok(jobUpdateIndex >= 0);
+    assert.ok(savepointIndex > jobUpdateIndex);
+    assert.ok(
+      dbPool.state.queries.some((q) => q.text.includes("UPDATE certops_agent_log_stream")),
+    );
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 

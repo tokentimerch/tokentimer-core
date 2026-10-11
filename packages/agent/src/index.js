@@ -96,7 +96,15 @@ const {
   createCaAwareFetch,
   startPollLoop,
   validateRegistrationResponse,
+  readClaimLogStream,
 } = require("./protocol");
+const {
+  createJobLogSession,
+  withJobConsole,
+  mirrorToJobConsole,
+  closeInBackground,
+  drainJobLogSessions,
+} = require("./job-log-stream");
 const {
   buildPolicyRejectionEvidence,
   buildEvidenceItem,
@@ -160,7 +168,11 @@ const {
 const {
   generateCsrViaCng,
   acceptCertificateViaCng,
+  mirrorAcceptedCertificateToStore,
+  computeSha1ThumbprintFromPem,
+  CERTREQ_ACCEPT_DEFAULT_STORE,
   acquireStoreLock,
+  acquireEnrollmentLock,
   removeAbandonedKeyContainer,
   removeCertificateAndKeyContainer,
   isAgentOwnedContainerName,
@@ -170,7 +182,7 @@ const {
   readIssuedContainerRecord,
   removeIssuedContainerRecord,
 } = require("./windows-cert-store");
-const { deployIisBinding, resolveVerificationTarget } = require("./windows-iis");
+const { deployIisBinding, resolveVerificationTarget, queryCurrentBinding } = require("./windows-iis");
 const {
   createLedgerRow,
   readLedgerRow,
@@ -241,6 +253,7 @@ function buildSignedJobPolicyDescriptor(job) {
 }
 
 function emitLog(log, message, details) {
+  mirrorToJobConsole("error", message, details);
   if (typeof log === "function") {
     log(message, details);
     return;
@@ -261,6 +274,7 @@ function emitLog(log, message, details) {
  */
 function emitInfo(message, details) {
   defaultAgentLogger.info(message, details);
+  mirrorToJobConsole("info", message, details);
 }
 
 function localAttemptId(jobId) {
@@ -351,13 +365,14 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
   isWindows()
     ? [
         "evidence-claim-binding-v1",
+        "job-log-stream-v1",
         "windows-cert-store-v1",
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
       ]
     : AGENT_TRUST_STORE_PREREQUISITES.candidate
-      ? ["evidence-claim-binding-v1", "trust-anchor-deploy-v1"]
-      : ["evidence-claim-binding-v1"],
+      ? ["evidence-claim-binding-v1", "job-log-stream-v1", "trust-anchor-deploy-v1"]
+      : ["evidence-claim-binding-v1", "job-log-stream-v1"],
 );
 
 /**
@@ -376,6 +391,12 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
   ] : [])],
 );
 
+const JOB_LOG_STREAM_CAPABILITY = "job-log-stream-v1";
+
+function agentLogStreamEnabled(env = process.env) {
+  return env.TT_AGENT_LOG_STREAM !== "off";
+}
+
 /**
  * ADR-0012 decision 3, step 4: agent-id-binding-v1 is advertised only from
  * the effective runtime value of requireSignedAgentId (already resolved
@@ -386,11 +407,20 @@ const AGENT_DECLARED_CAPABILITIES = filterQualifiedCapabilities(
  * effective value is false, absence of agentId is still tolerated by the
  * compatibility decoder (see checkAgentIdBinding), so advertising then
  * would overclaim.
+ *
+ * job-log-stream-v1 follows the same rule for TT_AGENT_LOG_STREAM=off: the
+ * agent must not advertise a stream it will refuse to open, or the control
+ * plane opens a pending stream that later looks abandoned.
  */
-function resolveDeclaredCapabilities(requireSignedAgentId) {
+function resolveDeclaredCapabilities(requireSignedAgentId, env = process.env) {
+  const base = agentLogStreamEnabled(env)
+    ? AGENT_DECLARED_CAPABILITIES
+    : AGENT_DECLARED_CAPABILITIES.filter(
+      (capability) => capability !== JOB_LOG_STREAM_CAPABILITY,
+    );
   return requireSignedAgentId
-    ? Object.freeze([...AGENT_DECLARED_CAPABILITIES, AGENT_ID_BINDING_CAPABILITY])
-    : AGENT_DECLARED_CAPABILITIES;
+    ? Object.freeze([...base, AGENT_ID_BINDING_CAPABILITY])
+    : Object.freeze([...base]);
 }
 
 /**
@@ -1971,119 +2001,140 @@ async function handleSignedJob({
   // success as "failed". Periodic lease heartbeat covers long ACME/DNS
   // stages that can approach the 15-minute lease TTL without stage-boundary
   // renews.
-  emitInfo(
-    `job ${jobId}: passed signature/replay/clock/policy verification, starting execution ` +
-      `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
-  );
-  const evidenceBuffer = createEvidenceBuffer();
-  const leaseOpts = {
-    leaseClient: client,
-    jobId,
-    claimId,
-    log,
-    leaseState,
-  };
-  const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
-  let outcome;
+  const logOffer = readClaimLogStream(claimedJob);
+  const jobLogSession = logOffer?.enabled === true && agentLogStreamEnabled()
+    ? createJobLogSession({
+      post: (request) => client.postJobLogs(request),
+      jobId,
+      claimId,
+      maxBatchBytes: logOffer.maxBatchBytes,
+    })
+    : null;
+  // One try/finally so evidence-assert / transmit throws still send final:true
+  // and clear the session from the claims map.
   try {
-    outcome = await executeJob({
-      job,
-      jobId,
-      attemptId,
-      claimId,
-      policyEngine,
-      client: evidenceBuffer,
+    withJobConsole(jobLogSession, () => emitInfo(
+      `job ${jobId}: passed signature/replay/clock/policy verification, starting execution ` +
+        `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
+    ));
+    const evidenceBuffer = createEvidenceBuffer();
+    const leaseOpts = {
       leaseClient: client,
-      leaseState,
-      executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
-      log,
-    });
-    const heartbeatAbort = leaseHeartbeat.getAbort();
-    // Lease loss after a "clean" terminal must not be reported as success.
-    // awaiting_issuer is intentionally omitted: the CA request and RequestId
-    // journal already exist, so that status stays more accurate than orphaned.
-    if (
-      heartbeatAbort &&
-      outcome &&
-      (outcome.status === "succeeded" || outcome.status === "dry_run_complete")
-    ) {
-      outcome = heartbeatAbort;
-    }
-  } catch (err) {
-    emitLog(log, `job ${jobId} execution error: ${err.message}`, {
-      name: err?.name,
-      code: err?.code,
-    });
-    outcome = {
-      status: "failed",
-      errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
-    };
-  } finally {
-    stopPeriodicLeaseRenewal(leaseHeartbeat);
-  }
-  const finishDetails =
-    outcome?.status === "failed"
-      ? {
-          errorMessage: outcome?.errorMessage,
-          failureCategory: outcome?.trustResult?.failureCategory,
-        }
-      : undefined;
-  emitInfo(`job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`, finishDetails);
-
-  const evidenceBodies = evidenceBuffer.takeEvidence();
-  for (const body of evidenceBodies) {
-    assertEvidencePayloadSafe(body);
-  }
-
-  const transmitted = await persistAndTransmitOutcome({
-    outboxDir: resolvedOutboxDir,
-    client,
-    result: {
       jobId,
-      attemptId,
       claimId,
-      nonce,
-      status: outcome.status,
-      rejectionReason: outcome.rejectionReason ?? null,
-      keyRotated: outcome.keyRotated ?? null,
-      errorMessage: outcome.errorMessage ?? null,
-      clockOffsetMs: clockEstimator.getOffsetMs(),
-      // Only trust-anchor jobs produce this; omitted (not null) for every
-      // other job family so their result bodies stay byte-identical.
-      ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
-      ...(outcome.publicationReceipt ? { publicationReceipt: outcome.publicationReceipt,
-        publicationCertificatePem: outcome.publicationCertificatePem } : {}),
-      ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
-      // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
-      // state; required by agent-protocol when status is awaiting_issuer.
-      ...(outcome.enrollmentResult
-        ? { enrollmentResult: outcome.enrollmentResult }
-        : {}),
-    },
-    evidence: evidenceBodies,
-    log,
-  });
-
-  if (stateDir && outcome && typeof outcome.status === "string") {
+      log,
+      leaseState,
+    };
+    const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
+    let outcome;
     try {
-      clearJournalOnTerminal({
-        stateDir,
+      outcome = await withJobConsole(jobLogSession, () => executeJob({
+        job,
         jobId,
         attemptId,
-        status: outcome.status,
-      });
-    } catch (err) {
-      emitLog(
+        claimId,
+        policyEngine,
+        client: evidenceBuffer,
+        leaseClient: client,
+        leaseState,
+        executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
         log,
-        `could not clear job journal for ${jobId}: ${err.message}`,
-      );
+        jobLog: jobLogSession?.logger,
+      }));
+      const heartbeatAbort = leaseHeartbeat.getAbort();
+      // Lease loss after a "clean" terminal must not be reported as success.
+      // awaiting_issuer is intentionally omitted: the CA request and RequestId
+      // journal already exist, so that status stays more accurate than orphaned.
+      if (
+        heartbeatAbort &&
+        outcome &&
+        (outcome.status === "succeeded" || outcome.status === "dry_run_complete")
+      ) {
+        outcome = heartbeatAbort;
+      }
+    } catch (err) {
+      emitLog(log, `job ${jobId} execution error: ${err.message}`, {
+        name: err?.name,
+        code: err?.code,
+      });
+      outcome = {
+        status: "failed",
+        errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
+      };
+    } finally {
+      stopPeriodicLeaseRenewal(leaseHeartbeat);
     }
-  }
+    const finishDetails =
+      outcome?.status === "failed"
+        ? {
+            errorMessage: outcome?.errorMessage,
+            failureCategory: outcome?.trustResult?.failureCategory,
+          }
+        : undefined;
+    withJobConsole(jobLogSession, () => emitInfo(
+      `job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`,
+      finishDetails,
+    ));
 
-  return {
-    ...transmitted,
-    retired: outcome.retired === true,
-  };
+    const evidenceBodies = evidenceBuffer.takeEvidence();
+    for (const body of evidenceBodies) {
+      assertEvidencePayloadSafe(body);
+    }
+
+    const transmitted = await persistAndTransmitOutcome({
+      outboxDir: resolvedOutboxDir,
+      client,
+      result: {
+        jobId,
+        attemptId,
+        claimId,
+        nonce,
+        status: outcome.status,
+        rejectionReason: outcome.rejectionReason ?? null,
+        keyRotated: outcome.keyRotated ?? null,
+        errorMessage: outcome.errorMessage ?? null,
+        clockOffsetMs: clockEstimator.getOffsetMs(),
+        // Only trust-anchor jobs produce this; omitted (not null) for every
+        // other job family so their result bodies stay byte-identical.
+        ...(outcome.trustResult ? { trustResult: outcome.trustResult } : {}),
+        ...(outcome.publicationReceipt ? { publicationReceipt: outcome.publicationReceipt,
+          publicationCertificatePem: outcome.publicationCertificatePem } : {}),
+        ...(outcome.deploymentReceipt ? { deploymentReceipt: outcome.deploymentReceipt } : {}),
+        // ADR-0014: awaiting_issuer (and other AD CS outcomes) carry enrollment
+        // state; required by agent-protocol when status is awaiting_issuer.
+        ...(outcome.enrollmentResult
+          ? { enrollmentResult: outcome.enrollmentResult }
+          : {}),
+      },
+      evidence: evidenceBodies,
+      log,
+    });
+
+    if (stateDir && outcome && typeof outcome.status === "string") {
+      try {
+        clearJournalOnTerminal({
+          stateDir,
+          jobId,
+          attemptId,
+          status: outcome.status,
+        });
+      } catch (err) {
+        emitLog(
+          log,
+          `could not clear job journal for ${jobId}: ${err.message}`,
+        );
+      }
+    }
+
+    return {
+      ...transmitted,
+      retired: outcome.retired === true,
+    };
+  } finally {
+    // Not awaited: a slow or unreachable log endpoint must not hold the
+    // claim loop. runAgent drains briefly on shutdown.
+    closeInBackground(jobLogSession);
+  }
 }
 
 /**
@@ -2195,6 +2246,14 @@ async function handleObserveOnlyJob({
  *   into ../trust-store. Always null/omitted in production.
  * @returns {Promise<{ status: string, rejectionReason?: string|null, keyRotated?: boolean|null, errorMessage?: string|null }>}
  */
+function stepForAction(action) {
+  if (action === "renew") return "acme";
+  if (action === "deploy") return "deploy";
+  if (action === "reload") return "reload";
+  if (action === "distribute-trust" || action === "revoke-trust") return "trust";
+  return "other";
+}
+
 async function executeJob({
   job,
   jobId,
@@ -2207,6 +2266,7 @@ async function executeJob({
   executionContext,
   log = console.error,
   trustStoreSeams = null,
+  jobLog = null,
 }) {
   const { execution } = executionContext;
   const action = job.action;
@@ -2230,6 +2290,11 @@ async function executeJob({
   // bindEvidenceClientToClaim above for why this is done once, here, rather
   // than threading claimId through every downstream execute*Job helper).
   const claimBoundClient = bindEvidenceClientToClaim(client, claimId);
+
+  if (jobLog) {
+    jobLog.step(stepForAction(action));
+    jobLog.info(`Starting ${action || "job"}`);
+  }
 
   if (action === "noop") {
     await reportStepEvidence(claimBoundClient, jobId, [
@@ -3034,6 +3099,7 @@ function getAdcsWindowsIisExecutors() {
       reportIssuanceEvidence,
       reportStepEvidence,
       runWindowsIisDeployTail,
+      finalizeWindowsIisDeployBookkeeping,
       emitInfo,
       emitLog,
       recordWindowsCngContainer,
@@ -3043,6 +3109,157 @@ function getAdcsWindowsIisExecutors() {
   return adcsWindowsIisExecutors;
 }
 
+/**
+ * Idempotent post-cutover evidence + retention ledger. Safe to re-run after a
+ * crash that completed IIS TLS verify but not bookkeeping.
+ */
+async function finalizeWindowsIisDeployBookkeeping({
+  jobId,
+  client,
+  certificatePem,
+  target,
+  stateDir,
+  log,
+  boundThumbprint,
+  outgoingThumbprint = null,
+  skippedMutation = false,
+  precedenceWarning = undefined,
+  windowsExecFileImpl,
+}) {
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: "deployment.updated",
+      observedAt: new Date().toISOString(),
+      summary: skippedMutation === true
+        ? `IIS binding deploy skipped for job ${jobId}: binding already pointed at this certificate (idempotent); TLS handshake re-verified.`
+        : `IIS binding deploy succeeded for job ${jobId}: certificate rebound and TLS-verified.`,
+      metadata: [
+        { name: "step", value: "iis-bind" },
+        { name: "idempotentSkip", value: skippedMutation === true },
+        { name: "boundThumbprint", value: boundThumbprint },
+        ...(precedenceWarning
+          ? [{ name: "precedenceWarning", value: precedenceWarning }]
+          : []),
+      ],
+    }),
+  ]);
+
+  const deployedFacts = describeDeployedCertificate(certificatePem);
+  const verifyFingerprint = computeCertificateFingerprint(certificatePem);
+  const verifyMetadata = [{ name: "step", value: "verify" }];
+  if (deployedFacts) {
+    for (const [name, value] of [
+      ["serialNumber", deployedFacts.serialNumber],
+      ["validFrom", deployedFacts.validFrom],
+      ["validTo", deployedFacts.validTo],
+      ["subject", deployedFacts.subject],
+      ["issuer", deployedFacts.issuer],
+      [
+        "subjectAltNames",
+        deployedFacts.dnsSans.length > 0 ? deployedFacts.dnsSans.join(",") : null,
+      ],
+    ]) {
+      if (value !== null) verifyMetadata.push({ name, value });
+    }
+  }
+  await reportStepEvidence(client, jobId, [
+    buildEvidenceItem({
+      eventType: "validation.passed",
+      observedAt: new Date().toISOString(),
+      fingerprintSha256: verifyFingerprint,
+      summary: `Verified deployed certificate fingerprint for job ${jobId} against the live IIS endpoint.`,
+      metadata: verifyMetadata,
+    }),
+  ]);
+
+  if (
+    isNonEmptyStringValue(outgoingThumbprint) &&
+    outgoingThumbprint !== boundThumbprint
+  ) {
+    try {
+      await recordSupersededWindowsCertificate({
+        jobId,
+        stateDir,
+        store: target.store,
+        oldThumbprint: outgoingThumbprint,
+        replacementThumbprint: boundThumbprint,
+        log,
+        ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+      });
+    } catch (err) {
+      emitLog(
+        log,
+        `job ${jobId}: failed to record retention-ledger row for ` +
+          `superseded thumbprint ${outgoingThumbprint}; predecessor material ` +
+          `remains in the store (safe failure mode): ${err.message}`,
+      );
+    }
+  }
+}
+
+/**
+ * True only when no store entry references this container or leaf thumbprint.
+ * List failures and any association → retain the key (fail closed).
+ */
+async function cngKeyAbsentFromStoresAfterAcceptFailure({
+  containerName,
+  expectedThumbprint,
+  targetStore,
+  execFileImpl,
+  listMachineStoreCertificatesImpl = listMachineStoreCertificates,
+}) {
+  const stores = new Set([CERTREQ_ACCEPT_DEFAULT_STORE, targetStore].filter(Boolean));
+  for (const store of stores) {
+    let listed;
+    try {
+      listed = await listMachineStoreCertificatesImpl({
+        store,
+        ...(execFileImpl ? { execFileImpl } : {}),
+      });
+    } catch {
+      return false;
+    }
+    if (!listed || listed.ok !== true) return false;
+    for (const cert of listed.certificates || []) {
+      const thumb = String(cert.thumbprint || "").toUpperCase();
+      if (
+        typeof expectedThumbprint === "string" &&
+        expectedThumbprint.length > 0 &&
+        thumb === expectedThumbprint
+      ) {
+        return false;
+      }
+      if (
+        typeof containerName === "string" &&
+        containerName.length > 0 &&
+        typeof cert.keyContainer === "string" &&
+        cert.keyContainer === containerName
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Complete CNG accept (+ optional mirror) then IIS bind/verify.
+ *
+ * `startAtStep` lets AD CS install recovery skip steps that inspection
+ * already proved complete. Never pass "accept" when the leaf may already
+ * be in the store: a bare certreq -accept failure deletes the CNG key.
+ *
+ * @param {"accept"|"mirror"|"bind"|"verify"} [startAtStep="accept"]
+ * @param {(step: string, meta?: object) => void|Promise<void>} [onInstallStep]
+ * @param {boolean} [retainKeyOnAcceptFailure=false] AD CS: never delete the
+ *   enrollment CNG key on bare accept failure (retry needs the same key).
+ * @param {boolean} [requireStoreAbsenceBeforeKeyDelete] deprecated alias for
+ *   retainKeyOnAcceptFailure (treated as retain when true).
+ * @param {string|null} [journaledPredecessorThumbprint] AD CS: pre-cutover
+ *   thumbprint from the enrollment journal. Used for retention bookkeeping
+ *   on verify-only / unbound resume when the live binding is already the
+ *   new cert or null.
+ */
 async function runWindowsIisDeployTail({
   jobId,
   client,
@@ -3054,14 +3271,26 @@ async function runWindowsIisDeployTail({
   containerName = null,
   leaseOpts = null,
   onBeforeMutation = null,
+  onInstallStep = null,
+  startAtStep = "accept",
+  retainKeyOnAcceptFailure = false,
+  requireStoreAbsenceBeforeKeyDelete = false,
+  journaledPredecessorThumbprint = null,
   windowsExecFileImpl,
   windowsConnectImpl,
 }) {
+  const retainKeyOnAcceptFailureEffective =
+    retainKeyOnAcceptFailure === true || requireStoreAbsenceBeforeKeyDelete === true;
   {
     const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
   if (typeof onBeforeMutation === "function") onBeforeMutation("deploy");
+
+  const stepOrder = { accept: 0, mirror: 1, bind: 2, verify: 3 };
+  const resumeFrom =
+    typeof startAtStep === "string" && Object.hasOwn(stepOrder, startAtStep) ? startAtStep : "accept";
+  const shouldRun = (step) => stepOrder[resumeFrom] <= stepOrder[step];
 
   let storeLock;
   try {
@@ -3074,75 +3303,145 @@ async function runWindowsIisDeployTail({
     return {
       status: "failed",
       keyRotated: null,
+      // Lease/lock aborts must not become durable install_failed terminals.
+      retryableInterrupt: true,
       errorMessage: boundErrorMessage(`could not acquire windows-iis store lock: ${err.message}`),
     };
   }
 
   try {
-    emitInfo(`job ${jobId}: completing CNG enrollment (certreq -accept) into store ${target.store}`);
-    const acceptResult = await acceptCertificateViaCng({
-      certificatePem,
-      workDir: cngWorkDir,
-      store: target.store,
-      ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-    });
-    if (!acceptResult.ok) {
-      // Only a bare-accept failure (no `stage`) leaves the CNG key
-      // container genuinely orphaned: `certreq -accept` itself never ran,
-      // or ran and failed before binding any certificate to the key, so
-      // there is no enrolled certificate anywhere referencing this
-      // container yet. A failure at the addstore/repairstore/delstore
-      // mirroring stage is different -- accept already SUCCEEDED, so the
-      // key is bound to a real certificate sitting in the store (at least
-      // in "My"); deleting the container there would corrupt that
-      // certificate's key reference instead of freeing dead weight. Same
-      // best-effort, non-fatal cleanup discipline as the ACME-failure path
-      // in executeWindowsIisRenewJob's finally block.
-      if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
-        try {
-          const cleanup = await removeAbandonedKeyContainer({
-            containerName,
-            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-          });
-          if (cleanup.ok !== true) {
+    return await storeLock.run(async (signal) => {
+    let acceptedThumbprint = computeSha1ThumbprintFromPem(certificatePem);
+
+    if (shouldRun("accept")) {
+      if (typeof onInstallStep === "function") await onInstallStep("accept");
+      storeLock.assertHeld();
+      emitInfo(`job ${jobId}: completing CNG enrollment (certreq -accept) into store ${target.store}`);
+      const acceptResult = await acceptCertificateViaCng({
+        certificatePem,
+        workDir: cngWorkDir,
+        store: target.store,
+        signal,
+        ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+      });
+      storeLock.assertHeld();
+      if (!acceptResult.ok) {
+        // Bare-accept failure (no `stage`): ACME may delete an orphaned CNG
+        // key. Durable AD CS enrollments that already journaled an issued
+        // leaf must retain the enrollment-owned key for retry — store
+        // absence alone does not prove accept had no side effects, and
+        // deleting the key makes continuation impossible.
+        if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
+          if (retainKeyOnAcceptFailureEffective) {
             emitLog(
               log,
-              `job ${jobId}: failed to delete abandoned CNG key container ` +
-                `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
-                `it will remain orphaned in the CNG key store until manually removed.`,
+              `job ${jobId}: retaining CNG key container ${containerName} after ` +
+                `certreq -accept failure so AD CS install recovery can retry against the journaled leaf`,
             );
           } else {
-            removeIssuedContainerRecord({ stateDir, containerName });
+            try {
+              const cleanup = await removeAbandonedKeyContainer({
+                containerName,
+                signal,
+                ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+              });
+              if (cleanup.ok !== true) {
+                emitLog(
+                  log,
+                  `job ${jobId}: failed to delete abandoned CNG key container ` +
+                    `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
+                    `it will remain orphaned in the CNG key store until manually removed.`,
+                );
+              } else {
+                removeIssuedContainerRecord({ stateDir, containerName });
+              }
+            } catch (err) {
+              emitLog(
+                log,
+                `job ${jobId}: failed to delete abandoned CNG key container ` +
+                  `${containerName} after certreq -accept failure: ${err.message}`,
+              );
+            }
           }
-        } catch (err) {
-          emitLog(
-            log,
-            `job ${jobId}: failed to delete abandoned CNG key container ` +
-              `${containerName} after certreq -accept failure: ${err.message}`,
-          );
+        }
+        await reportStepEvidence(client, jobId, [
+          buildEvidenceItem({
+            eventType: "validation.failed",
+            observedAt: new Date().toISOString(),
+            summary: `CNG certificate acceptance failed for job ${jobId} (exit code ${acceptResult.exitCode}).`,
+            metadata: [
+              { name: "step", value: "cng-accept" },
+              { name: "exitCode", value: acceptResult.exitCode },
+              { name: "stderrExcerpt", value: boundMetadataExcerpt(acceptResult.stderrExcerpt) },
+            ],
+          }),
+        ]);
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `CNG certificate acceptance failed (exit code ${acceptResult.exitCode}): ${acceptResult.stderrExcerpt}`,
+          ),
+        };
+      }
+      acceptedThumbprint = acceptResult.thumbprint;
+      emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptedThumbprint}`);
+    } else if (shouldRun("mirror") && target.store !== CERTREQ_ACCEPT_DEFAULT_STORE) {
+      // Accept already proven by inspection; finish non-default-store mirror only.
+      if (typeof onInstallStep === "function") await onInstallStep("mirror");
+      storeLock.assertHeld();
+      emitInfo(
+        `job ${jobId}: mirroring accepted certificate into store ${target.store} (recovery resume)`,
+      );
+      const crypto = require("node:crypto");
+      fs.mkdirSync(cngWorkDir, { recursive: true });
+      const certPath = path.join(
+        cngWorkDir,
+        `mirror-resume-${crypto.randomBytes(4).toString("hex")}.cer`,
+      );
+      fs.writeFileSync(certPath, certificatePem, { encoding: "utf8", flag: "wx" });
+      try {
+        const mirrored = await mirrorAcceptedCertificateToStore({
+          certPath,
+          thumbprint: acceptedThumbprint,
+          targetStore: target.store,
+          signal,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        storeLock.assertHeld();
+        if (!mirrored.ok) {
+          await reportStepEvidence(client, jobId, [
+            buildEvidenceItem({
+              eventType: "validation.failed",
+              observedAt: new Date().toISOString(),
+              summary: `CNG certificate mirror failed for job ${jobId} at stage ${mirrored.stage}.`,
+              metadata: [
+                { name: "step", value: "cng-mirror" },
+                { name: "stage", value: mirrored.stage },
+                { name: "exitCode", value: mirrored.exitCode },
+                { name: "stderrExcerpt", value: boundMetadataExcerpt(mirrored.stderrExcerpt) },
+              ],
+            }),
+          ]);
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              mirrored.reason === "aborted"
+                ? `CNG certificate mirror aborted at ${mirrored.stage}: store lock lost`
+                : `CNG certificate mirror failed at ${mirrored.stage} (exit code ${mirrored.exitCode}): ${mirrored.stderrExcerpt}`,
+            ),
+          };
+        }
+      } finally {
+        try {
+          fs.unlinkSync(certPath);
+        } catch {
+          // best-effort; public certificate bytes only
         }
       }
-      await reportStepEvidence(client, jobId, [
-        buildEvidenceItem({
-          eventType: "validation.failed",
-          observedAt: new Date().toISOString(),
-          summary: `CNG certificate acceptance failed for job ${jobId} (exit code ${acceptResult.exitCode}).`,
-          metadata: [
-            { name: "step", value: "cng-accept" },
-            { name: "exitCode", value: acceptResult.exitCode },
-            { name: "stderrExcerpt", value: boundMetadataExcerpt(acceptResult.stderrExcerpt) },
-          ],
-        }),
-      ]);
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(
-          `CNG certificate acceptance failed (exit code ${acceptResult.exitCode}): ${acceptResult.stderrExcerpt}`,
-        ),
-      };
     }
-    emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptResult.thumbprint}`);
+
     // Bind the ownership record to the actual accepted certificate's
     // thumbprint, not merely
     // "this agent created the container" -- see windows-cert-store's
@@ -3156,7 +3455,7 @@ async function runWindowsIisDeployTail({
         markIssuedContainerAccepted({
           stateDir,
           containerName,
-          acceptedThumbprint: acceptResult.thumbprint,
+          acceptedThumbprint,
           store: target.store,
         });
       } catch (err) {
@@ -3181,15 +3480,42 @@ async function runWindowsIisDeployTail({
       site: target.binding.site,
     };
 
+    // Journal predecessor identity before cutover so install-complete recovery
+    // can finish retention bookkeeping after a crash. On verify-only resume the
+    // current binding is already the new cert — do not overwrite a saved
+    // pre-cutover predecessor with that value.
+    if (typeof onInstallStep === "function") {
+      if (shouldRun("bind")) {
+        let predecessorThumbprint = null;
+        const currentBinding = await queryCurrentBinding({
+          binding,
+          signal,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        storeLock.assertHeld();
+        if (currentBinding.ok) {
+          predecessorThumbprint = currentBinding.thumbprint;
+        }
+        await onInstallStep("bind", { predecessorThumbprint });
+      } else {
+        await onInstallStep("verify", {});
+      }
+      storeLock.assertHeld();
+    }
     emitInfo(`job ${jobId}: deploying IIS binding at ${binding.address}:${binding.port}`);
     const deployResult = await deployIisBinding({
       binding,
       certificatePem,
+      signal,
       ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       ...(windowsConnectImpl ? { connectImpl: windowsConnectImpl } : {}),
     });
+    storeLock.assertHeld();
 
     if (deployResult.ok !== true) {
+      if (deployResult.code === "ABORTED") {
+        storeLock.assertHeld();
+      }
       await reportStepEvidence(client, jobId, [
         buildEvidenceItem({
           eventType: "validation.failed",
@@ -3205,6 +3531,7 @@ async function runWindowsIisDeployTail({
       return {
         status: "failed",
         keyRotated: null,
+        ...(deployResult.code === "ABORTED" ? { retryableInterrupt: true } : {}),
         errorMessage: boundErrorMessage(
           `IIS binding deploy failed (${deployResult.code}): ${deployResult.detail} ` +
             `(rolledBack: ${deployResult.rolledBack === true})`,
@@ -3216,97 +3543,58 @@ async function runWindowsIisDeployTail({
     if (deployResult.precedenceWarning) {
       emitInfo(`job ${jobId}: WARNING: ${deployResult.precedenceWarning}`);
     }
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "deployment.updated",
-        observedAt: new Date().toISOString(),
-        summary: deployResult.skippedMutation === true
-          ? `IIS binding deploy skipped for job ${jobId}: binding already pointed at this certificate (idempotent); TLS handshake re-verified.`
-          : `IIS binding deploy succeeded for job ${jobId}: certificate rebound and TLS-verified.`,
-        metadata: [
-          { name: "step", value: "iis-bind" },
-          { name: "idempotentSkip", value: deployResult.skippedMutation === true },
-          { name: "boundThumbprint", value: deployResult.boundThumbprint },
-          ...(deployResult.precedenceWarning
-            ? [{ name: "precedenceWarning", value: deployResult.precedenceWarning }]
-            : []),
-        ],
-      }),
-    ]);
-
-    // The control plane's reconciliation (apps/api's reconcileProvisionedCertificate
-    // for an "issue" job, refreshRenewedCertificateEvidence for a later "renew")
-    // looks for a claim-bound validation.passed event with metadata.step === "verify"
-    // carrying fingerprintSha256 and validTo -- the file-based path's runDeployTail
-    // always emits this after a successful live-endpoint check, but deployIisBinding's
-    // own TLS handshake verification above was never surfaced in that shape, so a
-    // windows-iis certificate would deploy correctly on the host and then sit
-    // forever in status 'provisioning' (or with a frozen not_after after a later
-    // renewal), invisible to expiry tracking and the renewal scheduler. Emitting the
-    // same evidence shape here, from the same already-verified certificatePem, closes
-    // that gap without re-running any verification deployIisBinding already did.
-    const deployedFacts = describeDeployedCertificate(certificatePem);
-    const verifyFingerprint = computeCertificateFingerprint(certificatePem);
-    const verifyMetadata = [{ name: "step", value: "verify" }];
-    if (deployedFacts) {
-      for (const [name, value] of [
-        ["serialNumber", deployedFacts.serialNumber],
-        ["validFrom", deployedFacts.validFrom],
-        ["validTo", deployedFacts.validTo],
-        ["subject", deployedFacts.subject],
-        ["issuer", deployedFacts.issuer],
-        [
-          "subjectAltNames",
-          deployedFacts.dnsSans.length > 0 ? deployedFacts.dnsSans.join(",") : null,
-        ],
-      ]) {
-        if (value !== null) verifyMetadata.push({ name, value });
-      }
-    }
-    await reportStepEvidence(client, jobId, [
-      buildEvidenceItem({
-        eventType: "validation.passed",
-        observedAt: new Date().toISOString(),
-        fingerprintSha256: verifyFingerprint,
-        summary: `Verified deployed certificate fingerprint for job ${jobId} against the live IIS endpoint.`,
-        metadata: verifyMetadata,
-      }),
-    ]);
-
-    // Retention ledger row (decision 18): only for a genuine predecessor
-    // this deploy just superseded. A first-ever bind (outgoingThumbprint
-    // null) or an idempotent skip (outgoing === new) has nothing to retire.
-    if (
-      isNonEmptyStringValue(deployResult.outgoingThumbprint) &&
-      deployResult.outgoingThumbprint !== deployResult.boundThumbprint
-    ) {
-      try {
-        await recordSupersededWindowsCertificate({
-          jobId,
-          stateDir,
-          store: target.store,
-          oldThumbprint: deployResult.outgoingThumbprint,
-          replacementThumbprint: deployResult.boundThumbprint,
-          log,
-          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-        });
-      } catch (err) {
-        // A ledger-write failure must never turn an already-succeeded,
-        // TLS-verified cutover into a reported job failure: decision 18's
-        // ledger governs LATER cleanup timing, not whether this renewal
-        // succeeded. The predecessor material simply stays in the store
-        // (the safe failure mode) until an operator or a future sweep
-        // notices; this is logged, not swallowed silently.
-        emitLog(
-          log,
-          `job ${jobId}: failed to record retention-ledger row for ` +
-            `superseded thumbprint ${deployResult.outgoingThumbprint}; predecessor material ` +
-            `remains in the store (safe failure mode): ${err.message}`,
-        );
-      }
-    }
+    // Verify-only / post-delete resumes see live outgoing as the new cert or
+    // null. Prefer a journalled pre-cutover predecessor so retention still
+    // records the superseded identity after recovery.
+    const journaledPredecessor =
+      typeof journaledPredecessorThumbprint === "string" &&
+      journaledPredecessorThumbprint.length > 0
+        ? journaledPredecessorThumbprint
+        : null;
+    const liveOutgoing =
+      typeof deployResult.outgoingThumbprint === "string" &&
+      deployResult.outgoingThumbprint.length > 0
+        ? deployResult.outgoingThumbprint
+        : null;
+    const boundThumb =
+      typeof deployResult.boundThumbprint === "string" && deployResult.boundThumbprint.length > 0
+        ? deployResult.boundThumbprint
+        : null;
+    const liveIsNewOrMissing =
+      !liveOutgoing ||
+      (boundThumb &&
+        String(liveOutgoing).toUpperCase() === String(boundThumb).toUpperCase());
+    const outgoingForBookkeeping =
+      journaledPredecessor && liveIsNewOrMissing ? journaledPredecessor : liveOutgoing;
+    await finalizeWindowsIisDeployBookkeeping({
+      jobId,
+      client,
+      certificatePem,
+      target,
+      stateDir,
+      log,
+      boundThumbprint: deployResult.boundThumbprint,
+      outgoingThumbprint: outgoingForBookkeeping,
+      skippedMutation: deployResult.skippedMutation === true,
+      precedenceWarning: deployResult.precedenceWarning,
+      windowsExecFileImpl,
+    });
+    storeLock.assertHeld();
 
     return { status: "succeeded", keyRotated: null };
+    });
+  } catch (err) {
+    if (err && err.code === "STORE_LOCK_LOST") {
+      return {
+        status: "failed",
+        keyRotated: null,
+        retryableInterrupt: true,
+        errorMessage: boundErrorMessage(
+          `windows-iis store lock lost mid-install: ${err.message}`,
+        ),
+      };
+    }
+    throw err;
   } finally {
     storeLock.release();
   }
@@ -3639,19 +3927,31 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
     const store = row.store || "My";
     const storeLock = acquireStoreLock(stateDir, store);
     try {
-      const result = await removeCertificateAndKeyContainer({
-        thumbprint: row.oldThumbprint,
-        store,
-        containerName: row.cngKeyContainerId,
-        ...(execFileImpl ? { execFileImpl } : {}),
+      await storeLock.run(async (signal) => {
+        const result = await removeCertificateAndKeyContainer({
+          thumbprint: row.oldThumbprint,
+          store,
+          containerName: row.cngKeyContainerId,
+          signal,
+          ...(execFileImpl ? { execFileImpl } : {}),
+        });
+        storeLock.assertHeld();
+        if (result.ok !== true) {
+          if (result.reason === "aborted") {
+            throw Object.assign(
+              new Error(
+                `removeCertificateAndKeyContainer aborted at stage ${result.stage}: store lock lost`,
+              ),
+              { code: "STORE_LOCK_LOST" },
+            );
+          }
+          throw new Error(
+            `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
+              result.stderrExcerpt,
+          );
+        }
+        removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
       });
-      if (result.ok !== true) {
-        throw new Error(
-          `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
-            result.stderrExcerpt,
-        );
-      }
-      removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
     } finally {
       storeLock.release();
     }
@@ -3689,10 +3989,15 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  *
  * @param {string} stateDir
  * @param {string} targetStore
- * @returns {{ release: () => void }} `release` releases every lock this
- *   call acquired, in any order. Throws (without leaking any lock already
- *   acquired in this call) if any store in the set cannot be locked.
+ * @returns {{ release: () => void, assertHeld: () => void }} `release`
+ *   releases every lock this call acquired, in any order. Throws (without
+ *   leaking any lock already acquired in this call) if any store in the
+ *   set cannot be locked. `assertHeld` throws if any lock worker exited
+ *   unexpectedly.
  */
+/** After multi-store lock loss, wait this long for cooperative cancel before release. */
+const WINDOWS_STORE_LOCKS_ABORT_DRAIN_MS = 5_000;
+
 function acquireWindowsStoreLocks(stateDir, targetStore) {
   const storeNames = [...new Set(["My", targetStore])];
   const locks = [];
@@ -3705,6 +4010,93 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
     throw err;
   }
   return {
+    assertHeld() {
+      for (const lock of locks) lock.assertHeld();
+    },
+    /**
+     * Race `work` against loss of any store lock. Matches single-lock
+     * `run`: abort cooperative work first, wait a bounded drain for
+     * subprocess exit, then release surviving locks. Do not release a
+     * still-held store before canceling its protected work.
+     * @template T
+     * @param {((signal: AbortSignal) => Promise<T>)|(() => Promise<T>)} work
+     * @returns {Promise<T>}
+     */
+    async run(work) {
+      if (locks.length === 1) {
+        return locks[0].run(work);
+      }
+      this.assertHeld();
+      let settled = false;
+      const ac = new AbortController();
+      const lossWatch = new Promise((resolve) => {
+        const timer = setInterval(() => {
+          if (settled) {
+            clearInterval(timer);
+            return;
+          }
+          try {
+            this.assertHeld();
+          } catch (err) {
+            clearInterval(timer);
+            // Abort first; keep surviving IPC listens so cooperative cancel
+            // can drain subprocesses before a successor acquires those stores.
+            // A lock whose worker already died has already dropped its listen
+            // (fail-open for that store; real-host qualification).
+            try {
+              ac.abort(err);
+            } catch {
+              // ignore
+            }
+            resolve(err);
+          }
+        }, 50);
+        if (typeof timer.unref === "function") timer.unref();
+      });
+      const workPromise = Promise.resolve().then(() => {
+        if (typeof work === "function" && work.length >= 1) {
+          return work(ac.signal);
+        }
+        return work();
+      });
+      try {
+        const outcome = await Promise.race([
+          workPromise.then(
+            (value) => ({ type: "ok", value }),
+            (err) => ({ type: "work-err", err }),
+          ),
+          lossWatch.then((err) => ({ type: "lost", err })),
+        ]);
+        if (outcome.type === "ok") {
+          return outcome.value;
+        }
+        if (outcome.type === "work-err") {
+          throw outcome.err;
+        }
+        try {
+          await Promise.race([
+            workPromise.then(
+              () => undefined,
+              () => undefined,
+            ),
+            new Promise((r) => setTimeout(r, WINDOWS_STORE_LOCKS_ABORT_DRAIN_MS)),
+          ]);
+        } finally {
+          for (const lock of locks) {
+            try {
+              lock.release();
+            } catch {
+              // best-effort
+            }
+          }
+        }
+        throw outcome.err;
+      } finally {
+        settled = true;
+      }
+    },
+    /** Exposed for crash-boundary tests: underlying per-store lock handles. */
+    _locksForTests: locks,
     release() {
       for (const lock of locks) lock.release();
     },
@@ -3787,12 +4179,43 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     return { freed, skipped };
   }
 
-  for (const entry of entries) {
-    const containerName = entry.windowsCngContainerName;
-    if (!isNonEmptyStringValue(containerName)) continue;
-    if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+  // AD CS open-enrollment protection: fail closed. An unreadable or
+  // inconsistent adcs-enrollments tree must never look like an empty set.
+  let protectedEnrollmentContainers = null;
+  let protectedEnrollmentScanFailed = false;
+  let looksLikeEnrollmentContainerName = (name) =>
+    /enr-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
+  let enrollmentIdFromContainerName = () => null;
+  let isEnrollmentContainerProtected = () => ({
+    protected: true,
+    reason: "AD CS enrollment journal helpers unavailable; deferred",
+  });
+  try {
+    const adcsJournal = require("./issuers/adcs-enrollment-journal");
+    looksLikeEnrollmentContainerName = adcsJournal.looksLikeEnrollmentContainerName;
+    enrollmentIdFromContainerName = adcsJournal.enrollmentIdFromContainerName;
+    isEnrollmentContainerProtected = adcsJournal.isEnrollmentContainerProtected;
+    const protectedScan = adcsJournal.listProtectedEnrollmentContainers(stateDir);
+    if (protectedScan.ok !== true) {
+      protectedEnrollmentScanFailed = true;
+      emitLog(
+        log,
+        `windows-cng-container reconciliation: AD CS enrollment journal scan failed; ` +
+          `deferring deletes for enrollment-shaped containers: ${protectedScan.error}`,
+      );
+    } else {
+      protectedEnrollmentContainers = protectedScan.containers;
+    }
+  } catch (err) {
+    protectedEnrollmentScanFailed = true;
+    emitLog(
+      log,
+      `windows-cng-container reconciliation: AD CS enrollment journal scan threw; ` +
+        `deferring deletes for enrollment-shaped containers: ${err.message}`,
+    );
+  }
 
-    const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+  async function attemptOrphanContainerDelete(entry, containerName, targetStore) {
     // Deduplicated: the common case (store: "My", or no store recorded at
     // all) checks the same store only once. Must match
     // acquireWindowsStoreLocks' own store set exactly, since the lock
@@ -3809,42 +4232,77 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
       // rather than waiting here, since this sweep must never block agent
       // startup.
       skipped.push({ containerName, reason: `store locked: ${err.message}` });
-      continue;
+      return;
     }
 
     try {
-      let enrolled = false;
-      let queryFailure = null;
-      for (const storeName of storesToCheck) {
-        const storeResult = await listMachineStoreCertificates({
-          store: storeName,
+      await storeLocks.run(async (signal) => {
+        let enrolled = false;
+        let queryFailure = null;
+        for (const storeName of storesToCheck) {
+          storeLocks.assertHeld();
+          const storeResult = await listMachineStoreCertificates({
+            store: storeName,
+            ...(execFileImpl ? { execFileImpl } : {}),
+          });
+          storeLocks.assertHeld();
+          if (storeResult.ok !== true) {
+            queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
+            break;
+          }
+          if (storeResult.certificates.some((cert) => cert.keyContainer === containerName)) {
+            enrolled = true;
+            break;
+          }
+        }
+
+        if (queryFailure) {
+          // Fail closed: a store lookup that could not be completed is NOT
+          // evidence the container is unused there, so this entry must be
+          // deferred rather than treated as safe to delete.
+          skipped.push({ containerName, reason: queryFailure });
+          return;
+        }
+
+        if (enrolled) {
+          // A later attempt (or an operator) legitimately enrolled a
+          // certificate to this container -- either in "My" (e.g. certreq
+          // -accept succeeded but a crash interrupted the later mirror step
+          // into targetStore) or in targetStore itself -- since the journal
+          // entry was written; never free a container backing a real
+          // certificate.
+          try {
+            markWindowsCngContainerReconciled({
+              stateDir,
+              jobId: entry.jobId,
+              attemptId: entry.attemptId,
+            });
+          } catch {
+            // Best-effort; the container itself is safe either way, and an
+            // un-marked entry is simply re-checked (and again found
+            // enrolled, hence still skipped) on the next startup.
+          }
+          skipped.push({ containerName, reason: "enrolled" });
+          return;
+        }
+
+        storeLocks.assertHeld();
+        const cleanup = await removeAbandonedKeyContainer({
+          containerName,
           ...(execFileImpl ? { execFileImpl } : {}),
+          signal,
         });
-        if (storeResult.ok !== true) {
-          queryFailure = `store ${storeName} query failed: ${storeResult.stderrExcerpt}`;
-          break;
+        storeLocks.assertHeld();
+        if (cleanup.ok !== true) {
+          skipped.push({
+            containerName,
+            reason:
+              cleanup.reason === "aborted"
+                ? "store lock lost during delkey"
+                : `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+          });
+          return;
         }
-        if (storeResult.certificates.some((cert) => cert.keyContainer === containerName)) {
-          enrolled = true;
-          break;
-        }
-      }
-
-      if (queryFailure) {
-        // Fail closed: a store lookup that could not be completed is NOT
-        // evidence the container is unused there, so this entry must be
-        // deferred rather than treated as safe to delete.
-        skipped.push({ containerName, reason: queryFailure });
-        continue;
-      }
-
-      if (enrolled) {
-        // A later attempt (or an operator) legitimately enrolled a
-        // certificate to this container -- either in "My" (e.g. certreq
-        // -accept succeeded but a crash interrupted the later mirror step
-        // into targetStore) or in targetStore itself -- since the journal
-        // entry was written; never free a container backing a real
-        // certificate.
         try {
           markWindowsCngContainerReconciled({
             stateDir,
@@ -3852,39 +4310,98 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
             attemptId: entry.attemptId,
           });
         } catch {
-          // Best-effort; the container itself is safe either way, and an
-          // un-marked entry is simply re-checked (and again found
-          // enrolled, hence still skipped) on the next startup.
+          // Best-effort; the container is already freed regardless.
         }
-        skipped.push({ containerName, reason: "enrolled" });
-        continue;
-      }
-
-      const cleanup = await removeAbandonedKeyContainer({
-        containerName,
-        ...(execFileImpl ? { execFileImpl } : {}),
+        removeIssuedContainerRecord({ stateDir, containerName });
+        freed.push(containerName);
       });
-      if (cleanup.ok !== true) {
+    } catch (err) {
+      if (err && (err.code === "STORE_LOCK_LOST" || err.code === "LOCK_LOST")) {
         skipped.push({
           containerName,
-          reason: `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+          reason: `store lock lost: ${err.message}`,
+        });
+        return;
+      }
+      throw err;
+    } finally {
+      storeLocks.release();
+    }
+  }
+
+  for (const entry of entries) {
+    const containerName = entry.windowsCngContainerName;
+    if (!isNonEmptyStringValue(containerName)) continue;
+    if (isNonEmptyStringValue(entry.windowsCngContainerReconciledAt)) continue;
+
+    if (protectedEnrollmentScanFailed && looksLikeEnrollmentContainerName(containerName)) {
+      skipped.push({
+        containerName,
+        reason: "adcs enrollment journal scan failed; deferred",
+      });
+      continue;
+    }
+    if (protectedEnrollmentContainers && protectedEnrollmentContainers.has(containerName)) {
+      skipped.push({
+        containerName,
+        reason: "open AD CS enrollment journal protects this container",
+      });
+      continue;
+    }
+
+    const targetStore = isNonEmptyStringValue(entry.windowsCngStore) ? entry.windowsCngStore : "My";
+
+    // Enrollment-shaped containers: recheck protection under the enrollment
+    // lock immediately before store checks/deletion (enrollment → store order).
+    if (looksLikeEnrollmentContainerName(containerName)) {
+      const enrollmentId = enrollmentIdFromContainerName(containerName);
+      if (!enrollmentId) {
+        skipped.push({
+          containerName,
+          reason: "enrollment-shaped container name could not be parsed; deferred",
+        });
+        continue;
+      }
+      let enrollmentLock;
+      try {
+        enrollmentLock = acquireEnrollmentLock(stateDir, enrollmentId);
+      } catch (err) {
+        skipped.push({
+          containerName,
+          reason: `enrollment locked: ${err.message}`,
         });
         continue;
       }
       try {
-        markWindowsCngContainerReconciled({
-          stateDir,
-          jobId: entry.jobId,
-          attemptId: entry.attemptId,
+        await enrollmentLock.run(async () => {
+          enrollmentLock.assertHeld();
+          const recheck = isEnrollmentContainerProtected(stateDir, enrollmentId, containerName);
+          if (recheck.protected) {
+            skipped.push({
+              containerName,
+              reason: recheck.reason || "open AD CS enrollment journal protects this container",
+            });
+            return;
+          }
+          await attemptOrphanContainerDelete(entry, containerName, targetStore);
+          enrollmentLock.assertHeld();
         });
-      } catch {
-        // Best-effort; the container is already freed regardless.
+      } catch (err) {
+        if (err && (err.code === "ENROLLMENT_LOCK_LOST" || err.code === "LOCK_LOST")) {
+          skipped.push({
+            containerName,
+            reason: `enrollment lock lost: ${err.message}`,
+          });
+        } else {
+          throw err;
+        }
+      } finally {
+        enrollmentLock.release();
       }
-      removeIssuedContainerRecord({ stateDir, containerName });
-      freed.push(containerName);
-    } finally {
-      storeLocks.release();
+      continue;
     }
+
+    await attemptOrphanContainerDelete(entry, containerName, targetStore);
   }
 
   if (freed.length > 0 || skipped.length > 0) {
@@ -6444,6 +6961,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     if (externalSignal) externalSignal.removeEventListener("abort", stop);
+    await drainJobLogSessions();
   }
 }
 
@@ -6457,6 +6975,8 @@ module.exports = {
   executeWindowsIisRenewJob,
   executeTrustJob,
   runWindowsIisDeployTail,
+  finalizeWindowsIisDeployBookkeeping,
+  cngKeyAbsentFromStoresAfterAcceptFailure,
   recordSupersededWindowsCertificate,
   runDeployReloadVerify,
   runDeployReloadVerifyForTargets,

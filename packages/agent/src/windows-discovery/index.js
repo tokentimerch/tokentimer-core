@@ -103,30 +103,132 @@ function assertSafeArgvElements(label, argv) {
 }
 
 /**
+ * CNG/IIS helpers key cancellation on `execError.code === "ABORT_ERR"`.
+ * `lock.run` aborts with STORE_/ENROLLMENT_LOCK_LOST — normalize here.
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {Error & { code: string, cause?: Error }}
+ */
+function abortExecError(signal) {
+  const cause =
+    signal && signal.reason instanceof Error
+      ? signal.reason
+      : signal && signal.reason != null
+        ? new Error(String(signal.reason))
+        : undefined;
+  const abortErr = new Error(cause ? cause.message : "aborted");
+  abortErr.code = "ABORT_ERR";
+  if (cause) abortErr.cause = cause;
+  return abortErr;
+}
+
+/**
  * Promise wrapper around an execFile-shaped implementation. Mirrors the
  * sibling modules' execWithoutShell, plus optional extra execFile options.
+ * Pass `signal` in `extraOptions` to cancel an in-flight child.
  * @param {Function} execFileImpl
  * @param {string[]} argv
  * @param {number} timeoutMs
  * @param {object} [extraOptions]
- * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown}>}
+ * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null}>}
  */
+/** Bound wait after kill() before resolving abort if exit never arrives. */
+const EXEC_ABORT_DRAIN_MS = 5_000;
+
 function execWithoutShell(execFileImpl, argv, timeoutMs, extraOptions = {}) {
   const [file, ...args] = argv;
+  const { signal, ...childOptions } = extraOptions;
   return new Promise((resolve) => {
-    execFileImpl(
+    if (signal && signal.aborted) {
+      resolve({
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        execError: abortExecError(signal),
+      });
+      return;
+    }
+
+    let settled = false;
+    let aborted = false;
+    /** @type {(() => void)|null} */
+    let onAbort = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let drainTimer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (drainTimer != null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      if (aborted) {
+        resolve({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          execError: abortExecError(signal),
+        });
+        return;
+      }
+      resolve(result);
+    };
+
+    const child = execFileImpl(
       file,
       args,
-      { timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024, ...extraOptions },
+      {
+        timeout: timeoutMs,
+        windowsHide: true,
+        maxBuffer: 10 * 1024 * 1024,
+        ...childOptions,
+      },
       (error, stdout, stderr) => {
         if (error) {
           const exitCode = typeof error.code === "number" ? error.code : null;
-          resolve({ exitCode, stdout, stderr });
+          finish({ exitCode, stdout, stderr, execError: error });
           return;
         }
-        resolve({ exitCode: 0, stdout, stderr });
+        finish({ exitCode: 0, stdout, stderr, execError: null });
       },
     );
+
+    if (signal && child && typeof child.kill === "function") {
+      onAbort = () => {
+        aborted = true;
+        try {
+          child.kill();
+        } catch {
+          // best-effort
+        }
+        // Wait for exit before resolving so discovery holders do not
+        // release while PowerShell / certutil may still be reading stores.
+        if (typeof child.once === "function") {
+          child.once("exit", () => finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          }));
+        }
+        const drainMs =
+          typeof timeoutMs === "number" && timeoutMs > 0
+            ? Math.min(timeoutMs, EXEC_ABORT_DRAIN_MS)
+            : EXEC_ABORT_DRAIN_MS;
+        drainTimer = setTimeout(() => {
+          finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          });
+        }, drainMs);
+        if (typeof drainTimer.unref === "function") drainTimer.unref();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
@@ -580,17 +682,26 @@ async function listHttpSysBindings({
   execFileImpl = childProcess.execFile,
   powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   assertSafeArgvElements("powershellPath", [powershellPath]);
   const powershellArgv = [powershellPath, "-NoProfile", "-NonInteractive", "-Command"];
   assertSafeArgvElements("argv", powershellArgv);
 
-  const { exitCode, stdout, stderr } = await execWithoutShell(
+  const { exitCode, stdout, stderr, execError } = await execWithoutShell(
     execFileImpl,
     [...powershellArgv, buildHttpSysBindingQueryScript()],
     timeoutMs,
-    { env: buildPowerShellEnv() },
+    { env: buildPowerShellEnv(), ...(signal ? { signal } : {}) },
   );
+  if (execError && execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      exitCode: null,
+      reason: "aborted",
+      stderrExcerpt: "http.sys binding query aborted",
+    };
+  }
   if (exitCode !== 0) {
     return { ok: false, exitCode, stderrExcerpt: boundAndRedactExcerpt(stderr || stdout) };
   }

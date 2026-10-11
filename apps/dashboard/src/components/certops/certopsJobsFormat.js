@@ -12,6 +12,8 @@ const JOB_STATUS_SCHEMES = {
   orphaned_unknown_effect: 'red',
   blocked: 'orange',
   cancelled: 'gray',
+  dry_run_complete: 'green',
+  awaiting_issuer: 'orange',
 };
 
 const JOB_STATUS_LABELS = {
@@ -26,6 +28,8 @@ const JOB_STATUS_LABELS = {
   orphaned_unknown_effect: 'Needs reconciliation',
   blocked: 'Blocked',
   cancelled: 'Cancelled',
+  dry_run_complete: 'Dry-run complete',
+  awaiting_issuer: 'Awaiting issuer',
 };
 
 const JOB_OPERATION_LABELS = {
@@ -35,8 +39,10 @@ const JOB_OPERATION_LABELS = {
   reload: 'Reload',
   revoke: 'Revoke',
   noop: 'No-op',
+  protocol_smoke: 'Protocol smoke',
   'distribute-trust': 'Distribute trust',
   'revoke-trust': 'Revoke trust',
+  'continue-enrollment': 'Continue enrollment',
 };
 
 const EVENT_TYPE_LABELS = {

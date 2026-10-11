@@ -131,7 +131,11 @@ function main(argv = process.argv.slice(2)) {
   // "files"), so they must exist before npm pack runs; build them fresh
   // here rather than trusting a stale bin/*.exe left over from a previous
   // run to still match the current windows-service-host/ source.
-  buildWindowsServiceHost();
+  // Pass [] so build-windows-service-host does not inherit pack-release's
+  // process.argv --out-dir (agent-dist/), which would write the host exes
+  // next to the tarball instead of packages/agent/bin/ and leave the
+  // packed tarball without the Windows service host.
+  buildWindowsServiceHost([]);
 
   const pack = spawnSync(
     "npm",

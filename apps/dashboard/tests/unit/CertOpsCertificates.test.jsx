@@ -23,7 +23,9 @@ const {
   listCertificatesMock,
   listRenewalProfilesMock,
   getCertificateIdentityMock,
+  getCertificateMock,
   listCertOpsRenewalProfilesMock,
+  showErrorMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -35,7 +37,9 @@ const {
   listCertificatesMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
   getCertificateIdentityMock: vi.fn(),
+  getCertificateMock: vi.fn(),
   listCertOpsRenewalProfilesMock: vi.fn(),
+  showErrorMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -71,10 +75,16 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
     detachCertificateRenewalProfile: detachCertificateRenewalProfileMock,
     retryRenewalSetupIntent: retryRenewalSetupIntentMock,
     listCertificates: listCertificatesMock,
+    getCertificate: getCertificateMock,
     getCertificateIdentity: getCertificateIdentityMock,
     listCertOpsRenewalProfiles: listCertOpsRenewalProfilesMock,
   };
 });
+
+vi.mock('../../src/utils/toast.js', () => ({
+  showError: showErrorMock,
+  showSuccess: vi.fn(),
+}));
 
 vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   const actual = await vi.importActual(
@@ -140,7 +150,9 @@ beforeEach(() => {
   listCertificatesMock.mockReset();
   listRenewalProfilesMock.mockReset();
   getCertificateIdentityMock.mockReset();
+  getCertificateMock.mockReset();
   listCertOpsRenewalProfilesMock.mockReset();
+  showErrorMock.mockReset();
   useCertOpsCanManageMock.mockReturnValue(true);
   useCertOpsCertificatesMock.mockReturnValue(certState());
   // Default: the retired-count probe (two limit:1 list calls) sees no
@@ -154,6 +166,7 @@ beforeEach(() => {
   // preset picker.
   listRenewalProfilesMock.mockResolvedValue({ items: [], total: 0 });
   getCertificateIdentityMock.mockResolvedValue(null);
+  getCertificateMock.mockResolvedValue({ certificate: null });
   listCertOpsRenewalProfilesMock.mockResolvedValue([]);
 });
 
@@ -537,14 +550,40 @@ describe('CertOpsCertificates filters', () => {
     );
   });
 
-  it('includes retired certificates once the Retired toggle is pressed', () => {
+  it('includes retired certificates once lifecycle is set to Including retired', () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retired' }));
+    fireEvent.change(screen.getByLabelText('Filter by certificate lifecycle'), {
+      target: { value: 'including' },
+    });
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ excludeRetired: undefined })
     );
+    expect(screen.getByText(/Lifecycle: Including retired/)).toBeInTheDocument();
+  });
+
+  it('filters unmanaged certificates from the management control', () => {
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText('Filter by management state'), {
+      target: { value: 'unmanaged' },
+    });
+
+    expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ unmanaged: true })
+    );
+    expect(screen.getByText(/Management: Unmanaged only/)).toBeInTheDocument();
+  });
+
+  it('keeps CSR workflows in the header as a secondary action', () => {
+    renderPage();
+
+    expect(
+      screen.getByRole('button', { name: 'CSR workflows' })
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'CSR workflows' }));
+    expect(screen.getByText('Public CSR workflows')).toBeInTheDocument();
   });
 
   it('does not force excludeRetired once an explicit status filter is chosen', () => {
@@ -568,6 +607,19 @@ describe('CertOpsCertificates filters', () => {
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ source: 'agent_filesystem' })
+    );
+  });
+
+  it('reads fingerprint search from the URL into the certificates query', () => {
+    renderPage(['/?q=534CE368D766B353']);
+
+    expect(
+      screen.getByPlaceholderText(
+        'Search certificates, fingerprints, issuers...'
+      )
+    ).toHaveValue('534CE368D766B353');
+    expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: '534CE368D766B353' })
     );
   });
 });
@@ -1172,7 +1224,7 @@ describe('CertOpsCertificates renewal setup and detach', () => {
 });
 
 describe('CertOpsCertificates retired count badge', () => {
-  it('shows a retired count on the toggle once the probe resolves', async () => {
+  it('shows a retired count on the lifecycle filter once the probe resolves', async () => {
     listCertificatesMock.mockImplementation((_workspaceId, params) =>
       Promise.resolve({
         items: [],
@@ -1186,19 +1238,22 @@ describe('CertOpsCertificates retired count badge', () => {
 
     renderPage();
 
-    const button = await screen.findByRole('button', { name: /Retired/ });
+    const lifecycle = await screen.findByLabelText(
+      'Filter by certificate lifecycle'
+    );
     await vi.waitFor(() => {
-      expect(within(button).getByText('3')).toBeInTheDocument();
+      expect(lifecycle).toHaveDisplayValue(/3 retired hidden/);
     });
   });
 
-  it('does not show a badge while the retired-count probe is still loading', () => {
+  it('does not show a retired count while the probe is still loading', () => {
     listCertificatesMock.mockImplementation(() => new Promise(() => {}));
 
     renderPage();
 
-    const button = screen.getByRole('button', { name: 'Retired' });
-    expect(within(button).queryByText(/^\d+$/)).not.toBeInTheDocument();
+    const lifecycle = screen.getByLabelText('Filter by certificate lifecycle');
+    expect(lifecycle).toHaveDisplayValue('Active only');
+    expect(lifecycle).not.toHaveDisplayValue(/retired hidden/);
   });
 
   it('re-probes the retired count after a certificate is retired', async () => {
@@ -1220,7 +1275,7 @@ describe('CertOpsCertificates retired count badge', () => {
 
     renderPage();
 
-    await screen.findByRole('button', { name: /Retired/ });
+    await screen.findByLabelText('Filter by certificate lifecycle');
     const callsBeforeRetire = listCertificatesMock.mock.calls.length;
 
     fireEvent.click(screen.getByRole('button', { name: 'Change lifecycle' }));
@@ -1242,5 +1297,139 @@ describe('CertOpsCertificates retired count badge', () => {
         callsBeforeRetire
       );
     });
+  });
+});
+
+describe('CertOpsCertificates certificateId deep links', () => {
+  const managedId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+  it('opens the details modal for a fingerprinted certificate', async () => {
+    const fingerprint = 'b'.repeat(64);
+    const identity = certificate({
+      id: managedId,
+      fingerprintSha256: fingerprint,
+      commonName: 'fingerprinted.example',
+    });
+    getCertificateMock.mockResolvedValue({
+      certificate: {
+        id: managedId,
+        fingerprintSha256: fingerprint,
+        commonName: 'fingerprinted.example',
+      },
+    });
+    getCertificateIdentityMock.mockResolvedValue(identity);
+    listCertificatesMock.mockImplementation((_ws, params) => {
+      if (params?.q === fingerprint) {
+        return Promise.resolve({ items: [identity], pagination: { total: 1 } });
+      }
+      return Promise.resolve({
+        items: [],
+        pagination: { limit: 1, offset: 0, total: 0 },
+      });
+    });
+
+    renderPage([`/certops/certificates?certificateId=${managedId}`]);
+
+    await screen.findByRole('dialog');
+    expect(showErrorMock).not.toHaveBeenCalledWith(
+      'Certificate not found',
+      expect.anything()
+    );
+    expect(getCertificateMock).toHaveBeenCalledWith(
+      'ws-1',
+      managedId,
+      expect.any(Object)
+    );
+  });
+
+  it('opens the details modal for a fingerprintless provisional certificate', async () => {
+    getCertificateMock.mockResolvedValue({
+      certificate: {
+        id: managedId,
+        fingerprintSha256: null,
+        commonName: 'provisional.example',
+        status: 'provisioning',
+        source: 'manual',
+      },
+    });
+    listCertificatesMock.mockResolvedValue({
+      items: [],
+      pagination: { limit: 1, offset: 0, total: 0 },
+    });
+
+    renderPage([`/certops/certificates?certificateId=${managedId}`]);
+
+    await screen.findByRole('dialog');
+    expect(showErrorMock).not.toHaveBeenCalledWith(
+      'Certificate not found',
+      expect.anything()
+    );
+  });
+
+  it('opens a fingerprintless provisional when the grouped list request fails', async () => {
+    getCertificateMock.mockResolvedValue({
+      certificate: {
+        id: managedId,
+        fingerprintSha256: null,
+        commonName: 'provisional.example',
+        status: 'provisioning',
+        source: 'manual',
+      },
+    });
+    listCertificatesMock.mockRejectedValue({
+      response: { status: 500, data: { error: 'list failed' } },
+      message: 'list failed',
+    });
+
+    renderPage([`/certops/certificates?certificateId=${managedId}`]);
+
+    await screen.findByRole('dialog');
+    expect(showErrorMock).not.toHaveBeenCalledWith(
+      'Certificate not found',
+      expect.anything()
+    );
+  });
+
+  it('reports not found for a deleted certificate', async () => {
+    getCertificateMock.mockRejectedValue({
+      response: { status: 404, data: { error: 'Not found' } },
+      message: 'Not found',
+    });
+
+    renderPage([`/certops/certificates?certificateId=${managedId}`]);
+
+    await waitFor(() => {
+      expect(showErrorMock).toHaveBeenCalledWith(
+        'Certificate not found',
+        expect.any(String)
+      );
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('CertOpsCertificates combined lifecycle filters', () => {
+  it('shows Including retired when Status is Revoked', async () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({ certificates: [certificate({ status: 'revoked' })] })
+    );
+
+    renderPage();
+
+    fireEvent.change(screen.getByDisplayValue('All statuses'), {
+      target: { value: 'revoked' },
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText('Filter by certificate lifecycle')
+      ).toHaveValue('including');
+    });
+    expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: 'revoked',
+        excludeRetired: undefined,
+      })
+    );
   });
 });

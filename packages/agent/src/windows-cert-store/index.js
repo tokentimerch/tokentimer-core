@@ -47,7 +47,9 @@
 const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { Worker } = require("node:worker_threads");
 
 const {
   assertNoPrivateKeyMaterial,
@@ -635,15 +637,80 @@ function normalizeCsrPemLabel(raw) {
  * acme/index.js's execWithoutShell: never rejects on nonzero exit/timeout
  * (operational outcomes), only on a genuine spawn/programmer error via the
  * resolved execError field for the caller to inspect.
+ * When `signal` aborts, the child is killed (if the impl returned one) and
+ * the promise resolves with execError.code === "ABORT_ERR".
  * @param {Function} execFileImpl
  * @param {string[]} argv argv[0] is the executable
  * @param {number} timeoutMs
+ * @param {AbortSignal} [signal]
  * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null}>}
  */
-function execWithoutShell(execFileImpl, argv, timeoutMs) {
+/**
+ * CNG helpers key cancellation on `execError.code === "ABORT_ERR"`.
+ * `lock.run` aborts with STORE_/ENROLLMENT_LOCK_LOST — normalize here and
+ * keep the original reason as `cause`.
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {Error & { code: string, cause?: Error }}
+ */
+function abortExecError(signal) {
+  const cause =
+    signal && signal.reason instanceof Error
+      ? signal.reason
+      : signal && signal.reason != null
+        ? new Error(String(signal.reason))
+        : undefined;
+  const abortErr = new Error(cause ? cause.message : "aborted");
+  abortErr.code = "ABORT_ERR";
+  if (cause) abortErr.cause = cause;
+  return abortErr;
+}
+
+/** Bound wait after kill() before resolving abort if exit never arrives. */
+const EXEC_ABORT_DRAIN_MS = 5_000;
+
+function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
   const [file, ...args] = argv;
   return new Promise((resolve) => {
-    execFileImpl(
+    if (signal && signal.aborted) {
+      resolve({
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        execError: abortExecError(signal),
+      });
+      return;
+    }
+
+    let settled = false;
+    let aborted = false;
+    /** @type {(() => void)|null} */
+    let onAbort = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let drainTimer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (drainTimer != null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      // Prefer the abort shape so callers never see a kill() exit code as success.
+      if (aborted) {
+        resolve({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          execError: abortExecError(signal),
+        });
+        return;
+      }
+      resolve(result);
+    };
+
+    const child = execFileImpl(
       file,
       args,
       {
@@ -654,12 +721,48 @@ function execWithoutShell(execFileImpl, argv, timeoutMs) {
       (error, stdout, stderr) => {
         if (error) {
           const exitCode = typeof error.code === "number" ? error.code : null;
-          resolve({ exitCode, stdout, stderr, execError: error });
+          finish({ exitCode, stdout, stderr, execError: error });
           return;
         }
-        resolve({ exitCode: 0, stdout, stderr, execError: null });
+        finish({ exitCode: 0, stdout, stderr, execError: null });
       },
     );
+
+    if (signal && child && typeof child.kill === "function") {
+      onAbort = () => {
+        aborted = true;
+        try {
+          child.kill();
+        } catch {
+          // best-effort
+        }
+        // Do not resolve until the child has exited (or the drain bound).
+        // Resolving immediately would let lock holders release while certreq /
+        // certutil / netsh may still be mutating protected state.
+        if (typeof child.once === "function") {
+          child.once("exit", () => finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          }));
+        }
+        const drainMs =
+          typeof timeoutMs === "number" && timeoutMs > 0
+            ? Math.min(timeoutMs, EXEC_ABORT_DRAIN_MS)
+            : EXEC_ABORT_DRAIN_MS;
+        drainTimer = setTimeout(() => {
+          finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          });
+        }, drainMs);
+        if (typeof drainTimer.unref === "function") drainTimer.unref();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
@@ -725,6 +828,7 @@ async function generateCsrViaCng({
   certreqPath = "certreq.exe",
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(workDir)) {
     throw buildError("generateCsrViaCng requires a non-empty workDir string");
@@ -749,7 +853,17 @@ async function generateCsrViaCng({
     assertSafeArgvElements("certutilPath", [certutilPath]);
     const listArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-key"];
     assertSafeArgvElements("listArgv", listArgv);
-    const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs);
+    const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs, signal);
+    if (listing.execError && listing.execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        containerName,
+        stdoutExcerpt: "",
+        stderrExcerpt: "",
+      };
+    }
     if (listing.exitCode !== 0) {
       return {
         ok: false,
@@ -794,12 +908,29 @@ async function generateCsrViaCng({
     // certreq too, so -new and -accept can never disagree under LocalSystem.
     const argv = [certreqPath, "-q", "-machine", "-new", infPath, reqPath];
     assertSafeArgvElements("argv", argv);
-    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+    const { exitCode, stdout, stderr, execError } = await execWithoutShell(
+      execFileImpl,
+      argv,
+      timeoutMs,
+      signal,
+    );
+
+    if (execError && execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        containerName,
+        stdoutExcerpt: "",
+        stderrExcerpt: "",
+      };
+    }
 
     if (exitCode !== 0) {
       return {
         ok: false,
         exitCode,
+        containerName,
         stdoutExcerpt: boundAndRedactExcerpt(stdout),
         stderrExcerpt: boundAndRedactExcerpt(stderr),
       };
@@ -881,6 +1012,7 @@ async function acceptCertificateViaCng({
   certreqPath = "certreq.exe",
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(certificatePem)) {
     throw buildError("acceptCertificateViaCng requires a non-empty certificatePem string");
@@ -906,7 +1038,22 @@ async function acceptCertificateViaCng({
   try {
     const argv = [certreqPath, "-q", "-machine", "-accept", certPath];
     assertSafeArgvElements("argv", argv);
-    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+    const { exitCode, stdout, stderr, execError } = await execWithoutShell(
+      execFileImpl,
+      argv,
+      timeoutMs,
+      signal,
+    );
+
+    if (execError && execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        stdoutExcerpt: "",
+        stderrExcerpt: "",
+      };
+    }
 
     if (exitCode !== 0) {
       return {
@@ -925,6 +1072,7 @@ async function acceptCertificateViaCng({
         execFileImpl,
         certutilPath,
         timeoutMs,
+        signal,
       });
       if (!mirrored.ok) return mirrored;
     }
@@ -988,15 +1136,26 @@ async function mirrorAcceptedCertificateToStore({
   certPath,
   thumbprint,
   targetStore,
-  execFileImpl,
-  certutilPath,
-  timeoutMs,
+  execFileImpl = childProcess.execFile,
+  certutilPath = "certutil.exe",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 }) {
   assertSafeArgvElements("certutilPath", [certutilPath]);
 
   const addstoreArgv = [certutilPath, "-addstore", targetStore, certPath];
   assertSafeArgvElements("addstoreArgv", addstoreArgv);
-  const addstoreResult = await execWithoutShell(execFileImpl, addstoreArgv, timeoutMs);
+  const addstoreResult = await execWithoutShell(execFileImpl, addstoreArgv, timeoutMs, signal);
+  if (addstoreResult.execError && addstoreResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "addstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (addstoreResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1009,7 +1168,22 @@ async function mirrorAcceptedCertificateToStore({
 
   const repairstoreArgv = [certutilPath, "-repairstore", targetStore, thumbprint];
   assertSafeArgvElements("repairstoreArgv", repairstoreArgv);
-  const repairstoreResult = await execWithoutShell(execFileImpl, repairstoreArgv, timeoutMs);
+  const repairstoreResult = await execWithoutShell(
+    execFileImpl,
+    repairstoreArgv,
+    timeoutMs,
+    signal,
+  );
+  if (repairstoreResult.execError && repairstoreResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "repairstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (repairstoreResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1022,7 +1196,17 @@ async function mirrorAcceptedCertificateToStore({
 
   const delstoreArgv = [certutilPath, "-delstore", CERTREQ_ACCEPT_DEFAULT_STORE, thumbprint];
   assertSafeArgvElements("delstoreArgv", delstoreArgv);
-  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs);
+  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs, signal);
+  if (delstoreResult.execError && delstoreResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "delstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (delstoreResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1038,7 +1222,17 @@ async function mirrorAcceptedCertificateToStore({
   // this function's doc comment, step 4).
   const verifyArgv = [certutilPath, "-store", targetStore, thumbprint];
   assertSafeArgvElements("verifyArgv", verifyArgv);
-  const verifyResult = await execWithoutShell(execFileImpl, verifyArgv, timeoutMs);
+  const verifyResult = await execWithoutShell(execFileImpl, verifyArgv, timeoutMs, signal);
+  if (verifyResult.execError && verifyResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      stage: "verify",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    };
+  }
   if (verifyResult.exitCode !== 0) {
     return {
       ok: false,
@@ -1052,153 +1246,329 @@ async function mirrorAcceptedCertificateToStore({
   return { ok: true };
 }
 
-/** A lock older than this, no matter whose PID recorded it, is treated as
- * stale outright, guarding against the (rare but real) case where the OS
- * has since reused the recorded PID for a completely unrelated process
- * that is very much still running -- liveness alone cannot rule that out,
- * only age can. Set well above any real enrollment/binding operation's
- * duration (seconds, not minutes) while staying well below "an operator
- * has to notice and intervene manually" territory. */
-const MAX_STORE_LOCK_AGE_MS = 30 * 60 * 1000;
+/** IPC lock worker state codes (see exclusive-lock-worker.js). */
+const EXCLUSIVE_LOCK_STATE_PENDING = 0;
+const EXCLUSIVE_LOCK_STATE_HELD = 1;
+const EXCLUSIVE_LOCK_STATE_BUSY = 2;
+const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
+/** Graceful close wait; terminate() always follows and drops the listen. */
+const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
+/** Parent treats a quieter heartbeat as lock loss (worker ticks every 50ms). */
+const EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS = 500;
+/** After lock loss, wait this long for cooperative cancel before dropping IPC. */
+const EXCLUSIVE_LOCK_ABORT_DRAIN_MS = 5_000;
 
 /**
- * Whether the process that created a lock file is still alive.
- * `process.kill(pid, 0)` sends no signal, only checks existence/permission
- * (works on both POSIX and win32, per Node's own child_process.kill docs).
- * ESRCH means the process is gone; anything else (including a permission
- * error, i.e. the PID exists but under a different account) means it is
- * still considered live, since this function's only job is to rule out
- * "this process definitely no longer exists", not to fully authenticate
- * ownership.
- * @param {number} pid
- * @returns {boolean}
+ * Maps a filesystem lock key to a short, deterministic IPC name.
+ * Never appends to an arbitrarily long lockPath on POSIX (unix-domain
+ * socket pathnames truncate and can collide). Returns
+ * `{ ipcPath, ipcKind }` where ipcKind is "pipe" | "abstract" | "file".
+ * @param {string} lockPath
+ * @returns {{ ipcPath: string, ipcKind: "pipe"|"abstract"|"file" }}
  */
-function isProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err?.code !== "ESRCH";
+function exclusiveLockIpcTarget(lockPath) {
+  const digest = crypto.createHash("sha256").update(lockPath).digest("hex").slice(0, 40);
+  if (process.platform === "win32") {
+    return {
+      ipcPath: "\\\\.\\pipe\\tokentimer-agent-" + digest,
+      ipcKind: "pipe",
+    };
   }
+  if (process.platform === "linux") {
+    // Abstract namespace: no filesystem node, so no stale-path reclaim.
+    return {
+      ipcPath: "\0tokentimer-agent-" + digest,
+      ipcKind: "abstract",
+    };
+  }
+  const dir = path.join(os.tmpdir(), "tokentimer-agent-ipc");
+  return {
+    ipcPath: path.join(dir, digest + ".sock"),
+    ipcKind: "file",
+  };
+}
+
+/** @deprecated use exclusiveLockIpcTarget; kept for tests that only need the path string */
+function exclusiveLockIpcPath(lockPath) {
+  return exclusiveLockIpcTarget(lockPath).ipcPath;
+}
+
+function lockLostCode(busyCode) {
+  if (busyCode === "STORE_LOCKED") return "STORE_LOCK_LOST";
+  if (busyCode === "ENROLLMENT_LOCKED") return "ENROLLMENT_LOCK_LOST";
+  if (busyCode === "ADCS_WATERMARK_LOCKED") return "ADCS_WATERMARK_LOCK_LOST";
+  return "LOCK_LOST";
 }
 
 /**
- * Parses an acquireStoreLock lock file's contents (`"<pid>\n<isoDate>\n"`,
- * written by acquireStoreLock itself) back into `{ pid, createdAt }`.
- * Returns null on anything unparseable, so a corrupted/foreign lock file
- * is treated the same as "cannot prove this is stale" (fails closed,
- * still locked) rather than crashing the caller.
+ * Parses the best-effort owner marker written beside an IPC lock
+ * (`"<pid>\n<isoDate>\n<ownerToken>\n"`). The marker is diagnostic only;
+ * exclusion comes from the pipe/socket listen, not from this file.
  * @param {string} contents
- * @returns {{ pid: number, createdAt: Date }|null}
+ * @returns {{ pid: number, createdAt: Date, ownerToken: string|null }|null}
  */
 function parseStoreLockContents(contents) {
   const lines = String(contents).split("\n");
   const pid = Number(lines[0]);
   const createdAt = new Date(lines[1] ?? "");
   if (!Number.isInteger(pid) || pid < 0 || Number.isNaN(createdAt.getTime())) return null;
-  return { pid, createdAt };
-}
-
-/**
- * Whether an existing lock file at `lockPath` is safe to steal: either its
- * recording process is no longer alive, or the lock has simply existed
- * longer than any real operation ever legitimately takes (see
- * MAX_STORE_LOCK_AGE_MS). An unparseable lock file is never considered
- * stale -- decision 13's mutex fails closed on anything it cannot
- * positively prove is dead, matching this module's fail-closed style
- * elsewhere (e.g. store-name/container-name validation).
- * @param {string} lockPath
- * @returns {boolean}
- */
-function isStoreLockStale(lockPath) {
-  let contents;
-  try {
-    contents = fs.readFileSync(lockPath, "utf8");
-  } catch (err) {
-    // Already gone (another racer cleaned it up first) -- not "stale",
-    // just no longer an obstacle; the caller's retry will succeed via the
-    // normal wx path.
-    if (err && err.code === "ENOENT") return true;
-    return false;
-  }
-  const parsed = parseStoreLockContents(contents);
-  if (parsed === null) return false;
-  if (Date.now() - parsed.createdAt.getTime() > MAX_STORE_LOCK_AGE_MS) return true;
-  return !isProcessAlive(parsed.pid);
+  const rawToken = lines[2] ?? "";
+  const ownerToken = rawToken.length > 0 ? rawToken : null;
+  return { pid, createdAt, ownerToken };
 }
 
 /**
  * Store-scoped mutex (ADR-0012 decision 13: "the per-target mutex covers
  * the store as well as the binding, since two jobs racing on the same
- * machine store is as damaging as two racing on one binding"). A plain
- * exclusive-create lock file under the agent's own ACL-protected state
- * dir: `wx` fails if another enrollment already holds the lock, which is
- * exactly the semantics a mutex needs and requires no additional OS
- * primitive. Reused as-is by the future IIS-binding executor so a single
- * lock name space covers both operations per decision 13.
+ * machine store is as damaging as two racing on one binding").
  *
- * Stale-lock recovery: a process killed mid-enrollment (crash, OOM kill,
- * `taskkill /F`) leaves its lock file behind forever under the plain `wx`
- * scheme above -- with no other recovery path, EVERY future renewal
- * against that store fails permanently until an operator manually deletes
- * the file. On an initial EEXIST, this now checks isStoreLockStale (dead
- * PID, or simply too old) and, if stale, unlinks the abandoned file and
- * retries the acquisition exactly once (not in a loop: a genuinely busy,
- * live lock must still fail fast with STORE_LOCKED, not spin).
+ * Mutual exclusion is a kernel-mediated exclusive listen (Windows named
+ * pipe / Linux abstract socket / short hashed pathname socket), held on a
+ * dedicated worker thread so the public acquire API stays synchronous.
+ * Process or worker death drops the listen automatically. Callers must
+ * treat unexpected worker exit as loss of authority via `assertHeld()`
+ * before further protected mutations. A marker file at `lockPath` is
+ * diagnostic only.
  *
- * @param {string} stateDir agent state dir.
- * @param {string} storeName Windows machine store name (e.g. "My").
- * @returns {{ lockPath: string, release: () => void }}
+ * @param {string} lockPath
+ * @param {string} busyCode
+ * @param {string} busyMessage
+ * @returns {{
+ *   lockPath: string,
+ *   ownerToken: string,
+ *   lost: boolean,
+ *   assertHeld: () => void,
+ *   release: () => void,
+ * }}
  */
 function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
-  function tryAcquire() {
-    return fs.openSync(lockPath, "wx");
+  if (!isNonEmptyString(lockPath)) {
+    throw buildError("acquireExclusiveLockFile requires a non-empty lockPath");
+  }
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+
+  const { ipcPath, ipcKind } = exclusiveLockIpcTarget(lockPath);
+  if (ipcKind === "file") {
+    fs.mkdirSync(path.dirname(ipcPath), { recursive: true });
   }
 
-  let fd;
-  try {
-    fd = tryAcquire();
-  } catch (err) {
-    if (err && err.code === "EEXIST" && isStoreLockStale(lockPath)) {
-      try {
-        fs.unlinkSync(lockPath);
-      } catch {
-        // Another racer may have already cleaned it up (or re-acquired
-        // it); either way, fall through to the single retry below, which
-        // is the actual source of truth.
-      }
-      try {
-        fd = tryAcquire();
-      } catch (retryErr) {
-        if (retryErr && retryErr.code === "EEXIST") {
-          throw buildError(busyMessage, busyCode);
-        }
-        throw retryErr;
-      }
-    } else if (err && err.code === "EEXIST") {
-      throw buildError(busyMessage, busyCode);
-    } else {
-      throw err;
+  // [0]=state, [1]=heartbeat millis (worker ticks while held)
+  const sab = new SharedArrayBuffer(8);
+  const state = new Int32Array(sab);
+  Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_PENDING);
+  Atomics.store(state, 1, 0);
+
+  const worker = new Worker(path.join(__dirname, "exclusive-lock-worker.js"), {
+    workerData: { sab, ipcPath, ipcKind },
+  });
+
+  let workerFailed = null;
+  worker.once("error", (err) => {
+    workerFailed = err;
+    Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_BUSY);
+    Atomics.notify(state, 0);
+  });
+
+  Atomics.wait(state, 0, EXCLUSIVE_LOCK_STATE_PENDING, EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS);
+  const acquireState = Atomics.load(state, 0);
+  if (acquireState !== EXCLUSIVE_LOCK_STATE_HELD) {
+    try {
+      worker.terminate();
+    } catch {
+      // best-effort
     }
+    if (workerFailed) {
+      throw buildError(
+        "exclusive lock worker failed for " + lockPath + ": " + workerFailed.message,
+        busyCode,
+      );
+    }
+    if (acquireState === EXCLUSIVE_LOCK_STATE_BUSY) {
+      throw buildError(busyMessage, busyCode);
+    }
+    throw buildError(
+      "timed out or failed acquiring exclusive lock for " + lockPath,
+      busyCode,
+    );
   }
-  fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
-  fs.closeSync(fd);
+
+  const ownerToken = crypto.randomBytes(16).toString("hex");
+  // Marker is best-effort and never consulted for exclusion. Writing it
+  // after the listen succeeds means a crash between listen and write leaves
+  // no blocking artifact -- the next acquire binds the freed IPC name.
+  try {
+    fs.writeFileSync(
+      lockPath,
+      process.pid + "\n" + new Date().toISOString() + "\n" + ownerToken + "\n",
+      "utf8",
+    );
+  } catch {
+    // diagnostic only
+  }
 
   let released = false;
+  let lost = false;
+  const lostError = buildError(
+    `exclusive lock lost for ${lockPath}: lock worker exited unexpectedly`,
+    lockLostCode(busyCode),
+  );
+
+  function markLost() {
+    if (!released) {
+      lost = true;
+    }
+  }
+
+  worker.once("exit", () => {
+    markLost();
+  });
+
+  function heartbeatIsFresh() {
+    const beat = Atomics.load(state, 1);
+    if (beat === 0) return false;
+    const now = Date.now() & 0x7fffffff;
+    // Handle 31-bit wrap by accepting either small forward delta.
+    const delta = (now - beat + 0x80000000) % 0x80000000;
+    return delta <= EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS;
+  }
+
   return {
     lockPath,
+    ownerToken,
+    get lost() {
+      if (!lost && !released && !heartbeatIsFresh()) {
+        lost = true;
+      }
+      return lost;
+    },
+    /**
+     * Throws if the lock worker exited, stopped heartbeating, or release
+     * already ran. Call after every await and before further protected
+     * mutations inside a critical section.
+     */
+    assertHeld() {
+      if (released) {
+        throw buildError(
+          `exclusive lock already released for ${lockPath}`,
+          lockLostCode(busyCode),
+        );
+      }
+      if (lost || !heartbeatIsFresh()) {
+        lost = true;
+        throw lostError;
+      }
+    },
+    /**
+     * Race `work` against lock loss. On loss the worker is terminated so the
+     * IPC listen drops for a successor, and an AbortSignal is aborted for
+     * cooperative cancellation (`work(signal)`). Callers that ignore the
+     * signal must still treat the rejected `run` as authority loss and must
+     * not perform further protected mutations (including finally cleanup).
+     * @template T
+     * @param {((signal: AbortSignal) => Promise<T>)|(() => Promise<T>)} work
+     * @returns {Promise<T>}
+     */
+    async run(work) {
+      this.assertHeld();
+      let settled = false;
+      const ac = new AbortController();
+      const lossWatch = new Promise((resolve) => {
+        const timer = setInterval(() => {
+          if (settled) {
+            clearInterval(timer);
+            return;
+          }
+          try {
+            this.assertHeld();
+          } catch (err) {
+            clearInterval(timer);
+            lost = true;
+            // Abort first; keep the IPC listen while the worker is still
+            // alive so cooperative cancel can drain subprocesses before a
+            // successor acquires. Unexpected worker death already drops the
+            // listen (fail-open for successors; real-host qualification).
+            try {
+              ac.abort(err);
+            } catch {
+              // ignore
+            }
+            resolve(err);
+          }
+        }, 50);
+        if (typeof timer.unref === "function") timer.unref();
+      });
+      const workPromise = Promise.resolve().then(() => {
+        if (typeof work === "function" && work.length >= 1) {
+          return work(ac.signal);
+        }
+        return work();
+      });
+      try {
+        const outcome = await Promise.race([
+          workPromise.then(
+            (value) => ({ type: "ok", value }),
+            (err) => ({ type: "work-err", err }),
+          ),
+          lossWatch.then((err) => ({ type: "lost", err })),
+        ]);
+        if (outcome.type === "ok") {
+          return outcome.value;
+        }
+        if (outcome.type === "work-err") {
+          throw outcome.err;
+        }
+        try {
+          await Promise.race([
+            workPromise.then(
+              () => undefined,
+              () => undefined,
+            ),
+            new Promise((r) => setTimeout(r, EXCLUSIVE_LOCK_ABORT_DRAIN_MS)),
+          ]);
+        } finally {
+          try {
+            worker.terminate();
+          } catch {
+            // best-effort
+          }
+        }
+        throw outcome.err;
+      } finally {
+        settled = true;
+      }
+    },
+    /**
+     * Exposed for crash-boundary tests: abrupt worker death must release
+     * the IPC listen so another contender can acquire.
+     */
+    _workerForTests: worker,
     release() {
       if (released) return;
       released = true;
+      // Always terminate: heartbeat-based `lost` can be a false positive
+      // (scheduler delay / sleep-resume) while the worker still holds the
+      // listen. Skipping terminate would leave STORE_LOCKED until process exit.
+      if (!lost) {
+        try {
+          worker.postMessage("release");
+          Atomics.wait(state, 0, EXCLUSIVE_LOCK_STATE_HELD, EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS);
+        } catch {
+          // best-effort
+        }
+      }
       try {
-        fs.unlinkSync(lockPath);
+        worker.terminate();
       } catch {
-        // best-effort; a lock file surviving past release (e.g. another
-        // process already stole it as stale in a race with this exact
-        // release call) is not a security issue -- nothing sensitive is
-        // in it -- and is exactly the scenario isStoreLockStale above
-        // exists to eventually recover from.
+        // best-effort
+      }
+      try {
+        const current = fs.readFileSync(lockPath, "utf8");
+        const parsed = parseStoreLockContents(current);
+        if (parsed && parsed.ownerToken === ownerToken) {
+          fs.unlinkSync(lockPath);
+        }
+      } catch {
+        // marker cleanup only; exclusion already dropped with the listen
       }
     },
   };
@@ -1222,13 +1592,20 @@ function acquireStoreLock(stateDir, storeName) {
  * Cross-process mutex for one AD CS enrollment (W6). The KSP existence
  * probe in generateCsrViaCng is not atomic with certreq -new; the
  * executor must hold this lock across probe, -new, submit/retrieve, and
- * -accept for that enrollmentId. Same wx + stale-steal rules as the
+ * -accept for that enrollmentId. Same IPC exclusive-listen rules as the
  * store lock. Distinct from acquireStoreLock: two enrollments may share
  * a store, and two stores must not serialize unrelated enrollments.
  *
  * @param {string} stateDir
  * @param {string} enrollmentId lowercase UUID
- * @returns {{ lockPath: string, release: () => void }}
+ * @returns {{
+ *   lockPath: string,
+ *   ownerToken: string,
+ *   lost: boolean,
+ *   assertHeld: () => void,
+ *   run: (work: Function) => Promise<unknown>,
+ *   release: () => void,
+ * }}
  */
 function acquireEnrollmentLock(stateDir, enrollmentId) {
   if (typeof enrollmentId !== "string" || !ENROLLMENT_ID_PATTERN.test(enrollmentId)) {
@@ -1289,6 +1666,7 @@ async function removeCertificateAndKeyContainer({
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(thumbprint) || !THUMBPRINT_PATTERN.test(thumbprint)) {
     throw buildError(`thumbprint must be a 40-hex-char SHA-1 string (got ${JSON.stringify(thumbprint)})`);
@@ -1306,7 +1684,17 @@ async function removeCertificateAndKeyContainer({
 
   const delstoreArgv = [certutilPath, "-delstore", store, thumbprint];
   assertSafeArgvElements("delstoreArgv", delstoreArgv);
-  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs);
+  const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs, signal);
+  if (delstoreResult.execError && delstoreResult.execError.code === "ABORT_ERR") {
+    return guardReturnValue({
+      ok: false,
+      stage: "delstore",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    });
+  }
   if (delstoreResult.exitCode !== 0) {
     return guardReturnValue({
       ok: false,
@@ -1325,7 +1713,17 @@ async function removeCertificateAndKeyContainer({
     containerName,
   ];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
-  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs);
+  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);
+  if (delkeyResult.execError && delkeyResult.execError.code === "ABORT_ERR") {
+    return guardReturnValue({
+      ok: false,
+      stage: "delkey",
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    });
+  }
   if (delkeyResult.exitCode !== 0) {
     // Real-host finding (interrupted-cleanup repro, 2026-08-09): unlike
     // `-delstore` (which silently no-ops with exit 0 for a thumbprint that is
@@ -1388,6 +1786,7 @@ async function removeAbandonedKeyContainer({
   execFileImpl = childProcess.execFile,
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(containerName) || !CONTAINER_NAME_PATTERN.test(containerName)) {
     throw buildError(`containerName must match ${CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`);
@@ -1399,7 +1798,16 @@ async function removeAbandonedKeyContainer({
 
   const delkeyArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-delkey", containerName];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
-  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs);
+  const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);
+  if (delkeyResult.execError && delkeyResult.execError.code === "ABORT_ERR") {
+    return guardReturnValue({
+      ok: false,
+      exitCode: null,
+      reason: "aborted",
+      stdoutExcerpt: "",
+      stderrExcerpt: "",
+    });
+  }
   if (delkeyResult.exitCode !== 0) {
     return guardReturnValue({
       ok: false,
@@ -1443,12 +1851,13 @@ module.exports = {
   guardReturnValue,
   generateCsrViaCng,
   acceptCertificateViaCng,
+  mirrorAcceptedCertificateToStore,
   acquireStoreLock,
   acquireEnrollmentLock,
-  isProcessAlive,
-  isStoreLockStale,
+  acquireExclusiveLockFile,
+  exclusiveLockIpcPath,
+  exclusiveLockIpcTarget,
   parseStoreLockContents,
-  MAX_STORE_LOCK_AGE_MS,
   removeCertificateAndKeyContainer,
   removeAbandonedKeyContainer,
 };

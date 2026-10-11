@@ -1,5 +1,5 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -18,6 +18,7 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Stack,
   Table,
@@ -38,23 +39,39 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import CopyableId from '../CopyableId.jsx';
+import AgentShellConsole from './AgentShellConsole.jsx';
+import { listAgentFleetLog, listAgentJobLog } from './certopsJobsApi';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
+  CERTOPS_DEFAULT_PAGE_SIZE,
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
+import {
+  certOpsPagedListOffset,
+  matchesCertOpsFocusId,
+  scrollCertOpsFocusedNode,
+} from './certopsResourceLinks.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
-import { retireAgent, updateAgentAlertSettings } from './certopsAgentsApi.js';
+import {
+  listAgents,
+  retireAgent,
+  updateAgentAlertSettings,
+} from './certopsAgentsApi.js';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import {
   canonicalAgentContactGroupFields,
   hydrateContactGroupIds,
 } from '../../utils/contactGroupAssignment.js';
-import { formatDateTime, formatRelativeDateTime } from './certopsJobsFormat';
+import {
+  formatDateTime,
+  formatRelativeDateTime,
+  jobStatusLabel,
+} from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import {
@@ -601,7 +618,429 @@ function EditAlertingModal({ isOpen, onClose, agent, onSaved }) {
  *   panel title (the tab's "Deploy an agent" button), so the fleet keeps
  *   its own title/description without the caller duplicating them.
  */
-export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
+const FLEET_ALL = 'all';
+// Fleet aggregates many jobs. Per-job and modal-wide budgets prevent one busy
+// agent from freezing the browser; open a single job for the full stream.
+const FLEET_LOG_PAGE_SIZE = 200;
+const FLEET_LOG_MAX_PAGES_PER_JOB = 10;
+const FLEET_LOG_TOTAL_MAX_LINES = 4000;
+const FLEET_LOG_MAX_CONCURRENCY = 3;
+
+export async function loadAgentLogPages(
+  workspaceId,
+  jobId,
+  {
+    signal,
+    maxPages = FLEET_LOG_MAX_PAGES_PER_JOB,
+    pageSize = FLEET_LOG_PAGE_SIZE,
+    maxItems = Number.POSITIVE_INFINITY,
+  } = {}
+) {
+  const items = [];
+  let cursor;
+  let truncated = false;
+  const pageLimit = Math.max(1, Math.min(pageSize, maxItems));
+  for (let page = 0; page < maxPages; page += 1) {
+    const remaining = maxItems - items.length;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    const result = await listAgentJobLog(workspaceId, jobId, {
+      cursor,
+      limit: Math.min(pageLimit, remaining),
+      signal,
+    });
+    const pageItems = result?.items || [];
+    items.push(...pageItems);
+    if (items.length >= maxItems) {
+      truncated = Boolean(result?.hasMore);
+      break;
+    }
+    if (!result?.hasMore || !result?.nextCursor) {
+      break;
+    }
+    if (page === maxPages - 1) {
+      truncated = true;
+      break;
+    }
+    cursor = result.nextCursor;
+  }
+  return { items, truncated };
+}
+
+export async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Array.from(
+    { length: Math.min(Math.max(1, concurrency), Math.max(items.length, 1)) },
+    async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        results[index] = await worker(items[index], index);
+      }
+    }
+  );
+  await Promise.all(runners);
+  return results;
+}
+
+/**
+ * Shared modal line budget. Workers claim page-sized slices and wait for an
+ * active owner to release unused capacity instead of skipping the job.
+ * Waiters are not owners: when remaining is 0 and owners is 0, every waiter
+ * exits with an exhausted-budget result (no deadlock among waiters).
+ */
+export function createFleetLineBudget(totalLines) {
+  let remaining = totalLines;
+  // Callers that currently hold reserved capacity (fetch in flight).
+  let owners = 0;
+  const waiters = [];
+  function notify() {
+    while (waiters.length > 0) waiters.shift()();
+  }
+  return {
+    get remaining() {
+      return remaining;
+    },
+    get owners() {
+      return owners;
+    },
+    async withReservation(wanted, work) {
+      const need = Math.max(0, wanted);
+      if (need === 0) return { reserved: 0, result: null };
+      while (remaining < 1) {
+        // Only an owner can return unused capacity; waiters cannot help each other.
+        if (owners === 0) return { reserved: 0, result: null };
+        await new Promise(resolve => {
+          waiters.push(resolve);
+        });
+      }
+      const reserved = Math.min(remaining, need);
+      remaining -= reserved;
+      // Become an owner before any await so peers never see a gap after claim.
+      owners += 1;
+      let used = 0;
+      try {
+        const outcome = await work(reserved);
+        used = Math.max(0, Math.min(reserved, Number(outcome?.used) || 0));
+        return { reserved, result: outcome?.result ?? null };
+      } catch (error) {
+        used = 0;
+        throw error;
+      } finally {
+        remaining += reserved - used;
+        owners = Math.max(0, owners - 1);
+        notify();
+      }
+    },
+  };
+}
+
+/**
+ * Load log pages for many jobs under a shared line budget.
+ * Reserves one page at a time; unused capacity is returned for other jobs.
+ */
+export async function loadFleetJobBatches(
+  workspaceId,
+  jobIds,
+  {
+    signal,
+    concurrency = FLEET_LOG_MAX_CONCURRENCY,
+    pageSize = FLEET_LOG_PAGE_SIZE,
+    maxPagesPerJob = FLEET_LOG_MAX_PAGES_PER_JOB,
+    totalMaxLines = FLEET_LOG_TOTAL_MAX_LINES,
+    fetchPage = listAgentJobLog,
+  } = {}
+) {
+  const budget = createFleetLineBudget(totalMaxLines);
+  return mapWithConcurrency(jobIds, concurrency, async jobId => {
+    try {
+      const items = [];
+      let cursor;
+      let truncated = false;
+      for (let page = 0; page < maxPagesPerJob; page += 1) {
+        const room = totalMaxLines - items.length;
+        if (room <= 0) {
+          truncated = true;
+          break;
+        }
+        const want = Math.min(pageSize, room);
+        let reserved;
+        let result;
+        try {
+          ({ reserved, result } = await budget.withReservation(
+            want,
+            async limit => {
+              const pageResult = await fetchPage(workspaceId, jobId, {
+                cursor,
+                limit,
+                signal,
+              });
+              const pageItems = pageResult?.items || [];
+              return {
+                used: Math.min(limit, pageItems.length),
+                result: pageResult,
+              };
+            }
+          ));
+        } catch {
+          // Keep pages already loaded so their budget stays matched to display.
+          // Discarding them would strand capacity other jobs still need.
+          return {
+            truncated: false,
+            failed: true,
+            jobId,
+            lines: items.map(line => ({
+              ...line,
+              jobId,
+              message: line.message
+                ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
+                : line.message,
+            })),
+          };
+        }
+        if (reserved <= 0) {
+          truncated = true;
+          break;
+        }
+        const pageItems = result?.items || [];
+        const kept = pageItems.slice(0, reserved);
+        items.push(...kept);
+        if (items.length >= totalMaxLines) {
+          truncated = Boolean(result?.hasMore) || pageItems.length > reserved;
+          break;
+        }
+        if (!result?.hasMore || !result?.nextCursor) {
+          break;
+        }
+        if (page === maxPagesPerJob - 1) {
+          truncated = true;
+          break;
+        }
+        cursor = result.nextCursor;
+      }
+      return {
+        truncated,
+        failed: false,
+        jobId,
+        lines: items.map(line => ({
+          ...line,
+          jobId,
+          message: line.message
+            ? `[job ${String(jobId).slice(0, 8)}] ${line.message}`
+            : line.message,
+        })),
+      };
+    } catch {
+      return { truncated: false, failed: true, jobId, lines: [] };
+    }
+  });
+}
+
+function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    closeButtonProps,
+    footerProps,
+  } = useDashboardModalProps();
+  const { muted, text } = useDashboardThemeColors();
+  const [jobs, setJobs] = useState([]);
+  const [source, setSource] = useState(FLEET_ALL);
+  const [mergedLines, setMergedLines] = useState([]);
+  const [truncatedJobIds, setTruncatedJobIds] = useState([]);
+  const [failedJobIds, setFailedJobIds] = useState([]);
+  const [fleetIndexCapped, setFleetIndexCapped] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const agentLabel =
+    agent?.name || agent?.hostname || agent?.agentId || 'Agent';
+  useEffect(() => {
+    if (!isOpen || !agent?.id || !workspaceId) return undefined;
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+    setJobs([]);
+    setMergedLines([]);
+    setTruncatedJobIds([]);
+    setFailedJobIds([]);
+    setFleetIndexCapped(false);
+    setLoadError(null);
+    setSource(FLEET_ALL);
+
+    (async () => {
+      try {
+        const result = await listAgentFleetLog(workspaceId, agent.id, {
+          limit: 20,
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        const seen = new Set();
+        const items = (result.items || []).filter(item => {
+          if (!item?.jobId || seen.has(item.jobId)) return false;
+          seen.add(item.jobId);
+          return true;
+        });
+        setJobs(items);
+        // API hard-caps the fleet index; warn when we likely hit that ceiling.
+        setFleetIndexCapped(items.length >= 20);
+
+        // Newest streams first from the API; reverse so the shell reads oldest→newest.
+        const jobIds = [...items.map(item => item.jobId)].reverse();
+        const batches = await loadFleetJobBatches(workspaceId, jobIds, {
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        setMergedLines(batches.flatMap(batch => batch.lines));
+        setTruncatedJobIds(
+          batches.filter(batch => batch.truncated).map(batch => batch.jobId)
+        );
+        setFailedJobIds(
+          batches.filter(batch => batch.failed).map(batch => batch.jobId)
+        );
+      } catch (err) {
+        if (
+          cancelled ||
+          err?.name === 'AbortError' ||
+          err?.code === 'ERR_CANCELED'
+        ) {
+          return;
+        }
+        setJobs([]);
+        setMergedLines([]);
+        setTruncatedJobIds([]);
+        setFailedJobIds([]);
+        setFleetIndexCapped(false);
+        setLoadError(
+          err?.response?.data?.error ||
+            err?.message ||
+            'Could not load agent logs.'
+        );
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [isOpen, agent, workspaceId]);
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered scrollBehavior='inside'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '720px' }}>
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Agent logs</DashboardModalTitle>
+          <DashboardModalDescription>
+            Recent CertOps job output for {agentLabel}, across attempts.
+          </DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          {loading ? (
+            <HStack spacing={2} color={muted} py={6} justify='center'>
+              <Spinner size='sm' />
+              <Text fontSize='sm'>Loading agent logs...</Text>
+            </HStack>
+          ) : null}
+          {!loading && loadError ? (
+            <Alert status='error' variant='subtle' borderRadius='md'>
+              <AlertIcon />
+              <AlertDescription fontSize='sm'>{loadError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {!loading && !loadError && jobs.length === 0 ? (
+            <Box py={4}>
+              <Text fontSize='sm' fontWeight='semibold' color={text}>
+                No job logs for this agent yet.
+              </Text>
+              <Text fontSize='sm' color={muted} mt={1}>
+                Logs appear after the agent claims and reports CertOps jobs.
+              </Text>
+            </Box>
+          ) : null}
+          {!loading && !loadError && jobs.length > 0 ? (
+            <Stack spacing={3}>
+              <Box>
+                <Text fontSize='sm' mb={1} color={muted}>
+                  Source
+                </Text>
+                <Select
+                  size='sm'
+                  value={source}
+                  onChange={event => setSource(event.target.value || FLEET_ALL)}
+                >
+                  <option value={FLEET_ALL}>
+                    All recent jobs ({jobs.length})
+                  </option>
+                  {jobs.map(job => (
+                    <option key={job.jobId} value={job.jobId}>
+                      Job {String(job.jobId).slice(0, 8)} ·{' '}
+                      {jobStatusLabel(job.jobStatus)}
+                    </option>
+                  ))}
+                </Select>
+              </Box>
+              {fleetIndexCapped ? (
+                <Text fontSize='sm' color={muted}>
+                  Showing the {jobs.length} most recent job streams for this
+                  agent, not the full history.
+                </Text>
+              ) : null}
+              {source === FLEET_ALL && truncatedJobIds.length > 0 ? (
+                <Text fontSize='sm' color={muted}>
+                  Showing up to {FLEET_LOG_TOTAL_MAX_LINES} lines across recent
+                  jobs
+                  {truncatedJobIds.length === 1
+                    ? ` (truncated for job ${String(truncatedJobIds[0]).slice(0, 8)})`
+                    : ` (truncated for ${truncatedJobIds.length} jobs)`}
+                  . Select a job above for the full stream.
+                </Text>
+              ) : null}
+              {source === FLEET_ALL && failedJobIds.length > 0 ? (
+                <Text fontSize='sm' color={muted}>
+                  Could not load the full log for{' '}
+                  {failedJobIds.length === 1
+                    ? `job ${String(failedJobIds[0]).slice(0, 8)}`
+                    : `${failedJobIds.length} jobs`}
+                  . Select a job above to retry that stream.
+                </Text>
+              ) : null}
+              {source === FLEET_ALL ? (
+                <AgentShellConsole
+                  title={`Agent · ${agentLabel}`}
+                  staticEntries={mergedLines}
+                  maxHeight='360px'
+                />
+              ) : (
+                <AgentShellConsole
+                  workspaceId={workspaceId}
+                  jobId={source}
+                  title={`Agent · ${agentLabel}`}
+                  maxHeight='360px'
+                />
+              )}
+            </Stack>
+          ) : null}
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Button onClick={onClose}>Close</Button>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+export default function AgentFleetPanel({
+  refreshSignal,
+  headerAction,
+  focusAgentId,
+} = {}) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -619,13 +1058,82 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
     });
 
   const [retireTarget, setRetireTarget] = useState(null);
+  const [logTarget, setLogTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
+  const focusPageLookupRef = useRef({ agentId: '', pass: 0 });
+
+  useEffect(() => {
+    focusPageLookupRef.current = { agentId: '', pass: 0 };
+  }, [focusAgentId, sort.key, sort.direction]);
+
+  useEffect(() => {
+    if (!focusAgentId || !workspaceId) return undefined;
+    const onPage = agents.some(agent =>
+      matchesCertOpsFocusId(focusAgentId, agent?.id, agent?.agentId)
+    );
+    if (onPage || loading) return undefined;
+    const lookup = focusPageLookupRef.current;
+    if (lookup.agentId === focusAgentId && lookup.pass >= 1) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    focusPageLookupRef.current = { agentId: focusAgentId, pass: 1 };
+
+    listAgents(workspaceId, {
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+      signal: controller.signal,
+    })
+      .then(data => {
+        if (cancelled) return;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const index = items.findIndex(agent =>
+          matchesCertOpsFocusId(focusAgentId, agent?.id, agent?.agentId)
+        );
+        if (index < 0) return;
+        const pageSize = limit || CERTOPS_DEFAULT_PAGE_SIZE;
+        const targetOffset = certOpsPagedListOffset(index, pageSize);
+        if (targetOffset !== offset) {
+          setPage({ offset: targetOffset });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    focusAgentId,
+    workspaceId,
+    loading,
+    agents,
+    limit,
+    offset,
+    sort.key,
+    sort.direction,
+    setPage,
+  ]);
+
+  useEffect(() => {
+    if (!focusAgentId || loading) return undefined;
+    const onPage = agents.some(agent =>
+      matchesCertOpsFocusId(focusAgentId, agent?.id, agent?.agentId)
+    );
+    if (!onPage) return undefined;
+    const id = CSS.escape(String(focusAgentId));
+    return scrollCertOpsFocusedNode(
+      `[data-agent-id="${id}"], [data-agent-public-id="${id}"]`
+    );
+  }, [focusAgentId, loading, agents]);
 
   const { muted, dashboard } = useDashboardThemeColors();
   const titleColor = dashboard.text.primary;
   const infoBg = dashboard.accent.interactiveSurface;
   const infoBorder = dashboard.accent.interactiveBorder;
   const infoText = dashboard.accent.interactiveForeground;
+  const focusRing = dashboard.accent?.interactiveBorder || infoBorder;
   const tableStyles = useCertOpsResponsiveTableStyles();
   const agentTableProps = {
     ...tableStyles.tableProps,
@@ -785,8 +1293,23 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
               <Tbody {...tableStyles.tbodyProps}>
                 {agents.map(agent => {
                   const status = String(agent.status || '').toLowerCase();
+                  const isFocused = matchesCertOpsFocusId(
+                    focusAgentId,
+                    agent.id,
+                    agent.agentId
+                  );
                   return (
-                    <Tr key={agent.id} {...tableStyles.rowProps}>
+                    <Tr
+                      key={agent.id}
+                      {...tableStyles.rowProps}
+                      data-agent-id={agent.id}
+                      data-agent-public-id={agent.agentId || undefined}
+                      tabIndex={isFocused ? -1 : undefined}
+                      outline={isFocused ? '2px solid' : undefined}
+                      outlineColor={isFocused ? focusRing : undefined}
+                      outlineOffset={isFocused ? '-2px' : undefined}
+                      bg={isFocused ? infoBg : undefined}
+                    >
                       <Td {...agentPrimaryCellProps}>
                         <Box>
                           <CertOpsTruncatedText
@@ -930,6 +1453,13 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
                                 Edit alerting
                               </Button>
                             ) : null}
+                            <Button
+                              size='xs'
+                              variant='outline'
+                              onClick={() => setLogTarget(agent)}
+                            >
+                              View logs
+                            </Button>
                             {status !== 'retired' ? (
                               <Button
                                 size='xs'
@@ -952,6 +1482,12 @@ export default function AgentFleetPanel({ refreshSignal, headerAction } = {}) {
         </Box>
       ) : null}
 
+      <AgentJobLogsModal
+        isOpen={Boolean(logTarget)}
+        onClose={() => setLogTarget(null)}
+        agent={logTarget}
+        workspaceId={workspaceId}
+      />
       <RetireAgentModal
         isOpen={Boolean(retireTarget)}
         onClose={() => setRetireTarget(null)}

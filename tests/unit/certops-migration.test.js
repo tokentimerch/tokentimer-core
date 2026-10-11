@@ -30,14 +30,16 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 60).name, "certops_public_csr_workflows");
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
+    assert.equal(migrations.find((entry) => entry.version === 67).name, "inventory_and_auto_sync_name_length");
     assert.equal(migrations.find((entry) => entry.version === 68).name, "certops_adcs_awaiting_issuer_and_continue_enrollment");
-    assert.equal(migrations.find((entry) => entry.version === 69).name, "certops_material_distribution");
-    assert.equal(migrations.find((entry) => entry.version === 70).name, "certops_distribution_review");
-    assert.equal(migrations.at(-1).version, 71);
+    assert.equal(migrations.find((entry) => entry.version === 69).name, "certops_agent_job_logs");
+    assert.equal(migrations.find((entry) => entry.version === 70).name, "certops_material_distribution");
+    assert.equal(migrations.find((entry) => entry.version === 71).name, "certops_distribution_review");
+    assert.equal(migrations.at(-1).version, 72);
     assert.equal(migrations.at(-1).name, "certops_distribution_transfer");
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 71 }, (_, index) => index + 1),
+      Array.from({ length: 72 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -1461,13 +1463,77 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
   });
 });
 
-describe("migration 69 distribution operation compatibility", () => {
+describe("migration 70 distribution operation compatibility", () => {
   it("adds deploy-from-store while retaining AD CS continuation", () => {
-    const migration = migrations.find(entry => entry.version === 69);
+    const migration = migrations.find(entry => entry.version === 70);
     const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
     assert.ok(declared);
     const values = declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, ""));
     assert.deepEqual(values.sort(), [...JOB_OPERATIONS].sort());
+  });
+});
+
+describe("migration 69 CertOps agent job logs", () => {
+  const migration = migrations.find(
+    (entry) => entry.name === "certops_agent_job_logs",
+  );
+
+  it("exists at version 69 and creates agent log storage tables", () => {
+    assert.ok(migration, "migration 69 expected");
+    assert.equal(migration.version, 69);
+    for (const tableName of [
+      "certops_agent_log_job_state",
+      "certops_agent_log_stream",
+      "certops_agent_log_daily_quota",
+      "certops_agent_job_log",
+    ]) {
+      assert.match(
+        migration.sql,
+        new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName}\\b`),
+      );
+    }
+  });
+
+  it("links job-scoped rows to certificate_jobs and daily quota to workspaces", () => {
+    assert.match(migration.sql, /fk_certops_agent_log_job_state_job/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id, job_id\)\s*\n\s*REFERENCES certificate_jobs \(workspace_id, id\)/,
+    );
+    assert.match(migration.sql, /fk_certops_agent_log_stream_job/);
+    assert.match(migration.sql, /fk_certops_agent_log_daily_quota_workspace/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id\) REFERENCES workspaces \(id\)\s*\n\s*ON DELETE CASCADE/,
+    );
+    assert.match(migration.sql, /fk_certops_agent_job_log_stream/);
+    assert.match(
+      migration.sql,
+      /FOREIGN KEY \(workspace_id, job_id, claim_id\)\s*\n\s*REFERENCES certops_agent_log_stream \(workspace_id, job_id, claim_id\)/,
+    );
+  });
+
+  it("dedupes log lines on claim seq and job ingest cursor position", () => {
+    assert.match(
+      migration.sql,
+      /CONSTRAINT uq_certops_agent_job_log_seq\s*\n\s*UNIQUE \(workspace_id, job_id, claim_id, seq\)/,
+    );
+    assert.match(
+      migration.sql,
+      /CREATE UNIQUE INDEX IF NOT EXISTS idx_certops_agent_job_log_cursor\s*\n\s*ON certops_agent_job_log \(workspace_id, job_id, ingest_order\)/,
+    );
+    assert.doesNotMatch(
+      migration.sql,
+      /CREATE INDEX IF NOT EXISTS idx_certops_agent_job_log_cursor\s/,
+    );
+  });
+
+  it("requires positive ingest_order on stored log lines", () => {
+    assert.match(migration.sql, /ingest_order BIGINT NOT NULL CHECK \(ingest_order > 0\)/);
+  });
+
+  it("uses only additive DDL (no DROP TABLE)", () => {
+    assert.doesNotMatch(migration.sql, /DROP TABLE/i);
   });
 });
 
@@ -1799,7 +1865,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 71);
+    assert.equal(sorted[sorted.length - 1], 72);
   });
 });
 

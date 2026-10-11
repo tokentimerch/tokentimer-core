@@ -94,9 +94,21 @@ describe('parseCertOpsListUrlState', () => {
       filters: CERTOPS_JOB_FILTERS,
     });
     expect(state.filters).toEqual({
+      q: '',
       status: 'failed',
       operation: '',
       source: 'scheduler',
+      createdSince: '',
+    });
+  });
+
+  it('reads job search and createdSince from the URL', () => {
+    const state = parseCertOpsListUrlState('?q=web-01&createdSince=7d', {
+      filters: CERTOPS_JOB_FILTERS,
+    });
+    expect(state.filters).toMatchObject({
+      q: 'web-01',
+      createdSince: '7d',
     });
   });
 

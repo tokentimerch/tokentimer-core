@@ -24,6 +24,7 @@ const {
 } = require("./agentJobEligibility");
 const { attachJobPendingReasons } = require("./jobPendingReason");
 const { attachUserDisplayNames } = require("./userDisplayNames");
+const { normalizeCertificateSearchQuery } = require("./certificateIdentity");
 
 const CERTOPS_JOB_INVALID = "CERTOPS_JOB_INVALID";
 const CERTOPS_JOB_NOT_FOUND = "CERTOPS_JOB_NOT_FOUND";
@@ -455,6 +456,31 @@ function normalizeOffset(value) {
   return Math.max(0, parsed);
 }
 
+const JOB_CREATED_SINCE_INTERVALS = Object.freeze({
+  "24h": "24 hours",
+  "7d": "7 days",
+  "30d": "30 days",
+});
+
+function normalizeJobCreatedSince(value) {
+  if (value === undefined || value === null || value === "") return null;
+  return JOB_CREATED_SINCE_INTERVALS[String(value)] || null;
+}
+
+function normalizeJobSearchQuery(value) {
+  const q = String(value || "")
+    .trim()
+    .slice(0, 128);
+  if (!q) return null;
+  const { fingerprintNeedle } = normalizeCertificateSearchQuery(q);
+  return { q, fingerprintNeedle };
+}
+
+/** Escape `\`, `%`, and `_` so ILIKE treats the query as a literal substring. */
+function escapeIlikePattern(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 function normalizedFieldName(value) {
   return String(value || "")
     .toLowerCase()
@@ -601,9 +627,10 @@ const JOB_KEY_MODES = Object.freeze([
 ]);
 const JOB_KEY_MODE_SET = new Set(JOB_KEY_MODES);
 
-function executionFieldError(fieldName) {
+function executionFieldError(fieldName, reason) {
+  const detail = reason ? `: ${reason}` : "";
   return serviceError(
-    `CertOps job payload field ${fieldName} is invalid`,
+    `CertOps job payload field ${fieldName} is invalid${detail}`,
     CERTOPS_JOB_EXECUTION_FIELD_INVALID,
   );
 }
@@ -611,66 +638,102 @@ function executionFieldError(fieldName) {
 const EXECUTION_FIELD_VALIDATORS = Object.freeze({
   commandRef(value) {
     if (typeof value !== "string" || !COMMAND_REF_PATTERN.test(value)) {
-      throw executionFieldError("commandRef");
+      throw executionFieldError(
+        "commandRef",
+        "use 1-128 chars from A-Z a-z 0-9 _ . : -",
+      );
     }
   },
   caEndpoint(value) {
     if (typeof value !== "string" || value.length > 512) {
-      throw executionFieldError("caEndpoint");
+      throw executionFieldError(
+        "caEndpoint",
+        "must be an http(s) URL of at most 512 characters",
+      );
     }
     let parsed;
     try {
       parsed = new URL(value);
     } catch (_error) {
-      throw executionFieldError("caEndpoint");
+      throw executionFieldError(
+        "caEndpoint",
+        "must be a valid http(s) URL",
+      );
     }
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw executionFieldError("caEndpoint");
+      throw executionFieldError(
+        "caEndpoint",
+        "must use http: or https:",
+      );
     }
   },
   acmeKind(value) {
     if (typeof value !== "string" || !ACME_KIND_SET.has(value)) {
-      throw executionFieldError("acmeKind");
+      throw executionFieldError(
+        "acmeKind",
+        `must be one of: ${ACME_KINDS.join(", ")}`,
+      );
     }
   },
   keyRotation(value) {
     if (typeof value !== "boolean") {
-      throw executionFieldError("keyRotation");
+      throw executionFieldError("keyRotation", "must be true or false");
     }
   },
   certPath(value) {
     if (typeof value !== "string" || value.length < 1 || value.length > 512) {
-      throw executionFieldError("certPath");
+      throw executionFieldError(
+        "certPath",
+        "must be a non-empty path of at most 512 characters",
+      );
     }
   },
   reloadService(value) {
     if (typeof value !== "string" || !RELOAD_SERVICE_PATTERN.test(value)) {
-      throw executionFieldError("reloadService");
+      throw executionFieldError(
+        "reloadService",
+        "use 1-128 chars from A-Z a-z 0-9 _ . : @ -",
+      );
     }
   },
   verifyHost(value) {
     if (typeof value !== "string" || value.length < 1 || value.length > 255) {
-      throw executionFieldError("verifyHost");
+      throw executionFieldError(
+        "verifyHost",
+        "must be a non-empty hostname of at most 255 characters",
+      );
     }
   },
   verifyPort(value) {
     if (!Number.isInteger(value) || value < 1 || value > 65535) {
-      throw executionFieldError("verifyPort");
+      throw executionFieldError(
+        "verifyPort",
+        "must be an integer between 1 and 65535",
+      );
     }
   },
   dnsZone(value) {
     if (typeof value !== "string" || value.length < 1 || value.length > 255) {
-      throw executionFieldError("dnsZone");
+      throw executionFieldError(
+        "dnsZone",
+        "must be a non-empty zone name of at most 255 characters",
+      );
     }
   },
   dnsProvider(value) {
     if (typeof value !== "string" || !DNS_PROVIDER_PATTERN.test(value)) {
-      throw executionFieldError("dnsProvider");
+      throw executionFieldError(
+        "dnsProvider",
+        "use 1-64 chars from A-Z a-z 0-9 _ . : -",
+      );
     }
   },
   keyMode(value) {
     if (typeof value !== "string" || !JOB_KEY_MODE_SET.has(value)) {
-      throw executionFieldError("keyMode");
+      throw executionFieldError(
+        "keyMode",
+        `must be one of: ${JOB_KEY_MODES.join(", ")}`,
+      );
     }
   },
 });
@@ -1164,7 +1227,10 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
     requiredDnsProvider &&
     !DNS_PROVIDER_PATTERN.test(requiredDnsProvider)
   ) {
-    throw executionFieldError("dnsProvider");
+    throw executionFieldError(
+      "dnsProvider",
+      "use 1-64 chars from A-Z a-z 0-9 _ . : -",
+    );
   }
 
   const requiredCommandProfile =
@@ -1176,7 +1242,10 @@ function resolveExecutorKindAndRouting(options, source, payload, autoAssignedAge
     requiredCommandProfile &&
     !COMMAND_REF_PATTERN.test(requiredCommandProfile)
   ) {
-    throw executionFieldError("commandRef");
+    throw executionFieldError(
+      "commandRef",
+      "use 1-128 chars from A-Z a-z 0-9 _ . : -",
+    );
   }
 
   return {
@@ -2260,6 +2329,74 @@ async function listCertificateJobs(options) {
     conditions.push(`subject_id = $${params.length}`);
   }
 
+  const createdSince = normalizeJobCreatedSince(options.createdSince);
+  if (createdSince) {
+    params.push(createdSince);
+    conditions.push(`created_at >= NOW() - ($${params.length})::interval`);
+  }
+
+  const search = normalizeJobSearchQuery(options.q);
+  if (search) {
+    params.push(escapeIlikePattern(search.q));
+    const idx = params.length;
+    let fingerprintIdx = null;
+    if (search.fingerprintNeedle) {
+      params.push(search.fingerprintNeedle);
+      fingerprintIdx = params.length;
+    }
+    const mcFingerprintMatch =
+      fingerprintIdx === null
+        ? ""
+        : `
+             OR (
+               mc.fingerprint_sha256 IS NOT NULL AND
+               position($${fingerprintIdx} in mc.fingerprint_sha256) > 0
+             )`;
+    const taFingerprintMatch =
+      fingerprintIdx === null
+        ? ""
+        : `
+             OR (
+               ta.fingerprint_sha256 IS NOT NULL AND
+               position($${fingerprintIdx} in ta.fingerprint_sha256) > 0
+             )`;
+    // ESCAPE '\' keeps %, _, and \ literal (Certificates search is substring-literal).
+    conditions.push(`(
+      id::text ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR subject_id ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR operation ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR source ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1 FROM managed_certificates mc
+         WHERE mc.workspace_id = certificate_jobs.workspace_id
+           AND mc.id::text = certificate_jobs.subject_id
+           AND (
+             COALESCE(mc.common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(mc.source_ref, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'${mcFingerprintMatch}
+           )
+      )
+      OR EXISTS (
+        SELECT 1 FROM certops_agents a
+         WHERE a.workspace_id = certificate_jobs.workspace_id
+           AND a.id IN (certificate_jobs.claimed_by_agent_id, certificate_jobs.assigned_agent_id)
+           AND (
+             COALESCE(a.name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(a.hostname, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(a.agent_id, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+           )
+      )
+      OR EXISTS (
+        SELECT 1 FROM certops_trust_anchors ta
+         WHERE ta.workspace_id = certificate_jobs.workspace_id
+           AND ta.id::text = certificate_jobs.subject_id
+           AND (
+             COALESCE(ta.name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(ta.subject_common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'${taFingerprintMatch}
+           )
+      )
+    )`);
+  }
+
   // Counted over the filter predicate the page itself uses, before LIMIT and
   // OFFSET are appended. A total taken over a wider predicate would advertise
   // pages that hold none of the rows the caller asked for.
@@ -2528,6 +2665,7 @@ module.exports = {
   JOB_SOURCES,
   JOB_STATUSES,
   JOB_STATUS_TRANSITIONS,
+  TERMINAL_JOB_STATUSES,
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
@@ -2564,7 +2702,9 @@ module.exports = {
   validateRenewalProfileOnPayload,
   _test: {
     assertSafePublicValue,
+    escapeIlikePattern,
     fieldNameLooksForbidden,
+    normalizeJobSearchQuery,
     normalizePublicObject,
     parseJsonb,
     validateExecutionFields,

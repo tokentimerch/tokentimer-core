@@ -22,12 +22,14 @@ describe('jobStatusLabel / jobStatusScheme', () => {
     expect(jobStatusScheme('orphaned_unknown_effect')).toBe('red');
   });
 
+  it('labels and colors a completed dry-run job', () => {
+    expect(jobStatusLabel('dry_run_complete')).toBe('Dry-run complete');
+    expect(jobStatusScheme('dry_run_complete')).toBe('green');
+  });
+
   it('falls back to the raw status and gray for a status not yet mapped', () => {
-    // dry_run_complete is a real status (same migration as
-    // orphaned_unknown_effect) that hits the same unmapped fallback -
-    // documents the gap rather than fixing it.
-    expect(jobStatusLabel('dry_run_complete')).toBe('dry_run_complete');
-    expect(jobStatusScheme('dry_run_complete')).toBe('gray');
+    expect(jobStatusLabel('not_a_real_status')).toBe('not_a_real_status');
+    expect(jobStatusScheme('not_a_real_status')).toBe('gray');
   });
 });
 

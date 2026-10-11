@@ -220,8 +220,8 @@
               "null"
             ],
             "maxLength": 512,
-            "pattern": "^/",
-            "description": "Absolute POSIX destination for the matching private key PEM. Path/mode metadata only — never key content."
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)",
+            "description": "Absolute host destination for the matching private key PEM (POSIX, Windows drive, or UNC). Path/mode metadata only — never key content."
           },
           "reloadService": {
             "type": [
@@ -287,7 +287,7 @@
               "null"
             ],
             "maxLength": 512,
-            "pattern": "^/"
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
           },
           "backupRetentionCount": {
             "type": [
@@ -337,7 +337,7 @@
             "null"
           ],
           "maxLength": 512,
-          "pattern": "^/"
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
         },
         "chainPath": {
           "type": [

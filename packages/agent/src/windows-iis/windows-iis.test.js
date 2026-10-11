@@ -1462,3 +1462,63 @@ describe("deployIisBinding precedenceWarning wiring", () => {
     assert.equal(result.precedenceWarning, undefined);
   });
 });
+
+describe("IIS bind AbortSignal cancellation", () => {
+  it("aborts an in-flight netsh delete and does not start add", async () => {
+    const ac = new AbortController();
+    const calls = [];
+    let killed = false;
+    const execFileImpl = (file, args, options, callback) => {
+      calls.push({ args: [...args] });
+      const fakeChild = {
+        kill() {
+          killed = true;
+          process.nextTick(() =>
+            callback(Object.assign(new Error("killed"), { code: "ABORT_ERR" }), "", ""),
+          );
+        },
+      };
+      if (args[1] === "delete") {
+        setTimeout(
+          () => ac.abort(Object.assign(new Error("store lock lost"), { code: "STORE_LOCK_LOST" })),
+          15,
+        );
+        setTimeout(() => callback(null, "", ""), 500);
+        return fakeChild;
+      }
+      process.nextTick(() => callback(null, "", ""));
+      return fakeChild;
+    };
+    const result = await bindCertificate({
+      binding: VALID_BINDING,
+      thumbprint: FIXTURE_THUMBPRINT,
+      store: "My",
+      execFileImpl,
+      signal: ac.signal,
+    });
+    assert.equal(killed, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "aborted");
+    assert.equal(
+      calls.some((c) => c.args[1] === "add"),
+      false,
+    );
+  });
+
+  it("returns ABORTED from deployIisBinding when the binding query is aborted", async () => {
+    const ac = new AbortController();
+    ac.abort(Object.assign(new Error("store lock lost"), { code: "STORE_LOCK_LOST" }));
+    const result = await deployIisBinding({
+      binding: VALID_BINDING,
+      certificatePem: FIXTURE_CERT_PEM,
+      signal: ac.signal,
+      execFileImpl: makeExecStub(() => ({ error: null, stdout: NO_BINDINGS })),
+      connectImpl: () => {
+        throw new Error("TLS must not run after abort");
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "ABORTED");
+    assert.equal(result.rolledBack, false);
+  });
+});

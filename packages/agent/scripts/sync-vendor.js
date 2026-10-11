@@ -15,6 +15,19 @@ const repoRoot = path.resolve(packageRoot, "..", "..");
 
 const VENDOR_MAP = [
   {
+    from: path.join(repoRoot, "packages", "log-scrub", "agent-log-text.js"),
+    to: path.join(packageRoot, "vendor", "log-scrub", "agent-log-text.js"),
+    attribution: [
+      "/*",
+      " * VENDORED COPY for self-contained agent distribution.",
+      " * Source of truth: packages/log-scrub/agent-log-text.js (@tokentimer/log-scrub).",
+      " * Refresh with: node packages/agent/scripts/sync-vendor.js",
+      " * Do not edit detection logic here; change the upstream file and re-sync.",
+      " */",
+      "",
+    ].join("\n"),
+  },
+  {
     from: path.join(repoRoot, "packages", "log-scrub", "secret-material.js"),
     to: path.join(packageRoot, "vendor", "log-scrub", "secret-material.js"),
     attribution: [

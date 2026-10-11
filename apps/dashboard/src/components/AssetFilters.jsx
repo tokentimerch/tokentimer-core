@@ -214,22 +214,34 @@ function ScrollableChipRow({ children, isMobileLayout }) {
   );
 }
 
-function AssetSearchInput({
+export function AssetSearchInput({
   value,
   onCommit,
+  // Bump when Clear filters (or similar) runs so an uncommitted draft is
+  // dropped even if the URL value was already empty.
+  resetSignal = 0,
   inputBg,
   inputBorder,
   placeholderColor,
   searchIconColor,
+  placeholder = 'Search assets, domains, owners...',
 }) {
   const externalValue = value || '';
   const [draft, setDraft] = useState(externalValue);
   const pendingRef = useRef(false);
   const onCommitRef = useRef(onCommit);
+  const resetSeenRef = useRef(resetSignal);
 
   useEffect(() => {
     onCommitRef.current = onCommit;
   }, [onCommit]);
+
+  useEffect(() => {
+    if (resetSeenRef.current === resetSignal) return;
+    resetSeenRef.current = resetSignal;
+    pendingRef.current = false;
+    setDraft(externalValue);
+  }, [resetSignal, externalValue]);
 
   useEffect(() => {
     if (pendingRef.current) {
@@ -261,7 +273,7 @@ function AssetSearchInput({
           pendingRef.current = true;
           setDraft(event.target.value);
         }}
-        placeholder='Search assets, domains, owners...'
+        placeholder={placeholder}
         size='sm'
         bg={inputBg}
         borderColor={inputBorder}

@@ -234,6 +234,8 @@ const corsOptions = {
     "X-Requested-With",
     "X-CSRF-Token",
     "Idempotency-Key",
+    "Cache-Control",
+    "Pragma",
   ],
   maxAge: 86400, // 24 hours
 };
@@ -809,6 +811,22 @@ function validateStartupConfig() {
     logger.warn(
       "In local http://localhost with NODE_ENV=production, browser does not persist/send the secure session cookie correctly for auth flow. You need HTTPS in front of API/dashboard (reverse proxy with TLS), otherwise secure cookies are expected to fail in local HTTP.",
     );
+  }
+
+  // Compose/env path: invalid retention falls back with a boot warning;
+  // invalid CERTOPS_AGENT_LOG_DAILY_BYTES fails closed (no silent unlimited).
+  // Helm rejects both at template time.
+  try {
+    const { warnInvalidAgentLogEnv } = require("./services/certops/agentJobLogs");
+    warnInvalidAgentLogEnv(process.env, {
+      warn: (message) => logger.warn(message),
+    });
+  } catch (err) {
+    if (err && err.code === "CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID") {
+      logger.error(err.message);
+      process.exit(1);
+    }
+    // Module load failures are handled elsewhere; do not block boot here.
   }
 
   // CertOps agent registration and job signing already fail closed per

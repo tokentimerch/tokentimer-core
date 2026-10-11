@@ -761,6 +761,115 @@ describe("deployCertificateAndKey", () => {
     assert.equal(fs.readFileSync(keyPath, "utf8"), MATCHING_KEY_PEM);
   });
 
+  it("retains a live custody key when installing to a different production keyPath", async () => {
+    const dir = makeTempDir();
+    const prodDir = path.join(dir, "prod");
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const certPath = path.join(prodDir, "server.crt");
+    const prodKeyPath = path.join(prodDir, "server.key");
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    fs.writeFileSync(custodyKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath: prodKeyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: custodyKeyPath,
+      checkPath: makeCheckPath(dir),
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
+    // Custody copy must remain for a later standalone deploy job.
+    assert.equal(fs.existsSync(custodyKeyPath), true);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), MATCHING_KEY_PEM);
+  });
+
+  it("promotes a rotation staging key into live custody then consumes staging", async () => {
+    const dir = makeTempDir();
+    const prodDir = path.join(dir, "prod");
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const certPath = path.join(prodDir, "server.crt");
+    const prodKeyPath = path.join(prodDir, "server.key");
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    const stagingKeyPath = path.join(
+      custodyDir,
+      ".cert-1.key.pem.staging-1-abcdef",
+    );
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagingKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath: prodKeyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagingKeyPath,
+      checkPath: makeCheckPath(dir),
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(fs.existsSync(stagingKeyPath), false);
+    assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), MATCHING_KEY_PEM);
+  });
+
+  it("keeps the rotation staging key when custody promotion fails", async () => {
+    const dir = makeTempDir();
+    const prodDir = path.join(dir, "prod");
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const certPath = path.join(prodDir, "server.crt");
+    const prodKeyPath = path.join(prodDir, "server.key");
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    const stagingKeyPath = path.join(
+      custodyDir,
+      ".cert-1.key.pem.staging-1-abcdef",
+    );
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagingKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const realRename = require("node:fs/promises").rename;
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath: prodKeyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagingKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: (from, to) => {
+          // Production key/cert renames succeed; fail only custody promotion.
+          if (String(to) === custodyKeyPath) {
+            return Promise.reject(new Error("injected custody rename failure"));
+          }
+          return realRename(from, to);
+        },
+      },
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(fs.existsSync(stagingKeyPath), true);
+    assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+  });
+
   it("rolls back BOTH key and cert when the key write fails after cert write", async () => {
     const dir = makeTempDir();
     const certPath = path.join(dir, "server.crt");

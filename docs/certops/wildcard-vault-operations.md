@@ -6,8 +6,9 @@ The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
 deploying to every consumer. The same certificate may be an ordinary, SAN, or
 wildcard certificate; sharing it is independent of its DNS names.
-This candidate adds migrations 69–71, after the existing AD CS migration 68; Cloud applies
-the same SQL as migrations 86–88 after main's inventory migration 85. Enterprise
+This candidate adds migrations 70–72, after the existing AD CS migration 68
+and agent-console migration 69. Cloud applies the distribution SQL as migrations
+86–88, retains AD CS vocabulary at 89, and adds agent-console storage at 90. Enterprise
 inherits Core through staged composition.
 
 Rejected/cancelled publications release their allocation only when the database

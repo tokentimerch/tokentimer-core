@@ -135,6 +135,8 @@ let cachedUserSid = null;
  */
 function currentUserSid({ spawn = spawnSync, useCache = true } = {}) {
   if (useCache && cachedUserSid !== null) return cachedUserSid;
+  // Absolute System32 whoami: Git Bash can shadow PATH with an MSYS whoami
+  // that rejects /user /fo csv. windowsSystem32Tool keeps POSIX bare names.
   const result = runTool(windowsSystem32Tool("whoami"), ["/user", "/fo", "csv", "/nh"], spawn);
   if (result.status !== 0) {
     throw buildError(

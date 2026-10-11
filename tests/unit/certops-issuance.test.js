@@ -199,6 +199,36 @@ describe("certops issuance request validation", () => {
     );
   });
 
+  it("accepts Windows drive and UNC certPath absolutes", () => {
+    // Windows agents deploy to host filesystem paths; rejecting C:\... here
+    // blocked every Windows filesystem issue job before dispatch.
+    const drive = normalizeIssuanceRequest(
+      validRequest({
+        payload: { certPath: "C:\\ProgramData\\tokentimer\\web-01.pem" },
+      }),
+    );
+    assert.equal(drive.certPath, "C:\\ProgramData\\tokentimer\\web-01.pem");
+    const forward = normalizeIssuanceRequest(
+      validRequest({
+        payload: { certPath: "D:/ssl/web-01.pem" },
+      }),
+    );
+    assert.equal(forward.certPath, "D:/ssl/web-01.pem");
+    const unc = normalizeIssuanceRequest(
+      validRequest({
+        payload: { certPath: "\\\\fileserver\\certs\\web-01.pem" },
+      }),
+    );
+    assert.equal(unc.certPath, "\\\\fileserver\\certs\\web-01.pem");
+    assert.throws(
+      () =>
+        normalizeIssuanceRequest(
+          validRequest({ payload: { certPath: "C:\\ssl\\" } }),
+        ),
+      /must be a file path, not a directory/,
+    );
+  });
+
   it("rejects a target reference that is not a DNS name", () => {
     assert.throws(
       () =>

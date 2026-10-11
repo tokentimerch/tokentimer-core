@@ -21,6 +21,10 @@ const {
 } = require("../middleware/require-workspace-certops-active");
 const { authorize, can, hasAtLeastRole } = require("../services/rbac");
 const {
+  readAgentFleetLog,
+  readAgentJobLog,
+} = require("../services/certops/agentJobLogs");
+const {
   CERTOPS_LIST_SORT_INVALID,
 } = require("../services/certops/listSorting");
 const {
@@ -667,9 +671,11 @@ function handleCertOpsError(res, err) {
     CERTOPS_EVIDENCE_INVALID,
     CERTOPS_EVIDENCE_TYPE_INVALID,
   ]);
+  // err.message already names the field and reason; surface it so operators
+  // see what to fix instead of a generic "request is invalid".
   if (certOpsJobBadRequestCodes.has(err?.code)) {
     return res.status(400).json({
-      error: "CertOps job request is invalid",
+      error: err.message || "CertOps job request is invalid",
       code: err.code,
     });
   }
@@ -950,6 +956,8 @@ function jobListOptionsFromRequest(req) {
     subjectId: req.query.subjectId,
     operation: req.query.operation,
     source: req.query.source,
+    q: req.query.q,
+    createdSince: req.query.createdSince,
   };
 }
 
@@ -2807,6 +2815,86 @@ router.get(
   },
 );
 
+// Viewers get stream status only. Line text needs certops.agent_logs.read.
+function createAgentJobLogReadHandler({ agentJobLogReader = readAgentJobLog } = {}) {
+  return async function agentJobLogReadHandler(req, res) {
+    const jobId = jobIdFromParams(req, res);
+    if (!jobId) return null;
+    const includeText = can(req.authz?.workspaceRole, "certops.agent_logs.read");
+    try {
+      const result = await agentJobLogReader({
+        workspaceId: req.workspace.id,
+        jobId,
+        cursor: req.query.cursor,
+        limit: req.query.limit,
+        includeText,
+      });
+      return res.json({
+        ...result,
+        items: includeText ? result.items.map((item) => redactClaimIdForNonAdmins(req, item)) : [],
+        streams: (result.streams || []).map((stream) => redactClaimIdForNonAdmins(req, stream)),
+        nextCursor: includeText ? result.nextCursor : null,
+        hasMore: includeText ? Boolean(result.hasMore) : false,
+        linesVisible: includeText,
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps agent log read failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        jobId,
+      });
+      return res.status(500).json({
+        error: "Failed to read agent log",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  };
+}
+
+router.get(
+  "/api/v1/workspaces/:id/certops/jobs/:jobId/agent-log",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  createAgentJobLogReadHandler(),
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/agents/:agentId/agent-log",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  async (req, res) => {
+    const agentId = agentIdFromParams(req, res);
+    if (!agentId) return null;
+    try {
+      const result = await readAgentFleetLog({
+        workspaceId: req.workspace.id,
+        agentId,
+        limit: req.query.limit,
+      });
+      return res.json({
+        ...result,
+        items: result.items.map((item) => redactClaimIdForNonAdmins(req, item)),
+      });
+    } catch (err) {
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps agent fleet log read failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        agentId,
+      });
+      return res.status(500).json({
+        error: "Failed to read agent log",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 router.get(
   "/api/v1/workspaces/:id/certops/jobs/:jobId/evidence",
   getApiLimiter(),
@@ -3379,6 +3467,7 @@ router.get(
         status: req.query.status, source: req.query.source,
         excludeRetired: req.query.excludeRetired === "true",
         unmanaged: req.query.unmanaged,
+        q: req.query.q,
         sort: req.query.sort, direction: req.query.direction,
       });
       const enriched = await withRenewalState({
@@ -4171,6 +4260,7 @@ router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollout
 module.exports = router;
 module.exports._test = {
   createManualCertificateJobHandler,
+  createAgentJobLogReadHandler,
   bulkRenewCertificatesHandler,
   bulkRenewItemIdempotencyKey,
   createControllerProvisionIntentHandler,

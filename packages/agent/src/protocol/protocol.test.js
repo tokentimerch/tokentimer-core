@@ -14,6 +14,7 @@ const {
   createCaAwareFetch,
   createProtocolClient,
   parseServerUrl,
+  readClaimLogStream,
 } = require("./index.js");
 
 const CREDENTIAL = "ttagent_agent-1_0123456789abcdef";
@@ -254,6 +255,45 @@ test("claim: missing jobs field in response returns empty array", async () => {
 
   const jobs = await client.claim({ maxJobs: 1 });
   assert.deepEqual(jobs, []);
+});
+
+test("claim: a server without logStreams leaves every job without a log offer", async () => {
+  stubFetch([{ status: 200, json: { jobs: [{ jobId: "job-1" }] } }]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  const [job] = await client.claim({ maxJobs: 1 });
+  assert.deepEqual(job, { jobId: "job-1" });
+  assert.equal(readClaimLogStream(job), null);
+});
+
+test("claim: log offers pair with jobs by position and never enter the job object", async () => {
+  stubFetch([
+    {
+      status: 200,
+      json: {
+        jobs: [{ jobId: "job-1" }, { jobId: "job-2" }],
+        logStreams: [{ enabled: true, maxBatchBytes: 32768 }, { enabled: false }],
+      },
+    },
+  ]);
+
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+
+  const jobs = await client.claim({ maxJobs: 2 });
+  assert.deepEqual(jobs, [{ jobId: "job-1" }, { jobId: "job-2" }]);
+  assert.deepEqual(readClaimLogStream(jobs[0]), { enabled: true, maxBatchBytes: 32768 });
+  assert.deepEqual(readClaimLogStream(jobs[1]), { enabled: false, maxBatchBytes: 64 * 1024 });
 });
 
 test("reportResult: accepts dry_run_complete as a valid result status", async () => {
@@ -1356,4 +1396,58 @@ test("heartbeat: validates signingKeyRotation and nulls malformed notices", asyn
 
   const absent = await client.heartbeat({ agentVersion: "0.1.0" });
   assert.equal(absent.signingKeyRotation, null);
+});
+
+test("log batches omit sequence and do not block heartbeats", async () => {
+  let releaseLog;
+  const logGate = new Promise((resolve) => {
+    releaseLog = resolve;
+  });
+  const calls = [];
+  global.fetch = (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith("/logs")) return logGate;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({}),
+    });
+  };
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  const pendingLog = client.postJobLogs({
+    jobId: "job-1",
+    body: {
+      jobId: "job-1",
+      claimId: "claim-1",
+      final: true,
+      lines: [],
+      droppedBefore: 0,
+    },
+  });
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  assert.equal(calls[0].body.messageType, "log");
+  assert.equal("sequence" in calls[0].body, false);
+  assert.equal(calls[1].body.messageType, "heartbeat");
+  assert.equal(calls[1].body.sequence, 1);
+  releaseLog({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({
+      ackThroughSeq: 0,
+      newlyStored: 0,
+      duplicateCount: 0,
+      serverDroppedCount: 0,
+      streamDisabled: false,
+    }),
+  });
+  const ack = await pendingLog;
+  assert.equal(ack.status, 200);
 });

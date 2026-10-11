@@ -462,9 +462,9 @@ describe('ExecutorJobsPanel approvals', () => {
     expect(screen.getByRole('button', { name: 'Reject' })).not.toBeDisabled();
   });
 
-  it('labels a queued job as not executable while the workspace is paused', () => {
+  it('labels an approved job as not executable while the workspace is paused', () => {
     useCertOpsJobsMock.mockReturnValue(
-      jobsState({ jobs: [job({ status: 'queued' })] })
+      jobsState({ jobs: [job({ status: 'approved' })] })
     );
 
     renderPanel({ certOpsPaused: true });
@@ -560,7 +560,8 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Approved')).toBeInTheDocument();
+    // Status filter also has an "Approved" option; the row chip is the extra hit.
+    expect(screen.getAllByText('Approved').length).toBeGreaterThan(1);
   });
 
   it('does not show the "Approved" indicator on a row with no approval attribution', () => {
@@ -568,7 +569,8 @@ describe('ExecutorJobsPanel approvals', () => {
 
     renderPanel();
 
-    expect(screen.queryByText('Approved')).not.toBeInTheDocument();
+    // Only the status filter option should mention Approved.
+    expect(screen.getAllByText('Approved')).toHaveLength(1);
   });
 });
 
@@ -752,6 +754,39 @@ describe('ExecutorJobsPanel list states', () => {
     ).toBeInTheDocument();
   });
 
+  it('forwards search and createdSince filters to the jobs query', () => {
+    useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()] }));
+
+    renderPanel({}, ['/?q=web-01&createdSince=7d&operation=renew']);
+
+    expect(useCertOpsJobsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        q: 'web-01',
+        createdSince: '7d',
+        operation: 'renew',
+      })
+    );
+    expect(screen.getByText(/Search: web-01/)).toBeInTheDocument();
+  });
+
+  it('distinguishes filtered empty results from an empty workspace', () => {
+    useCertOpsJobsMock.mockReturnValue(
+      jobsState({
+        jobs: [],
+        pagination: { limit: 20, offset: 0, total: 0 },
+      })
+    );
+
+    renderPanel({}, ['/?status=failed']);
+
+    expect(
+      screen.getByText('No jobs match these filters')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('No executor-reported certificate jobs yet')
+    ).not.toBeInTheDocument();
+  });
+
   it('offers a way back instead of claiming the list is empty when the URL page is past the end', () => {
     useCertOpsJobsMock.mockReturnValue(
       jobsState({
@@ -819,7 +854,12 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Needs reconciliation')).toBeInTheDocument();
+    // Status filter option and row badge share the same label.
+    expect(
+      screen
+        .getAllByText('Needs reconciliation')
+        .some((node) => node.tagName === 'SPAN')
+    ).toBe(true);
   });
 
   it('shows the advisory line for a job needing reconciliation with no errorMessage', () => {

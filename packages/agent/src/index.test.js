@@ -63,7 +63,12 @@ const {
 } = require("./job-journal");
 const { listOutboxEntries, drainOutbox } = require("./outbox");
 const { readLedgerRow, createLedgerRow } = require("./windows-retention");
-const { recordIssuedContainer, markIssuedContainerAccepted, acquireStoreLock } = require("./windows-cert-store");
+const {
+  recordIssuedContainer,
+  markIssuedContainerAccepted,
+  acquireStoreLock,
+  execWithoutShell,
+} = require("./windows-cert-store");
 const { loadPolicyConfig, createPolicyEngine, REJECTION_REASONS } = require("./policy");
 const {
   ensureConfigDir,
@@ -753,6 +758,7 @@ describe("registerIfNeeded", () => {
     // pass the manifest gate and get declared.
     const expectedDeclaredCapabilities = [
       "evidence-claim-binding-v1",
+      "job-log-stream-v1",
       ...(process.platform === "win32"
         ? ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"]
         : AGENT_TRUST_STORE_PREREQUISITES.candidate
@@ -3122,6 +3128,15 @@ describe("resolveDeclaredCapabilities advertises agent-id-binding-v1 from the ef
       assert.ok(capabilities.includes("evidence-claim-binding-v1"));
     }
   });
+
+  it("omits job-log-stream-v1 when TT_AGENT_LOG_STREAM=off", () => {
+    const on = resolveDeclaredCapabilities(true, {});
+    const off = resolveDeclaredCapabilities(true, { TT_AGENT_LOG_STREAM: "off" });
+    assert.ok(on.includes("job-log-stream-v1"));
+    assert.ok(!off.includes("job-log-stream-v1"));
+    assert.ok(off.includes("evidence-claim-binding-v1"));
+    assert.ok(off.includes(AGENT_ID_BINDING_CAPABILITY));
+  });
 });
 
 describe("renewal profile fidelity helpers", () => {
@@ -4764,6 +4779,81 @@ describe("windows-iis renew job (os-store-managed)", () => {
         targetLock.release();
       }
     });
+
+    it("two-store run drains an aborted child before releasing the surviving store lock", async () => {
+      const { execFile } = require("node:child_process");
+      const dir = stateDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const locks = acquireWindowsStoreLocks(dir, "WebHosting");
+      assert.equal(locks._locksForTests.length, 2);
+
+      /** @type {number|null} */
+      let childPid = null;
+      let successorSawLiveOnWebHosting = false;
+      let successorAcquiredWebHosting = false;
+
+      const work = locks.run(async (signal) =>
+        execWithoutShell(
+          (file, args, opts, cb) => {
+            const child = execFile(file, args, opts, cb);
+            childPid = child.pid ?? null;
+            return child;
+          },
+          [process.execPath, "-e", "setTimeout(() => {}, 60000)"],
+          15000,
+          signal,
+        ),
+      );
+
+      for (let i = 0; i < 50 && childPid == null; i += 1) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.ok(childPid, "child pid should be assigned before lock loss");
+
+      // Lose My while the child is active; WebHosting must stay held until drain.
+      await locks._locksForTests[0]._workerForTests.terminate();
+
+      const successorProbe = (async () => {
+        for (let i = 0; i < 400; i += 1) {
+          try {
+            const next = acquireStoreLock(dir, "WebHosting");
+            successorAcquiredWebHosting = true;
+            try {
+              process.kill(childPid, 0);
+              successorSawLiveOnWebHosting = true;
+            } catch {
+              // predecessor already gone — expected ordering
+            }
+            next.release();
+            return;
+          } catch {
+            await new Promise((r) => setTimeout(r, 10));
+          }
+        }
+      })();
+
+      await assert.rejects(work, (err) => {
+        assert.match(String(err && err.code), /LOCK_LOST|STORE_LOCK_LOST/);
+        return true;
+      });
+      await successorProbe;
+      try {
+        locks.release();
+      } catch {
+        // already released on loss path
+      }
+
+      assert.equal(
+        successorSawLiveOnWebHosting,
+        false,
+        "WebHosting must not be acquirable while the predecessor child is still alive",
+      );
+      assert.equal(
+        successorAcquiredWebHosting,
+        true,
+        "WebHosting must become acquirable after the composite run drains and releases",
+      );
+    });
   });
 });
 
@@ -5114,6 +5204,74 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     // Still unresolved: freeing the container never resolves the
     // job-attempt-outcome question this journal entry also tracks.
     assert.equal(hasUnresolvedJournalForJob(workDir, "job-1"), true);
+  });
+
+  it("never frees an AD CS enrollment container protected by an open enrollment journal", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    const { writeKeygenIntent } = require("./issuers/adcs-enrollment-journal");
+    await writeKeygenIntent({
+      stateDir: workDir,
+      enrollmentId,
+      containerName,
+      attempt: 1,
+      snapshotSha256: "a".repeat(64),
+      jobId: "job-1",
+    });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /open AD CS enrollment journal/);
+  });
+
+  it("defers enrollment-shaped deletes when the AD CS journal scan fails closed", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    // Unexpected entry makes listProtectedEnrollmentContainers return ok:false.
+    fs.mkdirSync(path.join(workDir, "adcs-enrollments"), { recursive: true });
+    fs.writeFileSync(path.join(workDir, "adcs-enrollments", "not-a-uuid"), "x");
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(result.skipped[0].reason, /journal scan failed/);
+  });
+
+  it("defers enrollment-shaped deletes when the enrollment directory exists without a readable journal", async () => {
+    workDir = makeTempConfigDir();
+    const enrollmentId = "cccccccc-dddd-eeee-ffff-000000000000";
+    const containerName = `tokentimer-enr-${enrollmentId}`;
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    // Empty enrollment directory: initial protected-set scan fails closed, and
+    // the locked recheck must also refuse deletion.
+    fs.mkdirSync(path.join(workDir, "adcs-enrollments", enrollmentId), {
+      recursive: true,
+    });
+
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      execFileImpl: makeReconcileExecStub(),
+    });
+
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped.length, 1);
+    assert.match(
+      result.skipped[0].reason,
+      /journal scan failed|without readable journal|deferred/,
+    );
   });
 
   it("never frees a container that is now legitimately enrolled to a real certificate", async () => {

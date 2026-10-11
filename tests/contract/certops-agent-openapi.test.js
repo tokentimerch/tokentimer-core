@@ -48,6 +48,7 @@ const AGENT_ROUTES = {
   "/api/v1/certops/agent/jobs/claim": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/{jobId}/lease": "agentCredentialAuth",
   "/api/v1/certops/agent/jobs/results": "agentCredentialAuth",
+  "/api/v1/certops/agent/jobs/{jobId}/logs": "agentCredentialAuth",
 };
 
 /**
@@ -165,6 +166,23 @@ describe("CertOps agent routes OpenAPI contract", () => {
         ],
         statuses: ['"400"', '"401"', '"404"', '"409"', '"410"', '"422"', '"429"'],
       },
+      "/api/v1/certops/agent/jobs/{jobId}/logs": {
+        success: '"200"',
+        codes: [
+          "CERTOPS_AGENT_LOG_CLAIM_INVALID",
+          "CERTOPS_AGENT_LOG_PRIVATE_MATERIAL",
+        ],
+        statuses: [
+          '"400"',
+          '"401"',
+          '"404"',
+          '"409"',
+          '"410"',
+          '"413"',
+          '"422"',
+          '"429"',
+        ],
+      },
     };
 
     for (const [routePath, expected] of Object.entries(expectations)) {
@@ -231,7 +249,7 @@ describe("CertOps agent routes OpenAPI contract", () => {
 
 describe("CertOps route-compat contract (agent runtime)", () => {
   it("carries the agent-runtime version and status", () => {
-    assert.strictEqual(routeCompat.version, "0.17.0");
+    assert.strictEqual(routeCompat.version, "0.18.0");
     assert.strictEqual(routeCompat.status, "agent-runtime-stable");
   });
 
@@ -294,6 +312,7 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
       "claim",
       "result",
       "evidence",
+      "log",
     ]);
     assert.ok(
       envelopeBlock.includes(`enum: [${schemaEnum.join(", ")}]`),
@@ -307,6 +326,7 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
       CertOpsAgentHeartbeatRequest: "enum: [heartbeat]",
       CertOpsAgentClaimRequest: "enum: [claim]",
       CertOpsAgentResultRequest: "enum: [result, evidence]",
+      CertOpsAgentLogRequest: "enum: [log]",
     };
     for (const [schemaName, pin] of Object.entries(pins)) {
       const block = extractSchemaBlock(openApiYaml, schemaName);
@@ -374,6 +394,61 @@ describe("OpenAPI agent request bodies align with agent-protocol.schema.json", (
     assert.ok(
       claimBlock.includes(`enum: [${actionsEnum.join(", ")}]`),
       "claim supportedActions enum must match agent-protocol.schema.json",
+    );
+
+    const logRequestBlock = extractSchemaBlock(
+      openApiYaml,
+      "CertOpsAgentLogRequest",
+    );
+    assert.ok(
+      logRequestBlock.includes("CertOpsAgentLogBody"),
+      "log request must compose CertOpsAgentLogBody",
+    );
+
+    const logBodyBlock = extractSchemaBlock(openApiYaml, "CertOpsAgentLogBody");
+    for (const field of defs.logBody.required) {
+      assert.ok(
+        logBodyBlock.includes(field),
+        `log body must include required field ${field}`,
+      );
+    }
+    assert.ok(
+      logBodyBlock.includes("additionalProperties: false"),
+      "log body must set additionalProperties false",
+    );
+    assert.ok(
+      logBodyBlock.includes("maxItems: 200"),
+      "log body lines must cap maxItems at 200",
+    );
+    assert.ok(
+      logBodyBlock.includes("minItems: 1"),
+      "log body must require minItems 1 on lines when final is false",
+    );
+    assert.ok(
+      logBodyBlock.includes("CertOpsAgentLogLine"),
+      "log body lines items must reference CertOpsAgentLogLine",
+    );
+
+    const logLineBlock = extractSchemaBlock(openApiYaml, "CertOpsAgentLogLine");
+    for (const field of defs.logLine.required) {
+      assert.ok(
+        logLineBlock.includes(field),
+        `log line must include required field ${field}`,
+      );
+    }
+    assert.ok(
+      logLineBlock.includes("additionalProperties: false"),
+      "log line must set additionalProperties false",
+    );
+    const levelEnum = defs.logLine.properties.level.enum;
+    assert.ok(
+      logLineBlock.includes(`enum: [${levelEnum.join(", ")}]`),
+      "log line level enum must match agent-protocol.schema.json",
+    );
+    const stepEnum = defs.logLine.properties.step.enum;
+    assert.ok(
+      logLineBlock.includes(`enum: [${stepEnum.join(", ")}]`),
+      "log line step enum must match agent-protocol.schema.json",
     );
   });
 });

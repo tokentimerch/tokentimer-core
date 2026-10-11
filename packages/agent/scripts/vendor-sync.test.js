@@ -30,6 +30,18 @@ describe("vendor sync", () => {
     assert.equal(stripVendoredAttribution(vendored), upstream);
   });
 
+  it("keeps agent-log-text identical to @tokentimer/log-scrub (aside from attribution)", () => {
+    const upstream = fs.readFileSync(
+      path.join(repoRoot, "packages", "log-scrub", "agent-log-text.js"),
+      "utf8",
+    );
+    const vendored = fs.readFileSync(
+      path.join(packageRoot, "vendor", "log-scrub", "agent-log-text.js"),
+      "utf8",
+    );
+    assert.equal(stripVendoredAttribution(vendored), upstream);
+  });
+
   it("keeps canonical-json identical to @tokentimer/contracts (aside from attribution)", () => {
     const upstream = fs.readFileSync(
       path.join(repoRoot, "packages", "contracts", "certops", "canonical-json.cjs"),

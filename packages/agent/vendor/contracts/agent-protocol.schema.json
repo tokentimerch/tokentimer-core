@@ -31,9 +31,10 @@
         "heartbeat",
         "claim",
         "result",
-        "evidence"
+        "evidence",
+        "log"
       ],
-      "description": "register/heartbeat/claim/result/evidence. See definitions.*Body below for the per-messageType payload."
+      "description": "register/heartbeat/claim/result/evidence/log. log is the execution-console telemetry channel and does not carry the control-channel sequence. See definitions.*Body below for the per-messageType payload."
     },
     "agentId": {
       "type": "string",
@@ -150,6 +151,22 @@
         "properties": {
           "body": {
             "$ref": "#/definitions/evidenceBody"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "messageType": {
+            "const": "log"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/definitions/logBody"
           }
         }
       }
@@ -415,7 +432,15 @@
         },
         "status": {
           "type": "string",
-          "enum": ["succeeded", "failed", "rejected", "blocked", "dry_run_complete", "orphaned_unknown_effect", "awaiting_issuer"],
+          "enum": [
+            "succeeded",
+            "failed",
+            "rejected",
+            "blocked",
+            "dry_run_complete",
+            "orphaned_unknown_effect",
+            "awaiting_issuer"
+          ],
           "description": "awaiting_issuer ends this job while its enrollment waits on the issuer, for example for CA-manager approval; a later continue-enrollment job picks it up (ADR-0014 decision 2). It is valid only with an enrollmentResult."
         },
         "rejectionReason": {
@@ -495,23 +520,41 @@
           "description": "Vetted public leaf/chain only; accepted solely with a claim-bound publication receipt. Never persisted in generic job/outbox JSON."
         },
         "enrollmentResult": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "Typed enrollment outcome for a job that carries an enrollment, absent (or null) otherwise. Shape-only here for the same reason as trustResult: the authoritative contract is enrollment-result-contract.schema.json, validated by the control plane at result ingestion."
         },
         "preflightResult": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "Typed result of an adcs-preflight job, absent (or null) otherwise. Shape-only here; the authoritative contract is adcs-preflight-result-contract.schema.json."
         }
       },
       "allOf": [
         {
           "if": {
-            "required": ["status"],
-            "properties": { "status": { "const": "awaiting_issuer" } }
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "awaiting_issuer"
+              }
+            }
           },
           "then": {
-            "required": ["enrollmentResult"],
-            "properties": { "enrollmentResult": { "type": "object" } }
+            "required": [
+              "enrollmentResult"
+            ],
+            "properties": {
+              "enrollmentResult": {
+                "type": "object"
+              }
+            }
           }
         }
       ]
@@ -925,6 +968,142 @@
           ]
         }
       }
+    },
+    "logLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "ts",
+        "level",
+        "step",
+        "message"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ts": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "step": {
+          "type": "string",
+          "enum": [
+            "claim",
+            "acme",
+            "dns",
+            "deploy",
+            "reload",
+            "verify",
+            "discovery",
+            "trust",
+            "other"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "fields": {
+          "type": "object",
+          "maxProperties": 8,
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "logBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "claimId",
+        "final"
+      ],
+      "description": "Execution-console batch for one claim. Lines are contiguous from firstSeq. An empty lines array is valid only when final is true. This message omits the control-channel sequence.",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "claimId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "firstSeq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/definitions/logLine"
+          }
+        },
+        "droppedBefore": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "final": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "final": {
+                "const": false
+              }
+            },
+            "required": [
+              "final"
+            ]
+          },
+          "then": {
+            "required": [
+              "firstSeq",
+              "lines"
+            ],
+            "properties": {
+              "lines": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

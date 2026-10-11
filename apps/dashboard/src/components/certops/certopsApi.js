@@ -28,6 +28,7 @@ export async function listCertificates(
     excludeRetired,
     grouped = false,
     unmanaged,
+    q,
     sort,
     direction,
     signal,
@@ -38,6 +39,7 @@ export async function listCertificates(
   if (source) params.source = source;
   if (excludeRetired !== undefined) params.excludeRetired = excludeRetired;
   if (unmanaged !== undefined) params.unmanaged = unmanaged;
+  if (q) params.q = q;
   if (sort) params.sort = sort;
   if (direction) params.direction = direction;
   const res = await apiClient.get(

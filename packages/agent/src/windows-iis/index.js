@@ -356,24 +356,114 @@ function generateAppId() {
  * @param {Function} execFileImpl
  * @param {string[]} argv
  * @param {number} timeoutMs
- * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown}>}
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null}>}
  */
-function execWithoutShell(execFileImpl, argv, timeoutMs) {
+function abortExecError(signal) {
+  const cause =
+    signal && signal.reason instanceof Error
+      ? signal.reason
+      : signal && signal.reason != null
+        ? new Error(String(signal.reason))
+        : undefined;
+  const abortErr = new Error(cause ? cause.message : "aborted");
+  abortErr.code = "ABORT_ERR";
+  if (cause) abortErr.cause = cause;
+  return abortErr;
+}
+
+/** Bound wait after kill() before resolving abort if exit never arrives. */
+const EXEC_ABORT_DRAIN_MS = 5_000;
+
+function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
   const [file, ...args] = argv;
   return new Promise((resolve) => {
-    execFileImpl(
+    if (signal && signal.aborted) {
+      resolve({
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        execError: abortExecError(signal),
+      });
+      return;
+    }
+
+    let settled = false;
+    let aborted = false;
+    /** @type {(() => void)|null} */
+    let onAbort = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let drainTimer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (drainTimer != null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      if (aborted) {
+        resolve({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          execError: abortExecError(signal),
+        });
+        return;
+      }
+      resolve(result);
+    };
+
+    const child = execFileImpl(
       file,
       args,
       { timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
           const exitCode = typeof error.code === "number" ? error.code : null;
-          resolve({ exitCode, stdout, stderr });
+          finish({ exitCode, stdout, stderr, execError: error });
           return;
         }
-        resolve({ exitCode: 0, stdout, stderr });
+        finish({ exitCode: 0, stdout, stderr, execError: null });
       },
     );
+
+    if (signal && child && typeof child.kill === "function") {
+      onAbort = () => {
+        aborted = true;
+        try {
+          child.kill();
+        } catch {
+          // best-effort
+        }
+        // Wait for exit before resolving so bind/deploy holders do not
+        // release while netsh / PowerShell may still be mutating IIS.
+        if (typeof child.once === "function") {
+          child.once("exit", () => finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          }));
+        }
+        const drainMs =
+          typeof timeoutMs === "number" && timeoutMs > 0
+            ? Math.min(timeoutMs, EXEC_ABORT_DRAIN_MS)
+            : EXEC_ABORT_DRAIN_MS;
+        drainTimer = setTimeout(() => {
+          finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          });
+        }, drainMs);
+        if (typeof drainTimer.unref === "function") drainTimer.unref();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
@@ -427,10 +517,16 @@ async function queryCurrentBinding({
   execFileImpl = childProcess.execFile,
   powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
-  const listed = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs });
+  const listed = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs, signal });
   if (!listed.ok) {
-    return { ok: false, exitCode: listed.exitCode, stderrExcerpt: listed.stderrExcerpt };
+    return {
+      ok: false,
+      exitCode: listed.exitCode,
+      ...(listed.reason ? { reason: listed.reason } : {}),
+      stderrExcerpt: listed.stderrExcerpt,
+    };
   }
 
   const keyedBy = binding.sniHost ? "hostnameport" : "ipport";
@@ -727,12 +823,17 @@ const CLASSIC_NETSH_PARAMS = new Set([
  * @param {number} input.timeoutMs
  * @returns {Promise<string[]>}
  */
-async function findUnsupportedNetshParams({ args, execFileImpl, netshPath, timeoutMs }) {
+async function findUnsupportedNetshParams({ args, execFileImpl, netshPath, timeoutMs, signal }) {
   const names = args.map((arg) => arg.slice(0, arg.indexOf("="))).filter((name) => !CLASSIC_NETSH_PARAMS.has(name));
   if (names.length === 0) return [];
   const argv = [netshPath, "http", "add", "sslcert", "help"];
   assertSafeArgvElements("argv", argv);
-  const { stdout } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+  const { stdout, execError } = await execWithoutShell(execFileImpl, argv, timeoutMs, signal);
+  if (execError && execError.code === "ABORT_ERR") {
+    const err = new Error("netsh help probe aborted");
+    err.code = "ABORT_ERR";
+    throw err;
+  }
   const helpText = typeof stdout === "string" ? stdout : String(stdout ?? "");
   const listed = new Set(Array.from(helpText.matchAll(/\[([a-z0-9]+)=/g), (match) => match[1]));
   return names.filter((name) => !listed.has(name));
@@ -782,6 +883,7 @@ async function bindCertificate({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   delayImpl = defaultDelayImpl,
   addRetryDelaysMs = BIND_ADD_RETRY_DELAYS_MS,
+  signal = undefined,
 } = {}) {
   const normalizedThumbprint = normalizeThumbprint(thumbprint);
   if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store)) {
@@ -796,11 +898,20 @@ async function bindCertificate({
   // never inspected. Deleting unconditionally rather than only when
   // queryCurrentBinding found something avoids a second, redundant query
   // call and a TOCTOU window between that query and this delete.
-  await execWithoutShell(
+  const deleteResult = await execWithoutShell(
     execFileImpl,
     [netshPath, "http", "delete", "sslcert", selector],
     timeoutMs,
+    signal,
   );
+  if (deleteResult.execError && deleteResult.execError.code === "ABORT_ERR") {
+    return {
+      ok: false,
+      exitCode: null,
+      reason: "aborted",
+      stderrExcerpt: "netsh http delete sslcert aborted",
+    };
+  }
 
   // See BIND_ADD_RETRY_DELAYS_MS's doc comment: a just-accepted CNG
   // certificate can transiently fail netsh's own key-association lookup
@@ -828,7 +939,20 @@ async function bindCertificate({
     ];
     assertSafeArgvElements("argv", addArgs);
 
-    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, addArgs, timeoutMs);
+    const { exitCode, stdout, stderr, execError } = await execWithoutShell(
+      execFileImpl,
+      addArgs,
+      timeoutMs,
+      signal,
+    );
+    if (execError && execError.code === "ABORT_ERR") {
+      return {
+        ok: false,
+        exitCode: null,
+        reason: "aborted",
+        stderrExcerpt: "netsh http add sslcert aborted",
+      };
+    }
     if (exitCode === 0) {
       return { ok: true };
     }
@@ -882,6 +1006,7 @@ async function attemptRollback({
   powershellPath,
   timeoutMs,
   delayImpl,
+  signal = undefined,
 }) {
   const rollbackResult = await bindCertificate({
     binding,
@@ -891,13 +1016,17 @@ async function attemptRollback({
     execFileImpl,
     netshPath,
     timeoutMs,
+    signal,
     ...(delayImpl !== undefined ? { delayImpl } : {}),
   });
 
   if (!rollbackResult.ok) {
     return {
       rolledBack: false,
-      rollbackDetail: `rollback bind also failed: ${rollbackResult.stderrExcerpt}`,
+      rollbackDetail:
+        rollbackResult.reason === "aborted"
+          ? "rollback bind aborted: store lock lost"
+          : `rollback bind also failed: ${rollbackResult.stderrExcerpt}`,
     };
   }
 
@@ -906,6 +1035,7 @@ async function attemptRollback({
     execFileImpl,
     powershellPath,
     timeoutMs,
+    signal,
   });
   const rollbackVerifyDetail =
     rollbackVerifyResult.ok && rollbackVerifyResult.thumbprint === outgoingThumbprint
@@ -962,10 +1092,16 @@ async function attemptRollback({
  * @param {number} input.timeoutMs
  * @returns {Promise<string|undefined>}
  */
-async function checkSniPrecedenceConflict({ binding, execFileImpl, powershellPath, timeoutMs }) {
+async function checkSniPrecedenceConflict({
+  binding,
+  execFileImpl,
+  powershellPath,
+  timeoutMs,
+  signal = undefined,
+}) {
   let listed;
   try {
-    listed = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs });
+    listed = await listHttpSysBindings({ execFileImpl, powershellPath, timeoutMs, signal });
   } catch {
     return undefined;
   }
@@ -1136,6 +1272,7 @@ async function deployIisBinding({
   verifyTimeoutMs = DEFAULT_VERIFY_TIMEOUT_MS,
   connectImpl,
   delayImpl = defaultDelayImpl,
+  signal = undefined,
 } = {}) {
   assertValidBinding(binding);
   if (!isNonEmptyString(certificatePem)) {
@@ -1150,11 +1287,12 @@ async function deployIisBinding({
     execFileImpl,
     powershellPath,
     timeoutMs,
+    signal,
   });
   if (!currentBindingResult.ok) {
     return guardReturnValue({
       ok: false,
-      code: "QUERY_FAILED",
+      code: currentBindingResult.reason === "aborted" ? "ABORTED" : "QUERY_FAILED",
       detail: `http.sys binding query failed: ${currentBindingResult.stderrExcerpt}`,
       outgoingThumbprint: null,
       rolledBack: false,
@@ -1166,14 +1304,30 @@ async function deployIisBinding({
   const alreadyBound = outgoingThumbprint === newThumbprint;
 
   if (!alreadyBound) {
-    const unsupported = [
-      ...(currentBindingResult.unsupportedSettings || []),
-      ...(await findUnsupportedNetshParams({
+    let unsupportedNames;
+    try {
+      unsupportedNames = await findUnsupportedNetshParams({
         args: formatPreservedParamArgs(outgoingParameters),
         execFileImpl,
         netshPath,
         timeoutMs,
-      })).map((name) => `${name} (not supported by this host's netsh)`),
+        signal,
+      });
+    } catch (err) {
+      if (err && err.code === "ABORT_ERR") {
+        return guardReturnValue({
+          ok: false,
+          code: "ABORTED",
+          detail: "netsh capability probe aborted: store lock lost",
+          outgoingThumbprint,
+          rolledBack: false,
+        });
+      }
+      throw err;
+    }
+    const unsupported = [
+      ...(currentBindingResult.unsupportedSettings || []),
+      ...unsupportedNames.map((name) => `${name} (not supported by this host's netsh)`),
     ];
     if (unsupported.length > 0) {
       return guardReturnValue({
@@ -1196,8 +1350,18 @@ async function deployIisBinding({
       netshPath,
       timeoutMs,
       delayImpl,
+      signal,
     });
     if (!bindResult.ok) {
+      if (bindResult.reason === "aborted") {
+        return guardReturnValue({
+          ok: false,
+          code: "ABORTED",
+          detail: "netsh http bind aborted: store lock lost",
+          outgoingThumbprint,
+          rolledBack: false,
+        });
+      }
       // The preceding delete (inside bindCertificate) already ran
       // unconditionally, so a failed add can leave this ipport genuinely
       // unbound, not merely "still on the outgoing cert" -- attempt to
@@ -1214,6 +1378,7 @@ async function deployIisBinding({
               powershellPath,
               timeoutMs,
               delayImpl,
+              signal,
             });
       return guardReturnValue({
         ok: false,
@@ -1237,7 +1402,7 @@ async function deployIisBinding({
 
   if (verifyResult.verified) {
     const precedenceWarning = binding.sniHost
-      ? await checkSniPrecedenceConflict({ binding, execFileImpl, powershellPath, timeoutMs })
+      ? await checkSniPrecedenceConflict({ binding, execFileImpl, powershellPath, timeoutMs, signal })
       : undefined;
     return guardReturnValue({
       ok: true,
@@ -1276,6 +1441,7 @@ async function deployIisBinding({
     powershellPath,
     timeoutMs,
     delayImpl,
+    signal,
   });
   return guardReturnValue({
     ok: false,
