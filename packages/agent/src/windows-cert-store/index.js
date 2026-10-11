@@ -47,6 +47,7 @@
 const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { Worker } = require("node:worker_threads");
 
@@ -1063,18 +1064,45 @@ const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
 
 /**
- * Maps a filesystem lock key to the OS object that actually provides
- * mutual exclusion: a Windows named pipe, or a unix-domain socket path
- * beside the marker file on POSIX.
+ * Maps a filesystem lock key to a short, deterministic IPC name.
+ * Never appends to an arbitrarily long lockPath on POSIX (unix-domain
+ * socket pathnames truncate and can collide). Returns
+ * `{ ipcPath, ipcKind }` where ipcKind is "pipe" | "abstract" | "file".
  * @param {string} lockPath
- * @returns {string}
+ * @returns {{ ipcPath: string, ipcKind: "pipe"|"abstract"|"file" }}
  */
-function exclusiveLockIpcPath(lockPath) {
+function exclusiveLockIpcTarget(lockPath) {
   const digest = crypto.createHash("sha256").update(lockPath).digest("hex").slice(0, 40);
   if (process.platform === "win32") {
-    return "\\\\.\\pipe\\tokentimer-agent-" + digest;
+    return {
+      ipcPath: "\\\\.\\pipe\\tokentimer-agent-" + digest,
+      ipcKind: "pipe",
+    };
   }
-  return lockPath + ".ipc";
+  if (process.platform === "linux") {
+    // Abstract namespace: no filesystem node, so no stale-path reclaim.
+    return {
+      ipcPath: "\0tokentimer-agent-" + digest,
+      ipcKind: "abstract",
+    };
+  }
+  const dir = path.join(os.tmpdir(), "tokentimer-agent-ipc");
+  return {
+    ipcPath: path.join(dir, digest + ".sock"),
+    ipcKind: "file",
+  };
+}
+
+/** @deprecated use exclusiveLockIpcTarget; kept for tests that only need the path string */
+function exclusiveLockIpcPath(lockPath) {
+  return exclusiveLockIpcTarget(lockPath).ipcPath;
+}
+
+function lockLostCode(busyCode) {
+  if (busyCode === "STORE_LOCKED") return "STORE_LOCK_LOST";
+  if (busyCode === "ENROLLMENT_LOCKED") return "ENROLLMENT_LOCK_LOST";
+  if (busyCode === "ADCS_WATERMARK_LOCKED") return "ADCS_WATERMARK_LOCK_LOST";
+  return "LOCK_LOST";
 }
 
 /**
@@ -1100,17 +1128,23 @@ function parseStoreLockContents(contents) {
  * machine store is as damaging as two racing on one binding").
  *
  * Mutual exclusion is a kernel-mediated exclusive listen (Windows named
- * pipe / POSIX unix socket), held on a dedicated worker thread so the
- * public acquire API stays synchronous. Process or worker death drops the
- * listen automatically -- there is no stale-file reclaim, rename, or
- * put-back path that could admit a second owner. A marker file at
- * `lockPath` records pid/token for operators and tests only; an empty or
- * corrupt marker cannot block later acquisition because it is not the
- * mutex.
+ * pipe / Linux abstract socket / short hashed pathname socket), held on a
+ * dedicated worker thread so the public acquire API stays synchronous.
+ * Process or worker death drops the listen automatically. Callers must
+ * treat unexpected worker exit as loss of authority via `assertHeld()`
+ * before further protected mutations. A marker file at `lockPath` is
+ * diagnostic only.
  *
- * @param {string} stateDir agent state dir.
- * @param {string} storeName Windows machine store name (e.g. "My").
- * @returns {{ lockPath: string, ownerToken: string, release: () => void }}
+ * @param {string} lockPath
+ * @param {string} busyCode
+ * @param {string} busyMessage
+ * @returns {{
+ *   lockPath: string,
+ *   ownerToken: string,
+ *   lost: boolean,
+ *   assertHeld: () => void,
+ *   release: () => void,
+ * }}
  */
 function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   if (!isNonEmptyString(lockPath)) {
@@ -1118,13 +1152,17 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   }
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
-  const ipcPath = exclusiveLockIpcPath(lockPath);
+  const { ipcPath, ipcKind } = exclusiveLockIpcTarget(lockPath);
+  if (ipcKind === "file") {
+    fs.mkdirSync(path.dirname(ipcPath), { recursive: true });
+  }
+
   const sab = new SharedArrayBuffer(4);
   const state = new Int32Array(sab);
   Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_PENDING);
 
   const worker = new Worker(path.join(__dirname, "exclusive-lock-worker.js"), {
-    workerData: { sab, ipcPath },
+    workerData: { sab, ipcPath, ipcKind },
   });
 
   let workerFailed = null;
@@ -1172,9 +1210,39 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   }
 
   let released = false;
+  let lost = false;
+  const lostError = buildError(
+    `exclusive lock lost for ${lockPath}: lock worker exited unexpectedly`,
+    lockLostCode(busyCode),
+  );
+
+  worker.once("exit", () => {
+    if (!released) {
+      lost = true;
+    }
+  });
+
   return {
     lockPath,
     ownerToken,
+    get lost() {
+      return lost;
+    },
+    /**
+     * Throws if the lock worker exited unexpectedly (or release already
+     * ran). Call after every await inside a critical section.
+     */
+    assertHeld() {
+      if (released) {
+        throw buildError(
+          `exclusive lock already released for ${lockPath}`,
+          lockLostCode(busyCode),
+        );
+      }
+      if (lost) {
+        throw lostError;
+      }
+    },
     /**
      * Exposed for crash-boundary tests: abrupt worker death must release
      * the IPC listen so another contender can acquire.
@@ -1183,16 +1251,18 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
     release() {
       if (released) return;
       released = true;
-      try {
-        worker.postMessage("release");
-        Atomics.wait(state, 0, EXCLUSIVE_LOCK_STATE_HELD, EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS);
-      } catch {
-        // best-effort
-      }
-      try {
-        worker.terminate();
-      } catch {
-        // best-effort
+      if (!lost) {
+        try {
+          worker.postMessage("release");
+          Atomics.wait(state, 0, EXCLUSIVE_LOCK_STATE_HELD, EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS);
+        } catch {
+          // best-effort
+        }
+        try {
+          worker.terminate();
+        } catch {
+          // best-effort
+        }
       }
       try {
         const current = fs.readFileSync(lockPath, "utf8");
@@ -1451,6 +1521,7 @@ module.exports = {
   acquireEnrollmentLock,
   acquireExclusiveLockFile,
   exclusiveLockIpcPath,
+  exclusiveLockIpcTarget,
   parseStoreLockContents,
   removeCertificateAndKeyContainer,
   removeAbandonedKeyContainer,

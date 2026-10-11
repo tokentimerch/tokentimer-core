@@ -829,6 +829,7 @@ function createAdcsWindowsIisExecutors(deps) {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
+      enrollmentLock.assertHeld();
 
       {
         const existing = readEnrollmentJournal(stateDir, decoded.enrollmentId);
@@ -1000,6 +1001,7 @@ function createAdcsWindowsIisExecutors(deps) {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
+      enrollmentLock.assertHeld();
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
       // Durable submitting barrier: must succeed before certreq -submit.
       // Capture enrollment reconcile cursor from the CA watermark here so later
@@ -1682,6 +1684,7 @@ function createAdcsWindowsIisExecutors(deps) {
         errorMessage: boundErrorMessage(`could not acquire AD CS enrollment lock: ${err.message}`),
       };
     }
+    enrollmentLock.assertHeld();
 
     let journal;
     let artifacts = { csrPem: null, leafPem: null, chainPem: null };

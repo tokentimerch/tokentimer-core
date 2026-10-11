@@ -40,6 +40,7 @@ const {
   acquireEnrollmentLock,
   acquireExclusiveLockFile,
   exclusiveLockIpcPath,
+  exclusiveLockIpcTarget,
   parseStoreLockContents,
   removeAbandonedKeyContainer,
   removeCertificateAndKeyContainer,
@@ -1037,14 +1038,208 @@ describe("acquireStoreLock", () => {
     }
   });
 
-  it("exclusiveLockIpcPath is stable for a given lockPath", () => {
-    const p = path.join(makeTempDir(), "x.lock");
-    assert.equal(exclusiveLockIpcPath(p), exclusiveLockIpcPath(p));
+  it("exclusiveLockIpcPath is short, hashed, and stable (no long-path collision)", () => {
+    const base = path.join(makeTempDir(), "a".repeat(120));
+    const p1 = path.join(base, "one.lock");
+    const p2 = path.join(base, "two.lock");
+    assert.equal(exclusiveLockIpcPath(p1), exclusiveLockIpcPath(p1));
+    assert.notEqual(exclusiveLockIpcPath(p1), exclusiveLockIpcPath(p2));
+    const t1 = exclusiveLockIpcTarget(p1);
+    const t2 = exclusiveLockIpcTarget(p2);
     if (process.platform === "win32") {
-      assert.match(exclusiveLockIpcPath(p), /^\\\\\.\\pipe\\tokentimer-agent-[0-9a-f]{40}$/);
+      assert.equal(t1.ipcKind, "pipe");
+      assert.match(t1.ipcPath, /^\\\\\.\\pipe\\tokentimer-agent-[0-9a-f]{40}$/);
+    } else if (process.platform === "linux") {
+      assert.equal(t1.ipcKind, "abstract");
+      assert.equal(t1.ipcPath.charCodeAt(0), 0);
+      assert.ok(t1.ipcPath.length < 80);
     } else {
-      assert.equal(exclusiveLockIpcPath(p), `${p}.ipc`);
+      assert.equal(t1.ipcKind, "file");
+      assert.ok(t1.ipcPath.length < 120);
+      assert.ok(t1.ipcPath.startsWith(path.join(os.tmpdir(), "tokentimer-agent-ipc")));
     }
+    // Distinct long lock paths must be independently acquirable.
+    const a = acquireExclusiveLockFile(p1, "STORE_LOCKED", "busy");
+    const b = acquireExclusiveLockFile(p2, "STORE_LOCKED", "busy");
+    assert.notEqual(a.ownerToken, b.ownerToken);
+    a.release();
+    b.release();
+    void t2;
+  });
+
+  it("assertHeld fails after the lock worker dies while the parent still thinks it owns the lock", async () => {
+    const stateDir = makeTempDir();
+    const lock = acquireStoreLock(stateDir, "My");
+    assert.doesNotThrow(() => lock.assertHeld());
+    await lock._workerForTests.terminate();
+    // Give the exit handler a turn to mark lost.
+    await new Promise((r) => setImmediate(r));
+    assert.equal(lock.lost, true);
+    assert.throws(() => lock.assertHeld(), (err) => {
+      assert.equal(err.code, "STORE_LOCK_LOST");
+      return true;
+    });
+    // Successor may acquire; prior holder must not continue protected work.
+    const next = acquireStoreLock(stateDir, "My");
+    assert.throws(() => lock.assertHeld(), /lock lost/);
+    next.release();
+    lock.release();
+  });
+
+  it("release then immediate reacquire admits only one of two competing processes", async () => {
+    const stateDir = makeTempDir();
+    const lockPath = path.join(stateDir, "windows-cert-store", "handoff.lock");
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const held = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+    const barrierDir = makeTempDir();
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const { acquireExclusiveLockFile } = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+      const lockPath = process.env.TT_LOCK_PATH;
+      const barrierDir = process.env.TT_BARRIER_DIR;
+      const id = process.env.TT_CONTENDER_ID;
+      const go = path.join(barrierDir, "go");
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline && !fs.existsSync(go)) {}
+      try {
+        const lock = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+        fs.writeFileSync(path.join(barrierDir, id + ".won"), lock.ownerToken);
+        const holdUntil = Date.now() + 800;
+        while (Date.now() < holdUntil) {}
+        lock.release();
+        process.exit(0);
+      } catch (err) {
+        fs.writeFileSync(path.join(barrierDir, id + ".lost"), err && err.code ? err.code : "ERR");
+        process.exit(2);
+      }
+    `;
+    const kids = Promise.all(
+      ["b", "c"].map(
+        (id) =>
+          new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, ["-e", script], {
+              env: {
+                ...process.env,
+                TT_LOCK_PATH: lockPath,
+                TT_BARRIER_DIR: barrierDir,
+                TT_CONTENDER_ID: id,
+              },
+              stdio: "ignore",
+            });
+            const timer = setTimeout(() => {
+              child.kill();
+              reject(new Error(`contender ${id} timed out`));
+            }, 20000);
+            child.on("exit", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+          }),
+      ),
+    );
+    // Let children park on the go-file, then release and open the gate.
+    await new Promise((r) => setTimeout(r, 200));
+    held.release();
+    fs.writeFileSync(path.join(barrierDir, "go"), "1");
+    await kids;
+    const won = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".won"));
+    const lost = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".lost"));
+    assert.equal(won.length, 1, `won=${won} lost=${lost}`);
+    assert.equal(lost.length, 1);
+  });
+});
+
+describe("exclusiveLockIpcTarget file-socket reclaim (pathname platforms)", () => {
+  it("allows only one owner when two processes reclaim the same abandoned pathname socket", async () => {
+    if (process.platform === "win32" || process.platform === "linux") {
+      // Named pipes / abstract sockets have no reclaimable filesystem pathname.
+      return;
+    }
+    const lockPath = path.join(makeTempDir(), "stale-reclaim.lock");
+    const target = exclusiveLockIpcTarget(lockPath);
+    assert.equal(target.ipcKind, "file");
+    fs.mkdirSync(path.dirname(target.ipcPath), { recursive: true });
+    try {
+      fs.unlinkSync(target.ipcPath);
+    } catch {
+      // ok
+    }
+
+    const holderScript = `
+      const net = require("net");
+      const fs = require("fs");
+      const s = net.createServer(() => {});
+      s.listen({ path: process.env.TT_IPC, exclusive: true }, () => {
+        fs.writeFileSync(process.env.TT_READY, "1");
+        setInterval(() => {}, 1000);
+      });
+    `;
+    const ready = path.join(makeTempDir(), "ready");
+    const holder = spawn(process.execPath, ["-e", holderScript], {
+      env: { ...process.env, TT_IPC: target.ipcPath, TT_READY: ready },
+      stdio: "ignore",
+    });
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !fs.existsSync(ready)) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    holder.kill("SIGKILL");
+    await new Promise((r) => holder.once("exit", r));
+
+    const barrierDir = makeTempDir();
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const { acquireExclusiveLockFile } = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+      const lockPath = process.env.TT_LOCK_PATH;
+      const barrierDir = process.env.TT_BARRIER_DIR;
+      const id = process.env.TT_CONTENDER_ID;
+      fs.writeFileSync(path.join(barrierDir, id + ".ready"), "1");
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if (fs.readdirSync(barrierDir).filter((n) => n.endsWith(".ready")).length >= 2) break;
+      }
+      try {
+        const lock = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+        fs.writeFileSync(path.join(barrierDir, id + ".won"), lock.ownerToken);
+        const holdUntil = Date.now() + 1200;
+        while (Date.now() < holdUntil) {}
+        lock.release();
+        process.exit(0);
+      } catch (err) {
+        fs.writeFileSync(path.join(barrierDir, id + ".lost"), err && err.code ? err.code : "ERR");
+        process.exit(2);
+      }
+    `;
+    await Promise.all(
+      ["a", "b"].map(
+        (id) =>
+          new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, ["-e", script], {
+              env: {
+                ...process.env,
+                TT_LOCK_PATH: lockPath,
+                TT_BARRIER_DIR: barrierDir,
+                TT_CONTENDER_ID: id,
+              },
+              stdio: "ignore",
+            });
+            const timer = setTimeout(() => {
+              child.kill();
+              reject(new Error(`contender ${id} timed out`));
+            }, 20000);
+            child.on("exit", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+          }),
+      ),
+    );
+    const won = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".won"));
+    const lost = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".lost"));
+    assert.equal(won.length, 1, `won=${won} lost=${lost}`);
+    assert.equal(lost.length, 1);
   });
 });
 

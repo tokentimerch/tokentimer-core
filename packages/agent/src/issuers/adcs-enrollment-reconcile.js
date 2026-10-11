@@ -31,7 +31,9 @@ async function withWatermarkLock(stateDir, caConfig, fn) {
     "CA RequestId watermark is locked by a concurrent update",
   );
   try {
-    return await fn();
+    const result = await fn(lock);
+    lock.assertHeld();
+    return result;
   } finally {
     lock.release();
   }
@@ -118,7 +120,8 @@ async function recordHighestRequestId(stateDir, caConfig, requestId) {
   if (!Number.isInteger(requestId) || requestId < 1) {
     throw new TypeError("requestId must be an integer >= 1");
   }
-  return await withWatermarkLock(stateDir, caConfig, async () => {
+  return await withWatermarkLock(stateDir, caConfig, async (lock) => {
+    lock.assertHeld();
     const current = readWatermark(stateDir, caConfig);
     if (!current.ok) {
       const err = new Error(current.error);
@@ -132,6 +135,7 @@ async function recordHighestRequestId(stateDir, caConfig, requestId) {
       updatedAt: new Date().toISOString(),
     })}\n`;
     await durableWriteFile(watermarkPath(stateDir, caConfig), payload);
+    lock.assertHeld();
     return requestId;
   });
 }

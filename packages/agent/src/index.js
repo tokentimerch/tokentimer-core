@@ -3191,6 +3191,7 @@ async function runWindowsIisDeployTail({
         store: target.store,
         ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       });
+      storeLock.assertHeld();
       if (!acceptResult.ok) {
         // Bare-accept failure (no `stage`): ACME may delete an orphaned CNG
         // key. Durable AD CS enrollments that already journaled an issued
@@ -3747,6 +3748,7 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
         containerName: row.cngKeyContainerId,
         ...(execFileImpl ? { execFileImpl } : {}),
       });
+      storeLock.assertHeld();
       if (result.ok !== true) {
         throw new Error(
           `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
@@ -3791,9 +3793,11 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
  *
  * @param {string} stateDir
  * @param {string} targetStore
- * @returns {{ release: () => void }} `release` releases every lock this
- *   call acquired, in any order. Throws (without leaking any lock already
- *   acquired in this call) if any store in the set cannot be locked.
+ * @returns {{ release: () => void, assertHeld: () => void }} `release`
+ *   releases every lock this call acquired, in any order. Throws (without
+ *   leaking any lock already acquired in this call) if any store in the
+ *   set cannot be locked. `assertHeld` throws if any lock worker exited
+ *   unexpectedly.
  */
 function acquireWindowsStoreLocks(stateDir, targetStore) {
   const storeNames = [...new Set(["My", targetStore])];
@@ -3807,6 +3811,9 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
     throw err;
   }
   return {
+    assertHeld() {
+      for (const lock of locks) lock.assertHeld();
+    },
     release() {
       for (const lock of locks) lock.release();
     },

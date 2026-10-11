@@ -3,8 +3,13 @@
 /**
  * Holds one exclusive IPC listen for acquireExclusiveLockFile.
  * State Int32Array[0]: 0=pending, 1=held, 2=busy, 3=error, 4=released.
- * Exclusion is the listen itself (named pipe on win32, unix socket elsewhere);
- * process/worker death releases the bind without any stale-file reclaim path.
+ *
+ * ipcKind:
+ *   - "pipe": Windows named pipe (no filesystem node; EADDRINUSE => busy)
+ *   - "abstract": Linux abstract unix socket (no filesystem node; no reclaim)
+ *   - "file": pathname unix socket under a short hashed directory; stale
+ *     reclaim is serialized via an exclusive mkdir gate so two reclaimers
+ *     cannot both unlink and listen.
  */
 
 const fs = require("node:fs");
@@ -18,6 +23,7 @@ const STATE_RELEASED = 4;
 
 const state = new Int32Array(workerData.sab);
 const ipcPath = workerData.ipcPath;
+const ipcKind = workerData.ipcKind;
 
 /** @type {import('node:net').Server|null} */
 let server = null;
@@ -30,30 +36,33 @@ function signal(code) {
   Atomics.notify(state, 0);
 }
 
-function attachServer(nextServer) {
+function listenOn(nextServer, onListening) {
   server = nextServer;
-  server.on("error", (err) => {
+  nextServer.once("error", (err) => {
     if (err && err.code === "EADDRINUSE") {
-      if (process.platform === "win32") {
-        signal(STATE_BUSY);
-        return;
-      }
-      recoverStaleUnixSocket();
+      onAddrInUse();
       return;
     }
     signal(STATE_ERROR);
   });
-  server.listen({ path: ipcPath, exclusive: true }, () => {
-    signal(STATE_HELD);
-  });
+  nextServer.listen({ path: ipcPath, exclusive: true }, onListening);
+}
+
+function onAddrInUse() {
+  if (ipcKind === "pipe" || ipcKind === "abstract") {
+    signal(STATE_BUSY);
+    return;
+  }
+  recoverStaleFileSocket();
 }
 
 /**
- * POSIX only: an abandoned unix-socket pathname can remain after the holder
- * died. Probe with a connect; ECONNREFUSED means the name is stale and safe
- * to unlink once before a single retry. A live holder must stay busy.
+ * Pathname unix sockets only. Probe for a live holder; if abandoned, win an
+ * exclusive mkdir gate before unlinking the stale name and listening. Losers
+ * of the gate retry listen once (no independent unlink on a prior probe).
  */
-function recoverStaleUnixSocket() {
+function recoverStaleFileSocket() {
+  const gatePath = `${ipcPath}.reclaim-gate`;
   const probe = net.connect({ path: ipcPath });
   probe.once("connect", () => {
     probe.destroy();
@@ -65,21 +74,69 @@ function recoverStaleUnixSocket() {
       return;
     }
     try {
-      fs.unlinkSync(ipcPath);
+      fs.mkdirSync(gatePath);
     } catch {
-      signal(STATE_BUSY);
+      // Another worker is reclaiming (or left a gate). Retry listen once
+      // without unlinking based on this probe observation.
+      setTimeout(() => retryListenAfterPeerReclaim(), 25);
       return;
     }
-    const retry = net.createServer(() => {});
-    retry.on("error", () => signal(STATE_BUSY));
-    retry.listen({ path: ipcPath, exclusive: true }, () => {
-      server = retry;
-      signal(STATE_HELD);
-    });
+    try {
+      try {
+        fs.unlinkSync(ipcPath);
+      } catch {
+        // already gone
+      }
+      const retry = net.createServer(() => {});
+      retry.once("error", () => {
+        try {
+          fs.rmdirSync(gatePath);
+        } catch {
+          // best-effort
+        }
+        // Vacancy filled by a peer between unlink and listen: they own it.
+        signal(STATE_BUSY);
+      });
+      retry.listen({ path: ipcPath, exclusive: true }, () => {
+        try {
+          fs.rmdirSync(gatePath);
+        } catch {
+          // best-effort
+        }
+        server = retry;
+        signal(STATE_HELD);
+      });
+    } catch {
+      try {
+        fs.rmdirSync(gatePath);
+      } catch {
+        // best-effort
+      }
+      signal(STATE_BUSY);
+    }
   });
 }
 
-attachServer(net.createServer(() => {}));
+function retryListenAfterPeerReclaim() {
+  if (settled) return;
+  const retry = net.createServer(() => {});
+  retry.once("error", (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      // Peer holds it or still reclaiming — treat as busy (fail-closed).
+      signal(STATE_BUSY);
+      return;
+    }
+    signal(STATE_ERROR);
+  });
+  retry.listen({ path: ipcPath, exclusive: true }, () => {
+    server = retry;
+    signal(STATE_HELD);
+  });
+}
+
+listenOn(net.createServer(() => {}), () => {
+  signal(STATE_HELD);
+});
 
 parentPort.on("message", (msg) => {
   if (msg !== "release") return;
@@ -90,14 +147,10 @@ parentPort.on("message", (msg) => {
     Atomics.notify(state, 0);
     return;
   }
+  // Do not unlink the pathname after close: Node already removes a unix
+  // socket name on close, and an extra unlink can delete a successor's
+  // freshly bound pathname.
   active.close(() => {
-    if (process.platform !== "win32") {
-      try {
-        fs.unlinkSync(ipcPath);
-      } catch {
-        // best-effort
-      }
-    }
     Atomics.store(state, 0, STATE_RELEASED);
     Atomics.notify(state, 0);
   });
