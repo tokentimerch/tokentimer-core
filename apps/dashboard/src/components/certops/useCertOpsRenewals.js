@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import {
   listRenewalProfiles,
@@ -251,12 +251,15 @@ export function useUpdateRenewalProfile() {
   const { workspaceId } = useWorkspace();
   const [saving, setSaving] = useState(null);
   const [error, setError] = useState('');
+  const saveGeneration = useRef(0);
 
   const clearError = useCallback(() => setError(''), []);
 
   const save = useCallback(
     async (profileId, changes) => {
       if (!workspaceId || !profileId) return null;
+      const generation = saveGeneration.current + 1;
+      saveGeneration.current = generation;
       setSaving(profileId);
       setError('');
       try {
@@ -274,7 +277,7 @@ export function useUpdateRenewalProfile() {
         );
         return null;
       } finally {
-        setSaving(null);
+        if (saveGeneration.current === generation) setSaving(null);
       }
     },
     [workspaceId]

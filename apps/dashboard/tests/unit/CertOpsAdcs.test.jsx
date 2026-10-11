@@ -167,7 +167,7 @@ describe('CertOpsAdcs', () => {
       )
     ).toBeInTheDocument();
     expect(screen.getByText(/RequestId\s+42/)).toBeInTheDocument();
-    expect(screen.getAllByText(/key abababababab/)).toHaveLength(2);
+    expect(screen.getAllByText(/key prefix abababababab/)).toHaveLength(2);
     expect(screen.getByText(/stays on issuer version 1/)).toBeInTheDocument();
     expect(screen.queryByText(/Cancel and re-enroll/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/CA key changed/).length).toBeGreaterThan(0);
@@ -179,7 +179,7 @@ describe('CertOpsAdcs', () => {
       )
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Reconcile' })
+      screen.getByRole('button', { name: /Reconcile/ })
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /Confirm key/ })
@@ -253,7 +253,7 @@ describe('CertOpsAdcs', () => {
 
     expect(
       await screen.findByText(
-        'Waiting for the agent to report the preflight verdict.'
+        /Waiting for Issuing CA to report the preflight verdict/
       )
     ).toBeInTheDocument();
   });

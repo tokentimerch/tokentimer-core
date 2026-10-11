@@ -337,7 +337,7 @@ the shared detector scans every outbound envelope.
 
 ## Dashboard certificate visibility
 
-Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
+Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, AD CS, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. The AD CS tab is for issuer preflight and enrollment status. It does not enable AD CS enrollment. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
 
 ## Certificate removal
 
