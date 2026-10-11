@@ -382,6 +382,7 @@ export default function CertOpsCertificates() {
         const identityFromManagedCert = sourceCert => ({
           id: sourceCert.id,
           managedCertificateId: sourceCert.id,
+          tokenId: sourceCert.tokenId ?? null,
           fingerprintSha256: sourceCert.fingerprintSha256 || null,
           commonName: sourceCert.commonName || null,
           subjectAltNames: sourceCert.subjectAltNames || [],

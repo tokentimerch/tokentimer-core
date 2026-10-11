@@ -633,3 +633,42 @@ it('keeps previous monitors out of current locations and explains visibility gap
   expect(within(table).getAllByText('Previous observation')).toHaveLength(2);
   expect(within(table).getAllByText('Observed')).toHaveLength(1);
 });
+
+it('passes managed certificate id for job history when opened from a job deep link', async () => {
+  // Jobs link with ?certificateId=… builds this shape (no identityId, no token).
+  const fromJobDeepLink = {
+    id: '11111111-1111-4111-8111-111111111111',
+    managedCertificateId: '11111111-1111-4111-8111-111111111111',
+    fingerprintSha256: 'b'.repeat(64),
+    commonName: 'api.example.test',
+    status: 'active',
+    sources: [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        managedCertificateId: '11111111-1111-4111-8111-111111111111',
+      },
+    ],
+  };
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={fromJobDeepLink}
+        isOpen
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  expect(await screen.findByText('api.example.test')).toBeInTheDocument();
+  await waitFor(() => {
+    expect(detailsModalMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        certOps: expect.objectContaining({
+          certificate: expect.objectContaining({
+            id: '11111111-1111-4111-8111-111111111111',
+          }),
+        }),
+      })
+    );
+  });
+});
