@@ -485,4 +485,120 @@ describe("adcs-enrollment-journal", () => {
     await commitPrepared(stateDir);
     assert.ok(fs.existsSync(journalV2Path(stateDir, ENROLLMENT_ID)));
   });
+
+  it("reloads a deferred tier-2 candidate leaf after restart without CA retrieve", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "submission_uncertain",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      reconcileSearchFrom: 105,
+    });
+    const { leafSha256 } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: LEAF_PEM,
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "submission_uncertain",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      reconcileSearchFrom: 105,
+      reconcileCandidateRequestId: 105,
+      leafSha256,
+      validationDeadlineAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+
+    const reloaded = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(reloaded.kind, "valid");
+    assert.equal(reloaded.journal.state, "submission_uncertain");
+    assert.equal(reloaded.journal.reconcileCandidateRequestId, 105);
+    assert.equal(reloaded.artifacts.leafPem, LEAF_PEM);
+    assert.equal(sha256HexOfString(reloaded.artifacts.leafPem), leafSha256);
+  });
+
+  it("fails closed when a deferred candidate is missing its leaf artifact", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "submission_uncertain",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      reconcileSearchFrom: 10,
+      reconcileCandidateRequestId: 10,
+      leafSha256: "d".repeat(64),
+      validationDeadlineAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+    const reloaded = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(reloaded.kind, "corrupt");
+    assert.match(reloaded.error, /deferred candidate requires leaf\.pem/);
+  });
+
+  it("preserves the first predecessorThumbprint across verify-stage journal updates", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    const { leafSha256 } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: LEAF_PEM,
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "issued",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      leafSha256,
+      requestId: 9,
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "installing",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      leafSha256,
+      installStep: "bind",
+      predecessorThumbprint: "AA".repeat(20),
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "installing",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      leafSha256,
+      installStep: "verify",
+      predecessorThumbprint: "BB".repeat(20),
+    });
+    const read = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(read.kind, "valid");
+    assert.equal(read.journal.predecessorThumbprint, "AA".repeat(20));
+    assert.equal(read.journal.installStep, "verify");
+  });
 });

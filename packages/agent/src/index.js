@@ -3126,8 +3126,10 @@ async function cngKeyAbsentFromStoresAfterAcceptFailure({
  *
  * @param {"accept"|"mirror"|"bind"|"verify"} [startAtStep="accept"]
  * @param {(step: string, meta?: object) => void|Promise<void>} [onInstallStep]
- * @param {boolean} [requireStoreAbsenceBeforeKeyDelete=false] AD CS: inspect
- *   stores before deleting CNG key on bare accept failure.
+ * @param {boolean} [retainKeyOnAcceptFailure=false] AD CS: never delete the
+ *   enrollment CNG key on bare accept failure (retry needs the same key).
+ * @param {boolean} [requireStoreAbsenceBeforeKeyDelete] deprecated alias for
+ *   retainKeyOnAcceptFailure (treated as retain when true).
  */
 async function runWindowsIisDeployTail({
   jobId,
@@ -3142,10 +3144,13 @@ async function runWindowsIisDeployTail({
   onBeforeMutation = null,
   onInstallStep = null,
   startAtStep = "accept",
+  retainKeyOnAcceptFailure = false,
   requireStoreAbsenceBeforeKeyDelete = false,
   windowsExecFileImpl,
   windowsConnectImpl,
 }) {
+  const retainKeyOnAcceptFailureEffective =
+    retainKeyOnAcceptFailure === true || requireStoreAbsenceBeforeKeyDelete === true;
   {
     const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -3188,27 +3193,18 @@ async function runWindowsIisDeployTail({
       });
       if (!acceptResult.ok) {
         // Bare-accept failure (no `stage`): ACME may delete an orphaned CNG
-        // key. For durable AD CS enrollments a nonzero exit alone does not
-        // prove accept had no store side effects — inspect first and retain
-        // the key when the result is ambiguous.
+        // key. Durable AD CS enrollments that already journaled an issued
+        // leaf must retain the enrollment-owned key for retry — store
+        // absence alone does not prove accept had no side effects, and
+        // deleting the key makes continuation impossible.
         if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
-          let safeToDelete = !requireStoreAbsenceBeforeKeyDelete;
-          if (requireStoreAbsenceBeforeKeyDelete) {
-            safeToDelete = await cngKeyAbsentFromStoresAfterAcceptFailure({
-              containerName,
-              expectedThumbprint: acceptedThumbprint,
-              targetStore: target.store,
-              execFileImpl: windowsExecFileImpl,
-            });
-            if (!safeToDelete) {
-              emitLog(
-                log,
-                `job ${jobId}: retaining CNG key container ${containerName} after ` +
-                  `certreq -accept failure; store inspection found the leaf/key or was inconclusive`,
-              );
-            }
-          }
-          if (safeToDelete) {
+          if (retainKeyOnAcceptFailureEffective) {
+            emitLog(
+              log,
+              `job ${jobId}: retaining CNG key container ${containerName} after ` +
+                `certreq -accept failure so AD CS install recovery can retry against the journaled leaf`,
+            );
+          } else {
             try {
               const cleanup = await removeAbandonedKeyContainer({
                 containerName,
@@ -3345,21 +3341,23 @@ async function runWindowsIisDeployTail({
     };
 
     // Journal predecessor identity before cutover so install-complete recovery
-    // can finish retention bookkeeping after a crash.
-    let predecessorThumbprint = null;
-    {
-      const currentBinding = await queryCurrentBinding({
-        binding,
-        ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-      });
-      if (currentBinding.ok) {
-        predecessorThumbprint = currentBinding.thumbprint;
-      }
-    }
+    // can finish retention bookkeeping after a crash. On verify-only resume the
+    // current binding is already the new cert — do not overwrite a saved
+    // pre-cutover predecessor with that value.
     if (typeof onInstallStep === "function") {
-      await onInstallStep(shouldRun("bind") ? "bind" : "verify", {
-        predecessorThumbprint,
-      });
+      if (shouldRun("bind")) {
+        let predecessorThumbprint = null;
+        const currentBinding = await queryCurrentBinding({
+          binding,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        if (currentBinding.ok) {
+          predecessorThumbprint = currentBinding.thumbprint;
+        }
+        await onInstallStep("bind", { predecessorThumbprint });
+      } else {
+        await onInstallStep("verify", {});
+      }
     }
     emitInfo(`job ${jobId}: deploying IIS binding at ${binding.address}:${binding.port}`);
     const deployResult = await deployIisBinding({

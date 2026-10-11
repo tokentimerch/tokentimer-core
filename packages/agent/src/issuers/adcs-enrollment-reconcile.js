@@ -10,40 +10,66 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { durableWriteFile } = require("./adcs-enrollment-journal");
+const { isStoreLockStale } = require("../windows-cert-store");
 
 const WATERMARK_DIR = "adcs-ca-watermarks";
 const DEFAULT_RECONCILE_WINDOW = 16;
 const DIR_MODE = 0o700;
 
-/** Minimal wx lock for per-CA watermark updates (same fail-closed idea as store locks). */
+/**
+ * Per-CA watermark mutex. Same wx + stale-steal rules as store/enrollment
+ * locks: a crash that leaves the .lock file must not permanently block
+ * later watermark updates after restart.
+ */
 async function withWatermarkLock(stateDir, caConfig, fn) {
   const dir = path.join(stateDir, WATERMARK_DIR);
   fs.mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   const lockPath = watermarkLockPath(stateDir, caConfig);
-  let fd;
-  try {
-    fd = fs.openSync(lockPath, "wx");
-  } catch (err) {
-    if (err && err.code === "EEXIST") {
-      const locked = new Error("CA RequestId watermark is locked by a concurrent update");
-      locked.code = "ADCS_WATERMARK_LOCKED";
-      throw locked;
+
+  function tryAcquire() {
+    const fd = fs.openSync(lockPath, "wx");
+    try {
+      fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
+    } finally {
+      fs.closeSync(fd);
     }
-    throw err;
   }
+
+  function throwLocked() {
+    const locked = new Error("CA RequestId watermark is locked by a concurrent update");
+    locked.code = "ADCS_WATERMARK_LOCKED";
+    throw locked;
+  }
+
   try {
-    fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
+    tryAcquire();
+  } catch (err) {
+    if (err && err.code === "EEXIST" && isStoreLockStale(lockPath)) {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // Another racer may have cleaned or re-acquired; retry is authoritative.
+      }
+      try {
+        tryAcquire();
+      } catch (retryErr) {
+        if (retryErr && retryErr.code === "EEXIST") throwLocked();
+        throw retryErr;
+      }
+    } else if (err && err.code === "EEXIST") {
+      throwLocked();
+    } else {
+      throw err;
+    }
+  }
+
+  try {
     return await fn();
   } finally {
     try {
-      fs.closeSync(fd);
-    } catch {
-      // ignore
-    }
-    try {
       fs.unlinkSync(lockPath);
     } catch {
-      // ignore
+      // best-effort; stale recovery handles an abandoned file after a crash
     }
   }
 }
@@ -283,5 +309,6 @@ module.exports = {
   captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
   watermarkPath,
+  watermarkLockPath,
   leafSpkiSha256Hex,
 };

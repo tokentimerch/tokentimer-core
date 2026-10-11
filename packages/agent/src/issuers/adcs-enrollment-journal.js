@@ -541,15 +541,22 @@ function readV2Journal(stateDir, enrollmentId, filePath) {
     }
   }
 
-  const needsLeaf = ["issued", "validation_deferred", "installing", "installed", "install_failed"].includes(
-    parsed.state,
-  );
+  const hasDeferredTier2Candidate =
+    parsed.state === "submission_uncertain" &&
+    Number.isInteger(parsed.reconcileCandidateRequestId) &&
+    parsed.reconcileCandidateRequestId >= 1;
+  const needsLeaf =
+    ["issued", "validation_deferred", "installing", "installed", "install_failed"].includes(
+      parsed.state,
+    ) || hasDeferredTier2Candidate;
   if (needsLeaf) {
     const leafPath = leafArtifactPath(stateDir, enrollmentId);
     if (!fs.existsSync(leafPath)) {
       return {
         kind: "corrupt",
-        error: `journal state ${parsed.state} requires leaf.pem but it is missing`,
+        error: hasDeferredTier2Candidate
+          ? "submission_uncertain deferred candidate requires leaf.pem but it is missing"
+          : `journal state ${parsed.state} requires leaf.pem but it is missing`,
         path: filePath,
       };
     }
@@ -743,15 +750,10 @@ function mergeImmutableJournalFields(previousJournal, previousState, fields) {
     merged.reconcileCandidateRequestId = previousJournal.reconcileCandidateRequestId;
   }
 
-  // Predecessor thumbprint journalled before IIS cutover for retention recovery.
-  if (Object.hasOwn(fields, "predecessorThumbprint")) {
-    if (
-      typeof fields.predecessorThumbprint !== "string" ||
-      fields.predecessorThumbprint.length === 0
-    ) {
-      delete merged.predecessorThumbprint;
-    }
-  } else if (
+  // Predecessor thumbprint journalled before IIS cutover: once recorded,
+  // never replace with a later binding query (verify-only resume sees the
+  // new cert and must not erase the superseded identity).
+  if (
     typeof previousJournal.predecessorThumbprint === "string" &&
     previousJournal.predecessorThumbprint.length > 0
   ) {

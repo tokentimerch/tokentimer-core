@@ -16,6 +16,7 @@ const {
   captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
   watermarkPath,
+  watermarkLockPath,
 } = require("./adcs-enrollment-reconcile");
 
 describe("adcs-enrollment-reconcile", () => {
@@ -280,5 +281,31 @@ describe("adcs-enrollment-reconcile", () => {
     assert.equal(result.status, "unresolved");
     assert.equal(result.probed, 3);
     assert.equal(result.nextSearchFrom, 2);
+  });
+
+  it("recovers a stale watermark lock left by a dead process after crash", async () => {
+    const caConfig = "CA\\Lab";
+    const lockPath = watermarkLockPath(stateDir, caConfig);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    // Pid that cannot be alive, with a fresh timestamp (process-dead stale path).
+    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\n", "utf8");
+    await recordHighestRequestId(stateDir, caConfig, 7);
+    assert.equal(readHighestRequestId(stateDir, caConfig), 7);
+    assert.equal(fs.existsSync(lockPath), false);
+  });
+
+  it("does not steal a live watermark lock from a concurrent holder", async () => {
+    const caConfig = "CA\\Lab";
+    const lockPath = watermarkLockPath(stateDir, caConfig);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, "utf8");
+    await assert.rejects(
+      () => recordHighestRequestId(stateDir, caConfig, 3),
+      (err) => {
+        assert.equal(err.code, "ADCS_WATERMARK_LOCKED");
+        return true;
+      },
+    );
+    fs.unlinkSync(lockPath);
   });
 });

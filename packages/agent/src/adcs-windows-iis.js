@@ -1265,7 +1265,7 @@ function createAdcsWindowsIisExecutors(deps) {
         containerName,
         leaseOpts,
         onBeforeMutation,
-        requireStoreAbsenceBeforeKeyDelete: true,
+        retainKeyOnAcceptFailure: true,
         onInstallStep: async (step, meta = {}) => {
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "installing",
@@ -1283,9 +1283,7 @@ function createAdcsWindowsIisExecutors(deps) {
             ...(Number.isInteger(issuance.requestId) ? { requestId: issuance.requestId } : {}),
             ...(typeof meta.predecessorThumbprint === "string"
               ? { predecessorThumbprint: meta.predecessorThumbprint }
-              : meta.predecessorThumbprint === null
-                ? { predecessorThumbprint: null }
-                : {}),
+              : {}),
           });
         },
         windowsExecFileImpl,
@@ -1502,18 +1500,18 @@ function createAdcsWindowsIisExecutors(deps) {
         leaseOpts,
         onBeforeMutation,
         startAtStep: progress.startAtStep,
-        requireStoreAbsenceBeforeKeyDelete: true,
+        retainKeyOnAcceptFailure: true,
         onInstallStep: async (step, meta = {}) => {
           currentInstallStep = step;
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "installing",
             ...journalBase,
             installStep: step,
+            // Only record predecessor on bind; verify-only resume must not
+            // overwrite a journalled pre-cutover thumbprint with the new cert.
             ...(typeof meta.predecessorThumbprint === "string"
               ? { predecessorThumbprint: meta.predecessorThumbprint }
-              : meta.predecessorThumbprint === null
-                ? { predecessorThumbprint: null }
-                : {}),
+              : {}),
           });
         },
         windowsExecFileImpl,
@@ -1615,7 +1613,7 @@ function createAdcsWindowsIisExecutors(deps) {
       leaseOpts,
       onBeforeMutation,
       startAtStep: "accept",
-      requireStoreAbsenceBeforeKeyDelete: true,
+      retainKeyOnAcceptFailure: true,
       onInstallStep: async (step, meta = {}) => {
         currentInstallStep = step;
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
@@ -1624,9 +1622,7 @@ function createAdcsWindowsIisExecutors(deps) {
           installStep: step,
           ...(typeof meta.predecessorThumbprint === "string"
             ? { predecessorThumbprint: meta.predecessorThumbprint }
-            : meta.predecessorThumbprint === null
-              ? { predecessorThumbprint: null }
-              : {}),
+            : {}),
         });
       },
       windowsExecFileImpl,

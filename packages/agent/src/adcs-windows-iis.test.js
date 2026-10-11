@@ -652,26 +652,32 @@ describe("withUniqueValidationLeafFile", () => {
 });
 
 describe("AD CS accept-failure key retention", () => {
-  it("inspects stores before deleting CNG keys after bare certreq -accept failure", () => {
+  it("retains the enrollment CNG key on bare certreq -accept failure for AD CS retry", () => {
     const src = fs.readFileSync(require.resolve("./index.js"), "utf8");
-    assert.match(src, /async function cngKeyAbsentFromStoresAfterAcceptFailure/);
-    assert.match(src, /requireStoreAbsenceBeforeKeyDelete/);
+    assert.match(src, /retainKeyOnAcceptFailure/);
     const acceptFail = src.indexOf("if (!acceptResult.ok)");
     assert.ok(acceptFail >= 0);
     const branch = src.slice(acceptFail, acceptFail + 2500);
-    assert.match(branch, /cngKeyAbsentFromStoresAfterAcceptFailure/);
+    assert.match(branch, /retainKeyOnAcceptFailureEffective/);
     assert.match(branch, /retaining CNG key container/);
+    assert.match(branch, /AD CS install recovery can retry/);
+    // Deletion must be gated out when retain is effective.
+    const retainBranch = branch.indexOf("retainKeyOnAcceptFailureEffective");
+    const deleteCall = branch.indexOf("removeAbandonedKeyContainer", retainBranch);
+    const elseDelete = branch.indexOf("} else {", retainBranch);
+    assert.ok(elseDelete > retainBranch);
+    assert.ok(deleteCall > elseDelete, "CNG delete must only run on the non-retain path");
   });
 
-  it("journals predecessorThumbprint before IIS cutover and finalizes bookkeeping on complete recovery", () => {
+  it("journals predecessorThumbprint only before bind and preserves it on verify-only resume", () => {
     const src = fs.readFileSync(require.resolve("./index.js"), "utf8");
     assert.match(src, /async function finalizeWindowsIisDeployBookkeeping/);
-    assert.match(src, /predecessorThumbprint/);
     const bindRegion = src.indexOf("Journal predecessor identity before cutover");
     assert.ok(bindRegion >= 0);
     const region = src.slice(bindRegion, bindRegion + 4000);
+    assert.match(region, /shouldRun\("bind"\)/);
     assert.match(region, /queryCurrentBinding/);
-    assert.match(region, /onInstallStep/);
+    assert.match(region, /onInstallStep\("verify", \{\}\)/);
     assert.match(region, /await finalizeWindowsIisDeployBookkeeping/);
   });
 });
