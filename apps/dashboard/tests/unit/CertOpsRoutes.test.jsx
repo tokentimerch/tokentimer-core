@@ -55,9 +55,7 @@ vi.mock('../../src/components/certops/BootstrapTokenList.jsx', () => ({
 vi.mock('../../src/components/certops/DeployAgentModal.jsx', () => ({
   default: ({ isOpen, certOpsPaused }) =>
     isOpen ? (
-      <div data-paused={String(Boolean(certOpsPaused))}>
-        Deploy agent modal
-      </div>
+      <div data-paused={String(Boolean(certOpsPaused))}>Deploy agent modal</div>
     ) : null,
 }));
 vi.mock('../../src/components/certops/ApiTokenList.jsx', () => ({
@@ -66,9 +64,7 @@ vi.mock('../../src/components/certops/ApiTokenList.jsx', () => ({
 vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
   default: ({ isOpen, certOpsPaused }) =>
     isOpen ? (
-      <div data-paused={String(Boolean(certOpsPaused))}>
-        Create token modal
-      </div>
+      <div data-paused={String(Boolean(certOpsPaused))}>Create token modal</div>
     ) : null,
 }));
 vi.mock('../../src/components/certops/RenewalProfilesPanel.jsx', () => ({
@@ -76,6 +72,9 @@ vi.mock('../../src/components/certops/RenewalProfilesPanel.jsx', () => ({
 }));
 vi.mock('../../src/components/certops/UpcomingRenewalsPanel.jsx', () => ({
   default: () => <div>Upcoming renewals</div>,
+}));
+vi.mock('../../src/pages/certops/CertOpsAdcs.jsx', () => ({
+  default: () => <div>AD CS issuers</div>,
 }));
 
 function renderAt(path) {
@@ -114,6 +113,7 @@ const TAB_PANELS = {
   '/certops/jobs': 'Machine executor jobs',
   '/certops/certificates': 'Certificates tab',
   '/certops/renewals': 'Renewal profiles',
+  '/certops/adcs': 'AD CS issuers',
   '/certops/agents': 'Agent fleet',
   '/certops/settings': 'Machine API tokens',
 };
@@ -175,7 +175,7 @@ describe('CertOpsRoutes tabs', () => {
     expect(current[0]).toHaveTextContent('Agents');
   });
 
-  it('keeps the five sections on one scrollable row instead of wrapping', () => {
+  it('keeps the sections on one scrollable row instead of wrapping', () => {
     renderAt('/certops/renewals');
 
     const nav = screen.getByRole('navigation', {
@@ -186,6 +186,7 @@ describe('CertOpsRoutes tabs', () => {
       'Jobs',
       'Certificates',
       'Renewals',
+      'AD CS',
       'Agents',
       'Settings',
     ]);

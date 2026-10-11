@@ -5,6 +5,7 @@ import CertOpsCertificates from './CertOpsCertificates.jsx';
 import CertOpsRenewals from './CertOpsRenewals.jsx';
 import CertOpsAgents from './CertOpsAgents.jsx';
 import CertOpsSettings from './CertOpsSettings.jsx';
+import CertOpsAdcs from './CertOpsAdcs.jsx';
 
 /**
  * Router for the /certops/* splat route: one layout (availability gate,
@@ -30,6 +31,7 @@ export default function CertOpsRoutes({ session, onLogout, onAccountClick }) {
         <Route path='jobs' element={<CertOpsJobs />} />
         <Route path='certificates' element={<CertOpsCertificates />} />
         <Route path='renewals' element={<CertOpsRenewals />} />
+        <Route path='adcs' element={<CertOpsAdcs />} />
         <Route path='agents' element={<CertOpsAgents />} />
         <Route path='settings' element={<CertOpsSettings />} />
       </Route>

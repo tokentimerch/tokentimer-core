@@ -11,6 +11,8 @@ const {
   createEnrollment,
   createIssuer,
   dispatchPreflight,
+  listEnrollments,
+  listIssuers,
   proposeReconcileRequestId,
 } = require("../services/certops/certificateEnrollments");
 
@@ -29,6 +31,25 @@ function fail(res, err) {
   }
   return res.status(500).json({ error: "CertOps enrollment request failed", code: "INTERNAL_ERROR" });
 }
+
+router.get(
+  "/api/v1/workspaces/:id/certops/issuers",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.issuer.manage"),
+  async (req, res) => {
+    try {
+      const page = await listIssuers({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(page);
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);
 
 router.post(
   "/api/v1/workspaces/:id/certops/issuers",
@@ -91,6 +112,25 @@ router.post(
         actorUserId: req.user?.id || null,
       });
       return res.json(confirmed);
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/certops/enrollments",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.issuer.manage"),
+  async (req, res) => {
+    try {
+      const page = await listEnrollments({
+        workspaceId: req.workspace.id,
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      return res.json(page);
     } catch (err) {
       return fail(res, err);
     }

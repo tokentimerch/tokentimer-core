@@ -731,6 +731,125 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
   return created;
 }
 
+function clampPage(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function publicPreflight(value) {
+  if (!value || typeof value !== "object") return null;
+  const certs = Array.isArray(value.caCertificates) ? value.caCertificates : [];
+  return {
+    caConfig: value.caConfig || null,
+    template: value.template || null,
+    templateCheck: value.templateCheck || null,
+    caCheck: value.caCheck || null,
+    caCertificates: certs.slice(0, 8).map((cert) => ({
+      keySha256: cert?.keySha256 || null,
+      thumbprintSha1: cert?.thumbprintSha1 || null,
+      notBefore: cert?.notBefore || null,
+      notAfter: cert?.notAfter || null,
+    })),
+  };
+}
+
+function snapshotFields(bytes) {
+  try {
+    const snapshot = JSON.parse(Buffer.from(bytes).toString("utf8"));
+    return {
+      caConfig: snapshot.caConfig || null,
+      template: snapshot.template || null,
+      caKeySha256: snapshot.caKeySha256 || null,
+      authorizedDnsNames: Array.isArray(snapshot.authorizedDnsNames)
+        ? snapshot.authorizedDnsNames
+        : [],
+    };
+  } catch (_error) {
+    return { caConfig: null, template: null, caKeySha256: null, authorizedDnsNames: [] };
+  }
+}
+
+async function listIssuers({ client, workspaceId, limit = 50, offset = 0 }) {
+  const db = dbOf(client);
+  const pageLimit = Math.min(100, Math.max(1, clampPage(limit, 50)));
+  const pageOffset = clampPage(offset, 0);
+  const [rows, total] = await Promise.all([
+    db.query(
+      `SELECT id, kind, name, current_version, revalidation_required, last_preflight, updated_at
+         FROM certificate_issuers
+        WHERE workspace_id = $1
+        ORDER BY name ASC, id ASC
+        LIMIT $2 OFFSET $3`,
+      [workspaceId, pageLimit, pageOffset],
+    ),
+    db.query(
+      `SELECT count(*)::int AS n FROM certificate_issuers WHERE workspace_id = $1`,
+      [workspaceId],
+    ),
+  ]);
+  return {
+    items: rows.rows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      name: row.name,
+      currentVersion: row.current_version,
+      revalidationRequired: row.revalidation_required === true,
+      lastPreflight: publicPreflight(row.last_preflight),
+      updatedAt: row.updated_at,
+    })),
+    pagination: { limit: pageLimit, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
+  };
+}
+
+async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) {
+  const db = dbOf(client);
+  const pageLimit = Math.min(100, Math.max(1, clampPage(limit, 50)));
+  const pageOffset = clampPage(offset, 0);
+  const [rows, total] = await Promise.all([
+    db.query(
+      `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.operator_request_id,
+              e.request_id, e.last_error_code, e.issuer_id, e.issuer_version,
+              e.certificate_id, e.updated_at, i.name AS issuer_name,
+              i.revalidation_required, i.current_version
+         FROM certificate_enrollments e
+         JOIN certificate_issuers i
+           ON i.workspace_id = e.workspace_id AND i.id = e.issuer_id
+        WHERE e.workspace_id = $1
+        ORDER BY e.updated_at DESC, e.id ASC
+        LIMIT $2 OFFSET $3`,
+      [workspaceId, pageLimit, pageOffset],
+    ),
+    db.query(
+      `SELECT count(*)::int AS n FROM certificate_enrollments WHERE workspace_id = $1`,
+      [workspaceId],
+    ),
+  ]);
+  return {
+    items: rows.rows.map((row) => {
+      const snapshot = snapshotFields(row.snapshot_bytes);
+      return {
+        id: row.id,
+        state: row.state,
+        attempt: row.attempt,
+        requestId: parseRequestId(row.request_id),
+        operatorRequestId: parseRequestId(row.operator_request_id),
+        lastErrorCode: row.last_error_code,
+        issuerId: row.issuer_id,
+        issuerName: row.issuer_name,
+        issuerVersion: row.issuer_version,
+        issuerCurrentVersion: row.current_version,
+        snapshotStale: Number(row.issuer_version) !== Number(row.current_version),
+        revalidationRequired: row.revalidation_required === true,
+        certificateId: row.certificate_id,
+        updatedAt: row.updated_at,
+        ...snapshot,
+      };
+    }),
+    pagination: { limit: pageLimit, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
+  };
+}
+
 module.exports = {
   abandonEnrollment,
   attachEnrollmentDispatch,
@@ -739,6 +858,8 @@ module.exports = {
   createEnrollment,
   createIssuer,
   dispatchPreflight,
+  listEnrollments,
+  listIssuers,
   loadDispatchEnrollment,
   proposeReconcileRequestId,
   recordEnrollmentResult,

@@ -20,6 +20,8 @@ const {
   proposeReconcileRequestId,
   recordEnrollmentResult,
   recordPreflightResult,
+  listEnrollments,
+  listIssuers,
   scheduleDueEnrollments,
 } = require("../../apps/api/services/certops/certificateEnrollments");
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
@@ -806,5 +808,70 @@ describe("enrollment rows", () => {
     );
     assert.equal(stored.last.template, template);
     assert.equal(stored.last.caConfig, caConfig);
+  });
+
+  it("lists issuers without certificate bytes and marks a stale enrollment snapshot", async () => {
+    const frozen = freezeSnapshot(snapshotInput());
+    const db = {
+      async query(sql) {
+        if (sql.includes("ORDER BY name")) {
+          return {
+            rows: [{
+              id: ISSUER,
+              kind: "adcs",
+              name: "Issuing CA",
+              current_version: 2,
+              revalidation_required: true,
+              last_preflight: {
+                caConfig: "ca01.corp.example.com\\Corp Issuing CA 01",
+                template: "TokenTimerWebServer",
+                templateCheck: { verdict: "safe", reasons: [] },
+                caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+                caCertificates: [{
+                  keySha256: "ab".repeat(32),
+                  certificateB64: "MIIB",
+                  thumbprintSha1: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+                  notBefore: "2026-01-01T00:00:00.000Z",
+                  notAfter: "2031-01-01T00:00:00.000Z",
+                }],
+              },
+              updated_at: new Date("2026-10-11T12:00:00.000Z"),
+            }],
+          };
+        }
+        if (sql.includes("FROM certificate_enrollments e")) {
+          return {
+            rows: [{
+              id: ENROLLMENT,
+              state: "pending_issuance",
+              attempt: 1,
+              snapshot_bytes: frozen.bytes,
+              operator_request_id: "77",
+              request_id: "42",
+              last_error_code: "ADCS_CA_KEY_CHANGED",
+              issuer_id: ISSUER,
+              issuer_version: 1,
+              certificate_id: null,
+              updated_at: new Date("2026-10-11T12:00:00.000Z"),
+              issuer_name: "Issuing CA",
+              revalidation_required: true,
+              current_version: 2,
+            }],
+          };
+        }
+        if (sql.includes("count(*)")) return { rows: [{ n: 1 }] };
+        throw new Error(sql);
+      },
+    };
+    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE });
+    assert.equal(issuers.items[0].revalidationRequired, true);
+    assert.equal(issuers.items[0].lastPreflight.caCertificates[0].certificateB64, undefined);
+    assert.equal(issuers.items[0].lastPreflight.caCertificates[0].keySha256, "ab".repeat(32));
+    const enrollments = await listEnrollments({ client: db, workspaceId: WORKSPACE });
+    assert.equal(enrollments.items[0].state, "pending_issuance");
+    assert.equal(enrollments.items[0].requestId, 42);
+    assert.equal(enrollments.items[0].operatorRequestId, 77);
+    assert.equal(enrollments.items[0].snapshotStale, true);
+    assert.equal(enrollments.items[0].template, "TokenTimerWebServer");
   });
 });

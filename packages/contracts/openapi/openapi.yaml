@@ -5067,6 +5067,38 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/certops/issuers:
+    get:
+      tags: [CertOps]
+      summary: List certificate issuers
+      operationId: listCertOpsIssuers
+      description: >-
+        Lists issuer records for the workspace. Preflight certificate bytes
+        are omitted. The key hashes remain so an admin can confirm one.
+        Requires certops.issuer.manage.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Issuer page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  pagination:
+                    type: object
+                    additionalProperties: true
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
     post:
       tags: [CertOps]
       summary: Create a certificate issuer
@@ -5210,6 +5242,38 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/enrollments:
+    get:
+      tags: [CertOps]
+      summary: List AD CS enrollments
+      operationId: listCertOpsEnrollments
+      description: >-
+        Lists enrollments with the frozen CA and template, the RequestId, and
+        whether the issuer version or CA key needs attention. Requires
+        certops.issuer.manage.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/certOpsReadLimitParam"
+        - $ref: "#/components/parameters/certOpsReadOffsetParam"
+      responses:
+        "200":
+          description: Enrollment page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, pagination]
+                properties:
+                  items:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  pagination:
+                    type: object
+                    additionalProperties: true
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
     post:
       tags: [CertOps]
       summary: Create an AD CS enrollment
