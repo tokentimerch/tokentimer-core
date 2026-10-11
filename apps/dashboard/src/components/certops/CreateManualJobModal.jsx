@@ -744,14 +744,19 @@ export default function CreateManualJobModal({
     setSubmitting(true);
     try {
       if (isTrustOp) {
-        const result = await createJob(workspaceId, {
+        const trustBody = {
           operation: trustOp.operation,
           subjectType: 'trust_anchor',
           subjectId: trustOp.anchorId,
           agentId: trustResolvedAgentId,
           owner: trustResolvedOwner,
           idempotencyKey: idempotencyKey.trim(),
-        });
+        };
+        // Same approval gate as the manual-job path (checkbox + workspace kill-switch).
+        if (requiresApproval || certOpsRequireApprovalAlways === true) {
+          trustBody.requiresApproval = true;
+        }
+        const result = await createJob(workspaceId, trustBody);
         if (result?.ownershipReleased) {
           showSuccess(
             'Reference released, no agent job dispatched',

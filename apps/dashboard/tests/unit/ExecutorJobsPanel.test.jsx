@@ -462,9 +462,9 @@ describe('ExecutorJobsPanel approvals', () => {
     expect(screen.getByRole('button', { name: 'Reject' })).not.toBeDisabled();
   });
 
-  it('labels a queued job as not executable while the workspace is paused', () => {
+  it('labels an approved job as not executable while the workspace is paused', () => {
     useCertOpsJobsMock.mockReturnValue(
-      jobsState({ jobs: [job({ status: 'queued' })] })
+      jobsState({ jobs: [job({ status: 'approved' })] })
     );
 
     renderPanel({ certOpsPaused: true });

@@ -1,5 +1,5 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -44,24 +44,34 @@ import { listAgentFleetLog, listAgentJobLog } from './certopsJobsApi';
 import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
 import DashboardPagination from '../DashboardPagination.jsx';
 import {
+  CERTOPS_DEFAULT_PAGE_SIZE,
   CERTOPS_PAGE_SIZE_OPTIONS,
   useCertOpsListUrlState,
 } from '../../hooks/useCertOpsUrlState.js';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import {
+  certOpsPagedListOffset,
   matchesCertOpsFocusId,
   scrollCertOpsFocusedNode,
 } from './certopsResourceLinks.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { workspaceAPI } from '../../utils/apiClient';
 import { showSuccess } from '../../utils/toast.js';
-import { retireAgent, updateAgentAlertSettings } from './certopsAgentsApi.js';
+import {
+  listAgents,
+  retireAgent,
+  updateAgentAlertSettings,
+} from './certopsAgentsApi.js';
 import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import {
   canonicalAgentContactGroupFields,
   hydrateContactGroupIds,
 } from '../../utils/contactGroupAssignment.js';
-import { formatDateTime, formatRelativeDateTime } from './certopsJobsFormat';
+import {
+  formatDateTime,
+  formatRelativeDateTime,
+  jobStatusLabel,
+} from './certopsJobsFormat';
 import { useCertOpsCanManage } from './useCertOps.js';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import {
@@ -835,6 +845,8 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
   const [mergedLines, setMergedLines] = useState([]);
   const [truncatedJobIds, setTruncatedJobIds] = useState([]);
   const [failedJobIds, setFailedJobIds] = useState([]);
+  const [fleetIndexCapped, setFleetIndexCapped] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [loading, setLoading] = useState(false);
   const agentLabel =
     agent?.name || agent?.hostname || agent?.agentId || 'Agent';
@@ -847,6 +859,8 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
     setMergedLines([]);
     setTruncatedJobIds([]);
     setFailedJobIds([]);
+    setFleetIndexCapped(false);
+    setLoadError(null);
     setSource(FLEET_ALL);
 
     (async () => {
@@ -863,6 +877,8 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
           return true;
         });
         setJobs(items);
+        // API hard-caps the fleet index; warn when we likely hit that ceiling.
+        setFleetIndexCapped(items.length >= 20);
 
         // Newest streams first from the API; reverse so the shell reads oldest→newest.
         const jobIds = [...items.map(item => item.jobId)].reverse();
@@ -877,13 +893,20 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
         setFailedJobIds(
           batches.filter(batch => batch.failed).map(batch => batch.jobId)
         );
-      } catch {
-        if (!cancelled) {
-          setJobs([]);
-          setMergedLines([]);
-          setTruncatedJobIds([]);
-          setFailedJobIds([]);
+      } catch (err) {
+        if (cancelled || err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
+          return;
         }
+        setJobs([]);
+        setMergedLines([]);
+        setTruncatedJobIds([]);
+        setFailedJobIds([]);
+        setFleetIndexCapped(false);
+        setLoadError(
+          err?.response?.data?.error ||
+            err?.message ||
+            'Could not load agent logs.'
+        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -913,7 +936,13 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
               <Text fontSize='sm'>Loading agent logs...</Text>
             </HStack>
           ) : null}
-          {!loading && jobs.length === 0 ? (
+          {!loading && loadError ? (
+            <Alert status='error' variant='subtle' borderRadius='md'>
+              <AlertIcon />
+              <AlertDescription fontSize='sm'>{loadError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {!loading && !loadError && jobs.length === 0 ? (
             <Box py={4}>
               <Text fontSize='sm' fontWeight='semibold' color={text}>
                 No job logs for this agent yet.
@@ -923,7 +952,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
               </Text>
             </Box>
           ) : null}
-          {!loading && jobs.length > 0 ? (
+          {!loading && !loadError && jobs.length > 0 ? (
             <Stack spacing={3}>
               <Box>
                 <Text fontSize='sm' mb={1} color={muted}>
@@ -939,22 +968,29 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
                   </option>
                   {jobs.map(job => (
                     <option key={job.jobId} value={job.jobId}>
-                      Job {String(job.jobId).slice(0, 8)} · {job.jobStatus}
+                      Job {String(job.jobId).slice(0, 8)} ·{' '}
+                      {jobStatusLabel(job.jobStatus)}
                     </option>
                   ))}
                 </Select>
               </Box>
-              {truncatedJobIds.length > 0 ? (
+              {fleetIndexCapped ? (
+                <Text fontSize='sm' color={muted}>
+                  Showing the {jobs.length} most recent job streams for this
+                  agent, not the full history.
+                </Text>
+              ) : null}
+              {source === FLEET_ALL && truncatedJobIds.length > 0 ? (
                 <Text fontSize='sm' color={muted}>
                   Showing up to {FLEET_LOG_TOTAL_MAX_LINES} lines across recent
                   jobs
                   {truncatedJobIds.length === 1
                     ? ` (truncated for job ${String(truncatedJobIds[0]).slice(0, 8)})`
                     : ` (truncated for ${truncatedJobIds.length} jobs)`}
-                  . Open a single job Agent output panel for the full stream.
+                  . Select a job above for the full stream.
                 </Text>
               ) : null}
-              {failedJobIds.length > 0 ? (
+              {source === FLEET_ALL && failedJobIds.length > 0 ? (
                 <Text fontSize='sm' color={muted}>
                   Could not load the full log for{' '}
                   {failedJobIds.length === 1
@@ -1012,9 +1048,68 @@ export default function AgentFleetPanel({
   const [retireTarget, setRetireTarget] = useState(null);
   const [logTarget, setLogTarget] = useState(null);
   const [alertingTarget, setAlertingTarget] = useState(null);
+  const focusPageLookupRef = useRef({ agentId: '', pass: 0 });
+
+  useEffect(() => {
+    focusPageLookupRef.current = { agentId: '', pass: 0 };
+  }, [focusAgentId, sort.key, sort.direction]);
+
+  useEffect(() => {
+    if (!focusAgentId || !workspaceId) return undefined;
+    const onPage = agents.some(agent =>
+      matchesCertOpsFocusId(focusAgentId, agent?.id, agent?.agentId)
+    );
+    if (onPage || loading) return undefined;
+    const lookup = focusPageLookupRef.current;
+    if (lookup.agentId === focusAgentId && lookup.pass >= 1) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    focusPageLookupRef.current = { agentId: focusAgentId, pass: 1 };
+
+    listAgents(workspaceId, {
+      ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
+      signal: controller.signal,
+    })
+      .then(data => {
+        if (cancelled) return;
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const index = items.findIndex(agent =>
+          matchesCertOpsFocusId(focusAgentId, agent?.id, agent?.agentId)
+        );
+        if (index < 0) return;
+        const pageSize = limit || CERTOPS_DEFAULT_PAGE_SIZE;
+        const targetOffset = certOpsPagedListOffset(index, pageSize);
+        if (targetOffset !== offset) {
+          setPage({ offset: targetOffset });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    focusAgentId,
+    workspaceId,
+    loading,
+    agents,
+    limit,
+    offset,
+    sort.key,
+    sort.direction,
+    setPage,
+  ]);
 
   useEffect(() => {
     if (!focusAgentId || loading) return undefined;
+    const onPage = agents.some(agent =>
+      matchesCertOpsFocusId(focusAgentId, agent?.id, agent?.agentId)
+    );
+    if (!onPage) return undefined;
     const id = CSS.escape(String(focusAgentId));
     return scrollCertOpsFocusedNode(
       `[data-agent-id="${id}"], [data-agent-public-id="${id}"]`

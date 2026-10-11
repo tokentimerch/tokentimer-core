@@ -30,28 +30,35 @@ import {
   jobAgentHref,
   jobSubjectHref,
 } from './certopsResourceLinks.js';
-import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
+import {
+  useCertOpsCanManage,
+  useCertOpsIsWorkspaceAdmin,
+} from './useCertOps.js';
 
 const TRUST_ANCHOR_ADMIN_ONLY =
   'Only workspace admins can open trust anchors.';
+const AGENT_MANAGE_ONLY =
+  'Only workspace managers can open the Agents page.';
 
 function ApprovedByLine({ job }) {
+  const { muted } = useDashboardTheme();
   const name = userFacingName(
     job?.approvedByUserId,
     job?.approvedByDisplayName
   );
   if (!name) return null;
   return (
-    <Text fontSize='xs' color='gray.500'>
+    <Text fontSize='xs' color={muted}>
       Approved by {name}
     </Text>
   );
 }
 
 function MetadataField({ label, children }) {
+  const { muted } = useDashboardTheme();
   return (
     <Box minW={0}>
-      <Text fontSize='xs' color='gray.500' mb={0.5}>
+      <Text fontSize='xs' color={muted} mb={0.5}>
         {label}
       </Text>
       {children}
@@ -94,7 +101,7 @@ function resolveAgentId(job) {
  * stay in JobExecutionSummary when the row is expanded.
  */
 function JobMetadataDetails({ job, agentsById }) {
-  const { dashboard } = useDashboardTheme();
+  const { border, text } = useDashboardTheme();
   const attemptLabel = attemptLabelFor(job);
 
   return (
@@ -169,13 +176,15 @@ function JobMetadataDetails({ job, agentsById }) {
           mt={1}
           w='100%'
           leftIcon={<Icon as={FileSearch} boxSize={3.5} />}
-          color={dashboard.accent.interactiveForeground}
-          borderColor={dashboard.accent.interactiveBorder}
-          bg={dashboard.accent.interactiveSurface}
+          color={text}
+          borderColor={border}
+          bg='transparent'
           _hover={{
-            bg: dashboard.accent.interactiveSurface,
-            borderColor: dashboard.accent.interactiveForeground,
+            bg: 'transparent',
+            borderColor: text,
+            color: text,
           }}
+          _active={{ bg: 'transparent' }}
         >
           View audit log
         </Button>
@@ -386,6 +395,7 @@ function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
 export function JobExecutionSummary({ job, agentsById }) {
   const { muted, text } = useDashboardTheme();
   const canOpenTrustAnchors = useCertOpsIsWorkspaceAdmin();
+  const canOpenAgents = useCertOpsCanManage();
   const subjectDisplay = useJobSubjectDisplay(job, { canOpenTrustAnchors });
   if (!job) return null;
 
@@ -396,7 +406,10 @@ export function JobExecutionSummary({ job, agentsById }) {
       : null;
   const agentName = agentDisplayName(agent);
   // Prefer the fleet row UUID so Agents can match data-agent-id after load.
-  const agentHref = jobAgentHref(agent?.id || agentId);
+  // Viewers can list jobs but not GET /certops/agents; hide the dead link.
+  const agentHref = canOpenAgents
+    ? jobAgentHref(agent?.id || agentId)
+    : null;
   const attemptLabel = attemptLabelFor(job);
   const subjectLabel = subjectTypeLabel(job.subjectType) || 'Subject';
   const subjectHref =
@@ -422,9 +435,20 @@ export function JobExecutionSummary({ job, agentsById }) {
         {agentId ? (
           <Box>
             <Box fontSize='sm'>
-              <ResourceNavLink href={agentHref}>
-                {agentName || 'Open agent'}
-              </ResourceNavLink>
+              {!canOpenAgents ? (
+                <Text
+                  fontSize='sm'
+                  color={muted}
+                  title={AGENT_MANAGE_ONLY}
+                  data-testid='agent-access-denied'
+                >
+                  {agentName || AGENT_MANAGE_ONLY}
+                </Text>
+              ) : (
+                <ResourceNavLink href={agentHref}>
+                  {agentName || 'Open agent'}
+                </ResourceNavLink>
+              )}
             </Box>
             <CopyableId id={agentId} />
           </Box>

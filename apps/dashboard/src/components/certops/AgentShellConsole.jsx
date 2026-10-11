@@ -34,14 +34,28 @@ const STATUS_LABEL = {
   failed: 'Failed',
   cancelled: 'Cancelled',
   rejected: 'Rejected',
-  pending: 'Queued',
+  pending: 'Pending',
   claimed: 'Claimed',
   running: 'Running',
   complete: 'Complete',
   incomplete: 'Incomplete',
   disabled: 'Disabled',
   forbidden: 'Restricted',
+  awaiting_issuer: 'Awaiting issuer',
+  blocked: 'Blocked',
+  dry_run_complete: 'Dry-run complete',
+  merged: 'Merged',
 };
+
+/** Truncation / drop notices shown even when the shell already has lines. */
+function deliveryLimitNotice(payload) {
+  if (!payload) return null;
+  const streams = payload.streams || [];
+  const dropped = streamDroppedLines(streams);
+  if (dropped > 0) return `Output incomplete: ${dropped} lines dropped`;
+  if (streams.some(stream => stream.truncated)) return 'Log limit reached';
+  return null;
+}
 
 function toneForStatus(status) {
   const s = String(status || '').toLowerCase();
@@ -176,9 +190,12 @@ function statusHintFromPayload(payload, failed) {
     if (dropped > 0) return 'incomplete';
     const job = String(payload.jobStatus || '').toLowerCase();
     if (job === 'succeeded' || job === 'success') return 'succeeded';
-    if (job === 'failed') return 'failed';
+    if (job === 'failed' || job === 'orphaned_unknown_effect') return 'failed';
     if (job === 'cancelled') return 'cancelled';
     if (job === 'rejected') return 'rejected';
+    if (job === 'awaiting_issuer') return 'awaiting_issuer';
+    if (job === 'blocked') return 'blocked';
+    if (job === 'dry_run_complete') return 'dry_run_complete';
     return 'complete';
   }
   if (streams.some(stream => stream.status === 'streaming')) return 'streaming';
@@ -252,7 +269,8 @@ export default function AgentShellConsole({
   onComplete,
 }) {
   const { muted, text, dashboard } = useDashboardTheme();
-  const cursorColor = dashboard?.accent?.interactiveForeground || SHELL.info;
+  // Keep the live cursor on the shell palette (theme accent fails contrast on #0f172a).
+  const cursorColor = SHELL.info;
 
   const [payload, setPayload] = useState(null);
   const [items, setItems] = useState([]);
@@ -261,16 +279,13 @@ export default function AgentShellConsole({
   const doneRef = useRef(false);
   const useStatic = Array.isArray(staticEntries);
 
+  // Merged fleet view is not a single job status; avoid badging the last line level.
   const statusHint = useStatic
-    ? (() => {
-        const last = staticEntries[staticEntries.length - 1];
-        return last
-          ? String(last.status || last.level || 'succeeded')
-          : staticEntries.length
-            ? 'streaming'
-            : 'connecting';
-      })()
+    ? staticEntries.length
+      ? 'merged'
+      : 'connecting'
     : statusHintFromPayload(payload, failed);
+  const limitNotice = useStatic ? null : deliveryLimitNotice(payload);
 
   const displayLines = useMemo(() => {
     if (useStatic) {
@@ -501,6 +516,11 @@ export default function AgentShellConsole({
         ) : null}
         <div ref={bottomRef} />
       </Box>
+      {limitNotice ? (
+        <Text fontSize='xs' color={muted} role='status'>
+          {limitNotice}
+        </Text>
+      ) : null}
       {payload &&
       (payload.storageEnabled === false || payload.linesVisible === false) ? (
         <Text fontSize='xs' color={muted}>

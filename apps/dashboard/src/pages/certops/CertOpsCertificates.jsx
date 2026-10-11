@@ -405,14 +405,8 @@ export default function CertOpsCertificates() {
           });
         } catch (listErr) {
           if (cancelled || listErr?.name === 'CanceledError') return;
-          // getCertificate already succeeded. For fingerprintless provisionals
-          // the grouped list is enrichment only; do not treat a list failure
-          // as "certificate not found".
-          if (!fingerprint) {
-            listed = { items: [] };
-          } else {
-            throw listErr;
-          }
+          // getCertificate already succeeded; grouped list is enrichment only.
+          listed = { items: [] };
         }
         const items = Array.isArray(listed?.items) ? listed.items : [];
         const matchesManagedId = item =>
@@ -430,7 +424,7 @@ export default function CertOpsCertificates() {
               item =>
                 String(item.fingerprintSha256 || '').toLowerCase() ===
                   String(fingerprint).toLowerCase() || matchesManagedId(item)
-            ) || items[0];
+            ) || identityFromManagedCert(cert);
         } else {
           identity =
             items.find(matchesManagedId) || identityFromManagedCert(cert);
@@ -439,6 +433,7 @@ export default function CertOpsCertificates() {
         if (identity) {
           setCsrModalOpen(false);
           setDetailsTarget(identity);
+          stripCertificateId();
         } else {
           setFocusedCertificateId('');
           showError(
@@ -455,8 +450,6 @@ export default function CertOpsCertificates() {
             err?.message ||
             'This certificate may have been deleted or is inaccessible.'
         );
-      } finally {
-        if (!cancelled) stripCertificateId();
       }
     })();
     return () => {

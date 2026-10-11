@@ -73,7 +73,8 @@ const PAUSED_CREATE_REASON =
 // Statuses whose jobs are waiting on an agent claim: while the workspace is
 // paused the control plane stops handing them out, so they sit in place
 // rather than failing, and the row has to say so.
-const AWAITING_EXECUTION_STATUSES = new Set(['pending', 'queued', 'claimed']);
+// Claimable wait states while paused (queued is not a JOB_STATUSES value).
+const AWAITING_EXECUTION_STATUSES = new Set(['approved', 'pending', 'claimed']);
 
 /**
  * Maps approve/reject failures to a message that explains the specific
