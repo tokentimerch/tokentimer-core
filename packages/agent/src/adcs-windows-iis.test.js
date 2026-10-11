@@ -16,15 +16,20 @@ const {
   resolveCleanupOutcome,
   isRetryableInstallInterrupt,
   observeInstalledCertificateIdentity,
+  inspectAdcsInstallProgress,
   withUniqueValidationLeafFile,
 } = require("./adcs-windows-iis");
+const { computeSha1ThumbprintFromPem } = require("./windows-cert-store");
 
 describe("AD CS renew evidence ordering", () => {
   it("persists classified CA outcomes before reportIssuanceEvidence and exposes fault injection", () => {
     const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
     const renewFn = src.indexOf("async function executeWindowsIisAdcsRenewJob");
     assert.ok(renewFn >= 0);
-    const renewSrc = src.slice(renewFn, src.indexOf("async function executeWindowsIisAdcsContinueJob"));
+    const renewSrc = src.slice(
+      renewFn,
+      src.indexOf("async function executeWindowsIisContinueEnrollmentJob"),
+    );
     function assertPersistBeforeReport(marker) {
       const persistAt = renewSrc.indexOf(marker);
       assert.ok(persistAt >= 0, `missing ${marker}`);
@@ -38,6 +43,32 @@ describe("AD CS renew evidence ordering", () => {
     assertPersistBeforeReport("issuanceOutcome = caHresult ? \"denied\" : \"submission_uncertain\"");
     assertPersistBeforeReport('state: issuanceOutcome');
     assertPersistBeforeReport('state: "refused"');
+  });
+
+  it("inspects install progress before decision-6 on installing recovery and validates tier-2 before issued", () => {
+    const src = fs.readFileSync(require.resolve("./adcs-windows-iis.js"), "utf8");
+    const validateFn = src.indexOf("async function validateAndInstallFromLeaf");
+    assert.ok(validateFn >= 0);
+    const validateSrc = src.slice(validateFn, src.indexOf("async function executeWindowsIisContinueEnrollmentJob"));
+    const resumeGate = validateSrc.indexOf("resumeInstallStates");
+    const inspectAt = validateSrc.indexOf("inspectImpl", resumeGate);
+    const decision6At = validateSrc.indexOf("runDecision6Validation", resumeGate);
+    assert.ok(inspectAt >= 0, "install recovery must inspect live progress");
+    assert.ok(decision6At > inspectAt, "decision-6 must not run before install inspection on resume");
+    assert.match(validateSrc, /startAtStep:\s*progress\.startAtStep/);
+
+    const continueFn = src.indexOf("async function executeWindowsIisContinueEnrollmentJob");
+    const continueSrc = src.slice(continueFn);
+    const tier2 = continueSrc.indexOf('journal.state === "submission_uncertain"');
+    assert.ok(tier2 >= 0);
+    const tier2Src = continueSrc.slice(tier2, tier2 + 4500);
+    assert.match(tier2Src, /unique_candidate/);
+    assert.match(tier2Src, /runDecision6Validation/);
+    assert.match(tier2Src, /reconcileSearchFrom/);
+    const candidateValidation = tier2Src.indexOf("candidateValidation");
+    const issuedJournal = tier2Src.indexOf('state: "issued"', candidateValidation);
+    assert.ok(candidateValidation >= 0);
+    assert.ok(issuedJournal > candidateValidation, "decision-6 must precede issued journal attach");
   });
 });
 
@@ -440,6 +471,126 @@ describe("observeInstalledCertificateIdentity", () => {
     });
     assert.ok(missingExpiry.error);
     assert.match(missingExpiry.error, /missing serial or notAfter/);
+  });
+});
+
+describe("inspectAdcsInstallProgress", () => {
+  const fixturePem = fs.readFileSync(
+    path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
+    "utf8",
+  );
+  const expectedThumbprint = computeSha1ThumbprintFromPem(fixturePem);
+  const windowsTarget = {
+    store: "WebHosting",
+    binding: { site: "Default Web Site", port: 443 },
+  };
+  const containerName = "tokentimer-enr-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+  it("resumes at accept when the leaf is absent from every store", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget,
+      containerName,
+      listMachineStoreCertificatesImpl: async () => ({ ok: true, certificates: [] }),
+      queryCurrentBindingImpl: async () => {
+        throw new Error("binding must not be queried before store presence");
+      },
+    });
+    assert.equal(progress.status, "resume");
+    assert.equal(progress.startAtStep, "accept");
+  });
+
+  it("resumes at mirror when accepted in My but missing from the target store", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget,
+      containerName,
+      listMachineStoreCertificatesImpl: async ({ store }) => {
+        if (store === "My") {
+          return {
+            ok: true,
+            certificates: [
+              {
+                thumbprint: expectedThumbprint,
+                hasPrivateKey: true,
+                keyContainer: containerName,
+              },
+            ],
+          };
+        }
+        return { ok: true, certificates: [] };
+      },
+      queryCurrentBindingImpl: async () => {
+        throw new Error("binding must not be queried before mirror completes");
+      },
+    });
+    assert.equal(progress.status, "resume");
+    assert.equal(progress.startAtStep, "mirror");
+  });
+
+  it("resumes at bind when the target store has the keyed leaf but IIS is unbound", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget,
+      containerName,
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: expectedThumbprint,
+            hasPrivateKey: true,
+            keyContainer: containerName,
+          },
+        ],
+      }),
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: null }),
+    });
+    assert.equal(progress.status, "resume");
+    assert.equal(progress.startAtStep, "bind");
+  });
+
+  it("finalizes complete when binding and live TLS already match the leaf", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget,
+      containerName,
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: expectedThumbprint,
+            hasPrivateKey: true,
+            keyContainer: containerName,
+          },
+        ],
+      }),
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: expectedThumbprint }),
+      verifyDeployedCertificateImpl: async () => ({ verified: true }),
+    });
+    assert.equal(progress.status, "complete");
+    assert.equal(progress.expectedThumbprint, expectedThumbprint);
+  });
+
+  it("resumes at verify when bound but live TLS does not match", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget,
+      containerName,
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: expectedThumbprint,
+            hasPrivateKey: true,
+            keyContainer: containerName,
+          },
+        ],
+      }),
+      queryCurrentBindingImpl: async () => ({ ok: true, thumbprint: expectedThumbprint }),
+      verifyDeployedCertificateImpl: async () => ({ verified: false, detail: "mismatch" }),
+    });
+    assert.equal(progress.status, "resume");
+    assert.equal(progress.startAtStep, "verify");
   });
 });
 

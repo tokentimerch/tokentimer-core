@@ -160,6 +160,9 @@ const {
 const {
   generateCsrViaCng,
   acceptCertificateViaCng,
+  mirrorAcceptedCertificateToStore,
+  computeSha1ThumbprintFromPem,
+  CERTREQ_ACCEPT_DEFAULT_STORE,
   acquireStoreLock,
   acquireEnrollmentLock,
   removeAbandonedKeyContainer,
@@ -2980,6 +2983,16 @@ function getAdcsWindowsIisExecutors() {
   return adcsWindowsIisExecutors;
 }
 
+/**
+ * Complete CNG accept (+ optional mirror) then IIS bind/verify.
+ *
+ * `startAtStep` lets AD CS install recovery skip steps that inspection
+ * already proved complete. Never pass "accept" when the leaf may already
+ * be in the store: a bare certreq -accept failure deletes the CNG key.
+ *
+ * @param {"accept"|"mirror"|"bind"|"verify"} [startAtStep="accept"]
+ * @param {(step: string) => void|Promise<void>} [onInstallStep]
+ */
 async function runWindowsIisDeployTail({
   jobId,
   client,
@@ -2991,6 +3004,8 @@ async function runWindowsIisDeployTail({
   containerName = null,
   leaseOpts = null,
   onBeforeMutation = null,
+  onInstallStep = null,
+  startAtStep = "accept",
   windowsExecFileImpl,
   windowsConnectImpl,
 }) {
@@ -2999,6 +3014,11 @@ async function runWindowsIisDeployTail({
     if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
   }
   if (typeof onBeforeMutation === "function") onBeforeMutation("deploy");
+
+  const stepOrder = { accept: 0, mirror: 1, bind: 2, verify: 3 };
+  const resumeFrom =
+    typeof startAtStep === "string" && Object.hasOwn(stepOrder, startAtStep) ? startAtStep : "accept";
+  const shouldRun = (step) => stepOrder[resumeFrom] <= stepOrder[step];
 
   let storeLock;
   try {
@@ -3018,70 +3038,126 @@ async function runWindowsIisDeployTail({
   }
 
   try {
-    emitInfo(`job ${jobId}: completing CNG enrollment (certreq -accept) into store ${target.store}`);
-    const acceptResult = await acceptCertificateViaCng({
-      certificatePem,
-      workDir: cngWorkDir,
-      store: target.store,
-      ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-    });
-    if (!acceptResult.ok) {
-      // Only a bare-accept failure (no `stage`) leaves the CNG key
-      // container genuinely orphaned: `certreq -accept` itself never ran,
-      // or ran and failed before binding any certificate to the key, so
-      // there is no enrolled certificate anywhere referencing this
-      // container yet. A failure at the addstore/repairstore/delstore
-      // mirroring stage is different -- accept already SUCCEEDED, so the
-      // key is bound to a real certificate sitting in the store (at least
-      // in "My"); deleting the container there would corrupt that
-      // certificate's key reference instead of freeing dead weight. Same
-      // best-effort, non-fatal cleanup discipline as the ACME-failure path
-      // in executeWindowsIisRenewJob's finally block.
-      if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
-        try {
-          const cleanup = await removeAbandonedKeyContainer({
-            containerName,
-            ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
-          });
-          if (cleanup.ok !== true) {
+    let acceptedThumbprint = computeSha1ThumbprintFromPem(certificatePem);
+
+    if (shouldRun("accept")) {
+      if (typeof onInstallStep === "function") await onInstallStep("accept");
+      emitInfo(`job ${jobId}: completing CNG enrollment (certreq -accept) into store ${target.store}`);
+      const acceptResult = await acceptCertificateViaCng({
+        certificatePem,
+        workDir: cngWorkDir,
+        store: target.store,
+        ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+      });
+      if (!acceptResult.ok) {
+        // Only a bare-accept failure (no `stage`) leaves the CNG key
+        // container genuinely orphaned: `certreq -accept` itself never ran,
+        // or ran and failed before binding any certificate to the key, so
+        // there is no enrolled certificate anywhere referencing this
+        // container yet. A failure at the addstore/repairstore/delstore
+        // mirroring stage is different -- accept already SUCCEEDED, so the
+        // key is bound to a real certificate sitting in the store (at least
+        // in "My"); deleting the container there would corrupt that
+        // certificate's key reference instead of freeing dead weight. Same
+        // best-effort, non-fatal cleanup discipline as the ACME-failure path
+        // in executeWindowsIisRenewJob's finally block.
+        if (acceptResult.stage === undefined && isNonEmptyStringValue(containerName)) {
+          try {
+            const cleanup = await removeAbandonedKeyContainer({
+              containerName,
+              ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+            });
+            if (cleanup.ok !== true) {
+              emitLog(
+                log,
+                `job ${jobId}: failed to delete abandoned CNG key container ` +
+                  `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
+                  `it will remain orphaned in the CNG key store until manually removed.`,
+              );
+            } else {
+              removeIssuedContainerRecord({ stateDir, containerName });
+            }
+          } catch (err) {
             emitLog(
               log,
               `job ${jobId}: failed to delete abandoned CNG key container ` +
-                `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
-                `it will remain orphaned in the CNG key store until manually removed.`,
+                `${containerName} after certreq -accept failure: ${err.message}`,
             );
-          } else {
-            removeIssuedContainerRecord({ stateDir, containerName });
           }
-        } catch (err) {
-          emitLog(
-            log,
-            `job ${jobId}: failed to delete abandoned CNG key container ` +
-              `${containerName} after certreq -accept failure: ${err.message}`,
-          );
+        }
+        await reportStepEvidence(client, jobId, [
+          buildEvidenceItem({
+            eventType: "validation.failed",
+            observedAt: new Date().toISOString(),
+            summary: `CNG certificate acceptance failed for job ${jobId} (exit code ${acceptResult.exitCode}).`,
+            metadata: [
+              { name: "step", value: "cng-accept" },
+              { name: "exitCode", value: acceptResult.exitCode },
+              { name: "stderrExcerpt", value: boundMetadataExcerpt(acceptResult.stderrExcerpt) },
+            ],
+          }),
+        ]);
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `CNG certificate acceptance failed (exit code ${acceptResult.exitCode}): ${acceptResult.stderrExcerpt}`,
+          ),
+        };
+      }
+      acceptedThumbprint = acceptResult.thumbprint;
+      emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptedThumbprint}`);
+    } else if (shouldRun("mirror") && target.store !== CERTREQ_ACCEPT_DEFAULT_STORE) {
+      // Accept already proven by inspection; finish non-default-store mirror only.
+      if (typeof onInstallStep === "function") await onInstallStep("mirror");
+      emitInfo(
+        `job ${jobId}: mirroring accepted certificate into store ${target.store} (recovery resume)`,
+      );
+      const crypto = require("node:crypto");
+      fs.mkdirSync(cngWorkDir, { recursive: true });
+      const certPath = path.join(
+        cngWorkDir,
+        `mirror-resume-${crypto.randomBytes(4).toString("hex")}.cer`,
+      );
+      fs.writeFileSync(certPath, certificatePem, { encoding: "utf8", flag: "wx" });
+      try {
+        const mirrored = await mirrorAcceptedCertificateToStore({
+          certPath,
+          thumbprint: acceptedThumbprint,
+          targetStore: target.store,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        if (!mirrored.ok) {
+          await reportStepEvidence(client, jobId, [
+            buildEvidenceItem({
+              eventType: "validation.failed",
+              observedAt: new Date().toISOString(),
+              summary: `CNG certificate mirror failed for job ${jobId} at stage ${mirrored.stage}.`,
+              metadata: [
+                { name: "step", value: "cng-mirror" },
+                { name: "stage", value: mirrored.stage },
+                { name: "exitCode", value: mirrored.exitCode },
+                { name: "stderrExcerpt", value: boundMetadataExcerpt(mirrored.stderrExcerpt) },
+              ],
+            }),
+          ]);
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `CNG certificate mirror failed at ${mirrored.stage} (exit code ${mirrored.exitCode}): ${mirrored.stderrExcerpt}`,
+            ),
+          };
+        }
+      } finally {
+        try {
+          fs.unlinkSync(certPath);
+        } catch {
+          // best-effort; public certificate bytes only
         }
       }
-      await reportStepEvidence(client, jobId, [
-        buildEvidenceItem({
-          eventType: "validation.failed",
-          observedAt: new Date().toISOString(),
-          summary: `CNG certificate acceptance failed for job ${jobId} (exit code ${acceptResult.exitCode}).`,
-          metadata: [
-            { name: "step", value: "cng-accept" },
-            { name: "exitCode", value: acceptResult.exitCode },
-            { name: "stderrExcerpt", value: boundMetadataExcerpt(acceptResult.stderrExcerpt) },
-          ],
-        }),
-      ]);
-      return {
-        status: "failed",
-        keyRotated: null,
-        errorMessage: boundErrorMessage(
-          `CNG certificate acceptance failed (exit code ${acceptResult.exitCode}): ${acceptResult.stderrExcerpt}`,
-        ),
-      };
     }
-    emitInfo(`job ${jobId}: CNG enrollment complete, thumbprint ${acceptResult.thumbprint}`);
+
     // Bind the ownership record to the actual accepted certificate's
     // thumbprint, not merely
     // "this agent created the container" -- see windows-cert-store's
@@ -3095,7 +3171,7 @@ async function runWindowsIisDeployTail({
         markIssuedContainerAccepted({
           stateDir,
           containerName,
-          acceptedThumbprint: acceptResult.thumbprint,
+          acceptedThumbprint,
           store: target.store,
         });
       } catch (err) {
@@ -3120,6 +3196,9 @@ async function runWindowsIisDeployTail({
       site: target.binding.site,
     };
 
+    if (typeof onInstallStep === "function") {
+      await onInstallStep(shouldRun("bind") ? "bind" : "verify");
+    }
     emitInfo(`job ${jobId}: deploying IIS binding at ${binding.address}:${binding.port}`);
     const deployResult = await deployIisBinding({
       binding,

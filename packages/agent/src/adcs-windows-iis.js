@@ -48,9 +48,15 @@ const {
   removeIssuedContainerRecord,
   buildEnrollmentContainerName,
   hasIssuedContainerRecord,
+  computeSha1ThumbprintFromPem,
+  CERTREQ_ACCEPT_DEFAULT_STORE,
 } = require("./windows-cert-store");
-const { queryCurrentBinding } = require("./windows-iis");
+const { queryCurrentBinding, resolveVerificationTarget } = require("./windows-iis");
 const { listMachineStoreCertificates } = require("./windows-discovery");
+const {
+  computeCertificateFingerprint,
+  verifyDeployedCertificate,
+} = require("./verify");
 
 const WINDOWS_CERT_STORE_WORK_DIR_NAME = "windows-cert-store-work";
 const CA_HRESULT_PATTERN = /^0x[0-9A-F]{8}$/;
@@ -335,6 +341,145 @@ async function observeInstalledCertificateIdentity({
     };
   }
   return { existingNotAfter, existingSerialHex };
+}
+
+function findStoreCertificateByThumbprint(listed, thumbprint) {
+  const thumb = String(thumbprint).toUpperCase();
+  return (listed.certificates || []).find(
+    (cert) => String(cert.thumbprint || "").toUpperCase() === thumb,
+  );
+}
+
+/** True when the store entry has a usable private key for this enrollment. */
+function storeCertHasEnrollmentKey(cert, containerName) {
+  if (!cert || cert.hasPrivateKey !== true) return false;
+  if (
+    typeof containerName === "string" &&
+    containerName.length > 0 &&
+    typeof cert.keyContainer === "string" &&
+    cert.keyContainer.length > 0
+  ) {
+    return cert.keyContainer === containerName;
+  }
+  return true;
+}
+
+/**
+ * Inspect live store/binding/TLS state for AD CS install recovery.
+ * Never infer progress only from journal installStep.
+ *
+ * @returns {Promise<
+ *   | { status: "complete", expectedThumbprint: string }
+ *   | { status: "resume", startAtStep: "accept"|"mirror"|"bind"|"verify", expectedThumbprint: string }
+ *   | { status: "error", error: string }
+ * >}
+ */
+async function inspectAdcsInstallProgress({
+  certificatePem,
+  windowsTarget,
+  containerName = null,
+  execFileImpl,
+  connectImpl,
+  listMachineStoreCertificatesImpl = listMachineStoreCertificates,
+  queryCurrentBindingImpl = queryCurrentBinding,
+  verifyDeployedCertificateImpl = verifyDeployedCertificate,
+}) {
+  let expectedThumbprint;
+  try {
+    expectedThumbprint = computeSha1ThumbprintFromPem(certificatePem);
+  } catch (err) {
+    return { status: "error", error: `cannot compute leaf thumbprint: ${err.message}` };
+  }
+
+  const defaultStore = CERTREQ_ACCEPT_DEFAULT_STORE;
+  const targetStore = windowsTarget.store;
+  const listOpts = execFileImpl ? { execFileImpl } : {};
+
+  const listedDefault = await listMachineStoreCertificatesImpl({
+    store: defaultStore,
+    ...listOpts,
+  });
+  if (!listedDefault.ok) {
+    return {
+      status: "error",
+      error: listedDefault.stderrExcerpt || `could not list machine store ${defaultStore}`,
+    };
+  }
+
+  let listedTarget = listedDefault;
+  if (targetStore !== defaultStore) {
+    listedTarget = await listMachineStoreCertificatesImpl({
+      store: targetStore,
+      ...listOpts,
+    });
+    if (!listedTarget.ok) {
+      return {
+        status: "error",
+        error: listedTarget.stderrExcerpt || `could not list machine store ${targetStore}`,
+      };
+    }
+  }
+
+  const inDefault = findStoreCertificateByThumbprint(listedDefault, expectedThumbprint);
+  const inTarget = findStoreCertificateByThumbprint(listedTarget, expectedThumbprint);
+  const defaultKeyed = storeCertHasEnrollmentKey(inDefault, containerName);
+  const targetKeyed = storeCertHasEnrollmentKey(inTarget, containerName);
+
+  if (!defaultKeyed && !targetKeyed) {
+    return { status: "resume", startAtStep: "accept", expectedThumbprint };
+  }
+  if (targetStore !== defaultStore && !targetKeyed) {
+    // Accepted into My but mirror incomplete. Never re-run bare -accept.
+    return { status: "resume", startAtStep: "mirror", expectedThumbprint };
+  }
+
+  const address =
+    typeof windowsTarget.binding.address === "string" && windowsTarget.binding.address.length > 0
+      ? windowsTarget.binding.address
+      : "*";
+  const binding = {
+    address,
+    port: windowsTarget.binding.port,
+    ...(windowsTarget.binding.sniHost ? { sniHost: windowsTarget.binding.sniHost } : {}),
+    store: targetStore,
+    site: windowsTarget.binding.site,
+  };
+  const current = await queryCurrentBindingImpl({
+    binding,
+    ...listOpts,
+  });
+  if (!current.ok) {
+    return {
+      status: "error",
+      error: current.stderrExcerpt || "could not query the current IIS binding",
+    };
+  }
+  const boundMatches =
+    typeof current.thumbprint === "string" &&
+    current.thumbprint.length > 0 &&
+    String(current.thumbprint).toUpperCase() === expectedThumbprint;
+  if (!boundMatches) {
+    return { status: "resume", startAtStep: "bind", expectedThumbprint };
+  }
+
+  let expectedFingerprint;
+  try {
+    expectedFingerprint = computeCertificateFingerprint(certificatePem);
+  } catch (err) {
+    return { status: "error", error: `cannot compute leaf fingerprint: ${err.message}` };
+  }
+  const { host, servername } = resolveVerificationTarget(binding);
+  const verified = await verifyDeployedCertificateImpl({
+    host,
+    port: binding.port,
+    servername,
+    expectedFingerprintSha256: expectedFingerprint,
+    ...(connectImpl !== undefined ? { connectImpl } : {}),
+  });
+  if (verified && verified.verified === true) {
+    return { status: "complete", expectedThumbprint };
+  }
+  return { status: "resume", startAtStep: "verify", expectedThumbprint };
 }
 
 /**
@@ -1223,23 +1368,120 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
 
+    const journalBase = {
+      attempt: decoded.attempt,
+      containerName,
+      snapshotSha256: decoded.snapshotSha256,
+      jobId,
+      csrSha256: journal.csrSha256,
+      csrSpkiSha256: journal.csrSpkiSha256,
+      templateOid: journal.templateOid,
+      caConfig: snapshot.caConfig,
+      template: snapshot.template,
+      leafSha256: journal.leafSha256,
+      ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+    };
+
+    const resumeInstallStates = journal.state === "installing" || journal.state === "install_failed";
+
+    // Crash recovery: inspect live deployment before any renewal validation.
+    // An already-bound leaf must finalize as installed, never rejected_invalid.
+    if (resumeInstallStates) {
+      const inspectImpl =
+        executionContext.adcsInspectInstallProgressImpl || inspectAdcsInstallProgress;
+      const progress = await inspectImpl({
+        certificatePem,
+        windowsTarget,
+        containerName,
+        execFileImpl: windowsExecFileImpl || executionContext.windowsExecFileImpl,
+        connectImpl: windowsConnectImpl || executionContext.windowsConnectImpl,
+        listMachineStoreCertificatesImpl: executionContext.adcsListMachineStoreCertificatesImpl,
+        queryCurrentBindingImpl: executionContext.adcsQueryCurrentBindingImpl,
+        verifyDeployedCertificateImpl: executionContext.adcsVerifyDeployedCertificateImpl,
+      });
+      if (progress.status === "error") {
+        return {
+          status: "failed",
+          keyRotated: null,
+          errorMessage: boundErrorMessage(
+            `cannot inspect AD CS install progress for enrollment ${decoded.enrollmentId}: ${progress.error}`,
+          ),
+        };
+      }
+      if (progress.status === "complete") {
+        continueOutcomeRef.value = "installed";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "installed",
+          ...journalBase,
+          installStep: "complete",
+        });
+        return {
+          status: "succeeded",
+          keyRotated: null,
+          enrollmentResult: installedEnrollmentResult(
+            decoded.enrollmentId,
+            decoded.attempt,
+            journal.requestId,
+          ),
+        };
+      }
+
+      let currentInstallStep = progress.startAtStep;
+      await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+        state: "installing",
+        ...journalBase,
+        installStep: currentInstallStep,
+      });
+      continueOutcomeRef.value = "issued";
+
+      const deployResult = await runWindowsIisDeployTail({
+        jobId,
+        client,
+        certificatePem,
+        target: windowsTarget,
+        stateDir,
+        cngWorkDir,
+        log,
+        containerName,
+        leaseOpts,
+        onBeforeMutation,
+        startAtStep: progress.startAtStep,
+        onInstallStep: async (step) => {
+          currentInstallStep = step;
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "installing",
+            ...journalBase,
+            installStep: step,
+          });
+        },
+        windowsExecFileImpl,
+        windowsConnectImpl,
+      });
+      if (deployResult.status === "succeeded") {
+        continueOutcomeRef.value = "installed";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "installed",
+          ...journalBase,
+          installStep: "complete",
+        });
+      } else if (!isRetryableInstallInterrupt(deployResult)) {
+        continueOutcomeRef.value = "install_failed";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "install_failed",
+          ...journalBase,
+          installStep: currentInstallStep,
+        });
+      }
+      return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
+    }
+
     if (journal.state === "validation_deferred" && typeof journal.validationDeadlineAt === "string") {
       const deadlineMs = Date.parse(journal.validationDeadlineAt);
       if (Number.isFinite(deadlineMs) && Date.now() > deadlineMs) {
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "validation_expired",
-          attempt: decoded.attempt,
-          containerName,
-          snapshotSha256: decoded.snapshotSha256,
-          jobId,
-          csrSha256: journal.csrSha256,
-          csrSpkiSha256: journal.csrSpkiSha256,
-          templateOid: journal.templateOid,
-          caConfig: snapshot.caConfig,
-          template: snapshot.template,
-          leafSha256: journal.leafSha256,
+          ...journalBase,
           validationDeadlineAt: journal.validationDeadlineAt,
-          ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
         });
         continueOutcomeRef.value = "rejected_invalid";
         return {
@@ -1278,33 +1520,13 @@ function createAdcsWindowsIisExecutors(deps) {
             : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "validation_deferred",
-          attempt: decoded.attempt,
-          containerName,
-          snapshotSha256: decoded.snapshotSha256,
-          jobId,
-          csrSha256: journal.csrSha256,
-          csrSpkiSha256: journal.csrSpkiSha256,
-          templateOid: journal.templateOid,
-          caConfig: snapshot.caConfig,
-          template: snapshot.template,
-          leafSha256: journal.leafSha256,
+          ...journalBase,
           validationDeadlineAt: deadline,
-          ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
         });
       } else {
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "rejected_invalid",
-          attempt: decoded.attempt,
-          containerName,
-          snapshotSha256: decoded.snapshotSha256,
-          jobId,
-          csrSha256: journal.csrSha256,
-          csrSpkiSha256: journal.csrSpkiSha256,
-          templateOid: journal.templateOid,
-          caConfig: snapshot.caConfig,
-          template: snapshot.template,
-          leafSha256: journal.leafSha256,
-          ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+          ...journalBase,
         });
       }
       return resultForValidationOutcome(validation, decoded, journal.requestId);
@@ -1314,20 +1536,11 @@ function createAdcsWindowsIisExecutors(deps) {
 
     await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
       state: "installing",
-      attempt: decoded.attempt,
-      containerName,
-      snapshotSha256: decoded.snapshotSha256,
-      jobId,
-      csrSha256: journal.csrSha256,
-      csrSpkiSha256: journal.csrSpkiSha256,
-      templateOid: journal.templateOid,
-      caConfig: snapshot.caConfig,
-      template: snapshot.template,
-      leafSha256: journal.leafSha256,
-      installStep: journal.installStep || "accept",
-      ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+      ...journalBase,
+      installStep: "accept",
     });
 
+    let currentInstallStep = "accept";
     const deployResult = await runWindowsIisDeployTail({
       jobId,
       client,
@@ -1339,41 +1552,30 @@ function createAdcsWindowsIisExecutors(deps) {
       containerName,
       leaseOpts,
       onBeforeMutation,
+      startAtStep: "accept",
+      onInstallStep: async (step) => {
+        currentInstallStep = step;
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "installing",
+          ...journalBase,
+          installStep: step,
+        });
+      },
       windowsExecFileImpl,
       windowsConnectImpl,
     });
     if (deployResult.status === "succeeded") {
       await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
         state: "installed",
-        attempt: decoded.attempt,
-        containerName,
-        snapshotSha256: decoded.snapshotSha256,
-        jobId,
-        csrSha256: journal.csrSha256,
-        csrSpkiSha256: journal.csrSpkiSha256,
-        templateOid: journal.templateOid,
-        caConfig: snapshot.caConfig,
-        template: snapshot.template,
-        leafSha256: journal.leafSha256,
+        ...journalBase,
         installStep: "complete",
-        ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
       });
     } else if (!isRetryableInstallInterrupt(deployResult)) {
       continueOutcomeRef.value = "install_failed";
       await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
         state: "install_failed",
-        attempt: decoded.attempt,
-        containerName,
-        snapshotSha256: decoded.snapshotSha256,
-        jobId,
-        csrSha256: journal.csrSha256,
-        csrSpkiSha256: journal.csrSpkiSha256,
-        templateOid: journal.templateOid,
-        caConfig: snapshot.caConfig,
-        template: snapshot.template,
-        leafSha256: journal.leafSha256,
-        installStep: journal.installStep || "accept",
-        ...(Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}),
+        ...journalBase,
+        installStep: currentInstallStep,
       });
     }
     return withInstalledEnrollmentResult(deployResult, decoded, journal.requestId);
@@ -1722,15 +1924,36 @@ function createAdcsWindowsIisExecutors(deps) {
           stateDir,
           caConfig: snapshot.caConfig,
           csrSpkiSha256: journal.csrSpkiSha256,
+          reconcileSearchFrom: Number.isInteger(journal.reconcileSearchFrom)
+            ? journal.reconcileSearchFrom
+            : null,
           windowSize: executionContext.adcsReconcileWindowSize,
           assertIssuanceOutcome,
         });
-        if (reconciled.status !== "reconciled") {
+
+        const persistUncertainCursor = async (nextSearchFrom) => {
+          if (!Number.isInteger(nextSearchFrom) || nextSearchFrom < 1) return;
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "submission_uncertain",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256: journal.csrSha256,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            reconcileSearchFrom: nextSearchFrom,
+          });
+        };
+
+        if (reconciled.status === "error") {
           return {
             status: "failed",
             keyRotated: null,
             errorMessage: boundErrorMessage(
-              `AD CS submission remains uncertain for enrollment ${decoded.enrollmentId}; operator RequestId or abandon required`,
+              `AD CS tier-2 reconcile failed for enrollment ${decoded.enrollmentId}: ${reconciled.error}`,
             ),
             enrollmentResult: enrollmentResultFor(
               decoded.enrollmentId,
@@ -1740,6 +1963,58 @@ function createAdcsWindowsIisExecutors(deps) {
             ),
           };
         }
+
+        if (reconciled.status !== "unique_candidate") {
+          await persistUncertainCursor(reconciled.nextSearchFrom);
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              reconciled.status === "ambiguous"
+                ? `AD CS tier-2 reconcile found ${reconciled.matchCount} SPKI matches for enrollment ${decoded.enrollmentId}; operator RequestId or abandon required`
+                : `AD CS submission remains uncertain for enrollment ${decoded.enrollmentId}; operator RequestId or abandon required`,
+            ),
+            enrollmentResult: enrollmentResultFor(
+              decoded.enrollmentId,
+              decoded.attempt,
+              "submission_uncertain",
+              { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+            ),
+          };
+        }
+
+        // Decision-6 before attaching RequestId / journaling issued.
+        const candidateValidation = await runDecision6Validation({
+          certificatePem: reconciled.certificatePem,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          snapshot,
+          requiredDnsName: windowsTarget.reference,
+          stateDir,
+          executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
+          templateOid: journal.templateOid,
+          windowsTarget,
+        });
+        if (!candidateValidation.ok) {
+          // Invalid/ambiguous attachment must not bind RequestId; keep scanning.
+          const skipPast = Number.isInteger(reconciled.requestId)
+            ? reconciled.requestId + 1
+            : reconciled.nextSearchFrom;
+          await persistUncertainCursor(skipPast);
+          return {
+            status: "failed",
+            keyRotated: null,
+            errorMessage: boundErrorMessage(
+              `AD CS tier-2 candidate RequestId ${reconciled.requestId} failed validation; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+            ),
+            enrollmentResult: enrollmentResultFor(
+              decoded.enrollmentId,
+              decoded.attempt,
+              "submission_uncertain",
+              { errorCode: "ADCS_DISPOSITION_UNKNOWN" },
+            ),
+          };
+        }
+
         const written = await writeIssuedCertificateArtifacts({
           stateDir,
           enrollmentId: decoded.enrollmentId,
@@ -1760,6 +2035,7 @@ function createAdcsWindowsIisExecutors(deps) {
           requestId: reconciled.requestId,
         });
         await recordHighestRequestId(stateDir, snapshot.caConfig, reconciled.requestId);
+        await reportBestEffortRevocationEvidence(client, jobId, candidateValidation);
         journal = {
           ...journal,
           state: "issued",
@@ -1945,5 +2221,6 @@ module.exports = {
   resolveCleanupOutcome,
   isRetryableInstallInterrupt,
   observeInstalledCertificateIdentity,
+  inspectAdcsInstallProgress,
   withUniqueValidationLeafFile,
 };

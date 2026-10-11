@@ -1443,6 +1443,7 @@ module.exports = {
   guardReturnValue,
   generateCsrViaCng,
   acceptCertificateViaCng,
+  mirrorAcceptedCertificateToStore,
   acquireStoreLock,
   acquireEnrollmentLock,
   isProcessAlive,
