@@ -129,6 +129,12 @@ retry fetches the same pinned provider version. A changed intent needs a new
 approval. Cloud admission rejects new effects for frozen or unpaid workspaces;
 claim-bound continuing results remain accepted.
 
+After an uncertain consumer deployment, repair and reconcile the local service,
+then retry the original job and resume its rollout. Only an accepted, fresh
+receipt for the current authorized deployment clears that job's server-side
+reconciliation flag. Local reconciliation alone, stale historical evidence and
+an invalid receipt leave the flag in place.
+
 For a read-only drift check, request another approved rollout of the desired
 version with `verificationOnly: true`. It advances generation, fetches/validates
 the pinned bundle, compares the installed pair and probes the listeners, without

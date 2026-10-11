@@ -216,6 +216,26 @@ async function control(body) {
     return { stopped: true };
   }
   if (action === "start") return startAgent(name);
+  if (["fail-reload", "repair-reload", "reconcile-binding"].includes(action)) {
+    assert.ok(["nginx", "haproxy"].includes(name));
+    const dir = path.join(root, name);
+    if (action === "fail-reload") {
+      fs.writeFileSync(path.join(dir, "fail-reload"), "lab-only reload fault", { mode: 0o600 });
+      return { armed: true };
+    }
+    if (action === "repair-reload") {
+      fs.rmSync(path.join(dir, "fail-reload"), { force: true });
+      run(process.execPath, ["/repo/tests/wildcard-vault/ux-lab/reload.cjs", name, "reload"]);
+      return { repaired: true };
+    }
+    assert.match(body.bindingId || "", /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    await stopAgent(name);
+    const result = spawnSync(process.execPath, [build + "/bin/reconcile-material-binding.js", body.bindingId], {
+      encoding: "utf8", env: { ...process.env, TOKENTIMER_AGENT_CONFIG_DIR: dir },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
   if (action === "configure") {
     await stopAgent(name);
     const old = config(name),

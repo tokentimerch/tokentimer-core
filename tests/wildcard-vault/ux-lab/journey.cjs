@@ -647,6 +647,39 @@ async function recovery() {
     "offline consumer catches up through signed pinned deployment without a fourth ACME order",
   );
 }
+async function deploymentRecovery() {
+  const binding = state.bindings.find(b => b.name === "nginx");
+  await customer("fail-reload", "nginx");
+  const approval = await rollout("deployment-recovery", state.renewedVersionId || state.versionId);
+  await approve(approval.id);
+  await terminal(approval.id);
+  const uncertain = await wait("uncertain consumer deployment", async () => {
+    const row = (await matrix()).find(r => r.binding_id === binding.id);
+    if (row?.latest_deployment?.stage !== "orphaned_unknown_effect") return false;
+    const candidate = await job(row.latest_deployment.jobId);
+    return candidate.payload.materialDeployment.generation === approval.payload.distributionRollout.generation
+      ? candidate : false;
+  });
+  assert.equal(uncertain.needsOperatorReconciliation, true);
+  const blocked = await transferInventory(409);
+  assert.equal(blocked.code, "CERTOPS_DISTRIBUTION_TRANSFER_RECONCILIATION_REQUIRED");
+  await customer("repair-reload", "nginx");
+  const proof = await customer("reconcile-binding", "nginx", { bindingId: binding.id });
+  assert.equal(proof.reconciled, true);
+  assert.equal((await job(uncertain.id)).needsOperatorReconciliation, true,
+    "local reconciliation must not clear the server fence on its own");
+  await owner.request(api() + "/distribution-jobs/" + uncertain.id + "/retry", "POST", {});
+  await owner.request(group() + "/rollouts/" + uncertain.payload.materialDeployment.rolloutId + "/state",
+    "POST", { state: "deploying" });
+  await customer("start", "nginx");
+  const recovered = await terminal(uncertain.id);
+  assert.equal(recovered.needsOperatorReconciliation, false);
+  assert.equal(recovered.reconciliationReason, null);
+  await converge();
+  state.recoveredDeploymentJobId = recovered.id;
+  save();
+  check("real reload failure, local read-only reconciliation and signed retry clear only the verified current deployment fence");
+}
 async function authorization() {
   const b = state.bindings[0],
     pending = await rollout("revision-fence", state.renewedVersionId, {
@@ -967,6 +1000,7 @@ async function main() {
     rejection,
     authorization,
     recovery,
+    "deployment-recovery": deploymentRecovery,
     transfer,
   }))
     if (phase === "all" || phase === name) await step(name, fn);

@@ -2301,8 +2301,9 @@ async function ingestResult({
       await require("./materialDistribution").acceptPublicationReceipt({ client, workspaceId: agent.workspaceId,
         agentId: agent.id, job, receipt: body.publicationReceipt, certificatePem: body.publicationCertificatePem });
     }
+    let acceptedDeployment = null;
     if (body.deploymentReceipt) {
-      await require("./materialDistribution").acceptDeploymentReceipt({ client, workspaceId: agent.workspaceId,
+      acceptedDeployment = await require("./materialDistribution").acceptDeploymentReceipt({ client, workspaceId: agent.workspaceId,
         agentId: agent.id, job, receipt: body.deploymentReceipt, jobStatus });
     } else if (jobStatus === "succeeded" && job.payload?.materialDeployment) {
       throw serviceError("Missing deployment receipt", "CERTOPS_MATERIAL_RECEIPT_REQUIRED");
@@ -2332,11 +2333,12 @@ async function ingestResult({
           ).slice(0, 1024)
         : null;
 
-    // A publication retry is an explicit operator action. Its validated,
-    // claim-bound receipt above resolves the earlier uncertain Vault write.
-    // Other job families must retain their existing reconciliation fence.
-    const clearPublicationReconciliation =
-      jobStatus === "succeeded" && Boolean(job.payload?.publication);
+    // A material retry is an explicit operator action. A validated publication
+    // or current deployment receipt resolves that job's earlier uncertain
+    // effect. Historical deployment evidence and other job families retain
+    // their reconciliation fence.
+    const clearMaterialReconciliation = jobStatus === "succeeded" &&
+      (Boolean(job.payload?.publication) || acceptedDeployment?.historicalOnly === false);
     let setNeedsReconciliation = false;
     let reconciliationReason = null;
     if (jobStatus === "orphaned_unknown_effect") {
@@ -2411,7 +2413,7 @@ async function ingestResult({
         setNeedsReconciliation,
         reconciliationReason,
         JSON.stringify(resultMetadata),
-        clearPublicationReconciliation,
+        clearMaterialReconciliation,
       ],
     );
 

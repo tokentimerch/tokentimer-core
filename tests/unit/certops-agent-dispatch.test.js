@@ -2357,6 +2357,57 @@ describe("agentDispatch.ingestResult", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
   });
 
+  for (const historicalOnly of [false, true]) {
+    it(`${historicalOnly ? "retains" : "clears"} deployment reconciliation after ${historicalOnly ? "historical" : "current"} receipt validation`, async (t) => {
+      const material = require("../../apps/api/services/certops/materialDistribution");
+      let accepted = false;
+      t.mock.method(material, "acceptDeploymentReceipt", async ({ job }) => {
+        assert.equal(job.claim_id, "claim-uuid-1");
+        accepted = true;
+        return { historicalOnly, stage: "trust_validated" };
+      });
+      let updateParams;
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+          operation: "deploy-from-store",
+          payload: { materialDeployment: { materialVersionId: "version-1" } },
+          needs_operator_reconciliation: true,
+        })] };
+        if (sql.includes("UPDATE certificate_jobs")) {
+          assert.equal(accepted, true, "receipt validation must precede fence clearing");
+          updateParams = params;
+          return { rows: [{ id: 42, status: "succeeded", completed_at: new Date() }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await ingestResult({ dbPool, agent: agentFixture(),
+        body: resultBody({ status: "succeeded", errorMessage: undefined, deploymentReceipt: {} }),
+        deps: { consumeNonce: async () => ({ consumed: true }) } });
+      assert.equal(updateParams[7], !historicalOnly);
+      assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+    });
+  }
+
+  it("retains deployment reconciliation when receipt validation fails", async (t) => {
+    const material = require("../../apps/api/services/certops/materialDistribution");
+    t.mock.method(material, "acceptDeploymentReceipt", async () => {
+      throw new Error("deployment receipt mismatch");
+    });
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        operation: "deploy-from-store",
+        payload: { materialDeployment: { materialVersionId: "version-1" } },
+        needs_operator_reconciliation: true,
+      })] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined, deploymentReceipt: {} }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } }), /deployment receipt mismatch/);
+    assert.equal(dbPool.state.queries.some(q => q.text.includes("UPDATE certificate_jobs")), false);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
   it("rejects a sequence regression after nonce consumption and rolls the whole transaction back", async () => {
     let nonceConsumed = false;
     const dbPool = createMockPool((sql) => {

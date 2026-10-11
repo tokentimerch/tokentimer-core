@@ -11,6 +11,9 @@ if (
 )
   process.exit(2);
 const config = dir + "/service.conf";
+// Customer-side fault only: fail before signaling the listener, after the
+// product agent has installed the requested pair and recorded uncertainty.
+if (action === "reload" && fs.existsSync(dir + "/fail-reload")) process.exit(1);
 
 async function finish(status) {
   if (status !== 0 || action !== "reload") process.exit(status);
@@ -20,6 +23,7 @@ async function finish(status) {
     fs.readFileSync(dir + "/cert.pem"),
   ).fingerprint256;
   const deadline = Date.now() + 15000;
+  let readySince = null;
   while (Date.now() < deadline) {
     const ready = await new Promise((resolve) => {
       const socket = tls.connect({
@@ -45,7 +49,12 @@ async function finish(status) {
         resolve(false);
       });
     });
-    if (ready) process.exit(0);
+    // During a graceful reload old and new workers can briefly accept in
+    // parallel. One lucky new-worker handshake does not establish readiness.
+    if (ready) {
+      readySince ??= Date.now();
+      if (Date.now() - readySince >= 1000) process.exit(0);
+    } else readySince = null;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   console.error(

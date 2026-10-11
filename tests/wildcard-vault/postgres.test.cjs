@@ -140,14 +140,29 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   const deployed={schemaVersion:1,workspaceId,groupId,bindingId:bindingA,materialVersionId,generation:1,fetched:true,installed:true,bound:true,servedVerified:true,trustValidated:false,
     fingerprintSha256:cert.fingerprintSha256,validTo:cert.notAfter,observedAt:new Date().toISOString()};
   await assert.rejects(operations.transaction(client=>material.acceptDeploymentReceipt({client,workspaceId,agentId:consumerA,job:child,receipt:{...deployed,servedVerified:false},jobStatus:"succeeded"})),{code:"CERTOPS_DEPLOYMENT_ASSURANCE_MISSING"});
-  const resultBody={jobId:child.id,claimId:child.claim_id,nonce:decoded.nonce,status:"succeeded",deploymentReceipt:deployed};
+  let resultBody={jobId:child.id,claimId:child.claim_id,nonce:decoded.nonce,status:"succeeded",deploymentReceipt:deployed};
   await assert.rejects(dispatch.ingestResult({agent:agentInfo,body:{...resultBody,claimId:crypto.randomUUID()}}),{code:"CERTOPS_AGENT_CLAIM_OWNERSHIP_MISMATCH"});
+  await dispatch.ingestResult({agent:agentInfo,body:{...resultBody,status:"orphaned_unknown_effect",
+    deploymentReceipt:{...deployed,bound:false,servedVerified:false},errorMessage:"material_reload_failed"}});
+  assert.equal((await pool.query("SELECT needs_operator_reconciliation FROM certificate_jobs WHERE id=$1",[child.id])).rows[0].needs_operator_reconciliation,true);
+  await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,snapshot.rolloutId));
+  assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1",[snapshot.rolloutId])).rows[0].state,"paused");
+  await operations.retryDistributionJob({workspaceId,jobId:child.id,actorUserId:actor});
+  await operations.setRolloutState({workspaceId,groupId,rolloutId:snapshot.rolloutId,state:"deploying",actorUserId:actor});
+  const reclaimed=await dispatch.claimJobs(poll);assert.equal(reclaimed.jobs.length,1);
+  const retryIntent=verifyJobEnvelope({claimed:reclaimed.jobs[0],...signingKey,pinnedSigningKeyId:signingKey.signingKeyId}).job;
+  assert.equal(retryIntent.jobId,child.id);assert.notEqual(retryIntent.claimId,child.claim_id);
+  resultBody={...resultBody,claimId:retryIntent.claimId,nonce:retryIntent.nonce,
+    deploymentReceipt:{...deployed,observedAt:new Date().toISOString()}};
   if(process.env.TT_WILDCARD_API_ROOT) {
     await pool.query("UPDATE workspaces SET is_frozen=true,plan='free' WHERE id=$1",[workspaceId]);
     await assert.rejects(operations.requestRollout({workspaceId,groupId,materialVersionId,actorUserId:actor,idempotencyKey:"frozen-check"}),{code:"WORKSPACE_FROZEN"});
   }
   assert.equal((await dispatch.ingestResult({agent:agentInfo,body:resultBody})).ok,true);
   assert.equal((await dispatch.ingestResult({agent:agentInfo,body:resultBody})).duplicate,true);
+  const reconciled=(await pool.query("SELECT needs_operator_reconciliation,reconciliation_reason FROM certificate_jobs WHERE id=$1",[child.id])).rows[0];
+  assert.equal(reconciled.needs_operator_reconciliation,false,"fresh current deployment proof resolves the retried uncertain effect");
+  assert.equal(reconciled.reconciliation_reason,null);
   if(process.env.TT_WILDCARD_API_ROOT)await pool.query("UPDATE workspaces SET is_frozen=false,plan='pro' WHERE id=$1",[workspaceId]);
   await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,snapshot.rolloutId));
   const matrix=await material.consumerMatrix({client:pool,workspaceId,groupId});assert.equal(matrix.find(r=>r.binding_id===bindingA).converged,true);assert.equal(matrix.find(r=>r.binding_id===bindingB).observed_material_version_id,null);
