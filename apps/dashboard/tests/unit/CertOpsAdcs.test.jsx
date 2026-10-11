@@ -184,7 +184,7 @@ describe('CertOpsAdcs', () => {
     expect(
       screen.queryByRole('button', { name: /Confirm key/ })
     ).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Abandon' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /Abandon/ })).toHaveLength(1);
     expect(screen.queryByText(/MIIB/)).not.toBeInTheDocument();
   });
 
@@ -204,7 +204,7 @@ describe('CertOpsAdcs', () => {
     renderPage();
 
     expect(
-      await screen.findByRole('button', { name: 'Confirm key abababababab' })
+      await screen.findByRole('button', { name: /Confirm key abababababab/ })
     ).toBeInTheDocument();
   });
 
@@ -240,15 +240,15 @@ describe('CertOpsAdcs', () => {
     dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
 
     renderPage();
-    await screen.findByRole('button', { name: 'Run preflight' });
-    fireEvent.change(screen.getByLabelText('CA config'), {
+    await screen.findByRole('button', { name: /Run preflight/ });
+    fireEvent.change(screen.getByLabelText('CA config for Issuing CA'), {
       target: { value: 'ca01\\Corp CA' },
     });
-    fireEvent.change(screen.getByLabelText('Template'), {
+    fireEvent.change(screen.getByLabelText('Template for Issuing CA'), {
       target: { value: 'TokenTimerWebServer' },
     });
     fireEvent.submit(
-      screen.getByRole('button', { name: 'Run preflight' }).closest('form')
+      screen.getByRole('button', { name: /Run preflight/ }).closest('form')
     );
 
     expect(

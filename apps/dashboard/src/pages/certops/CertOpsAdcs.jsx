@@ -91,7 +91,19 @@ function EnrollmentNotices({ enrollment }) {
 
 const PAGE_LIMIT = 100;
 
-function ConfirmKeys({ issuer, busy, onConfirm }) {
+function actionProps(busyKey, key) {
+  return {
+    isLoading: busyKey === key,
+    isDisabled: Boolean(busyKey) && busyKey !== key,
+  };
+}
+
+function shortId(id) {
+  const text = String(id || '');
+  return text.length > 8 ? text.slice(0, 8) : text;
+}
+
+function ConfirmKeys({ issuer, busyKey, onConfirm }) {
   const certs = issuer.lastPreflight?.caCertificates || [];
   const alreadyPinned =
     !issuer.revalidationRequired && issuer.currentVersion > 0;
@@ -107,18 +119,22 @@ function ConfirmKeys({ issuer, busy, onConfirm }) {
   }
   return (
     <Stack spacing={2} mt={3}>
-      {pending.map(cert => (
-        <DashboardActionButton
-          key={cert.keySha256}
-          variant='outline'
-          isLoading={busy}
-          onClick={() =>
-            onConfirm(issuer.id, cert.keySha256, issuer.lastPreflight)
-          }
-        >
-          Confirm key {cert.keySha256?.slice(0, 12)}
-        </DashboardActionButton>
-      ))}
+      {pending.map(cert => {
+        const prefix = cert.keySha256?.slice(0, 12);
+        return (
+          <DashboardActionButton
+            key={cert.keySha256}
+            variant='outline'
+            {...actionProps(busyKey, `confirm:${issuer.id}:${cert.keySha256}`)}
+            aria-label={`Confirm key ${prefix} for ${issuer.name}`}
+            onClick={() =>
+              onConfirm(issuer.id, cert.keySha256, issuer.lastPreflight)
+            }
+          >
+            Confirm key {prefix}
+          </DashboardActionButton>
+        );
+      })}
     </Stack>
   );
 }
@@ -137,7 +153,7 @@ export default function CertOpsAdcs() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [kind, setKind] = useState('adcs');
-  const [busy, setBusy] = useState(false);
+  const [busyKey, setBusyKey] = useState(null);
   const [waitingForPreflight, setWaitingForPreflight] = useState(false);
   const pollRef = useRef(null);
 
@@ -266,7 +282,7 @@ export default function CertOpsAdcs() {
 
   async function handleCreate(event) {
     event.preventDefault();
-    setBusy(true);
+    setBusyKey('create');
     try {
       await createIssuer(workspaceId, { kind, name: name.trim() });
       setName('');
@@ -277,7 +293,7 @@ export default function CertOpsAdcs() {
     } catch (err) {
       showError(errorText(err, 'Could not create the issuer.'));
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   }
 
@@ -286,7 +302,7 @@ export default function CertOpsAdcs() {
     const data = new FormData(event.currentTarget);
     const previous = issuers.find(item => item.id === issuerId);
     const previousSignature = preflightSignature(previous?.lastPreflight);
-    setBusy(true);
+    setBusyKey(`preflight:${issuerId}`);
     try {
       await dispatchIssuerPreflight(workspaceId, issuerId, {
         agentId: data.get('agentId'),
@@ -301,12 +317,12 @@ export default function CertOpsAdcs() {
     } catch (err) {
       showError(errorText(err, 'Could not dispatch preflight.'));
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   }
 
   async function handleConfirm(issuerId, keySha256, preflight) {
-    setBusy(true);
+    setBusyKey(`confirm:${issuerId}:${keySha256}`);
     try {
       await confirmIssuerKey(workspaceId, issuerId, {
         caKeySha256: keySha256,
@@ -318,7 +334,7 @@ export default function CertOpsAdcs() {
     } catch (err) {
       showError(errorText(err, 'Could not confirm the CA key.'));
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   }
 
@@ -327,7 +343,7 @@ export default function CertOpsAdcs() {
     const requestId = Number(
       new FormData(event.currentTarget).get('requestId')
     );
-    setBusy(true);
+    setBusyKey(`reconcile:${enrollmentId}`);
     try {
       await proposeEnrollmentRequestId(workspaceId, enrollmentId, requestId);
       showSuccess(
@@ -337,12 +353,12 @@ export default function CertOpsAdcs() {
     } catch (err) {
       showError(errorText(err, 'Could not record the RequestId.'));
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   }
 
   async function handleAbandon(enrollmentId) {
-    setBusy(true);
+    setBusyKey(`abandon:${enrollmentId}`);
     try {
       await abandonEnrollment(workspaceId, enrollmentId);
       showSuccess('Enrollment abandoned. A final continuation frees the key.');
@@ -350,7 +366,7 @@ export default function CertOpsAdcs() {
     } catch (err) {
       showError(errorText(err, 'Could not abandon the enrollment.'));
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   }
 
@@ -363,7 +379,7 @@ export default function CertOpsAdcs() {
           action={
             <DashboardActionButton
               variant='outline'
-              isLoading={busy}
+              {...actionProps(busyKey, 'refresh')}
               onClick={() =>
                 reload().catch(err =>
                   showError(errorText(err, 'Could not refresh AD CS issuers.'))
@@ -399,7 +415,7 @@ export default function CertOpsAdcs() {
             />
             <DashboardActionButton
               type='submit'
-              isLoading={busy}
+              {...actionProps(busyKey, 'create')}
               alignSelf='flex-start'
             >
               Create issuer
@@ -446,20 +462,21 @@ export default function CertOpsAdcs() {
                   </Select>
                   <Input
                     name='caConfig'
-                    aria-label='CA config'
-                    placeholder='host\CA Name'
+                    aria-label={`CA config for ${issuer.name}`}
+                    placeholder={'host\\CA Name'}
                     required
                   />
                   <Input
                     name='template'
-                    aria-label='Template'
+                    aria-label={`Template for ${issuer.name}`}
                     placeholder='Template common name'
                     required
                   />
                   <DashboardActionButton
                     type='submit'
                     variant='outline'
-                    isLoading={busy}
+                    {...actionProps(busyKey, `preflight:${issuer.id}`)}
+                    aria-label={`Run preflight for ${issuer.name}`}
                     alignSelf='flex-start'
                   >
                     Run preflight
@@ -470,7 +487,7 @@ export default function CertOpsAdcs() {
               issuer.lastPreflight?.caCheck?.verdict === 'safe' ? (
                 <ConfirmKeys
                   issuer={issuer}
-                  busy={busy}
+                  busyKey={busyKey}
                   onConfirm={handleConfirm}
                 />
               ) : null}
@@ -491,9 +508,10 @@ export default function CertOpsAdcs() {
               <Stack spacing={4}>
                 {enrollments.map(enrollment => (
                   <Stack key={enrollment.id} spacing={2} align='flex-start'>
-                    <Text fontWeight='medium'>
+                    <Text fontWeight='medium' overflowWrap='anywhere'>
                       {enrollmentStateLabel(enrollment.state)} ·{' '}
-                      {enrollment.caConfig} / {enrollment.template}
+                      {shortId(enrollment.id)} · {enrollment.caConfig} /{' '}
+                      {enrollment.template}
                     </Text>
                     <Text fontSize='sm' color={muted}>
                       RequestId {enrollment.requestId || 'none'}
@@ -517,12 +535,20 @@ export default function CertOpsAdcs() {
                         >
                           <Input
                             name='requestId'
-                            aria-label='RequestId'
+                            aria-label={`RequestId for ${shortId(enrollment.id)}`}
                             placeholder='RequestId'
                             inputMode='numeric'
+                            min={1}
+                            max={4294967295}
                             required
                           />
-                          <DashboardActionButton type='submit' isLoading={busy}>
+                          <DashboardActionButton
+                            type='submit'
+                            {...actionProps(
+                              busyKey,
+                              `reconcile:${enrollment.id}`
+                            )}
+                          >
                             Reconcile
                           </DashboardActionButton>
                         </Stack>
@@ -531,7 +557,8 @@ export default function CertOpsAdcs() {
                     {enrollment.state === 'submission_uncertain' ? (
                       <DashboardActionButton
                         variant='outline'
-                        isLoading={busy}
+                        {...actionProps(busyKey, `abandon:${enrollment.id}`)}
+                        aria-label={`Abandon ${shortId(enrollment.id)}`}
                         onClick={() => handleAbandon(enrollment.id)}
                       >
                         Abandon
