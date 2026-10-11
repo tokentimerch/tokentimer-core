@@ -1639,6 +1639,44 @@ describe("execWithoutShell AbortSignal", () => {
     assert.equal(result.execError.cause && result.execError.cause.code, "STORE_LOCK_LOST");
   });
 
+  it("terminates a real OS child after abort, not only ABORT_ERR", async () => {
+    const { execFile } = require("node:child_process");
+    const ac = new AbortController();
+    /** @type {number|null} */
+    let childPid = null;
+    const resultPromise = execWithoutShell(
+      (file, args, opts, cb) => {
+        const child = execFile(file, args, opts, cb);
+        childPid = child.pid ?? null;
+        return child;
+      },
+      [process.execPath, "-e", "setTimeout(() => {}, 60000)"],
+      15000,
+      ac.signal,
+    );
+    for (let i = 0; i < 50 && childPid == null; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.ok(childPid, "child pid should be assigned before abort");
+    assert.doesNotThrow(() => process.kill(childPid, 0), "child should be alive before abort");
+
+    ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" }));
+    const result = await resultPromise;
+    assert.equal(result.execError && result.execError.code, "ABORT_ERR");
+    assert.equal(result.execError.cause && result.execError.cause.code, "STORE_LOCK_LOST");
+
+    let stillAlive = true;
+    for (let i = 0; i < 50 && stillAlive; i += 1) {
+      try {
+        process.kill(childPid, 0);
+        await new Promise((r) => setTimeout(r, 20));
+      } catch {
+        stillAlive = false;
+      }
+    }
+    assert.equal(stillAlive, false, `pid ${childPid} must be gone after child.kill()`);
+  });
+
   it("maps ENROLLMENT_LOCK_LOST abort during certreq -new to reason aborted", async () => {
     const workDir = makeTempDir();
     const ac = new AbortController();
