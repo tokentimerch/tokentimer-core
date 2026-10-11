@@ -768,6 +768,12 @@ function clampPage(value, fallback) {
   return parsed;
 }
 
+function readLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return 50;
+  return Math.min(100, Math.max(1, parsed));
+}
+
 function publicPreflight(value) {
   if (!value || typeof value !== "object") return null;
   const certs = Array.isArray(value.caCertificates) ? value.caCertificates : [];
@@ -803,7 +809,7 @@ function snapshotFields(bytes) {
 
 async function listIssuers({ client, workspaceId, limit = 50, offset = 0 }) {
   const db = dbOf(client);
-  const pageLimit = Math.min(100, Math.max(1, clampPage(limit, 50)));
+  const pageSize = readLimit(limit);
   const pageOffset = clampPage(offset, 0);
   const [rows, total] = await Promise.all([
     db.query(
@@ -817,7 +823,7 @@ async function listIssuers({ client, workspaceId, limit = 50, offset = 0 }) {
         WHERE i.workspace_id = $1
         ORDER BY i.name ASC, i.id ASC
         LIMIT $2 OFFSET $3`,
-      [workspaceId, pageLimit, pageOffset],
+      [workspaceId, pageSize, pageOffset],
     ),
     db.query(
       `SELECT count(*)::int AS n FROM certificate_issuers WHERE workspace_id = $1`,
@@ -835,13 +841,13 @@ async function listIssuers({ client, workspaceId, limit = 50, offset = 0 }) {
       lastPreflight: publicPreflight(row.last_preflight),
       updatedAt: row.updated_at,
     })),
-    pagination: { limit: pageLimit, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
+    pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
   };
 }
 
 async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) {
   const db = dbOf(client);
-  const pageLimit = Math.min(100, Math.max(1, clampPage(limit, 50)));
+  const pageSize = readLimit(limit);
   const pageOffset = clampPage(offset, 0);
   const [rows, total] = await Promise.all([
     db.query(
@@ -855,7 +861,7 @@ async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) 
         WHERE e.workspace_id = $1
         ORDER BY e.updated_at DESC, e.id ASC
         LIMIT $2 OFFSET $3`,
-      [workspaceId, pageLimit, pageOffset],
+      [workspaceId, pageSize, pageOffset],
     ),
     db.query(
       `SELECT count(*)::int AS n FROM certificate_enrollments WHERE workspace_id = $1`,
@@ -883,7 +889,7 @@ async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) 
         ...snapshot,
       };
     }),
-    pagination: { limit: pageLimit, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
+    pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
   };
 }
 

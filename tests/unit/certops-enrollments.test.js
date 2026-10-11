@@ -1011,4 +1011,19 @@ describe("enrollment rows", () => {
     assert.equal(enrollments.items[0].snapshotStale, true);
     assert.equal(enrollments.items[0].template, "TokenTimerWebServer");
   });
+
+  it("normalizes a negative list limit to 1", async () => {
+    const db = {
+      async query(sql, params) {
+        if (sql.includes("ORDER BY i.name")) {
+          assert.equal(params[1], 1);
+          return { rows: [] };
+        }
+        if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };
+        throw new Error(sql);
+      },
+    };
+    const page = await listIssuers({ client: db, workspaceId: WORKSPACE, limit: -5 });
+    assert.equal(page.pagination.limit, 1);
+  });
 });
