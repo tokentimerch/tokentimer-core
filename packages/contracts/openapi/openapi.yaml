@@ -12103,48 +12103,70 @@ components:
               - enum: [null]
                 nullable: true
     CertOpsAgentLogBody:
-      type: object
-      additionalProperties: false
-      required: [jobId, claimId, final]
       description: >-
         Execution-console batch for one claim. Lines are contiguous from firstSeq.
         An empty lines array is valid only when final is true. This message omits
-        the control-channel sequence.
-      properties:
-        jobId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9_.:-]+$'
-        claimId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          pattern: '^[A-Za-z0-9_.:-]+$'
-        firstSeq:
-          type: integer
-          minimum: 1
-        lines:
-          type: array
-          maxItems: 200
-          items:
-            $ref: "#/components/schemas/CertOpsAgentLogLine"
-        droppedBefore:
-          type: integer
-          minimum: 0
-        final:
-          type: boolean
-      allOf:
-        - if:
-            properties:
-              final:
-                const: false
-            required: [final]
-          then:
-            required: [firstSeq, lines]
-            properties:
-              lines:
-                minItems: 1
+        the control-channel sequence. OpenAPI 3.0.3 cannot express if/then, so the
+        non-final vs final shapes are modeled as oneOf (JSON Schema if/then remains
+        in agent-protocol.schema.json for runtime validation).
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [jobId, claimId, final, firstSeq, lines]
+          properties:
+            jobId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[A-Za-z0-9_.:-]+$'
+            claimId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[A-Za-z0-9_.:-]+$'
+            firstSeq:
+              type: integer
+              minimum: 1
+            lines:
+              type: array
+              minItems: 1
+              maxItems: 200
+              items:
+                $ref: "#/components/schemas/CertOpsAgentLogLine"
+            droppedBefore:
+              type: integer
+              minimum: 0
+            final:
+              type: boolean
+              enum: [false]
+        - type: object
+          additionalProperties: false
+          required: [jobId, claimId, final]
+          properties:
+            jobId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[A-Za-z0-9_.:-]+$'
+            claimId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[A-Za-z0-9_.:-]+$'
+            firstSeq:
+              type: integer
+              minimum: 1
+            lines:
+              type: array
+              maxItems: 200
+              items:
+                $ref: "#/components/schemas/CertOpsAgentLogLine"
+            droppedBefore:
+              type: integer
+              minimum: 0
+            final:
+              type: boolean
+              enum: [true]
     CertOpsAgentLogRequest:
       allOf:
         - $ref: "#/components/schemas/CertOpsAgentProtocolEnvelope"
