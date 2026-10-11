@@ -17,9 +17,9 @@ const DEFAULT_RECONCILE_WINDOW = 16;
 const DIR_MODE = 0o700;
 
 /**
- * Per-CA watermark mutex via the shared exclusive lock helper (wx +
- * rename-based stale reclaim). A crash that leaves the .lock file must not
- * permanently block later updates; two reclaimers must not both own it.
+ * Per-CA watermark mutex via the shared exclusive lock helper (kernel
+ * IPC listen). Holder crash releases the listen automatically; two
+ * processes must never both observe ownership.
  */
 async function withWatermarkLock(stateDir, caConfig, fn) {
   const dir = path.join(stateDir, WATERMARK_DIR);

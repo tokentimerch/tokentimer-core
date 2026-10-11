@@ -39,15 +39,13 @@ const {
   acquireStoreLock,
   acquireEnrollmentLock,
   acquireExclusiveLockFile,
-  reclaimStaleLockFile,
-  isProcessAlive,
-  isStoreLockStale,
+  exclusiveLockIpcPath,
   parseStoreLockContents,
-  MAX_STORE_LOCK_AGE_MS,
   removeAbandonedKeyContainer,
   removeCertificateAndKeyContainer,
   WINDOWS_STORE_NAME_PATTERN,
 } = require("./index.js");
+const { spawn } = require("node:child_process");
 
 const FIXTURE_CERT_PEM = fs.readFileSync(
   path.join(__dirname, "..", "verify", "fixtures", "selfsigned.crt.pem"),
@@ -907,70 +905,39 @@ describe("acquireStoreLock", () => {
     }
   });
 
-  it("steals a lock left behind by a process that is no longer alive (crash/OOM/taskkill)", () => {
+  it("recovers after the holder worker crashes without an explicit release", async () => {
     const stateDir = makeTempDir();
-    const lockDir = path.join(stateDir, "windows-cert-store");
-    fs.mkdirSync(lockDir, { recursive: true });
-    const lockPath = path.join(lockDir, "My.lock");
-    // PID 0 is never a real process on Windows or POSIX, and isProcessAlive
-    // treats a non-positive PID as dead outright -- this stands in for "the
-    // recorded PID has since exited" without depending on OS PID reuse
-    // timing in the test itself.
-    fs.writeFileSync(lockPath, `0\n${new Date().toISOString()}\n`);
-
     const lock = acquireStoreLock(stateDir, "My");
-    assert.equal(fs.existsSync(lock.lockPath), true);
-    const contents = fs.readFileSync(lock.lockPath, "utf8");
-    assert.equal(contents.startsWith(`${process.pid}\n`), true);
-    lock.release();
+    await lock._workerForTests.terminate();
+    // Kernel drops the pipe/socket listen on worker death; a marker file
+    // left behind must not block the next acquisition.
+    const next = acquireStoreLock(stateDir, "My");
+    assert.equal(typeof next.ownerToken, "string");
+    next.release();
   });
 
-  it("steals a lock that has simply existed longer than MAX_STORE_LOCK_AGE_MS, even if its PID is still alive", () => {
+  it("does not treat an abandoned or corrupt marker file as the mutex", () => {
     const stateDir = makeTempDir();
     const lockDir = path.join(stateDir, "windows-cert-store");
     fs.mkdirSync(lockDir, { recursive: true });
     const lockPath = path.join(lockDir, "My.lock");
-    const ancientTimestamp = new Date(Date.now() - MAX_STORE_LOCK_AGE_MS - 1000).toISOString();
-    // Uses this test's own PID, which is genuinely alive -- proving the
-    // steal is driven by age, not liveness, in this case.
-    fs.writeFileSync(lockPath, `${process.pid}\n${ancientTimestamp}\n`);
-
+    fs.writeFileSync(lockPath, ""); // crash between listen and marker write
     const lock = acquireStoreLock(stateDir, "My");
     assert.equal(fs.existsSync(lock.lockPath), true);
     lock.release();
-  });
-
-  it("does NOT steal a fresh lock held by a live process: still fails with STORE_LOCKED", () => {
-    const stateDir = makeTempDir();
-    const lock = acquireStoreLock(stateDir, "My");
-    assert.throws(() => acquireStoreLock(stateDir, "My"), /is locked by a concurrent/);
-    lock.release();
-  });
-
-  it("isStoreLockStale returns false for an unparseable lock file (fails closed)", () => {
-    const stateDir = makeTempDir();
-    const lockDir = path.join(stateDir, "windows-cert-store");
-    fs.mkdirSync(lockDir, { recursive: true });
-    const lockPath = path.join(lockDir, "My.lock");
     fs.writeFileSync(lockPath, "not a lock file at all");
-
-    assert.equal(isStoreLockStale(lockPath), false);
-    assert.throws(() => acquireStoreLock(stateDir, "My"), /is locked by a concurrent/);
+    const again = acquireStoreLock(stateDir, "My");
+    again.release();
   });
 
-  it("isStoreLockStale returns true for a lock file that no longer exists", () => {
+  it("does NOT steal a lock held by a live process: still fails with STORE_LOCKED", () => {
     const stateDir = makeTempDir();
-    const lockPath = path.join(stateDir, "windows-cert-store", "My.lock");
-    assert.equal(isStoreLockStale(lockPath), true);
+    const lock = acquireStoreLock(stateDir, "My");
+    assert.throws(() => acquireStoreLock(stateDir, "My"), /is locked by a concurrent/);
+    lock.release();
   });
 
-  it("isProcessAlive(0) and isProcessAlive(-1) are false; isProcessAlive(process.pid) is true", () => {
-    assert.equal(isProcessAlive(0), false);
-    assert.equal(isProcessAlive(-1), false);
-    assert.equal(isProcessAlive(process.pid), true);
-  });
-
-  it("parseStoreLockContents round-trips a real lock file's own format", () => {
+  it("parseStoreLockContents round-trips a real lock marker's own format", () => {
     const now = new Date();
     const token = "a".repeat(32);
     const parsed = parseStoreLockContents(`${process.pid}\n${now.toISOString()}\n${token}\n`);
@@ -979,7 +946,7 @@ describe("acquireStoreLock", () => {
     assert.equal(parsed.ownerToken, token);
   });
 
-  it("parseStoreLockContents accepts legacy two-line locks without an owner token", () => {
+  it("parseStoreLockContents accepts legacy two-line markers without an owner token", () => {
     const now = new Date();
     const parsed = parseStoreLockContents(`${process.pid}\n${now.toISOString()}\n`);
     assert.equal(parsed.pid, process.pid);
@@ -991,81 +958,93 @@ describe("acquireStoreLock", () => {
     assert.equal(parseStoreLockContents(""), null);
   });
 
-  it("release does not unlink a same-PID replacement lock after aged reclaim", () => {
+  it("release of a prior same-process holder cannot drop a later holder's IPC lock", () => {
     const stateDir = makeTempDir();
     const first = acquireStoreLock(stateDir, "My");
     const firstToken = first.ownerToken;
-    assert.equal(typeof firstToken, "string");
-    assert.equal(firstToken.length, 32);
-
-    // Age the still-held lock in place so a later acquisition in this same
-    // process can reclaim it (PID looks live; age is what makes it stale).
-    const ancient = new Date(Date.now() - MAX_STORE_LOCK_AGE_MS - 1000).toISOString();
-    fs.writeFileSync(first.lockPath, `${process.pid}\n${ancient}\n${firstToken}\n`);
-
-    const second = acquireStoreLock(stateDir, "My");
-    assert.notEqual(second.ownerToken, firstToken);
-    assert.equal(fs.existsSync(second.lockPath), true);
-
-    first.release();
-    assert.equal(fs.existsSync(second.lockPath), true);
-    const stillHeld = parseStoreLockContents(fs.readFileSync(second.lockPath, "utf8"));
-    assert.equal(stillHeld.ownerToken, second.ownerToken);
-
-    second.release();
-    assert.equal(fs.existsSync(second.lockPath), false);
-  });
-
-  it("reclaim puts back a replacement lock when a peer wins between stale check and rename", () => {
-    const stateDir = makeTempDir();
-    const lockDir = path.join(stateDir, "windows-cert-store");
-    fs.mkdirSync(lockDir, { recursive: true });
-    const lockPath = path.join(lockDir, "race.lock");
-    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\nstale-token\n");
-
-    // Deterministic interleaving on one thread: B has already observed the
-    // stale bytes; A then reclaims and installs a fresh lock; B's rename
-    // must put that replacement back rather than destroy it.
-    let winner;
-    const reclaimedByB = reclaimStaleLockFile(lockPath, {
-      beforeReclaimRename() {
-        assert.equal(reclaimStaleLockFile(lockPath), true);
-        winner = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
-      },
+    // Simulate the old holder surviving past a crash-recovery acquire by
+    // killing its worker (IPC released) then letting a replacement acquire.
+    // first.release() must not tear down the replacement's listen.
+    return first._workerForTests.terminate().then(() => {
+      const second = acquireStoreLock(stateDir, "My");
+      assert.notEqual(second.ownerToken, firstToken);
+      first.release();
+      assert.throws(() => acquireStoreLock(stateDir, "My"), /is locked by a concurrent/);
+      second.release();
     });
-
-    assert.equal(reclaimedByB, false);
-    assert.equal(fs.existsSync(lockPath), true);
-    const held = parseStoreLockContents(fs.readFileSync(lockPath, "utf8"));
-    assert.equal(held.ownerToken, winner.ownerToken);
-    winner.release();
   });
 
-  it("acquireExclusiveLockFile loses the reclaim race when a peer installs a fresh lock first", () => {
+  it("allows only one cross-process owner among three simultaneous contenders", async () => {
     const stateDir = makeTempDir();
-    const lockDir = path.join(stateDir, "windows-cert-store");
-    fs.mkdirSync(lockDir, { recursive: true });
-    const lockPath = path.join(lockDir, "race-acquire.lock");
-    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\nstale-token\n");
+    const lockPath = path.join(stateDir, "windows-cert-store", "race.lock");
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const barrierDir = makeTempDir();
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const { acquireExclusiveLockFile } = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+      const lockPath = process.env.TT_LOCK_PATH;
+      const barrierDir = process.env.TT_BARRIER_DIR;
+      const id = process.env.TT_CONTENDER_ID;
+      fs.writeFileSync(path.join(barrierDir, id + ".ready"), "1");
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        const ready = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".ready"));
+        if (ready.length >= 3) break;
+      }
+      try {
+        const lock = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+        fs.writeFileSync(path.join(barrierDir, id + ".won"), lock.ownerToken);
+        const holdUntil = Date.now() + 1500;
+        while (Date.now() < holdUntil) {}
+        lock.release();
+        process.exit(0);
+      } catch (err) {
+        fs.writeFileSync(path.join(barrierDir, id + ".lost"), err && err.code ? err.code : "ERR");
+        process.exit(2);
+      }
+    `;
+    await Promise.all(
+      ["a", "b", "c"].map(
+        (id) =>
+          new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, ["-e", script], {
+              env: {
+                ...process.env,
+                TT_LOCK_PATH: lockPath,
+                TT_BARRIER_DIR: barrierDir,
+                TT_CONTENDER_ID: id,
+              },
+              stdio: "ignore",
+            });
+            const timer = setTimeout(() => {
+              child.kill();
+              reject(new Error(`contender ${id} timed out`));
+            }, 20000);
+            child.on("exit", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+          }),
+      ),
+    );
+    const won = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".won"));
+    const lost = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".lost"));
+    assert.equal(won.length, 1, `won=${won} lost=${lost}`);
+    assert.equal(lost.length, 2);
+    for (const name of lost) {
+      assert.equal(fs.readFileSync(path.join(barrierDir, name), "utf8"), "STORE_LOCKED");
+    }
+  });
 
-    let winner;
-    assert.throws(
-      () =>
-        acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy", {
-          beforeReclaimRename() {
-            winner = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
-          },
-        }),
-      (err) => {
-        assert.equal(err.code, "STORE_LOCKED");
-        return true;
-      },
-    );
-    assert.equal(
-      parseStoreLockContents(fs.readFileSync(lockPath, "utf8")).ownerToken,
-      winner.ownerToken,
-    );
-    winner.release();
+  it("exclusiveLockIpcPath is stable for a given lockPath", () => {
+    const p = path.join(makeTempDir(), "x.lock");
+    assert.equal(exclusiveLockIpcPath(p), exclusiveLockIpcPath(p));
+    if (process.platform === "win32") {
+      assert.match(exclusiveLockIpcPath(p), /^\\\\\.\\pipe\\tokentimer-agent-[0-9a-f]{40}$/);
+    } else {
+      assert.equal(exclusiveLockIpcPath(p), `${p}.ipc`);
+    }
   });
 });
 

@@ -48,6 +48,7 @@ const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { Worker } = require("node:worker_threads");
 
 const {
   assertNoPrivateKeyMaterial,
@@ -1052,45 +1053,34 @@ async function mirrorAcceptedCertificateToStore({
   return { ok: true };
 }
 
-/** A lock older than this, no matter whose PID recorded it, is treated as
- * stale outright, guarding against the (rare but real) case where the OS
- * has since reused the recorded PID for a completely unrelated process
- * that is very much still running -- liveness alone cannot rule that out,
- * only age can. Set well above any real enrollment/binding operation's
- * duration (seconds, not minutes) while staying well below "an operator
- * has to notice and intervene manually" territory. */
-const MAX_STORE_LOCK_AGE_MS = 30 * 60 * 1000;
+/** IPC lock worker state codes (see exclusive-lock-worker.js). */
+const EXCLUSIVE_LOCK_STATE_PENDING = 0;
+const EXCLUSIVE_LOCK_STATE_HELD = 1;
+const EXCLUSIVE_LOCK_STATE_BUSY = 2;
+const EXCLUSIVE_LOCK_STATE_RELEASED = 4;
+const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
+/** Graceful close wait; terminate() always follows and drops the listen. */
+const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
 
 /**
- * Whether the process that created a lock file is still alive.
- * `process.kill(pid, 0)` sends no signal, only checks existence/permission
- * (works on both POSIX and win32, per Node's own child_process.kill docs).
- * ESRCH means the process is gone; anything else (including a permission
- * error, i.e. the PID exists but under a different account) means it is
- * still considered live, since this function's only job is to rule out
- * "this process definitely no longer exists", not to fully authenticate
- * ownership.
- * @param {number} pid
- * @returns {boolean}
+ * Maps a filesystem lock key to the OS object that actually provides
+ * mutual exclusion: a Windows named pipe, or a unix-domain socket path
+ * beside the marker file on POSIX.
+ * @param {string} lockPath
+ * @returns {string}
  */
-function isProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err?.code !== "ESRCH";
+function exclusiveLockIpcPath(lockPath) {
+  const digest = crypto.createHash("sha256").update(lockPath).digest("hex").slice(0, 40);
+  if (process.platform === "win32") {
+    return "\\\\.\\pipe\\tokentimer-agent-" + digest;
   }
+  return lockPath + ".ipc";
 }
 
 /**
- * Parses an exclusive lock file's contents
- * (`"<pid>\n<isoDate>\n<ownerToken>\n"`, written by acquireExclusiveLockFile)
- * back into `{ pid, createdAt, ownerToken }`. `ownerToken` may be null for
- * legacy two-line lock files still treated as parseable for stale-age /
- * dead-PID recovery. Returns null on anything unparseable, so a
- * corrupted/foreign lock file is treated the same as "cannot prove this
- * is stale" (fails closed, still locked) rather than crashing the caller.
+ * Parses the best-effort owner marker written beside an IPC lock
+ * (`"<pid>\n<isoDate>\n<ownerToken>\n"`). The marker is diagnostic only;
+ * exclusion comes from the pipe/socket listen, not from this file.
  * @param {string} contents
  * @returns {{ pid: number, createdAt: Date, ownerToken: string|null }|null}
  */
@@ -1105,180 +1095,105 @@ function parseStoreLockContents(contents) {
 }
 
 /**
- * @param {{ pid: number, createdAt: Date }} parsed
- * @returns {boolean}
- */
-function isParsedLockStale(parsed) {
-  if (Date.now() - parsed.createdAt.getTime() > MAX_STORE_LOCK_AGE_MS) return true;
-  return !isProcessAlive(parsed.pid);
-}
-
-/**
- * Whether an existing lock file at `lockPath` is safe to steal: either its
- * recording process is no longer alive, or the lock has simply existed
- * longer than any real operation ever legitimately takes (see
- * MAX_STORE_LOCK_AGE_MS). An unparseable lock file is never considered
- * stale -- decision 13's mutex fails closed on anything it cannot
- * positively prove is dead, matching this module's fail-closed style
- * elsewhere (e.g. store-name/container-name validation).
- * @param {string} lockPath
- * @returns {boolean}
- */
-function isStoreLockStale(lockPath) {
-  let contents;
-  try {
-    contents = fs.readFileSync(lockPath, "utf8");
-  } catch (err) {
-    // Already gone (another racer cleaned it up first) -- not "stale",
-    // just no longer an obstacle; the caller's retry will succeed via the
-    // normal wx path.
-    if (err && err.code === "ENOENT") return true;
-    return false;
-  }
-  const parsed = parseStoreLockContents(contents);
-  if (parsed === null) return false;
-  return isParsedLockStale(parsed);
-}
-
-/**
  * Store-scoped mutex (ADR-0012 decision 13: "the per-target mutex covers
  * the store as well as the binding, since two jobs racing on the same
- * machine store is as damaging as two racing on one binding"). A plain
- * exclusive-create lock file under the agent's own ACL-protected state
- * dir: `wx` fails if another enrollment already holds the lock, which is
- * exactly the semantics a mutex needs and requires no additional OS
- * primitive. Reused as-is by the future IIS-binding executor so a single
- * lock name space covers both operations per decision 13.
+ * machine store is as damaging as two racing on one binding").
  *
- * Stale-lock recovery: a process killed mid-enrollment (crash, OOM kill,
- * `taskkill /F`) leaves its lock file behind forever under the plain `wx`
- * scheme above -- with no other recovery path, EVERY future renewal
- * against that store fails permanently until an operator manually deletes
- * the file. On an initial EEXIST, this now checks isStoreLockStale (dead
- * PID, or simply too old) and, if stale, reclaims the abandoned file and
- * retries the acquisition exactly once (not in a loop: a genuinely busy,
- * live lock must still fail fast with STORE_LOCKED, not spin).
+ * Mutual exclusion is a kernel-mediated exclusive listen (Windows named
+ * pipe / POSIX unix socket), held on a dedicated worker thread so the
+ * public acquire API stays synchronous. Process or worker death drops the
+ * listen automatically -- there is no stale-file reclaim, rename, or
+ * put-back path that could admit a second owner. A marker file at
+ * `lockPath` records pid/token for operators and tests only; an empty or
+ * corrupt marker cannot block later acquisition because it is not the
+ * mutex.
  *
  * @param {string} stateDir agent state dir.
  * @param {string} storeName Windows machine store name (e.g. "My").
  * @returns {{ lockPath: string, ownerToken: string, release: () => void }}
  */
-/**
- * Claim a stale lock pathname via rename, then verify the moved bytes are
- * still the same abandoned lock that was inspected. Rename alone is not
- * enough: a peer can install a fresh lock between the stale check and the
- * rename; without the content check the second contender would steal that
- * replacement. On mismatch the displaced file is renamed back.
- *
- * @param {string} lockPath
- * @param {{ beforeReclaimRename?: (info: { lockPath: string, contents: string }) => void }} [options]
- * @returns {boolean} true when this caller claimed and removed the stale file
- */
-function reclaimStaleLockFile(lockPath, options = {}) {
-  let contents;
-  try {
-    contents = fs.readFileSync(lockPath, "utf8");
-  } catch (err) {
-    if (err && err.code === "ENOENT") return false;
-    return false;
+function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
+  if (!isNonEmptyString(lockPath)) {
+    throw buildError("acquireExclusiveLockFile requires a non-empty lockPath");
   }
-  const parsed = parseStoreLockContents(contents);
-  if (parsed === null || !isParsedLockStale(parsed)) return false;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
-  if (typeof options.beforeReclaimRename === "function") {
-    options.beforeReclaimRename({ lockPath, contents });
-  }
+  const ipcPath = exclusiveLockIpcPath(lockPath);
+  const sab = new SharedArrayBuffer(4);
+  const state = new Int32Array(sab);
+  Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_PENDING);
 
-  const reclaimPath = `${lockPath}.reclaim.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
-  try {
-    fs.renameSync(lockPath, reclaimPath);
-  } catch (err) {
-    // ENOENT: another contender already renamed it away.
-    if (err && err.code === "ENOENT") return false;
-    return false;
-  }
+  const worker = new Worker(path.join(__dirname, "exclusive-lock-worker.js"), {
+    workerData: { sab, ipcPath },
+  });
 
-  let reclaimedContents;
-  try {
-    reclaimedContents = fs.readFileSync(reclaimPath, "utf8");
-  } catch {
-    return false;
-  }
+  let workerFailed = null;
+  worker.once("error", (err) => {
+    workerFailed = err;
+    Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_BUSY);
+    Atomics.notify(state, 0);
+  });
 
-  if (reclaimedContents !== contents) {
-    // Renamed a replacement lock, not the abandoned one we inspected.
+  Atomics.wait(state, 0, EXCLUSIVE_LOCK_STATE_PENDING, EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS);
+  const acquireState = Atomics.load(state, 0);
+  if (acquireState !== EXCLUSIVE_LOCK_STATE_HELD) {
     try {
-      fs.renameSync(reclaimPath, lockPath);
+      worker.terminate();
     } catch {
-      // lockPath already recreated via wx: drop the displaced copy only.
-      try {
-        fs.unlinkSync(reclaimPath);
-      } catch {
-        // best-effort
-      }
+      // best-effort
     }
-    return false;
-  }
-
-  try {
-    fs.unlinkSync(reclaimPath);
-  } catch {
-    // best-effort; reclaim marker is not the live lock pathname
-  }
-  return true;
-}
-
-function acquireExclusiveLockFile(lockPath, busyCode, busyMessage, options = {}) {
-  function tryAcquire() {
-    return fs.openSync(lockPath, "wx");
-  }
-
-  let fd;
-  try {
-    fd = tryAcquire();
-  } catch (err) {
-    if (err && err.code === "EEXIST") {
-      // Content-verified reclaim: never drop a replacement lock based on an
-      // earlier stale observation of a different file at the same path.
-      if (reclaimStaleLockFile(lockPath, options)) {
-        try {
-          fd = tryAcquire();
-        } catch (retryErr) {
-          if (retryErr && retryErr.code === "EEXIST") {
-            throw buildError(busyMessage, busyCode);
-          }
-          throw retryErr;
-        }
-      } else {
-        // Not stale, or lost the reclaim race — one more wx attempt covers
-        // "peer reclaimed then released" without unlinking their lock.
-        try {
-          fd = tryAcquire();
-        } catch (retryErr) {
-          if (retryErr && retryErr.code === "EEXIST") {
-            throw buildError(busyMessage, busyCode);
-          }
-          throw retryErr;
-        }
-      }
-    } else {
-      throw err;
+    if (workerFailed) {
+      throw buildError(
+        "exclusive lock worker failed for " + lockPath + ": " + workerFailed.message,
+        busyCode,
+      );
     }
+    if (acquireState === EXCLUSIVE_LOCK_STATE_BUSY) {
+      throw buildError(busyMessage, busyCode);
+    }
+    throw buildError(
+      "timed out or failed acquiring exclusive lock for " + lockPath,
+      busyCode,
+    );
   }
-  // Per-acquisition identity: PID alone is not enough (same process can
-  // reclaim its own aged lock; the previous holder's release must not
-  // unlink the replacement).
+
   const ownerToken = crypto.randomBytes(16).toString("hex");
-  fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n${ownerToken}\n`);
-  fs.closeSync(fd);
+  // Marker is best-effort and never consulted for exclusion. Writing it
+  // after the listen succeeds means a crash between listen and write leaves
+  // no blocking artifact -- the next acquire binds the freed IPC name.
+  try {
+    fs.writeFileSync(
+      lockPath,
+      process.pid + "\n" + new Date().toISOString() + "\n" + ownerToken + "\n",
+      "utf8",
+    );
+  } catch {
+    // diagnostic only
+  }
 
   let released = false;
   return {
     lockPath,
     ownerToken,
+    /**
+     * Exposed for crash-boundary tests: abrupt worker death must release
+     * the IPC listen so another contender can acquire.
+     */
+    _workerForTests: worker,
     release() {
       if (released) return;
       released = true;
+      try {
+        worker.postMessage("release");
+        Atomics.wait(state, 0, EXCLUSIVE_LOCK_STATE_HELD, EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS);
+      } catch {
+        // best-effort
+      }
+      try {
+        worker.terminate();
+      } catch {
+        // best-effort
+      }
       try {
         const current = fs.readFileSync(lockPath, "utf8");
         const parsed = parseStoreLockContents(current);
@@ -1286,7 +1201,7 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage, options = {})
           fs.unlinkSync(lockPath);
         }
       } catch {
-        // best-effort
+        // marker cleanup only; exclusion already dropped with the listen
       }
     },
   };
@@ -1310,7 +1225,7 @@ function acquireStoreLock(stateDir, storeName) {
  * Cross-process mutex for one AD CS enrollment (W6). The KSP existence
  * probe in generateCsrViaCng is not atomic with certreq -new; the
  * executor must hold this lock across probe, -new, submit/retrieve, and
- * -accept for that enrollmentId. Same wx + stale-steal rules as the
+ * -accept for that enrollmentId. Same IPC exclusive-listen rules as the
  * store lock. Distinct from acquireStoreLock: two enrollments may share
  * a store, and two stores must not serialize unrelated enrollments.
  *
@@ -1535,11 +1450,8 @@ module.exports = {
   acquireStoreLock,
   acquireEnrollmentLock,
   acquireExclusiveLockFile,
-  reclaimStaleLockFile,
-  isProcessAlive,
-  isStoreLockStale,
+  exclusiveLockIpcPath,
   parseStoreLockContents,
-  MAX_STORE_LOCK_AGE_MS,
   removeCertificateAndKeyContainer,
   removeAbandonedKeyContainer,
 };

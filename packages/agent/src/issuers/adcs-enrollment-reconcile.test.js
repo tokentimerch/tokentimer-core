@@ -283,31 +283,38 @@ describe("adcs-enrollment-reconcile", () => {
     assert.equal(result.nextSearchFrom, 2);
   });
 
-  it("recovers a stale watermark lock left by a dead process after crash", async () => {
+  it("recovers a watermark lock after the holder worker crashes", async () => {
+    const { acquireExclusiveLockFile } = require("../windows-cert-store");
     const caConfig = "CA\\Lab";
     const lockPath = watermarkLockPath(stateDir, caConfig);
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    // Dead PID with a fresh timestamp: reclaim via process-not-alive, not age.
-    fs.writeFileSync(lockPath, `999999991\n${new Date().toISOString()}\n`, "utf8");
+    const held = acquireExclusiveLockFile(
+      lockPath,
+      "ADCS_WATERMARK_LOCKED",
+      "busy",
+    );
+    await held._workerForTests.terminate();
     await recordHighestRequestId(stateDir, caConfig, 7);
     assert.equal(readHighestRequestId(stateDir, caConfig), 7);
-    assert.equal(fs.existsSync(lockPath), false);
   });
 
-  it("recovers an aged watermark lock even if the recorded pid looks live", async () => {
+  it("ignores an abandoned watermark marker file that is not backed by a live listen", async () => {
     const caConfig = "CA\\Lab";
     const lockPath = watermarkLockPath(stateDir, caConfig);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, `${process.pid}\n2020-01-01T00:00:00.000Z\n`, "utf8");
+    fs.writeFileSync(lockPath, `${process.pid}\n2020-01-01T00:00:00.000Z\nabandoned\n`, "utf8");
     await recordHighestRequestId(stateDir, caConfig, 8);
     assert.equal(readHighestRequestId(stateDir, caConfig), 8);
   });
 
   it("does not steal a live watermark lock from a concurrent holder", async () => {
+    const { acquireExclusiveLockFile } = require("../windows-cert-store");
     const caConfig = "CA\\Lab";
     const lockPath = watermarkLockPath(stateDir, caConfig);
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, "utf8");
+    const held = acquireExclusiveLockFile(
+      lockPath,
+      "ADCS_WATERMARK_LOCKED",
+      "busy",
+    );
     await assert.rejects(
       () => recordHighestRequestId(stateDir, caConfig, 3),
       (err) => {
@@ -315,32 +322,67 @@ describe("adcs-enrollment-reconcile", () => {
         return true;
       },
     );
-    fs.unlinkSync(lockPath);
+    held.release();
   });
 
-  it("allows only one owner when two contenders reclaim the same stale watermark lock", async () => {
-    const { reclaimStaleLockFile, acquireExclusiveLockFile, parseStoreLockContents } = require("../windows-cert-store");
+  it("allows only one watermark writer when three processes contend", async () => {
+    const { spawn } = require("node:child_process");
     const caConfig = "CA\\Lab";
     const lockPath = watermarkLockPath(stateDir, caConfig);
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\nstale-token\n", "utf8");
-
-    // B observes stale; A wins reclaim+acquire inside B's pre-rename pause;
-    // B must restore A's lock rather than dual-own.
-    let winner;
-    const reclaimedByB = reclaimStaleLockFile(lockPath, {
-      beforeReclaimRename() {
-        assert.equal(reclaimStaleLockFile(lockPath), true);
-        winner = acquireExclusiveLockFile(lockPath, "ADCS_WATERMARK_LOCKED", "busy");
-      },
-    });
-    assert.equal(reclaimedByB, false);
-    assert.equal(
-      parseStoreLockContents(fs.readFileSync(lockPath, "utf8")).ownerToken,
-      winner.ownerToken,
+    const barrierDir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "wm-barrier-"));
+    const storeModule = path.join(__dirname, "..", "windows-cert-store", "index.js");
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const { acquireExclusiveLockFile } = require(${JSON.stringify(storeModule)});
+      const lockPath = process.env.TT_LOCK_PATH;
+      const barrierDir = process.env.TT_BARRIER_DIR;
+      const id = process.env.TT_CONTENDER_ID;
+      fs.writeFileSync(path.join(barrierDir, id + ".ready"), "1");
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        if (fs.readdirSync(barrierDir).filter((n) => n.endsWith(".ready")).length >= 3) break;
+      }
+      try {
+        const lock = acquireExclusiveLockFile(lockPath, "ADCS_WATERMARK_LOCKED", "busy");
+        fs.writeFileSync(path.join(barrierDir, id + ".won"), lock.ownerToken);
+        const holdUntil = Date.now() + 1500;
+        while (Date.now() < holdUntil) {}
+        lock.release();
+        process.exit(0);
+      } catch (err) {
+        fs.writeFileSync(path.join(barrierDir, id + ".lost"), err && err.code ? err.code : "ERR");
+        process.exit(2);
+      }
+    `;
+    await Promise.all(
+      ["a", "b", "c"].map(
+        (id) =>
+          new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, ["-e", script], {
+              env: {
+                ...process.env,
+                TT_LOCK_PATH: lockPath,
+                TT_BARRIER_DIR: barrierDir,
+                TT_CONTENDER_ID: id,
+              },
+              stdio: "ignore",
+            });
+            const timer = setTimeout(() => {
+              child.kill();
+              reject(new Error(`contender ${id} timed out`));
+            }, 20000);
+            child.on("exit", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+          }),
+      ),
     );
-    winner.release();
-
+    const won = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".won"));
+    const lost = fs.readdirSync(barrierDir).filter((n) => n.endsWith(".lost"));
+    assert.equal(won.length, 1, `won=${won} lost=${lost}`);
+    assert.equal(lost.length, 2);
     await recordHighestRequestId(stateDir, caConfig, 42);
     assert.equal(readHighestRequestId(stateDir, caConfig), 42);
   });
