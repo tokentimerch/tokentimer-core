@@ -61,6 +61,12 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
   useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }));
 
+// JobExecutionSummary gates agent / trust-anchor links on these hooks.
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsIsWorkspaceAdmin: () => true,
+  useCertOpsCanManage: () => true,
+}));
+
 function renderWithProviders(ui) {
   return render(
     <ChakraProvider>

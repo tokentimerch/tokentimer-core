@@ -8,10 +8,12 @@ import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const {
   useCertOpsIsWorkspaceAdminMock,
+  useCertOpsCanManageMock,
   getCertificateMock,
   listTrustAnchorsMock,
 } = vi.hoisted(() => ({
   useCertOpsIsWorkspaceAdminMock: vi.fn(),
+  useCertOpsCanManageMock: vi.fn(),
   getCertificateMock: vi.fn(),
   listTrustAnchorsMock: vi.fn(),
 }));
@@ -22,6 +24,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
+  useCertOpsCanManage: useCertOpsCanManageMock,
 }));
 
 vi.mock('../../src/components/certops/certopsApi.js', () => ({
@@ -48,9 +51,11 @@ function renderSummary(job) {
 
 beforeEach(() => {
   useCertOpsIsWorkspaceAdminMock.mockReset();
+  useCertOpsCanManageMock.mockReset();
   getCertificateMock.mockReset();
   listTrustAnchorsMock.mockReset();
   useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+  useCertOpsCanManageMock.mockReturnValue(true);
   listTrustAnchorsMock.mockResolvedValue({ items: [] });
 });
 

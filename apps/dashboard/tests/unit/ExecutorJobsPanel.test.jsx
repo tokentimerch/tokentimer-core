@@ -854,7 +854,12 @@ describe('ExecutorJobsPanel manual-reconciliation visibility', () => {
 
     renderPanel();
 
-    expect(screen.getByText('Needs reconciliation')).toBeInTheDocument();
+    // Status filter option and row badge share the same label.
+    expect(
+      screen
+        .getAllByText('Needs reconciliation')
+        .some((node) => node.tagName === 'SPAN')
+    ).toBe(true);
   });
 
   it('shows the advisory line for a job needing reconciliation with no errorMessage', () => {
