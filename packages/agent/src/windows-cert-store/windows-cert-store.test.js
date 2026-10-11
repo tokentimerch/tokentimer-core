@@ -38,6 +38,8 @@ const {
   acceptCertificateViaCng,
   acquireStoreLock,
   acquireEnrollmentLock,
+  acquireExclusiveLockFile,
+  reclaimStaleLockFile,
   isProcessAlive,
   isStoreLockStale,
   parseStoreLockContents,
@@ -970,14 +972,100 @@ describe("acquireStoreLock", () => {
 
   it("parseStoreLockContents round-trips a real lock file's own format", () => {
     const now = new Date();
-    const parsed = parseStoreLockContents(`${process.pid}\n${now.toISOString()}\n`);
+    const token = "a".repeat(32);
+    const parsed = parseStoreLockContents(`${process.pid}\n${now.toISOString()}\n${token}\n`);
     assert.equal(parsed.pid, process.pid);
     assert.equal(parsed.createdAt.getTime(), now.getTime());
+    assert.equal(parsed.ownerToken, token);
+  });
+
+  it("parseStoreLockContents accepts legacy two-line locks without an owner token", () => {
+    const now = new Date();
+    const parsed = parseStoreLockContents(`${process.pid}\n${now.toISOString()}\n`);
+    assert.equal(parsed.pid, process.pid);
+    assert.equal(parsed.ownerToken, null);
   });
 
   it("parseStoreLockContents returns null for garbage input", () => {
     assert.equal(parseStoreLockContents("garbage"), null);
     assert.equal(parseStoreLockContents(""), null);
+  });
+
+  it("release does not unlink a same-PID replacement lock after aged reclaim", () => {
+    const stateDir = makeTempDir();
+    const first = acquireStoreLock(stateDir, "My");
+    const firstToken = first.ownerToken;
+    assert.equal(typeof firstToken, "string");
+    assert.equal(firstToken.length, 32);
+
+    // Age the still-held lock in place so a later acquisition in this same
+    // process can reclaim it (PID looks live; age is what makes it stale).
+    const ancient = new Date(Date.now() - MAX_STORE_LOCK_AGE_MS - 1000).toISOString();
+    fs.writeFileSync(first.lockPath, `${process.pid}\n${ancient}\n${firstToken}\n`);
+
+    const second = acquireStoreLock(stateDir, "My");
+    assert.notEqual(second.ownerToken, firstToken);
+    assert.equal(fs.existsSync(second.lockPath), true);
+
+    first.release();
+    assert.equal(fs.existsSync(second.lockPath), true);
+    const stillHeld = parseStoreLockContents(fs.readFileSync(second.lockPath, "utf8"));
+    assert.equal(stillHeld.ownerToken, second.ownerToken);
+
+    second.release();
+    assert.equal(fs.existsSync(second.lockPath), false);
+  });
+
+  it("reclaim puts back a replacement lock when a peer wins between stale check and rename", () => {
+    const stateDir = makeTempDir();
+    const lockDir = path.join(stateDir, "windows-cert-store");
+    fs.mkdirSync(lockDir, { recursive: true });
+    const lockPath = path.join(lockDir, "race.lock");
+    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\nstale-token\n");
+
+    // Deterministic interleaving on one thread: B has already observed the
+    // stale bytes; A then reclaims and installs a fresh lock; B's rename
+    // must put that replacement back rather than destroy it.
+    let winner;
+    const reclaimedByB = reclaimStaleLockFile(lockPath, {
+      beforeReclaimRename() {
+        assert.equal(reclaimStaleLockFile(lockPath), true);
+        winner = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+      },
+    });
+
+    assert.equal(reclaimedByB, false);
+    assert.equal(fs.existsSync(lockPath), true);
+    const held = parseStoreLockContents(fs.readFileSync(lockPath, "utf8"));
+    assert.equal(held.ownerToken, winner.ownerToken);
+    winner.release();
+  });
+
+  it("acquireExclusiveLockFile loses the reclaim race when a peer installs a fresh lock first", () => {
+    const stateDir = makeTempDir();
+    const lockDir = path.join(stateDir, "windows-cert-store");
+    fs.mkdirSync(lockDir, { recursive: true });
+    const lockPath = path.join(lockDir, "race-acquire.lock");
+    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\nstale-token\n");
+
+    let winner;
+    assert.throws(
+      () =>
+        acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy", {
+          beforeReclaimRename() {
+            winner = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+          },
+        }),
+      (err) => {
+        assert.equal(err.code, "STORE_LOCKED");
+        return true;
+      },
+    );
+    assert.equal(
+      parseStoreLockContents(fs.readFileSync(lockPath, "utf8")).ownerToken,
+      winner.ownerToken,
+    );
+    winner.release();
   });
 });
 

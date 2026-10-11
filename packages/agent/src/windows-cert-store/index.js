@@ -1084,20 +1084,33 @@ function isProcessAlive(pid) {
 }
 
 /**
- * Parses an acquireStoreLock lock file's contents (`"<pid>\n<isoDate>\n"`,
- * written by acquireStoreLock itself) back into `{ pid, createdAt }`.
- * Returns null on anything unparseable, so a corrupted/foreign lock file
- * is treated the same as "cannot prove this is stale" (fails closed,
- * still locked) rather than crashing the caller.
+ * Parses an exclusive lock file's contents
+ * (`"<pid>\n<isoDate>\n<ownerToken>\n"`, written by acquireExclusiveLockFile)
+ * back into `{ pid, createdAt, ownerToken }`. `ownerToken` may be null for
+ * legacy two-line lock files still treated as parseable for stale-age /
+ * dead-PID recovery. Returns null on anything unparseable, so a
+ * corrupted/foreign lock file is treated the same as "cannot prove this
+ * is stale" (fails closed, still locked) rather than crashing the caller.
  * @param {string} contents
- * @returns {{ pid: number, createdAt: Date }|null}
+ * @returns {{ pid: number, createdAt: Date, ownerToken: string|null }|null}
  */
 function parseStoreLockContents(contents) {
   const lines = String(contents).split("\n");
   const pid = Number(lines[0]);
   const createdAt = new Date(lines[1] ?? "");
   if (!Number.isInteger(pid) || pid < 0 || Number.isNaN(createdAt.getTime())) return null;
-  return { pid, createdAt };
+  const rawToken = lines[2] ?? "";
+  const ownerToken = rawToken.length > 0 ? rawToken : null;
+  return { pid, createdAt, ownerToken };
+}
+
+/**
+ * @param {{ pid: number, createdAt: Date }} parsed
+ * @returns {boolean}
+ */
+function isParsedLockStale(parsed) {
+  if (Date.now() - parsed.createdAt.getTime() > MAX_STORE_LOCK_AGE_MS) return true;
+  return !isProcessAlive(parsed.pid);
 }
 
 /**
@@ -1124,8 +1137,7 @@ function isStoreLockStale(lockPath) {
   }
   const parsed = parseStoreLockContents(contents);
   if (parsed === null) return false;
-  if (Date.now() - parsed.createdAt.getTime() > MAX_STORE_LOCK_AGE_MS) return true;
-  return !isProcessAlive(parsed.pid);
+  return isParsedLockStale(parsed);
 }
 
 /**
@@ -1143,23 +1155,40 @@ function isStoreLockStale(lockPath) {
  * scheme above -- with no other recovery path, EVERY future renewal
  * against that store fails permanently until an operator manually deletes
  * the file. On an initial EEXIST, this now checks isStoreLockStale (dead
- * PID, or simply too old) and, if stale, unlinks the abandoned file and
+ * PID, or simply too old) and, if stale, reclaims the abandoned file and
  * retries the acquisition exactly once (not in a loop: a genuinely busy,
  * live lock must still fail fast with STORE_LOCKED, not spin).
  *
  * @param {string} stateDir agent state dir.
  * @param {string} storeName Windows machine store name (e.g. "My").
- * @returns {{ lockPath: string, release: () => void }}
+ * @returns {{ lockPath: string, ownerToken: string, release: () => void }}
  */
 /**
- * Atomically claim a stale lock pathname via rename (not unlink).
- * Two contenders both seeing "stale" cannot both delete each other's
- * freshly created lock: only one rename of the abandoned file succeeds.
+ * Claim a stale lock pathname via rename, then verify the moved bytes are
+ * still the same abandoned lock that was inspected. Rename alone is not
+ * enough: a peer can install a fresh lock between the stale check and the
+ * rename; without the content check the second contender would steal that
+ * replacement. On mismatch the displaced file is renamed back.
  *
+ * @param {string} lockPath
+ * @param {{ beforeReclaimRename?: (info: { lockPath: string, contents: string }) => void }} [options]
  * @returns {boolean} true when this caller claimed and removed the stale file
  */
-function reclaimStaleLockFile(lockPath) {
-  if (!isStoreLockStale(lockPath)) return false;
+function reclaimStaleLockFile(lockPath, options = {}) {
+  let contents;
+  try {
+    contents = fs.readFileSync(lockPath, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") return false;
+    return false;
+  }
+  const parsed = parseStoreLockContents(contents);
+  if (parsed === null || !isParsedLockStale(parsed)) return false;
+
+  if (typeof options.beforeReclaimRename === "function") {
+    options.beforeReclaimRename({ lockPath, contents });
+  }
+
   const reclaimPath = `${lockPath}.reclaim.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
   try {
     fs.renameSync(lockPath, reclaimPath);
@@ -1168,6 +1197,29 @@ function reclaimStaleLockFile(lockPath) {
     if (err && err.code === "ENOENT") return false;
     return false;
   }
+
+  let reclaimedContents;
+  try {
+    reclaimedContents = fs.readFileSync(reclaimPath, "utf8");
+  } catch {
+    return false;
+  }
+
+  if (reclaimedContents !== contents) {
+    // Renamed a replacement lock, not the abandoned one we inspected.
+    try {
+      fs.renameSync(reclaimPath, lockPath);
+    } catch {
+      // lockPath already recreated via wx: drop the displaced copy only.
+      try {
+        fs.unlinkSync(reclaimPath);
+      } catch {
+        // best-effort
+      }
+    }
+    return false;
+  }
+
   try {
     fs.unlinkSync(reclaimPath);
   } catch {
@@ -1176,7 +1228,7 @@ function reclaimStaleLockFile(lockPath) {
   return true;
 }
 
-function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
+function acquireExclusiveLockFile(lockPath, busyCode, busyMessage, options = {}) {
   function tryAcquire() {
     return fs.openSync(lockPath, "wx");
   }
@@ -1186,9 +1238,9 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
     fd = tryAcquire();
   } catch (err) {
     if (err && err.code === "EEXIST") {
-      // Rename-based reclaim: never unlink the live lock pathname based on
-      // a prior stale observation (that race could delete a winner's new lock).
-      if (reclaimStaleLockFile(lockPath)) {
+      // Content-verified reclaim: never drop a replacement lock based on an
+      // earlier stale observation of a different file at the same path.
+      if (reclaimStaleLockFile(lockPath, options)) {
         try {
           fd = tryAcquire();
         } catch (retryErr) {
@@ -1213,21 +1265,24 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
       throw err;
     }
   }
-  fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
+  // Per-acquisition identity: PID alone is not enough (same process can
+  // reclaim its own aged lock; the previous holder's release must not
+  // unlink the replacement).
+  const ownerToken = crypto.randomBytes(16).toString("hex");
+  fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n${ownerToken}\n`);
   fs.closeSync(fd);
 
   let released = false;
   return {
     lockPath,
+    ownerToken,
     release() {
       if (released) return;
       released = true;
       try {
-        // Only unlink if we still own the file (pid match). Prevents a
-        // confused releaser from removing another process's lock.
-        const contents = fs.readFileSync(lockPath, "utf8");
-        const parsed = parseStoreLockContents(contents);
-        if (parsed && parsed.pid === process.pid) {
+        const current = fs.readFileSync(lockPath, "utf8");
+        const parsed = parseStoreLockContents(current);
+        if (parsed && parsed.ownerToken === ownerToken) {
           fs.unlinkSync(lockPath);
         }
       } catch {

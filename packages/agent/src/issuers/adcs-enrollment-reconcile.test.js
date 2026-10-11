@@ -319,19 +319,28 @@ describe("adcs-enrollment-reconcile", () => {
   });
 
   it("allows only one owner when two contenders reclaim the same stale watermark lock", async () => {
-    const { reclaimStaleLockFile } = require("../windows-cert-store");
+    const { reclaimStaleLockFile, acquireExclusiveLockFile, parseStoreLockContents } = require("../windows-cert-store");
     const caConfig = "CA\\Lab";
     const lockPath = watermarkLockPath(stateDir, caConfig);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\n", "utf8");
+    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\nstale-token\n", "utf8");
 
-    const first = reclaimStaleLockFile(lockPath);
-    const second = reclaimStaleLockFile(lockPath);
-    assert.equal(first, true);
-    assert.equal(second, false);
-    assert.equal(fs.existsSync(lockPath), false);
+    // B observes stale; A wins reclaim+acquire inside B's pre-rename pause;
+    // B must restore A's lock rather than dual-own.
+    let winner;
+    const reclaimedByB = reclaimStaleLockFile(lockPath, {
+      beforeReclaimRename() {
+        assert.equal(reclaimStaleLockFile(lockPath), true);
+        winner = acquireExclusiveLockFile(lockPath, "ADCS_WATERMARK_LOCKED", "busy");
+      },
+    });
+    assert.equal(reclaimedByB, false);
+    assert.equal(
+      parseStoreLockContents(fs.readFileSync(lockPath, "utf8")).ownerToken,
+      winner.ownerToken,
+    );
+    winner.release();
 
-    // After exclusive reclaim, a single writer can update the watermark.
     await recordHighestRequestId(stateDir, caConfig, 42);
     assert.equal(readHighestRequestId(stateDir, caConfig), 42);
   });
