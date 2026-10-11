@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Badge,
-  Box,
-  HStack,
-  Text,
-  VStack,
-} from '@chakra-ui/react';
+import { Badge, Box, HStack, Text, VStack } from '@chakra-ui/react';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { listAgentJobLog } from './certopsJobsApi';
 
@@ -224,8 +218,7 @@ function entryTimeMs(entry) {
  */
 export function formatConsoleLine(entry) {
   const ms = entryTimeMs(entry);
-  const iso =
-    ms > 0 ? new Date(ms).toISOString() : new Date(0).toISOString();
+  const iso = ms > 0 ? new Date(ms).toISOString() : new Date(0).toISOString();
 
   let raw = String(entry?.message || entry?.eventType || '').trim();
   const agentMatch = raw.match(/^\[agent:([^\]]+)\]\s*/i);
@@ -437,9 +430,7 @@ export default function AgentShellConsole({
                   ? SHELL.danger
                   : cursorColor
             }
-            boxShadow={
-              live ? `0 0 0 3px ${cursorColor}33` : 'none'
-            }
+            boxShadow={live ? `0 0 0 3px ${cursorColor}33` : 'none'}
           />
           <Text fontSize='sm' fontWeight='semibold' color={text}>
             {title}
@@ -476,12 +467,7 @@ export default function AgentShellConsole({
           '& [data-shell-line]': { color: 'inherit' },
         }}
       >
-        <Text
-          fontSize='10px'
-          mb={2}
-          letterSpacing='0.04em'
-          data-shell-muted
-        >
+        <Text fontSize='10px' mb={2} letterSpacing='0.04em' data-shell-muted>
           {displayLines[0]?.agent
             ? `HOST  ${displayLines[0].agent}`
             : 'HOST  tokentimer-agent'}

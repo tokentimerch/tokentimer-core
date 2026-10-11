@@ -1180,6 +1180,7 @@ describe("migration 34 issue job operation", () => {
       (operation) =>
         operation !== "protocol_smoke" &&
         operation !== "continue-enrollment" &&
+        operation !== "adcs-preflight" &&
         !isTrustAnchorOperation(operation),
     );
     assert.deepEqual([...values].sort(), [...operationsAsOfMigration34].sort());

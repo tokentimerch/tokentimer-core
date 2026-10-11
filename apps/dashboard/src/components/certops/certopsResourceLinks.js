@@ -28,7 +28,12 @@ export function matchesCertOpsFocusId(focusId, ...candidates) {
 /** Map a zero-based list index to the page offset for a fixed page size. */
 export function certOpsPagedListOffset(index, pageSize) {
   const size = Number(pageSize);
-  if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(index) || index < 0) {
+  if (
+    !Number.isFinite(size) ||
+    size <= 0 ||
+    !Number.isFinite(index) ||
+    index < 0
+  ) {
     return 0;
   }
   return Math.floor(index / size) * size;

@@ -13,11 +13,15 @@ const {
   storedAdcsPayload,
 } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const {
+  abandonEnrollment,
   confirmIssuerKey,
+  createEnrollment,
+  dispatchPreflight,
   proposeReconcileRequestId,
   recordEnrollmentResult,
   scheduleDueEnrollments,
 } = require("../../apps/api/services/certops/certificateEnrollments");
+const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
 
@@ -166,17 +170,33 @@ const WEBHOSTING = {
 function rowDb() {
   const enrollments = new Map();
   const issuers = new Map();
+  let preflightCount = 0;
   let checkpoint = null;
   function cloneRows() {
     return new Map([...enrollments.entries()].map(([id, row]) => [id, { ...row }]));
   }
+  function cloneIssuers() {
+    return new Map([...issuers.entries()].map(([id, row]) => [id, {
+      ...row,
+      confirmed: row.confirmed ? { ...row.confirmed } : undefined,
+    }]));
+  }
   function restore(saved) {
     enrollments.clear();
-    for (const [id, row] of saved) enrollments.set(id, row);
+    for (const [id, row] of saved.enrollments) enrollments.set(id, row);
+    issuers.clear();
+    for (const [id, row] of saved.issuers) issuers.set(id, row);
+    preflightCount = saved.preflightCount;
   }
   return {
     enrollments,
     issuers,
+    get preflightCount() {
+      return preflightCount;
+    },
+    set preflightCount(value) {
+      preflightCount = value;
+    },
     putEnrollment(row) {
       enrollments.set(row.id, { ...row });
     },
@@ -186,7 +206,11 @@ function rowDb() {
     async query(sql, params = []) {
       const text = sql.replace(/\s+/g, " ").trim();
       if (text === "BEGIN") {
-        checkpoint = cloneRows();
+        checkpoint = {
+          enrollments: cloneRows(),
+          issuers: cloneIssuers(),
+          preflightCount,
+        };
         return { rows: [] };
       }
       if (text === "COMMIT") {
@@ -197,6 +221,10 @@ function rowDb() {
         if (checkpoint) restore(checkpoint);
         checkpoint = null;
         return { rows: [] };
+      }
+      if (text.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (text.includes("operation = 'adcs-preflight'") && text.includes("count")) {
+        return { rows: [{ n: preflightCount }] };
       }
       if (text.includes("FROM certificate_enrollments e") && text.includes("FOR UPDATE OF e SKIP LOCKED")) {
         const now = params[0];
@@ -253,6 +281,54 @@ function rowDb() {
       if (text.includes("FROM certificate_issuers") && text.includes("FOR UPDATE")) {
         const row = issuers.get(params[1]);
         return { rows: row && row.workspace_id === params[0] ? [row] : [] };
+      }
+      if (text.includes("FROM certificate_issuer_versions")) {
+        const issuer = issuers.get(params[1]);
+        if (!issuer || issuer.workspace_id !== params[0] || !issuer.ca_key_sha256) return { rows: [] };
+        return {
+          rows: [{
+            version: issuer.version,
+            ca_config: issuer.ca_config,
+            template: issuer.template,
+            ca_key_sha256: issuer.ca_key_sha256,
+            kind: issuer.kind,
+            revalidation_required: issuer.revalidation_required === true,
+          }],
+        };
+      }
+      if (text.includes("INSERT INTO certificate_enrollments")) {
+        const id = require("node:crypto").randomUUID();
+        enrollments.set(id, {
+          id,
+          workspace_id: params[0],
+          certificate_id: params[1],
+          issuer_id: params[2],
+          state: "requested",
+          attempt: 0,
+          snapshot_bytes: params[5],
+          snapshot_sha256: params[6],
+          deploy_target: JSON.parse(params[7]),
+          operator_request_id: null,
+          pending_since: null,
+          next_poll_at: null,
+          last_error_code: null,
+          current_job_id: null,
+          job_status: null,
+          agent_id: params[4],
+        });
+        return { rows: [{ id }] };
+      }
+      if (text.includes("SET current_job_id = $3")) {
+        const row = enrollments.get(params[1]);
+        row.current_job_id = params[2];
+        row.job_status = "pending";
+        return { rows: [] };
+      }
+      if (text.includes("SET state = 'abandoned'")) {
+        const row = enrollments.get(params[1]);
+        row.state = "abandoned";
+        row.next_poll_at = new Date();
+        return { rows: [] };
       }
       if (text.includes("INSERT INTO certificate_issuer_versions")) {
         const issuer = issuers.get(params[1]);
@@ -471,5 +547,183 @@ describe("enrollment rows", () => {
     assert.equal(confirmed.version, 1);
     assert.equal(db.issuers.get(ISSUER).confirmed.caConfig, "ca01.corp.example.com\\Corp Issuing CA 01");
     assert.equal(db.issuers.get(ISSUER).confirmed.template, "TokenTimerWebServer");
+  });
+
+  it("schedules reconciliation when PostgreSQL returns the RequestId as a string", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", {
+      attempt: 1,
+      operator_request_id: "77",
+      next_poll_at: new Date("2026-10-11T12:00:00.000Z"),
+    }));
+    const jobs = [];
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now: new Date("2026-10-11T12:05:00.000Z"),
+      createJob: async ({ payload }) => {
+        jobs.push(payload);
+        return { id: "job-bigint-1" };
+      },
+    });
+    assert.equal(created.length, 1);
+    assert.equal(jobs[0].metadata[0].value, 77);
+    assert.equal(typeof jobs[0].metadata[0].value, "number");
+  });
+
+  it("does not schedule a RequestId outside uint32", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", {
+      attempt: 1,
+      operator_request_id: "4294967296",
+      next_poll_at: new Date("2026-10-11T12:00:00.000Z"),
+    }));
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now: new Date("2026-10-11T12:05:00.000Z"),
+      createJob: async () => ({ id: "job-should-not-exist" }),
+    });
+    assert.equal(created.length, 0);
+  });
+
+  it("rolls back the enrollment when the first job cannot be created", async () => {
+    const db = rowDb();
+    db.putIssuer({
+      id: ISSUER,
+      workspace_id: WORKSPACE,
+      kind: "adcs",
+      version: 1,
+      ca_config: "ca01.corp.example.com\\Corp Issuing CA 01",
+      template: "TokenTimerWebServer",
+      ca_key_sha256: "ab".repeat(32),
+      revalidation_required: false,
+    });
+    await assert.rejects(
+      createEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        audit,
+        createJob: async () => {
+          throw new Error("job insert failed");
+        },
+      }),
+      /job insert failed/,
+    );
+    assert.equal(db.enrollments.size, 0);
+  });
+
+  it("refuses a new enrollment while the issuer requires revalidation", async () => {
+    const db = rowDb();
+    db.putIssuer({
+      id: ISSUER,
+      workspace_id: WORKSPACE,
+      kind: "adcs",
+      version: 1,
+      ca_config: "ca01.corp.example.com\\Corp Issuing CA 01",
+      template: "TokenTimerWebServer",
+      ca_key_sha256: "ab".repeat(32),
+      revalidation_required: true,
+    });
+    await assert.rejects(
+      createEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        audit,
+        createJob: async () => ({ id: "job-should-not-exist" }),
+      }),
+      (error) => error.code === "CERTOPS_ISSUER_REVALIDATION_REQUIRED",
+    );
+    assert.equal(db.enrollments.size, 0);
+  });
+
+  it("refuses a snapshot the agent would reject before inserting an enrollment", () => {
+    assert.throws(
+      () => freezeSnapshot({ ...snapshotInput(), keySize: 1024 }),
+      (error) => error.code === "CERTOPS_SNAPSHOT_INVALID",
+    );
+  });
+
+  it("dispatches a cleanup continuation after abandonment", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", { attempt: 1 }));
+    await abandonEnrollment({
+      client: db,
+      workspaceId: WORKSPACE,
+      enrollmentId: ENROLLMENT,
+      audit,
+    });
+    assert.equal(db.enrollments.get(ENROLLMENT).state, "abandoned");
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now: new Date(Date.now() + 1000),
+      createJob: async () => ({ id: "job-free-key" }),
+    });
+    assert.equal(created.length, 1);
+    assert.equal(created[0].jobId, "job-free-key");
+    assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at, null);
+  });
+
+  it("rolls back an issuer version when confirmation audit fails", async () => {
+    const db = rowDb();
+    const key = "cd".repeat(32);
+    db.putIssuer({
+      id: ISSUER,
+      workspace_id: WORKSPACE,
+      kind: "adcs",
+      current_version: 0,
+      last_preflight: {
+        caConfig: "ca01.corp.example.com\\Corp Issuing CA 01",
+        template: "TokenTimerWebServer",
+        templateCheck: { verdict: "safe", reasons: [] },
+        caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+        caCertificates: [{ keySha256: key }],
+      },
+    });
+    await assert.rejects(
+      confirmIssuerKey({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        caKeySha256: key,
+        audit: async () => {
+          throw new Error("audit failed");
+        },
+      }),
+      /audit failed/,
+    );
+    assert.equal(db.issuers.get(ISSUER).confirmed, undefined);
+  });
+
+  it("stops preflight dispatch at the workspace hourly limit", async () => {
+    const db = rowDb();
+    db.preflightCount = PREFLIGHT_PER_HOUR;
+    await assert.rejects(
+      dispatchPreflight({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        agentId: "22222222-2222-4222-8222-222222222222",
+        caConfig: "ca01.corp.example.com\\Corp Issuing CA 01",
+        template: "TokenTimerWebServer",
+        audit,
+        createJob: async () => {
+          throw new Error("should not create a job");
+        },
+      }),
+      (error) => error.code === "CERTOPS_PREFLIGHT_RATE_LIMITED",
+    );
   });
 });

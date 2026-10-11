@@ -770,18 +770,21 @@ export async function loadFleetJobBatches(
         let reserved;
         let result;
         try {
-          ({ reserved, result } = await budget.withReservation(want, async limit => {
-            const pageResult = await fetchPage(workspaceId, jobId, {
-              cursor,
-              limit,
-              signal,
-            });
-            const pageItems = pageResult?.items || [];
-            return {
-              used: Math.min(limit, pageItems.length),
-              result: pageResult,
-            };
-          }));
+          ({ reserved, result } = await budget.withReservation(
+            want,
+            async limit => {
+              const pageResult = await fetchPage(workspaceId, jobId, {
+                cursor,
+                limit,
+                signal,
+              });
+              const pageItems = pageResult?.items || [];
+              return {
+                used: Math.min(limit, pageItems.length),
+                result: pageResult,
+              };
+            }
+          ));
         } catch {
           // Keep pages already loaded so their budget stays matched to display.
           // Discarding them would strand capacity other jobs still need.
@@ -837,8 +840,13 @@ export async function loadFleetJobBatches(
 }
 
 function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
-  const { overlayProps, headerProps, bodyProps, closeButtonProps, footerProps } =
-    useDashboardModalProps();
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    closeButtonProps,
+    footerProps,
+  } = useDashboardModalProps();
   const { muted, text } = useDashboardThemeColors();
   const [jobs, setJobs] = useState([]);
   const [source, setSource] = useState(FLEET_ALL);
@@ -894,7 +902,11 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
           batches.filter(batch => batch.failed).map(batch => batch.jobId)
         );
       } catch (err) {
-        if (cancelled || err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
+        if (
+          cancelled ||
+          err?.name === 'AbortError' ||
+          err?.code === 'ERR_CANCELED'
+        ) {
           return;
         }
         setJobs([]);

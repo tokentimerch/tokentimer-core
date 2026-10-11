@@ -2415,11 +2415,27 @@ async function updateCertificateJobStatus(options) {
     CERTOPS_JOB_STATUS_INVALID,
     "status",
   );
-  if (status === "awaiting_issuer" && !options.enrollmentId) {
-    throw serviceError(
-      "awaiting_issuer requires a bound enrollment",
-      CERTOPS_JOB_STATUS_INVALID,
+  if (status === "awaiting_issuer") {
+    if (!options.enrollmentId) {
+      throw serviceError(
+        "awaiting_issuer requires a bound enrollment",
+        CERTOPS_JOB_STATUS_INVALID,
+      );
+    }
+    const bound = await db.query(
+      `SELECT enrollment_id
+         FROM certificate_jobs
+        WHERE workspace_id = $1
+          AND id = $2
+        LIMIT 1`,
+      [workspaceId, jobId],
     );
+    if (bound.rows[0]?.enrollment_id !== options.enrollmentId) {
+      throw serviceError(
+        "awaiting_issuer requires a bound enrollment",
+        CERTOPS_JOB_STATUS_INVALID,
+      );
+    }
   }
   const hasResultMetadata = Object.prototype.hasOwnProperty.call(
     options,

@@ -26,19 +26,14 @@ import {
 import { agentDisplayName } from './certopsAgentLabel.js';
 import { getCertificate } from './certopsApi.js';
 import { listTrustAnchors } from './certopsTrustAnchorsApi.js';
-import {
-  jobAgentHref,
-  jobSubjectHref,
-} from './certopsResourceLinks.js';
+import { jobAgentHref, jobSubjectHref } from './certopsResourceLinks.js';
 import {
   useCertOpsCanManage,
   useCertOpsIsWorkspaceAdmin,
 } from './useCertOps.js';
 
-const TRUST_ANCHOR_ADMIN_ONLY =
-  'Only workspace admins can open trust anchors.';
-const AGENT_MANAGE_ONLY =
-  'Only workspace managers can open the Agents page.';
+const TRUST_ANCHOR_ADMIN_ONLY = 'Only workspace admins can open trust anchors.';
+const AGENT_MANAGE_ONLY = 'Only workspace managers can open the Agents page.';
 
 function ApprovedByLine({ job }) {
   const { muted } = useDashboardTheme();
@@ -68,8 +63,7 @@ function MetadataField({ label, children }) {
 
 function AgentMetadataField({ id, label, agentsById }) {
   if (!id) return null;
-  const agent =
-    agentsById instanceof Map ? agentsById.get(String(id)) : null;
+  const agent = agentsById instanceof Map ? agentsById.get(String(id)) : null;
   const name = agentDisplayName(agent);
   return (
     <MetadataField label={label}>
@@ -117,9 +111,7 @@ function JobMetadataDetails({ job, agentsById }) {
         </MetadataField>
       ) : null}
       {job?.subjectId ? (
-        <MetadataField
-          label={subjectTypeLabel(job.subjectType) || 'Subject'}
-        >
+        <MetadataField label={subjectTypeLabel(job.subjectType) || 'Subject'}>
           <CopyableId id={job.subjectId} />
         </MetadataField>
       ) : null}
@@ -133,8 +125,7 @@ function JobMetadataDetails({ job, agentsById }) {
         label='Claimed by agent'
         agentsById={agentsById}
       />
-      {job?.assignedAgentId &&
-      job.assignedAgentId !== job.claimedByAgentId ? (
+      {job?.assignedAgentId && job.assignedAgentId !== job.claimedByAgentId ? (
         <AgentMetadataField
           id={job.assignedAgentId}
           label='Assigned agent'
@@ -375,12 +366,7 @@ function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
       cancelled = true;
       controller.abort();
     };
-  }, [
-    workspaceId,
-    job?.subjectId,
-    subjectType,
-    trustAnchorDenied,
-  ]);
+  }, [workspaceId, job?.subjectId, subjectType, trustAnchorDenied]);
 
   return {
     label,
@@ -407,9 +393,7 @@ export function JobExecutionSummary({ job, agentsById }) {
   const agentName = agentDisplayName(agent);
   // Prefer the fleet row UUID so Agents can match data-agent-id after load.
   // Viewers can list jobs but not GET /certops/agents; hide the dead link.
-  const agentHref = canOpenAgents
-    ? jobAgentHref(agent?.id || agentId)
-    : null;
+  const agentHref = canOpenAgents ? jobAgentHref(agent?.id || agentId) : null;
   const attemptLabel = attemptLabelFor(job);
   const subjectLabel = subjectTypeLabel(job.subjectType) || 'Subject';
   const subjectHref =
@@ -418,11 +402,7 @@ export function JobExecutionSummary({ job, agentsById }) {
       : jobSubjectHref(job.subjectType, job.subjectId);
 
   const hasAny =
-    agentId ||
-    job.subjectId ||
-    job.source ||
-    attemptLabel ||
-    job.createdAt;
+    agentId || job.subjectId || job.source || attemptLabel || job.createdAt;
   if (!hasAny) return null;
 
   return (

@@ -1,6 +1,11 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const Ajv = require("ajv");
+const snapshotSchema = require("../../../../packages/contracts/certops/enrollment-snapshot.schema.json");
+
+const ajv = new Ajv({ allErrors: true, strict: false });
+const validateSnapshot = ajv.compile(snapshotSchema);
 
 const ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 const ADCS_METADATA_MAX_BYTES = 4096;
@@ -62,6 +67,7 @@ const CONTINUATION_STATES = new Set([
   "validation_deferred",
   "cancelled",
   "expired",
+  "abandoned",
 ]);
 
 function serviceError(message, code) {
@@ -119,6 +125,13 @@ function freezeSnapshot(input) {
   if (bytes.length > 28 * 1024) {
     throw serviceError("enrollment snapshot exceeds 28 KiB", "CERTOPS_SNAPSHOT_INVALID");
   }
+  const frozen = JSON.parse(bytes.toString("utf8"));
+  if (!validateSnapshot(frozen)) {
+    throw serviceError(
+      "enrollment snapshot does not match its contract",
+      "CERTOPS_SNAPSHOT_INVALID",
+    );
+  }
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   return {
     snapshot,
@@ -153,6 +166,25 @@ function assertForwardTransition(from, to) {
   );
 }
 
+const REQUEST_ID_MAX = 4294967295;
+
+function parseRequestId(value) {
+  if (typeof value === "bigint") {
+    if (value < 1n || value > BigInt(REQUEST_ID_MAX)) return null;
+    return Number(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 1 || value > REQUEST_ID_MAX) return null;
+    return value;
+  }
+  if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > REQUEST_ID_MAX) return null;
+    return parsed;
+  }
+  return null;
+}
+
 function nextPollAt(now, seconds) {
   return new Date(now.getTime() + seconds * 1000);
 }
@@ -169,12 +201,14 @@ function decideContinuation(enrollment, snapshot, now) {
     return { dispatch: true, reason: UNREACHABLE_ERROR };
   }
   if (enrollment.state === "submission_uncertain") {
-    if (!Number.isInteger(enrollment.operatorRequestId) || enrollment.operatorRequestId < 1) {
-      return null;
-    }
+    if (parseRequestId(enrollment.operatorRequestId) == null) return null;
     return { dispatch: true, reason: "reconcile" };
   }
-  if (enrollment.state === "cancelled" || enrollment.state === "expired") {
+  if (
+    enrollment.state === "cancelled" ||
+    enrollment.state === "expired" ||
+    enrollment.state === "abandoned"
+  ) {
     return { dispatch: true, reason: "free_key" };
   }
   if (enrollment.state === "pending_issuance" || enrollment.state === "validation_deferred") {
@@ -217,14 +251,14 @@ function attachEnrollmentDispatch(stored, enrollment) {
     );
   }
   const metadata = Array.isArray(stored.metadata) ? stored.metadata.slice() : [];
+  const requestId = parseRequestId(enrollment.operatorRequestId);
   if (
-    Number.isInteger(enrollment.operatorRequestId) &&
-    enrollment.operatorRequestId >= 1 &&
+    requestId != null &&
     !metadata.some((entry) => entry && entry.name === "adcs.reconcileRequestId")
   ) {
     metadata.push({
       name: "adcs.reconcileRequestId",
-      value: enrollment.operatorRequestId,
+      value: requestId,
     });
   }
   return {
@@ -277,6 +311,7 @@ module.exports = {
   confirmedKeyAllowed,
   decideContinuation,
   freezeSnapshot,
+  parseRequestId,
   nextPollAt,
   serviceError,
   storedAdcsPayload,

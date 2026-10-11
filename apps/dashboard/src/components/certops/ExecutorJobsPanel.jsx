@@ -120,12 +120,7 @@ function JobReasonChip({ advisory }) {
  * caused the pause.
  */
 export default function ExecutorJobsPanel({ certOpsPaused = false }) {
-  const {
-    muted,
-    border,
-    dashboard,
-    inputBg,
-  } = useDashboardTheme();
+  const { muted, border, dashboard, inputBg } = useDashboardTheme();
   const rowHoverBg = dashboard.table.rowHover;
   const expandedBg = dashboard.bg.nested;
   const canManage = useCertOpsCanManage();
@@ -314,9 +309,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
           <Text fontSize='xs' color={muted}>
             Filtered by{' '}
             {[
-              ...(filters.q
-                ? [{ label: 'Search', value: filters.q }]
-                : []),
+              ...(filters.q ? [{ label: 'Search', value: filters.q }] : []),
               ...visibleFilterLabels,
             ]
               .map(entry => `${entry.label}: ${entry.value}`)
@@ -489,10 +482,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
                       flexShrink={0}
                       onClick={event => event.stopPropagation()}
                     >
-                      <JobDetailsButton
-                        job={job}
-                        agentsById={agentsById}
-                      />
+                      <JobDetailsButton job={job} agentsById={agentsById} />
                     </Box>
                   </HStack>
                   {targetLine ? (

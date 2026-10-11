@@ -5116,6 +5116,7 @@ paths:
                 distribute-trust,
                 revoke-trust,
                 continue-enrollment,
+                adcs-preflight,
               ]
         - in: query
           name: source
@@ -8873,7 +8874,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         status:
           type: string
           enum:
@@ -9299,7 +9300,7 @@ components:
           format: uuid
         operation:
           type: string
-          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment]
+          enum: [renew, deploy, reload, revoke, noop, issue, distribute-trust, revoke-trust, continue-enrollment, adcs-preflight]
         status:
           type: string
           enum:

@@ -39,10 +39,7 @@ import {
 import JobStatusBadge from './JobStatusBadge.jsx';
 import { useCertOpsJobTimeline } from './useCertOpsJobs.js';
 import AgentShellConsole from './AgentShellConsole.jsx';
-import {
-  JobDetailsButton,
-  JobExecutionSummary,
-} from './JobDetailsButton.jsx';
+import { JobDetailsButton, JobExecutionSummary } from './JobDetailsButton.jsx';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { useCertOpsAgents } from './useCertOpsAgents.js';
 import { indexAgentsByAnyId } from './certopsAgentLabel.js';
@@ -404,7 +401,9 @@ export default function EvidenceTimeline({
                     {jobOperationLabel(job.operation)}
                   </Text>
                   <JobStatusBadge status={job.status} />
-                  {job.source ? <CertOpsBadge>{job.source}</CertOpsBadge> : null}
+                  {job.source ? (
+                    <CertOpsBadge>{job.source}</CertOpsBadge>
+                  ) : null}
                 </>
               ) : null}
               <JobDetailsButton job={job} agentsById={agentsById} />

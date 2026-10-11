@@ -198,6 +198,10 @@ export const CERTOPS_SWEEP_CONFIG = Object.freeze({
     enableEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED",
     timeoutEnv: "CERTOPS_SWEEP_AGENT_LOG_PURGE_TIMEOUT_MS",
   }),
+  "enrollment-continuations": Object.freeze({
+    enableEnv: "CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_ENABLED",
+    timeoutEnv: "CERTOPS_SWEEP_ENROLLMENT_CONTINUATIONS_TIMEOUT_MS",
+  }),
 });
 
 export const DEFAULT_OUTBOX_DRAIN_BATCH_SIZE = 50;

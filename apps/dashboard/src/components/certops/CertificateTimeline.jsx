@@ -165,10 +165,7 @@ export default function CertificateTimeline({
                 >
                   {formatRelativeDateTime(job.createdAt)}
                 </Text>
-                <Box
-                  flexShrink={0}
-                  onClick={event => event.stopPropagation()}
-                >
+                <Box flexShrink={0} onClick={event => event.stopPropagation()}>
                   <JobDetailsButton job={job} agentsById={agentsById} />
                 </Box>
               </HStack>

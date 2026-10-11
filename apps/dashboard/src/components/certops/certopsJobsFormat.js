@@ -43,6 +43,7 @@ const JOB_OPERATION_LABELS = {
   'distribute-trust': 'Distribute trust',
   'revoke-trust': 'Revoke trust',
   'continue-enrollment': 'Continue enrollment',
+  'adcs-preflight': 'AD CS preflight',
 };
 
 const EVENT_TYPE_LABELS = {

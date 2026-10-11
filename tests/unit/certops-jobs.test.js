@@ -280,6 +280,14 @@ function createMemoryClient(options = {}) {
         return { rows };
       }
 
+      if (normalizedSql.includes("SET enrollment_id = $3")) {
+        const row = jobs.find(
+          (item) => item.workspace_id === params[0] && item.id === params[1],
+        );
+        if (row) row.enrollment_id = params[2];
+        return { rows: [] };
+      }
+
       if (normalizedSql.includes("UPDATE certificate_jobs")) {
         const row = jobs.find(
           (item) => item.workspace_id === params[0] && item.id === params[1],
@@ -2139,6 +2147,33 @@ describe("CertOps jobs service", () => {
       }),
       (error) => error.code === CERTOPS_JOB_STATUS_INVALID,
     );
+    await assert.rejects(
+      updateCertificateJobStatus({
+        client,
+        workspaceId: WORKSPACE_A,
+        jobId: job.id,
+        status: "awaiting_issuer",
+        enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69",
+      }),
+      (error) => error.code === CERTOPS_JOB_STATUS_INVALID,
+    );
+    const bound = await createCertificateJob({
+      client,
+      workspaceId: WORKSPACE_A,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: "cert-1",
+      payload: { target: "host/web" },
+      enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69",
+    });
+    const awaiting = await updateCertificateJobStatus({
+      client,
+      workspaceId: WORKSPACE_A,
+      jobId: bound.id,
+      status: "awaiting_issuer",
+      enrollmentId: "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69",
+    });
+    assert.equal(awaiting.status, "awaiting_issuer");
   });
 
   it("requires a valid renewalProfile for automation renew jobs", async () => {

@@ -36,6 +36,7 @@ export const CERTOPS_JOB_OPERATIONS = [
   'distribute-trust',
   'revoke-trust',
   'continue-enrollment',
+  'adcs-preflight',
 ];
 
 export const CERTOPS_JOB_CREATED_SINCE = [

@@ -54,7 +54,9 @@ export default function CertOpsAgents() {
         <BootstrapTokenList />
       </DashboardPanel>
       <DashboardPanel>
-        <TrustAnchorsPanel focusTrustAnchorId={focusTrustAnchorId || undefined} />
+        <TrustAnchorsPanel
+          focusTrustAnchorId={focusTrustAnchorId || undefined}
+        />
       </DashboardPanel>
 
       <DeployAgentModal

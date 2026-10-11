@@ -29,12 +29,55 @@ const {
   decideContinuation,
   freezeSnapshot,
   nextPollAt,
+  parseRequestId,
   serviceError,
   storedAdcsPayload,
 } = require("./enrollmentLifecycle");
 
 function dbOf(client) {
   return client || pool;
+}
+
+function isPool(db) {
+  return Boolean(db) && typeof db.connect === "function" && typeof db.idleCount === "number";
+}
+
+async function inTransaction(db, fn) {
+  await db.query("BEGIN");
+  try {
+    const result = await fn();
+    await db.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await db.query("ROLLBACK");
+    } catch (_rollbackError) {
+      // The original error is the one the caller can act on.
+    }
+    throw error;
+  }
+}
+
+async function withTransaction(db, fn) {
+  if (!isPool(db)) return inTransaction(db, () => fn(db));
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    try {
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // The original error is the one the caller can act on.
+      }
+      throw error;
+    }
+  } finally {
+    client.release();
+  }
 }
 
 async function createIssuer({ client, workspaceId, kind, name, actorUserId }) {
@@ -59,7 +102,7 @@ async function createIssuer({ client, workspaceId, kind, name, actorUserId }) {
   return row;
 }
 
-async function dispatchPreflight({
+function dispatchPreflight({
   client,
   workspaceId,
   issuerId,
@@ -67,54 +110,61 @@ async function dispatchPreflight({
   caConfig,
   template,
   actorUserId,
+  createJob = createCertificateJob,
+  audit = writeAudit,
 }) {
   const db = dbOf(client);
-  const recent = await db.query(
-    `SELECT count(*)::int AS n
-       FROM certificate_jobs
-      WHERE workspace_id = $1
-        AND operation = 'adcs-preflight'
-        AND created_at > NOW() - INTERVAL '1 hour'`,
-    [workspaceId],
-  );
-  if (Number(recent.rows[0]?.n || 0) >= PREFLIGHT_PER_HOUR) {
-    throw serviceError(
-      "AD CS preflight rate limit exceeded for this workspace",
-      "CERTOPS_PREFLIGHT_RATE_LIMITED",
+  return withTransaction(db, async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1::text))", [
+      `adcs-preflight:${workspaceId}`,
+    ]);
+    const recent = await tx.query(
+      `SELECT count(*)::int AS n
+         FROM certificate_jobs
+        WHERE workspace_id = $1
+          AND operation = 'adcs-preflight'
+          AND created_at > NOW() - INTERVAL '1 hour'`,
+      [workspaceId],
     );
-  }
-  const job = await createCertificateJob({
-    client: db,
-    workspaceId,
-    operation: "adcs-preflight",
-    allowIssuerPreflight: true,
-    source: "api",
-    subjectType: "external",
-    subjectId: issuerId,
-    assignedAgentId: agentId,
-    payload: {
-      schemaVersion: 1,
-      action: "adcs-preflight",
-      mode: "real",
-      caConfig,
-      template,
-      transport: "dcom",
-      issuerId,
-    },
+    if (Number(recent.rows[0]?.n || 0) >= PREFLIGHT_PER_HOUR) {
+      throw serviceError(
+        "AD CS preflight rate limit exceeded for this workspace",
+        "CERTOPS_PREFLIGHT_RATE_LIMITED",
+      );
+    }
+    const job = await createJob({
+      client: tx,
+      workspaceId,
+      operation: "adcs-preflight",
+      allowIssuerPreflight: true,
+      source: "api",
+      subjectType: "external",
+      subjectId: issuerId,
+      assignedAgentId: agentId,
+      payload: {
+        schemaVersion: 1,
+        action: "adcs-preflight",
+        mode: "real",
+        caConfig,
+        template,
+        transport: "dcom",
+        issuerId,
+      },
+    });
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "certops.issuer.preflight_dispatched",
+      targetType: "certificate_issuer",
+      workspaceId,
+      metadata: { issuerId, jobId: job.id, agentId },
+    });
+    return job;
   });
-  await writeAudit({
-    client: db,
-    actorUserId: actorUserId || null,
-    subjectUserId: actorUserId || null,
-    action: "certops.issuer.preflight_dispatched",
-    targetType: "certificate_issuer",
-    workspaceId,
-    metadata: { issuerId, jobId: job.id, agentId },
-  });
-  return job;
 }
 
-async function confirmIssuerKey({
+function confirmIssuerKey({
   client,
   workspaceId,
   issuerId,
@@ -125,7 +175,8 @@ async function confirmIssuerKey({
   audit = writeAudit,
 }) {
   const db = dbOf(client);
-  const issuer = await db.query(
+  return withTransaction(db, async (tx) => {
+  const issuer = await tx.query(
     `SELECT id, kind, current_version, last_preflight
        FROM certificate_issuers
       WHERE workspace_id = $1 AND id = $2
@@ -157,7 +208,7 @@ async function confirmIssuerKey({
     );
   }
   const version = Number(row.current_version || 0) + 1;
-  await db.query(
+  await tx.query(
     `INSERT INTO certificate_issuer_versions (
        workspace_id, issuer_id, version, ca_config, template, transport,
        ca_key_sha256, confirmed_at, config
@@ -172,14 +223,14 @@ async function confirmIssuerKey({
       JSON.stringify({ caKeySha256, templateOid: preflight.templateCheck?.templateOid || null }),
     ],
   );
-  await db.query(
+  await tx.query(
     `UPDATE certificate_issuers
         SET current_version = $3, revalidation_required = false, updated_at = NOW()
       WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, issuerId, version],
   );
   await audit({
-    client: db,
+    client: tx,
     actorUserId: actorUserId || null,
     subjectUserId: actorUserId || null,
     action: "certops.issuer.key_confirmed",
@@ -188,9 +239,10 @@ async function confirmIssuerKey({
     metadata: { issuerId, version, caKeySha256 },
   });
   return { issuerId, version, caKeySha256 };
+  });
 }
 
-async function createEnrollment({
+function createEnrollment({
   client,
   workspaceId,
   issuerId,
@@ -201,83 +253,95 @@ async function createEnrollment({
   keyAlgorithm,
   keySize,
   actorUserId,
+  createJob = createCertificateJob,
+  audit = writeAudit,
 }) {
-  const db = dbOf(client);
-  const version = await db.query(
-    `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, i.kind
-       FROM certificate_issuer_versions v
-       JOIN certificate_issuers i
-         ON i.workspace_id = v.workspace_id AND i.id = v.issuer_id
-      WHERE v.workspace_id = $1
-        AND v.issuer_id = $2
-        AND v.version = i.current_version
-        AND v.ca_key_sha256 IS NOT NULL`,
-    [workspaceId, issuerId],
-  );
-  const issuer = version.rows[0];
-  if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
   if (!target || target.type !== "windows-iis" || !target.binding) {
     throw serviceError(
       "enrollment target must be a windows-iis binding",
       "CERTOPS_SNAPSHOT_INVALID",
     );
   }
-  assertIssuerKind(issuer.kind);
-  const frozen = freezeSnapshot({
-    issuerId,
-    issuerVersion: issuer.version,
-    caConfig: issuer.ca_config,
-    caKeySha256: issuer.ca_key_sha256,
-    template: issuer.template,
-    authorizedDnsNames,
-    keyAlgorithm,
-    keySize,
-  });
-  const inserted = await db.query(
-    `INSERT INTO certificate_enrollments (
-       workspace_id, certificate_id, issuer_id, issuer_version, agent_id,
-       state, attempt, snapshot_bytes, snapshot_sha256, deploy_target
-     ) VALUES ($1,$2,$3,$4,$5,'requested',0,$6,$7,$8::jsonb)
-     RETURNING id`,
-    [
-      workspaceId,
-      certificateId,
+  const db = dbOf(client);
+  return withTransaction(db, async (tx) => {
+    const version = await tx.query(
+      `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, i.kind,
+              i.revalidation_required
+         FROM certificate_issuer_versions v
+         JOIN certificate_issuers i
+           ON i.workspace_id = v.workspace_id AND i.id = v.issuer_id
+        WHERE v.workspace_id = $1
+          AND v.issuer_id = $2
+          AND v.version = i.current_version
+          AND v.ca_key_sha256 IS NOT NULL
+        FOR UPDATE OF i`,
+      [workspaceId, issuerId],
+    );
+    const issuer = version.rows[0];
+    if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
+    if (issuer.revalidation_required === true) {
+      throw serviceError(
+        "issuer requires revalidation before new enrollments",
+        "CERTOPS_ISSUER_REVALIDATION_REQUIRED",
+      );
+    }
+    assertIssuerKind(issuer.kind);
+    const frozen = freezeSnapshot({
       issuerId,
-      issuer.version,
-      agentId,
-      frozen.bytes,
-      frozen.sha256,
-      JSON.stringify(target),
-    ],
-  );
-  const enrollmentId = inserted.rows[0].id;
-  const payload = storedAdcsPayload({ certificateId, target });
-  const job = await createCertificateJob({
-    client: db,
-    workspaceId,
-    operation: "renew",
-    subjectType: "managed_certificate",
-    subjectId: certificateId,
-    assignedAgentId: agentId,
-    payload,
-    enrollmentId,
+      issuerVersion: issuer.version,
+      caConfig: issuer.ca_config,
+      caKeySha256: issuer.ca_key_sha256,
+      template: issuer.template,
+      authorizedDnsNames,
+      keyAlgorithm,
+      keySize,
+    });
+    const inserted = await tx.query(
+      `INSERT INTO certificate_enrollments (
+         workspace_id, certificate_id, issuer_id, issuer_version, agent_id,
+         state, attempt, snapshot_bytes, snapshot_sha256, deploy_target
+       ) VALUES ($1,$2,$3,$4,$5,'requested',0,$6,$7,$8::jsonb)
+       RETURNING id`,
+      [
+        workspaceId,
+        certificateId,
+        issuerId,
+        issuer.version,
+        agentId,
+        frozen.bytes,
+        frozen.sha256,
+        JSON.stringify(target),
+      ],
+    );
+    const enrollmentId = inserted.rows[0].id;
+    const payload = storedAdcsPayload({ certificateId, target });
+    const job = await createJob({
+      client: tx,
+      workspaceId,
+      operation: "renew",
+      subjectType: "managed_certificate",
+      subjectId: certificateId,
+      assignedAgentId: agentId,
+      payload,
+      enrollmentId,
+    });
+    await tx.query(
+      `UPDATE certificate_enrollments
+          SET current_job_id = $3, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, enrollmentId, job.id],
+    );
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "certops.enrollment.created",
+      targetType: "certificate_enrollment",
+      workspaceId,
+      metadata: { enrollmentId, issuerId, jobId: job.id },
+    });
+    return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id };
   });
-  await db.query(
-    `UPDATE certificate_enrollments
-        SET current_job_id = $3, updated_at = NOW()
-      WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, enrollmentId, job.id],
-  );
-  await writeAudit({
-    client: db,
-    actorUserId: actorUserId || null,
-    subjectUserId: actorUserId || null,
-    action: "certops.enrollment.created",
-    targetType: "certificate_enrollment",
-    workspaceId,
-    metadata: { enrollmentId, issuerId, jobId: job.id },
-  });
-  return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id };
 }
 
 async function loadEnrollment(db, workspaceId, enrollmentId) {
@@ -303,7 +367,7 @@ function enrollmentView(row) {
     attempt: row.attempt,
     snapshotB64: Buffer.from(row.snapshot_bytes).toString("base64"),
     snapshotSha256: row.snapshot_sha256,
-    operatorRequestId: row.operator_request_id,
+    operatorRequestId: parseRequestId(row.operator_request_id),
     pendingSince: row.pending_since,
     nextPollAt: row.next_poll_at,
     lastErrorCode: row.last_error_code,
@@ -413,11 +477,18 @@ async function proposeReconcileRequestId({
       "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
     );
   }
+  const parsedRequestId = parseRequestId(requestId);
+  if (parsedRequestId == null) {
+    throw serviceError(
+      "RequestId must be an integer from 1 to 4294967295",
+      "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+  }
   await db.query(
     `UPDATE certificate_enrollments
         SET operator_request_id = $3, next_poll_at = NOW(), updated_at = NOW()
       WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, enrollmentId, requestId],
+    [workspaceId, enrollmentId, parsedRequestId],
   );
   await audit({
     client: db,
@@ -426,11 +497,17 @@ async function proposeReconcileRequestId({
     action: "certops.enrollment.reconcile_proposed",
     targetType: "certificate_enrollment",
     workspaceId,
-    metadata: { enrollmentId, requestId },
+    metadata: { enrollmentId, requestId: parsedRequestId },
   });
 }
 
-async function abandonEnrollment({ client, workspaceId, enrollmentId, actorUserId }) {
+async function abandonEnrollment({
+  client,
+  workspaceId,
+  enrollmentId,
+  actorUserId,
+  audit = writeAudit,
+}) {
   const db = dbOf(client);
   const row = await loadEnrollment(db, workspaceId, enrollmentId);
   if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
@@ -441,7 +518,7 @@ async function abandonEnrollment({ client, workspaceId, enrollmentId, actorUserI
       WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, enrollmentId],
   );
-  await writeAudit({
+  await audit({
     client: db,
     actorUserId: actorUserId || null,
     subjectUserId: actorUserId || null,
@@ -475,22 +552,6 @@ async function loadDispatchEnrollment(client, workspaceId, enrollmentId) {
     );
   }
   return { ...view, attempt };
-}
-
-async function inTransaction(db, fn) {
-  await db.query("BEGIN");
-  try {
-    const result = await fn();
-    await db.query("COMMIT");
-    return result;
-  } catch (error) {
-    try {
-      await db.query("ROLLBACK");
-    } catch (_rollbackError) {
-      // The original error is the one the next sweep can act on.
-    }
-    throw error;
-  }
 }
 
 async function claimDueEnrollment(db, workspaceId, enrollmentId, now) {
@@ -546,9 +607,10 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         );
       }
       const attempt = Number(row.attempt || 0) + 1;
+      const requestId = parseRequestId(row.operator_request_id);
       const reconcileMetadata =
-        Number.isInteger(row.operator_request_id) && row.operator_request_id >= 1
-          ? [{ name: "adcs.reconcileRequestId", value: row.operator_request_id }]
+        requestId != null
+          ? [{ name: "adcs.reconcileRequestId", value: requestId }]
           : undefined;
       const payload = storedAdcsPayload({
         certificateId: row.certificate_id,

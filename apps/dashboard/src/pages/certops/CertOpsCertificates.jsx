@@ -388,9 +388,7 @@ export default function CertOpsCertificates() {
           status: sourceCert.status || null,
           source: sourceCert.source || null,
           notAfter: sourceCert.notAfter || null,
-          sources: [
-            { id: sourceCert.id, managedCertificateId: sourceCert.id },
-          ],
+          sources: [{ id: sourceCert.id, managedCertificateId: sourceCert.id }],
         });
         let listed;
         try {
@@ -667,9 +665,7 @@ export default function CertOpsCertificates() {
           <Text fontSize='xs' color={muted}>
             Filtered by{' '}
             {[
-              ...(filters.q
-                ? [{ label: 'Search', value: filters.q }]
-                : []),
+              ...(filters.q ? [{ label: 'Search', value: filters.q }] : []),
               ...visibleFilterLabels,
               ...(lifecycleIncludesRetired
                 ? [{ label: 'Lifecycle', value: 'Including retired' }]
