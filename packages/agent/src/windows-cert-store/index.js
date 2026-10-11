@@ -1062,6 +1062,8 @@ const EXCLUSIVE_LOCK_STATE_RELEASED = 4;
 const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 /** Graceful close wait; terminate() always follows and drops the listen. */
 const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
+/** Parent treats a quieter heartbeat as lock loss (worker ticks every 50ms). */
+const EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS = 500;
 
 /**
  * Maps a filesystem lock key to a short, deterministic IPC name.
@@ -1157,9 +1159,11 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
     fs.mkdirSync(path.dirname(ipcPath), { recursive: true });
   }
 
-  const sab = new SharedArrayBuffer(4);
+  // [0]=state, [1]=heartbeat millis (worker ticks while held)
+  const sab = new SharedArrayBuffer(8);
   const state = new Int32Array(sab);
   Atomics.store(state, 0, EXCLUSIVE_LOCK_STATE_PENDING);
+  Atomics.store(state, 1, 0);
 
   const worker = new Worker(path.join(__dirname, "exclusive-lock-worker.js"), {
     workerData: { sab, ipcPath, ipcKind },
@@ -1216,21 +1220,38 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
     lockLostCode(busyCode),
   );
 
-  worker.once("exit", () => {
+  function markLost() {
     if (!released) {
       lost = true;
     }
+  }
+
+  worker.once("exit", () => {
+    markLost();
   });
+
+  function heartbeatIsFresh() {
+    const beat = Atomics.load(state, 1);
+    if (beat === 0) return false;
+    const now = Date.now() & 0x7fffffff;
+    // Handle 31-bit wrap by accepting either small forward delta.
+    const delta = (now - beat + 0x80000000) % 0x80000000;
+    return delta <= EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS;
+  }
 
   return {
     lockPath,
     ownerToken,
     get lost() {
+      if (!lost && !released && !heartbeatIsFresh()) {
+        lost = true;
+      }
       return lost;
     },
     /**
-     * Throws if the lock worker exited unexpectedly (or release already
-     * ran). Call after every await inside a critical section.
+     * Throws if the lock worker exited, stopped heartbeating, or release
+     * already ran. Call after every await and before further protected
+     * mutations inside a critical section.
      */
     assertHeld() {
       if (released) {
@@ -1239,8 +1260,40 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
           lockLostCode(busyCode),
         );
       }
-      if (lost) {
+      if (lost || !heartbeatIsFresh()) {
+        lost = true;
         throw lostError;
+      }
+    },
+    /**
+     * Race `work` against lock loss so an in-flight async critical section
+     * cannot continue after the worker dies (even between explicit asserts).
+     * @template T
+     * @param {() => Promise<T>} work
+     * @returns {Promise<T>}
+     */
+    async run(work) {
+      this.assertHeld();
+      let settled = false;
+      const lossWatch = new Promise((_, reject) => {
+        const timer = setInterval(() => {
+          if (settled) {
+            clearInterval(timer);
+            return;
+          }
+          try {
+            this.assertHeld();
+          } catch (err) {
+            clearInterval(timer);
+            reject(err);
+          }
+        }, 50);
+        if (typeof timer.unref === "function") timer.unref();
+      });
+      try {
+        return await Promise.race([work(), lossWatch]);
+      } finally {
+        settled = true;
       }
     },
     /**

@@ -1072,8 +1072,8 @@ describe("acquireStoreLock", () => {
     const lock = acquireStoreLock(stateDir, "My");
     assert.doesNotThrow(() => lock.assertHeld());
     await lock._workerForTests.terminate();
-    // Give the exit handler a turn to mark lost.
-    await new Promise((r) => setImmediate(r));
+    // Heartbeat goes stale without waiting for the exit event delivery.
+    await new Promise((r) => setTimeout(r, 600));
     assert.equal(lock.lost, true);
     assert.throws(() => lock.assertHeld(), (err) => {
       assert.equal(err.code, "STORE_LOCK_LOST");
@@ -1084,6 +1084,27 @@ describe("acquireStoreLock", () => {
     assert.throws(() => lock.assertHeld(), /lock lost/);
     next.release();
     lock.release();
+  });
+
+  it("lock.run aborts an in-flight critical section when the worker dies", async () => {
+    const stateDir = makeTempDir();
+    const lock = acquireStoreLock(stateDir, "My");
+    let afterLoss = false;
+    const work = lock.run(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      await lock._workerForTests.terminate();
+      await new Promise((r) => setTimeout(r, 700));
+      afterLoss = true;
+      return "should-not-resolve";
+    });
+    await assert.rejects(work, (err) => {
+      assert.equal(err.code, "STORE_LOCK_LOST");
+      return true;
+    });
+    assert.equal(afterLoss, false);
+    lock.release();
+    const next = acquireStoreLock(stateDir, "My");
+    next.release();
   });
 
   it("release then immediate reacquire admits only one of two competing processes", async () => {
@@ -1151,6 +1172,44 @@ describe("acquireStoreLock", () => {
 });
 
 describe("exclusiveLockIpcTarget file-socket reclaim (pathname platforms)", () => {
+  it("recovers an abandoned reclaim-gate directory left by a crashed worker", async () => {
+    if (process.platform === "win32" || process.platform === "linux") {
+      return;
+    }
+    const lockPath = path.join(makeTempDir(), "gate-stale.lock");
+    const target = exclusiveLockIpcTarget(lockPath);
+    assert.equal(target.ipcKind, "file");
+    fs.mkdirSync(path.dirname(target.ipcPath), { recursive: true });
+    const gatePath = `${target.ipcPath}.reclaim-gate`;
+    fs.mkdirSync(gatePath, { recursive: true });
+    const ancient = new Date(Date.now() - 60_000);
+    fs.utimesSync(gatePath, ancient, ancient);
+    // Abandoned socket + aged gate: acquire must still succeed.
+    const holderScript = `
+      const net = require("net");
+      const fs = require("fs");
+      const s = net.createServer(() => {});
+      s.listen({ path: process.env.TT_IPC, exclusive: true }, () => {
+        fs.writeFileSync(process.env.TT_READY, "1");
+        setInterval(() => {}, 1000);
+      });
+    `;
+    const ready = path.join(makeTempDir(), "ready");
+    const holder = spawn(process.execPath, ["-e", holderScript], {
+      env: { ...process.env, TT_IPC: target.ipcPath, TT_READY: ready },
+      stdio: "ignore",
+    });
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !fs.existsSync(ready)) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    holder.kill("SIGKILL");
+    await new Promise((r) => holder.once("exit", r));
+    const lock = acquireExclusiveLockFile(lockPath, "STORE_LOCKED", "busy");
+    assert.equal(typeof lock.ownerToken, "string");
+    lock.release();
+  });
+
   it("allows only one owner when two processes reclaim the same abandoned pathname socket", async () => {
     if (process.platform === "win32" || process.platform === "linux") {
       // Named pipes / abstract sockets have no reclaimable filesystem pathname.

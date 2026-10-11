@@ -825,6 +825,7 @@ function createAdcsWindowsIisExecutors(deps) {
     let submitStarted = false;
     let preparedJournalCommitted = false;
     try {
+      return await enrollmentLock.run(async () => {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -1328,6 +1329,19 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       // Retryable lease/lock interrupts leave journal at installing.
       return withInstalledEnrollmentResult(deployResult, decoded, issuance.requestId);
+      });
+    } catch (err) {
+      if (err && err.code === "ENROLLMENT_LOCK_LOST") {
+        return {
+          status: "failed",
+          keyRotated: null,
+          retryableInterrupt: true,
+          errorMessage: boundErrorMessage(
+            `AD CS enrollment lock lost mid-operation: ${err.message}`,
+          ),
+        };
+      }
+      throw err;
     } finally {
       const journalledCleanupOutcome = resolveCleanupOutcome({
         stateDir,
@@ -1738,10 +1752,12 @@ function createAdcsWindowsIisExecutors(deps) {
     const continueOutcomeRef = { value: null };
 
     try {
+      return await enrollmentLock.run(async () => {
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
+      enrollmentLock.assertHeld();
 
       // Terminal receipts: return recorded outcome without repeating CA contact.
       if (journal.state === "installed") {
@@ -2402,6 +2418,19 @@ function createAdcsWindowsIisExecutors(deps) {
         windowsConnectImpl,
         continueOutcomeRef,
       });
+      });
+    } catch (err) {
+      if (err && err.code === "ENROLLMENT_LOCK_LOST") {
+        return {
+          status: "failed",
+          keyRotated: null,
+          retryableInterrupt: true,
+          errorMessage: boundErrorMessage(
+            `AD CS enrollment lock lost mid-continue: ${err.message}`,
+          ),
+        };
+      }
+      throw err;
     } finally {
       const continueOutcome = continueOutcomeRef.value;
       const journalledCleanupOutcome = resolveCleanupOutcome({

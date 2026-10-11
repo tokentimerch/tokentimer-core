@@ -2,14 +2,16 @@
 
 /**
  * Holds one exclusive IPC listen for acquireExclusiveLockFile.
- * State Int32Array[0]: 0=pending, 1=held, 2=busy, 3=error, 4=released.
+ * SharedArrayBuffer Int32 layout:
+ *   [0] state: 0=pending, 1=held, 2=busy, 3=error, 4=released
+ *   [1] heartbeat: Date.now() truncated; parent assertHeld() uses this so
+ *       loss is visible even before the worker `exit` event is delivered
  *
  * ipcKind:
  *   - "pipe": Windows named pipe (no filesystem node; EADDRINUSE => busy)
  *   - "abstract": Linux abstract unix socket (no filesystem node; no reclaim)
- *   - "file": pathname unix socket under a short hashed directory; stale
- *     reclaim is serialized via an exclusive mkdir gate so two reclaimers
- *     cannot both unlink and listen.
+ *   - "file": pathname unix socket; stale reclaim is gated and always
+ *     re-probes while holding the gate before touching the pathname
  */
 
 const fs = require("node:fs");
@@ -20,6 +22,8 @@ const STATE_HELD = 1;
 const STATE_BUSY = 2;
 const STATE_ERROR = 3;
 const STATE_RELEASED = 4;
+/** Abandoned reclaim-gate directories older than this may be removed. */
+const MAX_RECLAIM_GATE_AGE_MS = 30 * 1000;
 
 const state = new Int32Array(workerData.sab);
 const ipcPath = workerData.ipcPath;
@@ -28,12 +32,31 @@ const ipcKind = workerData.ipcKind;
 /** @type {import('node:net').Server|null} */
 let server = null;
 let settled = false;
+/** @type {ReturnType<typeof setInterval>|null} */
+let heartbeatTimer = null;
 
 function signal(code) {
   if (settled) return;
   settled = true;
+  stopHeartbeat();
   Atomics.store(state, 0, code);
   Atomics.notify(state, 0);
+}
+
+function startHeartbeat() {
+  const tick = () => {
+    Atomics.store(state, 1, Date.now() & 0x7fffffff);
+  };
+  tick();
+  heartbeatTimer = setInterval(tick, 50);
+  if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
 }
 
 function listenOn(nextServer, onListening) {
@@ -57,63 +80,134 @@ function onAddrInUse() {
 }
 
 /**
- * Pathname unix sockets only. Probe for a live holder; if abandoned, win an
- * exclusive mkdir gate before unlinking the stale name and listening. Losers
- * of the gate retry listen once (no independent unlink on a prior probe).
+ * @param {string} gatePath
+ * @returns {boolean}
  */
-function recoverStaleFileSocket() {
-  const gatePath = `${ipcPath}.reclaim-gate`;
-  const probe = net.connect({ path: ipcPath });
-  probe.once("connect", () => {
-    probe.destroy();
-    signal(STATE_BUSY);
-  });
-  probe.once("error", (probeErr) => {
-    if (!probeErr || probeErr.code !== "ECONNREFUSED") {
-      signal(STATE_BUSY);
-      return;
+function tryAcquireReclaimGate(gatePath) {
+  try {
+    fs.mkdirSync(gatePath);
+    return true;
+  } catch (err) {
+    if (!err || err.code !== "EEXIST") return false;
+    let st;
+    try {
+      st = fs.statSync(gatePath);
+    } catch {
+      return false;
+    }
+    if (Date.now() - st.mtimeMs <= MAX_RECLAIM_GATE_AGE_MS) {
+      return false;
+    }
+    // Crash left an empty gate directory; reclaim it and retry once.
+    try {
+      fs.rmdirSync(gatePath);
+    } catch {
+      return false;
     }
     try {
       fs.mkdirSync(gatePath);
+      return true;
     } catch {
-      // Another worker is reclaiming (or left a gate). Retry listen once
-      // without unlinking based on this probe observation.
+      return false;
+    }
+  }
+}
+
+function releaseReclaimGate(gatePath) {
+  try {
+    fs.rmdirSync(gatePath);
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Probe whether ipcPath currently has a live listener.
+ * @returns {Promise<"live"|"stale"|"missing"|"unknown">}
+ */
+function probeSocketFresh() {
+  return new Promise((resolve) => {
+    const probe = net.connect({ path: ipcPath });
+    probe.once("connect", () => {
+      probe.destroy();
+      resolve("live");
+    });
+    probe.once("error", (err) => {
+      if (err && err.code === "ECONNREFUSED") {
+        resolve("stale");
+        return;
+      }
+      if (err && err.code === "ENOENT") {
+        resolve("missing");
+        return;
+      }
+      resolve("unknown");
+    });
+  });
+}
+
+/**
+ * Pathname unix sockets only. Gate acquisition serializes reclaimers; every
+ * contender re-probes while holding the gate so a peer that already bound
+ * the name is never unlinked from a stale pre-gate observation.
+ */
+function recoverStaleFileSocket() {
+  const gatePath = `${ipcPath}.reclaim-gate`;
+
+  // Cheap pre-check: if someone is already live, fail fast without the gate.
+  probeSocketFresh().then((pre) => {
+    if (settled) return;
+    if (pre === "live") {
+      signal(STATE_BUSY);
+      return;
+    }
+    if (pre !== "stale" && pre !== "missing") {
+      signal(STATE_BUSY);
+      return;
+    }
+    if (!tryAcquireReclaimGate(gatePath)) {
       setTimeout(() => retryListenAfterPeerReclaim(), 25);
       return;
     }
-    try {
-      try {
-        fs.unlinkSync(ipcPath);
-      } catch {
-        // already gone
+    // Fresh check under the gate — never act on the pre-gate probe alone.
+    probeSocketFresh().then((underGate) => {
+      if (settled) {
+        releaseReclaimGate(gatePath);
+        return;
+      }
+      if (underGate === "live") {
+        releaseReclaimGate(gatePath);
+        signal(STATE_BUSY);
+        return;
+      }
+      if (underGate !== "stale" && underGate !== "missing") {
+        releaseReclaimGate(gatePath);
+        signal(STATE_BUSY);
+        return;
+      }
+      if (underGate === "stale") {
+        try {
+          fs.unlinkSync(ipcPath);
+        } catch {
+          // already gone
+        }
       }
       const retry = net.createServer(() => {});
       retry.once("error", () => {
-        try {
-          fs.rmdirSync(gatePath);
-        } catch {
-          // best-effort
-        }
-        // Vacancy filled by a peer between unlink and listen: they own it.
+        releaseReclaimGate(gatePath);
         signal(STATE_BUSY);
       });
       retry.listen({ path: ipcPath, exclusive: true }, () => {
-        try {
-          fs.rmdirSync(gatePath);
-        } catch {
-          // best-effort
-        }
+        releaseReclaimGate(gatePath);
         server = retry;
-        signal(STATE_HELD);
+        if (!settled) {
+          settled = true;
+          startHeartbeat();
+          Atomics.store(state, 0, STATE_HELD);
+          Atomics.notify(state, 0);
+        }
       });
-    } catch {
-      try {
-        fs.rmdirSync(gatePath);
-      } catch {
-        // best-effort
-      }
-      signal(STATE_BUSY);
-    }
+    });
   });
 }
 
@@ -122,7 +216,6 @@ function retryListenAfterPeerReclaim() {
   const retry = net.createServer(() => {});
   retry.once("error", (err) => {
     if (err && err.code === "EADDRINUSE") {
-      // Peer holds it or still reclaiming — treat as busy (fail-closed).
       signal(STATE_BUSY);
       return;
     }
@@ -130,18 +223,29 @@ function retryListenAfterPeerReclaim() {
   });
   retry.listen({ path: ipcPath, exclusive: true }, () => {
     server = retry;
-    signal(STATE_HELD);
+    if (!settled) {
+      settled = true;
+      startHeartbeat();
+      Atomics.store(state, 0, STATE_HELD);
+      Atomics.notify(state, 0);
+    }
   });
 }
 
 listenOn(net.createServer(() => {}), () => {
-  signal(STATE_HELD);
+  if (!settled) {
+    settled = true;
+    startHeartbeat();
+    Atomics.store(state, 0, STATE_HELD);
+    Atomics.notify(state, 0);
+  }
 });
 
 parentPort.on("message", (msg) => {
   if (msg !== "release") return;
   const active = server;
   server = null;
+  stopHeartbeat();
   if (!active) {
     Atomics.store(state, 0, STATE_RELEASED);
     Atomics.notify(state, 0);

@@ -31,7 +31,7 @@ async function withWatermarkLock(stateDir, caConfig, fn) {
     "CA RequestId watermark is locked by a concurrent update",
   );
   try {
-    const result = await fn(lock);
+    const result = await lock.run(async () => fn(lock));
     lock.assertHeld();
     return result;
   } finally {

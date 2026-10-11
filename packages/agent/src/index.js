@@ -3180,10 +3180,12 @@ async function runWindowsIisDeployTail({
   }
 
   try {
+    return await storeLock.run(async () => {
     let acceptedThumbprint = computeSha1ThumbprintFromPem(certificatePem);
 
     if (shouldRun("accept")) {
       if (typeof onInstallStep === "function") await onInstallStep("accept");
+      storeLock.assertHeld();
       emitInfo(`job ${jobId}: completing CNG enrollment (certreq -accept) into store ${target.store}`);
       const acceptResult = await acceptCertificateViaCng({
         certificatePem,
@@ -3255,6 +3257,7 @@ async function runWindowsIisDeployTail({
     } else if (shouldRun("mirror") && target.store !== CERTREQ_ACCEPT_DEFAULT_STORE) {
       // Accept already proven by inspection; finish non-default-store mirror only.
       if (typeof onInstallStep === "function") await onInstallStep("mirror");
+      storeLock.assertHeld();
       emitInfo(
         `job ${jobId}: mirroring accepted certificate into store ${target.store} (recovery resume)`,
       );
@@ -3272,6 +3275,7 @@ async function runWindowsIisDeployTail({
           targetStore: target.store,
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
+        storeLock.assertHeld();
         if (!mirrored.ok) {
           await reportStepEvidence(client, jobId, [
             buildEvidenceItem({
@@ -3352,6 +3356,7 @@ async function runWindowsIisDeployTail({
           binding,
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
+        storeLock.assertHeld();
         if (currentBinding.ok) {
           predecessorThumbprint = currentBinding.thumbprint;
         }
@@ -3359,6 +3364,7 @@ async function runWindowsIisDeployTail({
       } else {
         await onInstallStep("verify", {});
       }
+      storeLock.assertHeld();
     }
     emitInfo(`job ${jobId}: deploying IIS binding at ${binding.address}:${binding.port}`);
     const deployResult = await deployIisBinding({
@@ -3367,6 +3373,7 @@ async function runWindowsIisDeployTail({
       ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
       ...(windowsConnectImpl ? { connectImpl: windowsConnectImpl } : {}),
     });
+    storeLock.assertHeld();
 
     if (deployResult.ok !== true) {
       await reportStepEvidence(client, jobId, [
@@ -3408,8 +3415,22 @@ async function runWindowsIisDeployTail({
       precedenceWarning: deployResult.precedenceWarning,
       windowsExecFileImpl,
     });
+    storeLock.assertHeld();
 
     return { status: "succeeded", keyRotated: null };
+    });
+  } catch (err) {
+    if (err && err.code === "STORE_LOCK_LOST") {
+      return {
+        status: "failed",
+        keyRotated: null,
+        retryableInterrupt: true,
+        errorMessage: boundErrorMessage(
+          `windows-iis store lock lost mid-install: ${err.message}`,
+        ),
+      };
+    }
+    throw err;
   } finally {
     storeLock.release();
   }
@@ -3742,20 +3763,22 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
     const store = row.store || "My";
     const storeLock = acquireStoreLock(stateDir, store);
     try {
-      const result = await removeCertificateAndKeyContainer({
-        thumbprint: row.oldThumbprint,
-        store,
-        containerName: row.cngKeyContainerId,
-        ...(execFileImpl ? { execFileImpl } : {}),
+      await storeLock.run(async () => {
+        const result = await removeCertificateAndKeyContainer({
+          thumbprint: row.oldThumbprint,
+          store,
+          containerName: row.cngKeyContainerId,
+          ...(execFileImpl ? { execFileImpl } : {}),
+        });
+        storeLock.assertHeld();
+        if (result.ok !== true) {
+          throw new Error(
+            `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
+              result.stderrExcerpt,
+          );
+        }
+        removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
       });
-      storeLock.assertHeld();
-      if (result.ok !== true) {
-        throw new Error(
-          `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
-            result.stderrExcerpt,
-        );
-      }
-      removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
     } finally {
       storeLock.release();
     }
@@ -3813,6 +3836,30 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
   return {
     assertHeld() {
       for (const lock of locks) lock.assertHeld();
+    },
+    async run(work) {
+      this.assertHeld();
+      let settled = false;
+      const lossWatch = new Promise((_, reject) => {
+        const timer = setInterval(() => {
+          if (settled) {
+            clearInterval(timer);
+            return;
+          }
+          try {
+            this.assertHeld();
+          } catch (err) {
+            clearInterval(timer);
+            reject(err);
+          }
+        }, 50);
+        if (typeof timer.unref === "function") timer.unref();
+      });
+      try {
+        return await Promise.race([work(), lossWatch]);
+      } finally {
+        settled = true;
+      }
     },
     release() {
       for (const lock of locks) lock.release();
