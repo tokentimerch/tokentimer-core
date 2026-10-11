@@ -540,11 +540,33 @@ agent_log_null="$(helm template "${RELEASE_NAME}" "${CHART}" \
   --set config.certopsAgentLogRetentionDays=null \
   --show-only templates/configmap.yaml)"
 assert_not_contains "${agent_log_null}" 'CERTOPS_AGENT_LOG_RETENTION_DAYS' "null agent log retention defers to code default"
-for invalid in -1 1.5 garbage; do
+for invalid in -1 1.5 garbage 3651; do
   if helm template "${RELEASE_NAME}" "${CHART}" \
     --set config.adminEmail=ci@example.com \
     --set "config.certopsAgentLogRetentionDays=${invalid}" >/dev/null 2>&1; then
     fail "accepted invalid certopsAgentLogRetentionDays=${invalid}"
+  fi
+done
+# Bounds that operators sometimes set as strings (Compose/.env style).
+if helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set-string config.certopsAgentLogRetentionDays=3650 \
+  --set-string config.certopsAgentLogDailyBytes=20971520 \
+  --show-only templates/configmap.yaml >/dev/null; then
+  :
+else
+  fail "rejected valid string agent-log bounds (3650 / 20971520)"
+fi
+if helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set-string config.certopsAgentLogDailyBytes=9007199254740992 >/dev/null 2>&1; then
+  fail "accepted oversized certopsAgentLogDailyBytes=9007199254740992"
+fi
+for invalid_bytes in -1 1.5 garbage; do
+  if helm template "${RELEASE_NAME}" "${CHART}" \
+    --set config.adminEmail=ci@example.com \
+    --set "config.certopsAgentLogDailyBytes=${invalid_bytes}" >/dev/null 2>&1; then
+    fail "accepted invalid certopsAgentLogDailyBytes=${invalid_bytes}"
   fi
 done
 

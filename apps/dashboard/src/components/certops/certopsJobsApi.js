@@ -7,6 +7,8 @@ import apiClient from '../../utils/apiClient';
  * Returns 404 when `certops.enabled` is off.
  */
 
+// Keep in lockstep with apps/api/services/certops/jobs.js JOB_STATUSES /
+// JOB_OPERATIONS (asserted by tests/unit/certops-jobs-filter-vocab.test.js).
 export const CERTOPS_JOB_STATUSES = [
   'pending_approval',
   'approved',
@@ -18,6 +20,9 @@ export const CERTOPS_JOB_STATUSES = [
   'failed',
   'blocked',
   'cancelled',
+  'dry_run_complete',
+  'orphaned_unknown_effect',
+  'awaiting_issuer',
 ];
 
 export const CERTOPS_JOB_OPERATIONS = [
@@ -27,8 +32,10 @@ export const CERTOPS_JOB_OPERATIONS = [
   'reload',
   'revoke',
   'noop',
+  'protocol_smoke',
   'distribute-trust',
   'revoke-trust',
+  'continue-enrollment',
 ];
 
 export const CERTOPS_JOB_CREATED_SINCE = [

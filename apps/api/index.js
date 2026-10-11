@@ -811,6 +811,18 @@ function validateStartupConfig() {
     );
   }
 
+  // Compose/env path: invalid CERTOPS_AGENT_LOG_* values fall back silently
+  // at resolve time; warn at boot so operators notice the mismatch. Helm
+  // rejects the same values at template time.
+  try {
+    const { warnInvalidAgentLogEnv } = require("./services/certops/agentJobLogs");
+    warnInvalidAgentLogEnv(process.env, {
+      warn: (message) => logger.warn(message),
+    });
+  } catch (_err) {
+    // Module load failures are handled elsewhere; do not block boot here.
+  }
+
   // CertOps agent registration and job signing already fail closed per
   // request (jobSigning.js / registrationCredentialCrypto.js throw
   // CERTOPS_{SIGNING,REGISTRATION}_ENCRYPTION_KEY_MISSING) when these wrap

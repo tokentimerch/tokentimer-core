@@ -217,6 +217,9 @@ function ScrollableChipRow({ children, isMobileLayout }) {
 export function AssetSearchInput({
   value,
   onCommit,
+  // Bump when Clear filters (or similar) runs so an uncommitted draft is
+  // dropped even if the URL value was already empty.
+  resetSignal = 0,
   inputBg,
   inputBorder,
   placeholderColor,
@@ -227,10 +230,18 @@ export function AssetSearchInput({
   const [draft, setDraft] = useState(externalValue);
   const pendingRef = useRef(false);
   const onCommitRef = useRef(onCommit);
+  const resetSeenRef = useRef(resetSignal);
 
   useEffect(() => {
     onCommitRef.current = onCommit;
   }, [onCommit]);
+
+  useEffect(() => {
+    if (resetSeenRef.current === resetSignal) return;
+    resetSeenRef.current = resetSignal;
+    pendingRef.current = false;
+    setDraft(externalValue);
+  }, [resetSignal, externalValue]);
 
   useEffect(() => {
     if (pendingRef.current) {

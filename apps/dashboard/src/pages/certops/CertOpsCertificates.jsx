@@ -1,7 +1,7 @@
 import CertOpsBadge, {
   CertificateLifecycleBadge,
 } from '../../components/certops/CertOpsBadge.jsx';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
   Box,
@@ -297,11 +297,20 @@ export default function CertOpsCertificates() {
   } = useCertOpsListUrlState({ filters: CERTOPS_CERTIFICATE_FILTERS });
 
   const showRetired = filters.showRetired === 'true';
+  const statusImpliesRetired = isRetiredStatus(filters.status);
+  // When Status is Revoked/Decommissioned, retired rows are in the result set
+  // even if the lifecycle control still says "Active only" in the URL.
+  const lifecycleIncludesRetired = showRetired || statusImpliesRetired;
   const unmanagedOnly = filters.management === 'unmanaged';
   // An explicit status pick is more precise than the coarse retired toggle;
   // let it through even if that status happens to be revoked/decommissioned.
   const excludeRetired = !filters.status && !showRetired ? true : undefined;
   const [sort, setSort] = useState({ key: 'expiry', direction: 'asc' });
+  const [searchResetSignal, setSearchResetSignal] = useState(0);
+  const clearAllFilters = useCallback(() => {
+    clearFilters();
+    setSearchResetSignal(tick => tick + 1);
+  }, [clearFilters]);
 
   const { certificates, pagination, loading, error, refresh, enabled } =
     useCertOpsCertificates({
@@ -364,29 +373,56 @@ export default function CertOpsCertificates() {
           signal: controller.signal,
         });
         const cert = data?.certificate || data;
+        if (!cert) {
+          throw Object.assign(new Error('Certificate not found'), {
+            response: { status: 404 },
+          });
+        }
         const fingerprint = cert?.fingerprintSha256;
+        const listed = await listCertificates(workspaceId, {
+          grouped: true,
+          // Fingerprint when present; otherwise search by managed-certificate
+          // id so provisional fingerprintless rows still resolve.
+          q: fingerprint || certificateIdInUrl,
+          limit: 20,
+          excludeRetired: false,
+          signal: controller.signal,
+        });
+        const items = Array.isArray(listed?.items) ? listed.items : [];
+        const matchesManagedId = item =>
+          String(item.id) === String(certificateIdInUrl) ||
+          (Array.isArray(item.sources) &&
+            item.sources.some(
+              source =>
+                String(source.id || source.managedCertificateId) ===
+                String(certificateIdInUrl)
+            ));
         let identity = null;
         if (fingerprint) {
-          const listed = await listCertificates(workspaceId, {
-            grouped: true,
-            q: fingerprint,
-            limit: 20,
-            excludeRetired: false,
-            signal: controller.signal,
-          });
-          const items = Array.isArray(listed?.items) ? listed.items : [];
           identity =
             items.find(
               item =>
                 String(item.fingerprintSha256 || '').toLowerCase() ===
-                  String(fingerprint).toLowerCase() ||
-                (Array.isArray(item.sources) &&
-                  item.sources.some(
-                    source =>
-                      String(source.id || source.managedCertificateId) ===
-                      String(certificateIdInUrl)
-                  ))
+                  String(fingerprint).toLowerCase() || matchesManagedId(item)
             ) || items[0];
+        } else {
+          identity = items.find(matchesManagedId) || null;
+          // Inventory supports fingerprintless provisional certificates as
+          // first-class rows; open the modal from the managed-cert payload
+          // when the list query does not return a grouped identity.
+          if (!identity) {
+            identity = {
+              id: cert.id,
+              managedCertificateId: cert.id,
+              fingerprintSha256: null,
+              commonName: cert.commonName || null,
+              subjectAltNames: cert.subjectAltNames || [],
+              status: cert.status || null,
+              source: cert.source || null,
+              notAfter: cert.notAfter || null,
+              sources: [{ id: cert.id, managedCertificateId: cert.id }],
+            };
+          }
         }
         if (cancelled) return;
         if (identity) {
@@ -549,6 +585,7 @@ export default function CertOpsCertificates() {
         <AssetSearchInput
           value={filters.q}
           onCommit={value => setFilter('q', value)}
+          resetSignal={searchResetSignal}
           inputBg={inputBg}
           inputBorder={inputBorder}
           placeholderColor={searchPlaceholderColor}
@@ -586,7 +623,7 @@ export default function CertOpsCertificates() {
         <Select
           size='sm'
           maxW='220px'
-          value={showRetired ? 'including' : 'active'}
+          value={lifecycleIncludesRetired ? 'including' : 'active'}
           onChange={event =>
             setFilter(
               'showRetired',
@@ -619,7 +656,7 @@ export default function CertOpsCertificates() {
       </HStack>
 
       {filters.q ||
-      showRetired ||
+      lifecycleIncludesRetired ||
       unmanagedOnly ||
       visibleFilterLabels.length > 0 ? (
         <HStack spacing={2} mb={2} flexWrap='wrap' align='center'>
@@ -630,7 +667,7 @@ export default function CertOpsCertificates() {
                 ? [{ label: 'Search', value: filters.q }]
                 : []),
               ...visibleFilterLabels,
-              ...(showRetired
+              ...(lifecycleIncludesRetired
                 ? [{ label: 'Lifecycle', value: 'Including retired' }]
                 : []),
               ...(unmanagedOnly
@@ -640,7 +677,7 @@ export default function CertOpsCertificates() {
               .map(entry => `${entry.label}: ${entry.value}`)
               .join(', ')}
           </Text>
-          <Button size='xs' variant='ghost' onClick={clearFilters}>
+          <Button size='xs' variant='ghost' onClick={clearAllFilters}>
             Clear filters
           </Button>
         </HStack>

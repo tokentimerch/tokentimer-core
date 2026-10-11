@@ -156,6 +156,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
   const [expandedId, setExpandedId] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState(null);
+  const [searchResetSignal, setSearchResetSignal] = useState(0);
   // Bumped alongside the list refresh so an already-expanded row's
   // EvidenceTimeline (a separate hook instance, not something the list's own
   // refresh() touches) refetches too, instead of silently going stale while
@@ -166,6 +167,11 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
     refresh();
     setTimelineRefreshToken(tick => tick + 1);
   }, [refresh]);
+
+  const clearAllFilters = useCallback(() => {
+    clearFilters();
+    setSearchResetSignal(tick => tick + 1);
+  }, [clearFilters]);
 
   const firstPage = () => setPage({ offset: 0 });
   const pageIsPastEnd = Boolean(
@@ -238,6 +244,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
         <AssetSearchInput
           value={filters.q}
           onCommit={value => setFilter('q', value)}
+          resetSignal={searchResetSignal}
           inputBg={inputBg}
           inputBorder={border}
           placeholderColor={muted}
@@ -314,7 +321,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
               .map(entry => `${entry.label}: ${entry.value}`)
               .join(', ')}
           </Text>
-          <Button size='xs' variant='ghost' onClick={clearFilters}>
+          <Button size='xs' variant='ghost' onClick={clearAllFilters}>
             Clear filters
           </Button>
         </HStack>

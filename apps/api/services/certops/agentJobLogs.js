@@ -18,6 +18,10 @@ const {
   scrubAgentLogText,
   scrubAgentLogFields,
 } = require("../../../../packages/log-scrub/agent-log-text");
+const {
+  isTerminalJobStatus,
+  TERMINAL_JOB_STATUSES,
+} = require("./jobs");
 
 const JOB_LOG_STREAM_CAPABILITY = "job-log-stream-v1";
 const MAX_BATCH_BYTES = 64 * 1024;
@@ -41,15 +45,6 @@ const OPERATION_LOCKS = Object.freeze({
   purgeStream: Object.freeze(["job_state", "stream"]),
 });
 
-const TERMINAL_JOB_STATUSES = new Set([
-  "rejected",
-  "succeeded",
-  "failed",
-  "blocked",
-  "cancelled",
-  "dry_run_complete",
-  "orphaned_unknown_effect",
-]);
 const CLOSED_STREAM_STATUSES = new Set(["final", "abandoned", "disabled"]);
 const ZERO_DELTA = Object.freeze({ quotaBytes: 0, quotaLines: 0, serverDropped: 0 });
 
@@ -100,6 +95,15 @@ function parseNonNegativeIntEnv(raw, fallback, { max = Number.MAX_SAFE_INTEGER }
   return parsed;
 }
 
+function isExactNonNegativeIntEnv(raw, { max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (raw == null) return true;
+  const trimmed = String(raw).trim();
+  if (trimmed === "") return true;
+  if (!/^\d+$/.test(trimmed)) return false;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed <= max;
+}
+
 function resolveRetentionDays(env = process.env) {
   return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_RETENTION_DAYS, 30, {
     max: MAX_AGENT_LOG_RETENTION_DAYS,
@@ -112,6 +116,36 @@ function storageEnabled(env = process.env) {
 
 function resolveDailyByteLimit(env = process.env) {
   return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_DAILY_BYTES, 0);
+}
+
+/**
+ * Warn when Compose/env operators set CERTOPS_AGENT_LOG_* to a value the
+ * resolvers would silently replace. Helm rejects these at template time;
+ * Compose still reaches process.env, so surface the mismatch at boot.
+ */
+function warnInvalidAgentLogEnv(env = process.env, { warn = console.warn } = {}) {
+  const retentionRaw = env.CERTOPS_AGENT_LOG_RETENTION_DAYS;
+  if (
+    retentionRaw != null &&
+    String(retentionRaw).trim() !== "" &&
+    !isExactNonNegativeIntEnv(retentionRaw, { max: MAX_AGENT_LOG_RETENTION_DAYS })
+  ) {
+    warn(
+      `CERTOPS_AGENT_LOG_RETENTION_DAYS=${JSON.stringify(String(retentionRaw))} is invalid; ` +
+        `using ${resolveRetentionDays(env)} (valid range 0–${MAX_AGENT_LOG_RETENTION_DAYS})`,
+    );
+  }
+  const dailyRaw = env.CERTOPS_AGENT_LOG_DAILY_BYTES;
+  if (
+    dailyRaw != null &&
+    String(dailyRaw).trim() !== "" &&
+    !isExactNonNegativeIntEnv(dailyRaw, { max: Number.MAX_SAFE_INTEGER })
+  ) {
+    warn(
+      `CERTOPS_AGENT_LOG_DAILY_BYTES=${JSON.stringify(String(dailyRaw))} is invalid; ` +
+        `using ${resolveDailyByteLimit(env)} (0 = unlimited; must be a safe non-negative integer)`,
+    );
+  }
 }
 
 function assertLockSequence(names) {
@@ -391,7 +425,9 @@ function projectRetainedBytes({
 }
 
 function logsComplete(jobStatus, streams) {
-  if (!TERMINAL_JOB_STATUSES.has(jobStatus)) return false;
+  // Same terminal set as jobs.js (includes awaiting_issuer): a final stream
+  // on a terminal job must stop console polling.
+  if (!isTerminalJobStatus(jobStatus)) return false;
   // Empty streams: still complete for polling (historical jobs pre-migration),
   // but the UI must not claim a stream finished — see deliveryState / deliveryLabel.
   if (!streams || streams.length === 0) return true;
@@ -1181,6 +1217,7 @@ module.exports = {
   resolveRetentionDays,
   storageEnabled,
   resolveDailyByteLimit,
+  warnInvalidAgentLogEnv,
   assertLockSequence,
   contentHash,
   batchKeyOf,

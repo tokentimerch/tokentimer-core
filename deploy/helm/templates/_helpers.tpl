@@ -204,13 +204,34 @@ DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
 {{- end }}
 CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnabled false)) | quote }}
-{{- /* Explicit checks, not truthiness: retention 0 means "store nothing". */}}
+{{- /* Explicit checks, not truthiness: retention 0 means "store nothing".
+       Reject values the API would silently replace (retention > 3650, or a
+       daily-byte quota above Number.MAX_SAFE_INTEGER which becomes unlimited).
+       Prefer float64 range checks for numeric YAML; regex only for strings so
+       toString scientific notation cannot false-reject valid integers. */}}
 {{- $retention := .Values.config.certopsAgentLogRetentionDays }}
 {{- if and (not (kindIs "invalid" $retention)) (ne (toString $retention) "") }}
+{{- if kindIs "string" $retention }}
+{{- if not (regexMatch "^(0|[1-9][0-9]{0,3}|[1-2][0-9]{4}|3[0-5][0-9]{2}|360[0-9]|3650)$" $retention) }}
+{{- fail "config.certopsAgentLogRetentionDays must be an integer from 0 to 3650" }}
+{{- end }}
+{{- else if or (lt ($retention | float64) 0.0) (gt ($retention | float64) 3650.0) (ne (floor ($retention | float64)) ($retention | float64)) }}
+{{- fail "config.certopsAgentLogRetentionDays must be an integer from 0 to 3650" }}
+{{- end }}
 CERTOPS_AGENT_LOG_RETENTION_DAYS: {{ $retention | int64 | quote }}
 {{- end }}
 {{- $dailyBytes := .Values.config.certopsAgentLogDailyBytes }}
 {{- if and (not (kindIs "invalid" $dailyBytes)) (ne (toString $dailyBytes) "") }}
+{{- if kindIs "string" $dailyBytes }}
+{{- if not (regexMatch "^(0|[1-9][0-9]{0,15})$" $dailyBytes) }}
+{{- fail "config.certopsAgentLogDailyBytes must be a non-negative integer within JavaScript safe-integer range" }}
+{{- end }}
+{{- if gt ($dailyBytes | float64) 9007199254740991.0 }}
+{{- fail "config.certopsAgentLogDailyBytes must be <= 9007199254740991 (Number.MAX_SAFE_INTEGER); larger values disable the quota" }}
+{{- end }}
+{{- else if or (lt ($dailyBytes | float64) 0.0) (gt ($dailyBytes | float64) 9007199254740991.0) (ne (floor ($dailyBytes | float64)) ($dailyBytes | float64)) }}
+{{- fail "config.certopsAgentLogDailyBytes must be a non-negative integer within JavaScript safe-integer range" }}
+{{- end }}
 CERTOPS_AGENT_LOG_DAILY_BYTES: {{ $dailyBytes | int64 | quote }}
 {{- end }}
 {{- if not .Values.config.existingSecret }}

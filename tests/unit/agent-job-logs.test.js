@@ -241,6 +241,8 @@ describe("agent job log ingest", () => {
     assert.equal(logsComplete("succeeded", []), true);
     assert.equal(logsComplete("succeeded", [{ status: "streaming" }]), false);
     assert.equal(logsComplete("succeeded", [{ status: "final" }, { status: "abandoned" }]), true);
+    assert.equal(logsComplete("awaiting_issuer", [{ status: "final" }]), true);
+    assert.equal(logsComplete("awaiting_issuer", [{ status: "streaming" }]), false);
     const quiet = {
       status: "streaming",
       acceptUntil: new Date(Date.now() + 60_000).toISOString(),
@@ -389,7 +391,10 @@ describe("agent job log ingest", () => {
   });
 
   it("rejects malformed retention and daily-byte env values", () => {
-    const { MAX_AGENT_LOG_RETENTION_DAYS } = require("../../apps/api/services/certops/agentJobLogs");
+    const {
+      MAX_AGENT_LOG_RETENTION_DAYS,
+      warnInvalidAgentLogEnv,
+    } = require("../../apps/api/services/certops/agentJobLogs");
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0.5" }), 30);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "30days" }), 30);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "0" }), 0);
@@ -400,6 +405,32 @@ describe("agent job log ingest", () => {
     assert.equal(MAX_AGENT_LOG_RETENTION_DAYS, 3650);
     assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "100MB" }), 0);
     assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "1048576" }), 1048576);
+    assert.equal(
+      resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "9007199254740992" }),
+      0,
+    );
+
+    const warnings = [];
+    warnInvalidAgentLogEnv(
+      {
+        CERTOPS_AGENT_LOG_RETENTION_DAYS: "3651",
+        CERTOPS_AGENT_LOG_DAILY_BYTES: "9007199254740992",
+      },
+      { warn: (message) => warnings.push(message) },
+    );
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /RETENTION_DAYS.*"3651".*using 30/);
+    assert.match(warnings[1], /DAILY_BYTES.*"9007199254740992".*using 0/);
+
+    const quiet = [];
+    warnInvalidAgentLogEnv(
+      {
+        CERTOPS_AGENT_LOG_RETENTION_DAYS: "30",
+        CERTOPS_AGENT_LOG_DAILY_BYTES: "1048576",
+      },
+      { warn: (message) => quiet.push(message) },
+    );
+    assert.deepEqual(quiet, []);
   });
 
   it("exposes jobStatus on shaped read payloads", () => {

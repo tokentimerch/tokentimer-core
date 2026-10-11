@@ -30,6 +30,10 @@ import {
   jobAgentHref,
   jobSubjectHref,
 } from './certopsResourceLinks.js';
+import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
+
+const TRUST_ANCHOR_ADMIN_ONLY =
+  'Only workspace admins can open trust anchors.';
 
 function ApprovedByLine({ job }) {
   const name = userFacingName(
@@ -291,14 +295,16 @@ function ResourceNavLink({ href, children }) {
   );
 }
 
-function useJobSubjectDisplay(job) {
+function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
   const { workspaceId } = useWorkspace();
   const [label, setLabel] = useState(null);
   const [missing, setMissing] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
     setLabel(null);
     setMissing(false);
+    setAccessDenied(false);
     if (!workspaceId || !job?.subjectId || !job?.subjectType) {
       return undefined;
     }
@@ -324,6 +330,12 @@ function useJobSubjectDisplay(job) {
           return;
         }
         if (type === 'trust_anchor') {
+          // GET /certops/trust-anchors requires trust_anchor.manage (admin).
+          // Managers/viewers must not see a link to a page they cannot use.
+          if (!canOpenTrustAnchors) {
+            if (!cancelled) setAccessDenied(true);
+            return;
+          }
           const data = await listTrustAnchors(workspaceId, {
             signal: controller.signal,
           });
@@ -343,6 +355,10 @@ function useJobSubjectDisplay(job) {
         }
       } catch (err) {
         if (cancelled || err?.name === 'CanceledError') return;
+        if (err?.response?.status === 403) {
+          setAccessDenied(true);
+          return;
+        }
         if (err?.response?.status === 404) setMissing(true);
       }
     };
@@ -351,9 +367,14 @@ function useJobSubjectDisplay(job) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, job?.subjectId, job?.subjectType]);
+  }, [
+    workspaceId,
+    job?.subjectId,
+    job?.subjectType,
+    canOpenTrustAnchors,
+  ]);
 
-  return { label, missing };
+  return { label, missing, accessDenied };
 }
 
 /**
@@ -361,7 +382,8 @@ function useJobSubjectDisplay(job) {
  */
 export function JobExecutionSummary({ job, agentsById }) {
   const { muted, text } = useDashboardTheme();
-  const subjectDisplay = useJobSubjectDisplay(job);
+  const canOpenTrustAnchors = useCertOpsIsWorkspaceAdmin();
+  const subjectDisplay = useJobSubjectDisplay(job, { canOpenTrustAnchors });
   if (!job) return null;
 
   const agentId = resolveAgentId(job);
@@ -374,9 +396,10 @@ export function JobExecutionSummary({ job, agentsById }) {
   const agentHref = jobAgentHref(agent?.id || agentId);
   const attemptLabel = attemptLabelFor(job);
   const subjectLabel = subjectTypeLabel(job.subjectType) || 'Subject';
-  const subjectHref = subjectDisplay.missing
-    ? null
-    : jobSubjectHref(job.subjectType, job.subjectId);
+  const subjectHref =
+    subjectDisplay.missing || subjectDisplay.accessDenied
+      ? null
+      : jobSubjectHref(job.subjectType, job.subjectId);
 
   const hasAny =
     agentId ||
@@ -411,7 +434,16 @@ export function JobExecutionSummary({ job, agentsById }) {
       <SummaryCell label={subjectLabel}>
         {job.subjectId ? (
           <Box>
-            {subjectDisplay.label ? (
+            {subjectDisplay.accessDenied ? (
+              <Text
+                fontSize='sm'
+                color={muted}
+                title={TRUST_ANCHOR_ADMIN_ONLY}
+                data-testid='trust-anchor-access-denied'
+              >
+                {TRUST_ANCHOR_ADMIN_ONLY}
+              </Text>
+            ) : subjectDisplay.label ? (
               <ResourceNavLink href={subjectHref}>
                 {subjectDisplay.label}
               </ResourceNavLink>

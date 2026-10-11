@@ -1,0 +1,105 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
+import { ChakraProvider } from '@chakra-ui/react';
+
+import { JobExecutionSummary } from '../../src/components/certops/JobDetailsButton.jsx';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
+
+const {
+  useCertOpsIsWorkspaceAdminMock,
+  getCertificateMock,
+  listTrustAnchorsMock,
+} = vi.hoisted(() => ({
+  useCertOpsIsWorkspaceAdminMock: vi.fn(),
+  getCertificateMock: vi.fn(),
+  listTrustAnchorsMock: vi.fn(),
+}));
+
+vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
+  useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}));
+
+vi.mock('../../src/components/certops/useCertOps.js', () => ({
+  useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
+}));
+
+vi.mock('../../src/components/certops/certopsApi.js', () => ({
+  getCertificate: getCertificateMock,
+}));
+
+vi.mock('../../src/components/certops/certopsTrustAnchorsApi.js', () => ({
+  listTrustAnchors: listTrustAnchorsMock,
+}));
+
+const ANCHOR_ID = '11111111-1111-4111-8111-111111111111';
+
+function renderSummary(job) {
+  return render(
+    <ChakraProvider>
+      <DashboardThemeProvider>
+        <MemoryRouter>
+          <JobExecutionSummary job={job} agentsById={new Map()} />
+        </MemoryRouter>
+      </DashboardThemeProvider>
+    </ChakraProvider>
+  );
+}
+
+beforeEach(() => {
+  useCertOpsIsWorkspaceAdminMock.mockReset();
+  getCertificateMock.mockReset();
+  listTrustAnchorsMock.mockReset();
+  useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+  listTrustAnchorsMock.mockResolvedValue({ items: [] });
+});
+
+describe('JobExecutionSummary trust-anchor links', () => {
+  const trustJob = {
+    subjectType: 'trust_anchor',
+    subjectId: ANCHOR_ID,
+    source: 'api',
+    createdAt: '2026-10-10T00:00:00.000Z',
+  };
+
+  it('links the trust anchor for workspace admins', async () => {
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
+    listTrustAnchorsMock.mockResolvedValue({
+      items: [{ id: ANCHOR_ID, name: 'Corp Root CA' }],
+    });
+
+    renderSummary(trustJob);
+
+    const link = await screen.findByRole('link', { name: 'Corp Root CA' });
+    expect(link).toHaveAttribute(
+      'href',
+      `/certops/agents?trustAnchorId=${ANCHOR_ID}`
+    );
+    expect(
+      screen.queryByTestId('trust-anchor-access-denied')
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows an access explanation for managers instead of a link', async () => {
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+
+    renderSummary(trustJob);
+
+    await screen.findByTestId('trust-anchor-access-denied');
+    expect(listTrustAnchorsMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('shows an access explanation for viewers instead of a link', async () => {
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+
+    renderSummary(trustJob);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('trust-anchor-access-denied')).toHaveTextContent(
+        /Only workspace admins can open trust anchors/
+      );
+    });
+    expect(screen.queryByRole('link', { name: /trust anchor/i })).toBeNull();
+  });
+});

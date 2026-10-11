@@ -472,6 +472,11 @@ function normalizeJobSearchQuery(value) {
   return q || null;
 }
 
+/** Escape `\`, `%`, and `_` so ILIKE treats the query as a literal substring. */
+function escapeIlikePattern(value) {
+  return String(value).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 function normalizedFieldName(value) {
   return String(value || "")
     .toLowerCase()
@@ -2271,20 +2276,21 @@ async function listCertificateJobs(options) {
 
   const search = normalizeJobSearchQuery(options.q);
   if (search) {
-    params.push(search);
+    params.push(escapeIlikePattern(search));
     const idx = params.length;
+    // ESCAPE '\' keeps %, _, and \ literal (Certificates search is substring-literal).
     conditions.push(`(
-      id::text ILIKE '%' || $${idx} || '%'
-      OR subject_id ILIKE '%' || $${idx} || '%'
-      OR operation ILIKE '%' || $${idx} || '%'
-      OR source ILIKE '%' || $${idx} || '%'
+      id::text ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR subject_id ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR operation ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+      OR source ILIKE '%' || $${idx} || '%' ESCAPE '\\'
       OR EXISTS (
         SELECT 1 FROM managed_certificates mc
          WHERE mc.workspace_id = certificate_jobs.workspace_id
            AND mc.id::text = certificate_jobs.subject_id
            AND (
-             COALESCE(mc.common_name, '') ILIKE '%' || $${idx} || '%'
-             OR COALESCE(mc.source_ref, '') ILIKE '%' || $${idx} || '%'
+             COALESCE(mc.common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(mc.source_ref, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
            )
       )
       OR EXISTS (
@@ -2292,9 +2298,9 @@ async function listCertificateJobs(options) {
          WHERE a.workspace_id = certificate_jobs.workspace_id
            AND a.id IN (certificate_jobs.claimed_by_agent_id, certificate_jobs.assigned_agent_id)
            AND (
-             COALESCE(a.name, '') ILIKE '%' || $${idx} || '%'
-             OR COALESCE(a.hostname, '') ILIKE '%' || $${idx} || '%'
-             OR COALESCE(a.agent_id, '') ILIKE '%' || $${idx} || '%'
+             COALESCE(a.name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(a.hostname, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(a.agent_id, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
            )
       )
       OR EXISTS (
@@ -2302,8 +2308,8 @@ async function listCertificateJobs(options) {
          WHERE ta.workspace_id = certificate_jobs.workspace_id
            AND ta.id::text = certificate_jobs.subject_id
            AND (
-             COALESCE(ta.name, '') ILIKE '%' || $${idx} || '%'
-             OR COALESCE(ta.subject_common_name, '') ILIKE '%' || $${idx} || '%'
+             COALESCE(ta.name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
+             OR COALESCE(ta.subject_common_name, '') ILIKE '%' || $${idx} || '%' ESCAPE '\\'
            )
       )
     )`);
@@ -2577,6 +2583,7 @@ module.exports = {
   JOB_SOURCES,
   JOB_STATUSES,
   JOB_STATUS_TRANSITIONS,
+  TERMINAL_JOB_STATUSES,
   LOG_STATUSES,
   PRIVATE_KEY_MATERIAL_REJECTED,
   SUBJECT_TYPES,
@@ -2612,7 +2619,9 @@ module.exports = {
   validateRenewalProfileOnPayload,
   _test: {
     assertSafePublicValue,
+    escapeIlikePattern,
     fieldNameLooksForbidden,
+    normalizeJobSearchQuery,
     normalizePublicObject,
     parseJsonb,
     validateExecutionFields,
