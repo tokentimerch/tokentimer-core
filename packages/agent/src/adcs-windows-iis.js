@@ -446,9 +446,21 @@ async function inspectAdcsInstallProgress({
   const inTarget = findStoreCertificateByThumbprint(listedTarget, expectedThumbprint);
   const defaultKeyed = storeCertHasEnrollmentKey(inDefault, containerName);
   const targetKeyed = storeCertHasEnrollmentKey(inTarget, containerName);
+  const leafPresent = Boolean(inDefault || inTarget);
 
   if (!defaultKeyed && !targetKeyed) {
-    return { status: "resume", startAtStep: "accept", expectedThumbprint };
+    if (!leafPresent) {
+      return { status: "resume", startAtStep: "accept", expectedThumbprint };
+    }
+    if (targetStore !== defaultStore) {
+      // Bytes are in a store; the pending request is consumed. Repair via
+      // addstore + repairstore. Never re-run bare certreq -accept.
+      return { status: "resume", startAtStep: "mirror", expectedThumbprint };
+    }
+    return {
+      status: "error",
+      error: `leaf ${expectedThumbprint} is in ${defaultStore} without a usable private key; refusing certreq -accept`,
+    };
   }
   if (targetStore !== defaultStore && !targetKeyed) {
     // Accepted into My but mirror incomplete. Never re-run bare -accept.
@@ -1565,6 +1577,11 @@ function createAdcsWindowsIisExecutors(deps) {
         onBeforeMutation,
         startAtStep: progress.startAtStep,
         retainKeyOnAcceptFailure: true,
+        journaledPredecessorThumbprint:
+          typeof journal.predecessorThumbprint === "string" &&
+          journal.predecessorThumbprint.length > 0
+            ? journal.predecessorThumbprint
+            : null,
         onInstallStep: async (step, meta = {}) => {
           currentInstallStep = step;
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
@@ -1689,6 +1706,11 @@ function createAdcsWindowsIisExecutors(deps) {
       onBeforeMutation,
       startAtStep: "accept",
       retainKeyOnAcceptFailure: true,
+      journaledPredecessorThumbprint:
+        typeof journal.predecessorThumbprint === "string" &&
+        journal.predecessorThumbprint.length > 0
+          ? journal.predecessorThumbprint
+          : null,
       onInstallStep: async (step, meta = {}) => {
         currentInstallStep = step;
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {

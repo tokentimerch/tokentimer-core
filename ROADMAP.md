@@ -68,16 +68,20 @@ called stable while it is open.
 
 - **AD CS issuer for the Windows agent**
   ([#321](https://github.com/tokentimerch/tokentimer-core/issues/321)).
-  Issue and renew IIS certificates from an enterprise AD CS CA, including
-  templates that need CA-manager approval. The key stays on the host and
-  the agent authenticates as its machine account. Contracts, CNG path,
-  CMC adapter, inert executor wiring, and decision-6 validation before
-  accept are on `main` ([#342](https://github.com/tokentimerch/tokentimer-core/pull/342)).
-  Durable enrollment journal recovery (resume-submit, issued-leaf continue,
-  install interrupt handling, bounded RequestId reconcile) is in draft
-  [#343](https://github.com/tokentimerch/tokentimer-core/pull/343).
-  `adcs` remains out of the executable issuer kinds until that recovery,
-  control-plane enrollments, and the ADR-0014 release gate pass on real hosts.
+  Goal: issue and renew IIS certificates from an enterprise AD CS CA,
+  including templates that need CA-manager approval. The key stays on
+  the host and the agent authenticates as its machine account.
+  Contracts ([#322](https://github.com/tokentimerch/tokentimer-core/pull/322)),
+  CNG path ([#326](https://github.com/tokentimerch/tokentimer-core/pull/326)),
+  CMC adapter ([#337](https://github.com/tokentimerch/tokentimer-core/pull/337)),
+  inert executor wiring ([#339](https://github.com/tokentimerch/tokentimer-core/pull/339)),
+  and issued-certificate validation before accept
+  ([#342](https://github.com/tokentimerch/tokentimer-core/pull/342)) are on `main`.
+  Durable enrollment journal recovery is implemented on the agent in draft
+  [#343](https://github.com/tokentimerch/tokentimer-core/pull/343) and stays
+  inert. `adcs` remains out of the executable issuer kinds until
+  control-plane enrollment records and continuation scheduling land, and
+  the ADR-0014 release gate passes on real hosts.
 
 ---
 

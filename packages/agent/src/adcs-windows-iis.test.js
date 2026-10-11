@@ -533,6 +533,60 @@ describe("inspectAdcsInstallProgress", () => {
     assert.equal(progress.startAtStep, "accept");
   });
 
+  it("resumes at mirror when the leaf is present but unkeyed (never re-accept)", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget,
+      containerName,
+      listMachineStoreCertificatesImpl: async ({ store }) => {
+        if (store === "My") {
+          return {
+            ok: true,
+            certificates: [
+              {
+                thumbprint: expectedThumbprint,
+                hasPrivateKey: false,
+                keyContainer: null,
+              },
+            ],
+          };
+        }
+        return { ok: true, certificates: [] };
+      },
+      queryCurrentBindingImpl: async () => {
+        throw new Error("binding must not be queried before mirror completes");
+      },
+    });
+    assert.equal(progress.status, "resume");
+    assert.equal(progress.startAtStep, "mirror");
+  });
+
+  it("errors when an unkeyed leaf is already in My and the target store is My", async () => {
+    const progress = await inspectAdcsInstallProgress({
+      certificatePem: fixturePem,
+      windowsTarget: {
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      containerName,
+      listMachineStoreCertificatesImpl: async () => ({
+        ok: true,
+        certificates: [
+          {
+            thumbprint: expectedThumbprint,
+            hasPrivateKey: false,
+            keyContainer: null,
+          },
+        ],
+      }),
+      queryCurrentBindingImpl: async () => {
+        throw new Error("binding must not be queried for unkeyed My-only leaf");
+      },
+    });
+    assert.equal(progress.status, "error");
+    assert.match(progress.error, /refusing certreq -accept/);
+  });
+
   it("resumes at mirror when accepted in My but missing from the target store", async () => {
     const progress = await inspectAdcsInstallProgress({
       certificatePem: fixturePem,

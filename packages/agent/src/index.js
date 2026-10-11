@@ -3130,6 +3130,10 @@ async function cngKeyAbsentFromStoresAfterAcceptFailure({
  *   enrollment CNG key on bare accept failure (retry needs the same key).
  * @param {boolean} [requireStoreAbsenceBeforeKeyDelete] deprecated alias for
  *   retainKeyOnAcceptFailure (treated as retain when true).
+ * @param {string|null} [journaledPredecessorThumbprint] AD CS: pre-cutover
+ *   thumbprint from the enrollment journal. Used for retention bookkeeping
+ *   on verify-only / unbound resume when the live binding is already the
+ *   new cert or null.
  */
 async function runWindowsIisDeployTail({
   jobId,
@@ -3146,6 +3150,7 @@ async function runWindowsIisDeployTail({
   startAtStep = "accept",
   retainKeyOnAcceptFailure = false,
   requireStoreAbsenceBeforeKeyDelete = false,
+  journaledPredecessorThumbprint = null,
   windowsExecFileImpl,
   windowsConnectImpl,
 }) {
@@ -3402,6 +3407,29 @@ async function runWindowsIisDeployTail({
     if (deployResult.precedenceWarning) {
       emitInfo(`job ${jobId}: WARNING: ${deployResult.precedenceWarning}`);
     }
+    // Verify-only / post-delete resumes see live outgoing as the new cert or
+    // null. Prefer a journalled pre-cutover predecessor so retention still
+    // records the superseded identity after recovery.
+    const journaledPredecessor =
+      typeof journaledPredecessorThumbprint === "string" &&
+      journaledPredecessorThumbprint.length > 0
+        ? journaledPredecessorThumbprint
+        : null;
+    const liveOutgoing =
+      typeof deployResult.outgoingThumbprint === "string" &&
+      deployResult.outgoingThumbprint.length > 0
+        ? deployResult.outgoingThumbprint
+        : null;
+    const boundThumb =
+      typeof deployResult.boundThumbprint === "string" && deployResult.boundThumbprint.length > 0
+        ? deployResult.boundThumbprint
+        : null;
+    const liveIsNewOrMissing =
+      !liveOutgoing ||
+      (boundThumb &&
+        String(liveOutgoing).toUpperCase() === String(boundThumb).toUpperCase());
+    const outgoingForBookkeeping =
+      journaledPredecessor && liveIsNewOrMissing ? journaledPredecessor : liveOutgoing;
     await finalizeWindowsIisDeployBookkeeping({
       jobId,
       client,
@@ -3410,7 +3438,7 @@ async function runWindowsIisDeployTail({
       stateDir,
       log,
       boundThumbprint: deployResult.boundThumbprint,
-      outgoingThumbprint: deployResult.outgoingThumbprint,
+      outgoingThumbprint: outgoingForBookkeeping,
       skippedMutation: deployResult.skippedMutation === true,
       precedenceWarning: deployResult.precedenceWarning,
       windowsExecFileImpl,
