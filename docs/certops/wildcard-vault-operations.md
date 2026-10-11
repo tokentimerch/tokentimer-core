@@ -8,7 +8,7 @@ deploying to every consumer. The same certificate may be an ordinary, SAN, or
 wildcard certificate; sharing it is independent of its DNS names.
 This candidate adds migrations 70–72, after the existing AD CS migration 68
 and agent-console migration 69. Cloud applies the distribution SQL as migrations
-86–88, retains AD CS vocabulary at 89, and adds agent-console storage at 90. Enterprise
+87–89, retains AD CS vocabulary at 90, and preserves main's agent-console storage at 86. Enterprise
 inherits Core through staged composition.
 
 Rejected/cancelled publications release their allocation only when the database
@@ -204,7 +204,7 @@ and rollback. No automated deletion is introduced by this candidate.
 
 Review and commit Core first. Cloud pins that exact candidate SHA, materializes
 manifest-mapped files, retains its quota/private-material/continuing-result
-policy and runs its own migrations 86–89. Enterprise composes the same candidate, retaining
+policy and runs its own migrations 86–90. Enterprise composes the same candidate, retaining
 RBAC/SSO and base CertOps independently of licensed compliance reports. Candidate
 SHA compatibility and locally built images are not published release references.
 Only after full agent/customer qualification and real release gates should the
