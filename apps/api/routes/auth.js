@@ -39,6 +39,15 @@ const verifyOtp =
   _otplib.verify ||
   _otplib.authenticator?.verify ||
   _otplib.default?.authenticator?.verify;
+// One TOTP step. A code typed as the 30s window rolls is still valid.
+const OTP_EPOCH_TOLERANCE_SECONDS = 30;
+function verifyTotp({ token, secret }) {
+  return verifyOtp({
+    token,
+    secret,
+    epochTolerance: OTP_EPOCH_TOLERANCE_SECONDS,
+  });
+}
 const {
   resolveClearSessionCookieOptions,
 } = require("../session-cookie-options.js");
@@ -569,7 +578,7 @@ router.post(
           .json({ error: "2FA is not enabled for this account" });
       }
 
-      const result = await verifyOtp({
+      const result = await verifyTotp({
         token,
         secret: user.two_factor_secret,
       });
@@ -670,7 +679,7 @@ router.post(
       if (!token)
         return res.status(400).json({ error: "2FA token is required" });
 
-      const enableResult = await verifyOtp({ token, secret: setup.secret });
+      const enableResult = await verifyTotp({ token, secret: setup.secret });
       if (!enableResult || !enableResult.valid)
         return res.status(400).json({ error: "Invalid 2FA token" });
 
