@@ -665,6 +665,9 @@ function abortExecError(signal) {
   return abortErr;
 }
 
+/** Bound wait after kill() before resolving abort if exit never arrives. */
+const EXEC_ABORT_DRAIN_MS = 5_000;
+
 function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
   const [file, ...args] = argv;
   return new Promise((resolve) => {
@@ -679,13 +682,30 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
     }
 
     let settled = false;
+    let aborted = false;
     /** @type {(() => void)|null} */
     let onAbort = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let drainTimer = null;
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      if (drainTimer != null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
       if (signal && onAbort) {
         signal.removeEventListener("abort", onAbort);
+      }
+      // Prefer the abort shape so callers never see a kill() exit code as success.
+      if (aborted) {
+        resolve({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          execError: abortExecError(signal),
+        });
+        return;
       }
       resolve(result);
     };
@@ -710,17 +730,36 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, signal) {
 
     if (signal && child && typeof child.kill === "function") {
       onAbort = () => {
+        aborted = true;
         try {
           child.kill();
         } catch {
           // best-effort
         }
-        finish({
-          exitCode: null,
-          stdout: "",
-          stderr: "",
-          execError: abortExecError(signal),
-        });
+        // Do not resolve until the child has exited (or the drain bound).
+        // Resolving immediately would let lock holders release while certreq /
+        // certutil / netsh may still be mutating protected state.
+        if (typeof child.once === "function") {
+          child.once("exit", () => finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          }));
+        }
+        const drainMs =
+          typeof timeoutMs === "number" && timeoutMs > 0
+            ? Math.min(timeoutMs, EXEC_ABORT_DRAIN_MS)
+            : EXEC_ABORT_DRAIN_MS;
+        drainTimer = setTimeout(() => {
+          finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          });
+        }, drainMs);
+        if (typeof drainTimer.unref === "function") drainTimer.unref();
       };
       signal.addEventListener("abort", onAbort, { once: true });
     }
@@ -1217,6 +1256,8 @@ const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
 /** Parent treats a quieter heartbeat as lock loss (worker ticks every 50ms). */
 const EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS = 500;
+/** After lock loss, wait this long for cooperative cancel before dropping IPC. */
+const EXCLUSIVE_LOCK_ABORT_DRAIN_MS = 5_000;
 
 /**
  * Maps a filesystem lock key to a short, deterministic IPC name.
@@ -1432,7 +1473,7 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
       this.assertHeld();
       let settled = false;
       const ac = new AbortController();
-      const lossWatch = new Promise((_, reject) => {
+      const lossWatch = new Promise((resolve) => {
         const timer = setInterval(() => {
           if (settled) {
             clearInterval(timer);
@@ -1443,29 +1484,56 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
           } catch (err) {
             clearInterval(timer);
             lost = true;
-            try {
-              worker.terminate();
-            } catch {
-              // best-effort
-            }
+            // Abort first; keep the IPC listen while the worker is still
+            // alive so cooperative cancel can drain subprocesses before a
+            // successor acquires. Unexpected worker death already drops the
+            // listen (fail-open for successors; real-host qualification).
             try {
               ac.abort(err);
             } catch {
               // ignore
             }
-            reject(err);
+            resolve(err);
           }
         }, 50);
         if (typeof timer.unref === "function") timer.unref();
       });
-      const invoke = () => {
+      const workPromise = Promise.resolve().then(() => {
         if (typeof work === "function" && work.length >= 1) {
           return work(ac.signal);
         }
         return work();
-      };
+      });
       try {
-        return await Promise.race([Promise.resolve().then(invoke), lossWatch]);
+        const outcome = await Promise.race([
+          workPromise.then(
+            (value) => ({ type: "ok", value }),
+            (err) => ({ type: "work-err", err }),
+          ),
+          lossWatch.then((err) => ({ type: "lost", err })),
+        ]);
+        if (outcome.type === "ok") {
+          return outcome.value;
+        }
+        if (outcome.type === "work-err") {
+          throw outcome.err;
+        }
+        try {
+          await Promise.race([
+            workPromise.then(
+              () => undefined,
+              () => undefined,
+            ),
+            new Promise((r) => setTimeout(r, EXCLUSIVE_LOCK_ABORT_DRAIN_MS)),
+          ]);
+        } finally {
+          try {
+            worker.terminate();
+          } catch {
+            // best-effort
+          }
+        }
+        throw outcome.err;
       } finally {
         settled = true;
       }

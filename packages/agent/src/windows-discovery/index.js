@@ -131,6 +131,9 @@ function abortExecError(signal) {
  * @param {object} [extraOptions]
  * @returns {Promise<{exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null}>}
  */
+/** Bound wait after kill() before resolving abort if exit never arrives. */
+const EXEC_ABORT_DRAIN_MS = 5_000;
+
 function execWithoutShell(execFileImpl, argv, timeoutMs, extraOptions = {}) {
   const [file, ...args] = argv;
   const { signal, ...childOptions } = extraOptions;
@@ -146,13 +149,29 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, extraOptions = {}) {
     }
 
     let settled = false;
+    let aborted = false;
     /** @type {(() => void)|null} */
     let onAbort = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    let drainTimer = null;
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      if (drainTimer != null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
       if (signal && onAbort) {
         signal.removeEventListener("abort", onAbort);
+      }
+      if (aborted) {
+        resolve({
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          execError: abortExecError(signal),
+        });
+        return;
       }
       resolve(result);
     };
@@ -178,17 +197,35 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, extraOptions = {}) {
 
     if (signal && child && typeof child.kill === "function") {
       onAbort = () => {
+        aborted = true;
         try {
           child.kill();
         } catch {
           // best-effort
         }
-        finish({
-          exitCode: null,
-          stdout: "",
-          stderr: "",
-          execError: abortExecError(signal),
-        });
+        // Wait for exit before resolving so discovery holders do not
+        // release while PowerShell / certutil may still be reading stores.
+        if (typeof child.once === "function") {
+          child.once("exit", () => finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          }));
+        }
+        const drainMs =
+          typeof timeoutMs === "number" && timeoutMs > 0
+            ? Math.min(timeoutMs, EXEC_ABORT_DRAIN_MS)
+            : EXEC_ABORT_DRAIN_MS;
+        drainTimer = setTimeout(() => {
+          finish({
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            execError: abortExecError(signal),
+          });
+        }, drainMs);
+        if (typeof drainTimer.unref === "function") drainTimer.unref();
       };
       signal.addEventListener("abort", onAbort, { once: true });
     }

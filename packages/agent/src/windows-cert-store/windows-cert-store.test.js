@@ -1639,7 +1639,7 @@ describe("execWithoutShell AbortSignal", () => {
     assert.equal(result.execError.cause && result.execError.cause.code, "STORE_LOCK_LOST");
   });
 
-  it("terminates a real OS child after abort, not only ABORT_ERR", async () => {
+  it("terminates a real OS child before abort resolves, not only eventually", async () => {
     const { execFile } = require("node:child_process");
     const ac = new AbortController();
     /** @type {number|null} */
@@ -1664,17 +1664,76 @@ describe("execWithoutShell AbortSignal", () => {
     const result = await resultPromise;
     assert.equal(result.execError && result.execError.code, "ABORT_ERR");
     assert.equal(result.execError.cause && result.execError.cause.code, "STORE_LOCK_LOST");
-
-    let stillAlive = true;
-    for (let i = 0; i < 50 && stillAlive; i += 1) {
-      try {
-        process.kill(childPid, 0);
-        await new Promise((r) => setTimeout(r, 20));
-      } catch {
-        stillAlive = false;
-      }
+    // Promise must not resolve while the child is still shutting down.
+    let stillAlive = false;
+    try {
+      process.kill(childPid, 0);
+      stillAlive = true;
+    } catch {
+      stillAlive = false;
     }
-    assert.equal(stillAlive, false, `pid ${childPid} must be gone after child.kill()`);
+    assert.equal(stillAlive, false, `pid ${childPid} must be gone before ABORT_ERR resolves`);
+  });
+
+  it("does not admit a successor while an aborted real child is still alive", async () => {
+    const { execFile } = require("node:child_process");
+    const stateDir = makeTempDir();
+    const lock = acquireStoreLock(stateDir, "My");
+    const ac = new AbortController();
+    /** @type {number|null} */
+    let childPid = null;
+    /** @type {boolean} */
+    let successorSawLivePredecessor = false;
+
+    const workPromise = (async () => {
+      const result = await execWithoutShell(
+        (file, args, opts, cb) => {
+          const child = execFile(file, args, opts, cb);
+          childPid = child.pid ?? null;
+          return child;
+        },
+        [process.execPath, "-e", "setTimeout(() => {}, 60000)"],
+        15000,
+        ac.signal,
+      );
+      // Release only after execWithoutShell confirms child exit.
+      lock.release();
+      return result;
+    })();
+
+    for (let i = 0; i < 50 && childPid == null; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.ok(childPid, "child pid should be assigned before abort");
+
+    ac.abort(Object.assign(new Error("lost"), { code: "STORE_LOCK_LOST" }));
+
+    const successorProbe = (async () => {
+      for (let i = 0; i < 200; i += 1) {
+        try {
+          const next = acquireStoreLock(stateDir, "My");
+          try {
+            process.kill(childPid, 0);
+            successorSawLivePredecessor = true;
+          } catch {
+            // predecessor already gone — expected ordering
+          }
+          next.release();
+          return;
+        } catch {
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      }
+    })();
+
+    const result = await workPromise;
+    await successorProbe;
+    assert.equal(result.execError && result.execError.code, "ABORT_ERR");
+    assert.equal(
+      successorSawLivePredecessor,
+      false,
+      "successor must not hold the store lock while the predecessor child is still alive",
+    );
   });
 
   it("maps ENROLLMENT_LOCK_LOST abort during certreq -new to reason aborted", async () => {
