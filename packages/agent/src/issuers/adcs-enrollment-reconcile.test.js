@@ -287,11 +287,20 @@ describe("adcs-enrollment-reconcile", () => {
     const caConfig = "CA\\Lab";
     const lockPath = watermarkLockPath(stateDir, caConfig);
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    // Pid that cannot be alive, with a fresh timestamp (process-dead stale path).
-    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\n", "utf8");
+    // Dead PID with a fresh timestamp: reclaim via process-not-alive, not age.
+    fs.writeFileSync(lockPath, `999999991\n${new Date().toISOString()}\n`, "utf8");
     await recordHighestRequestId(stateDir, caConfig, 7);
     assert.equal(readHighestRequestId(stateDir, caConfig), 7);
     assert.equal(fs.existsSync(lockPath), false);
+  });
+
+  it("recovers an aged watermark lock even if the recorded pid looks live", async () => {
+    const caConfig = "CA\\Lab";
+    const lockPath = watermarkLockPath(stateDir, caConfig);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, `${process.pid}\n2020-01-01T00:00:00.000Z\n`, "utf8");
+    await recordHighestRequestId(stateDir, caConfig, 8);
+    assert.equal(readHighestRequestId(stateDir, caConfig), 8);
   });
 
   it("does not steal a live watermark lock from a concurrent holder", async () => {
@@ -307,5 +316,23 @@ describe("adcs-enrollment-reconcile", () => {
       },
     );
     fs.unlinkSync(lockPath);
+  });
+
+  it("allows only one owner when two contenders reclaim the same stale watermark lock", async () => {
+    const { reclaimStaleLockFile } = require("../windows-cert-store");
+    const caConfig = "CA\\Lab";
+    const lockPath = watermarkLockPath(stateDir, caConfig);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, "999999991\n2020-01-01T00:00:00.000Z\n", "utf8");
+
+    const first = reclaimStaleLockFile(lockPath);
+    const second = reclaimStaleLockFile(lockPath);
+    assert.equal(first, true);
+    assert.equal(second, false);
+    assert.equal(fs.existsSync(lockPath), false);
+
+    // After exclusive reclaim, a single writer can update the watermark.
+    await recordHighestRequestId(stateDir, caConfig, 42);
+    assert.equal(readHighestRequestId(stateDir, caConfig), 42);
   });
 });

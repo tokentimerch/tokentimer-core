@@ -10,67 +10,30 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { durableWriteFile } = require("./adcs-enrollment-journal");
-const { isStoreLockStale } = require("../windows-cert-store");
+const { acquireExclusiveLockFile } = require("../windows-cert-store");
 
 const WATERMARK_DIR = "adcs-ca-watermarks";
 const DEFAULT_RECONCILE_WINDOW = 16;
 const DIR_MODE = 0o700;
 
 /**
- * Per-CA watermark mutex. Same wx + stale-steal rules as store/enrollment
- * locks: a crash that leaves the .lock file must not permanently block
- * later watermark updates after restart.
+ * Per-CA watermark mutex via the shared exclusive lock helper (wx +
+ * rename-based stale reclaim). A crash that leaves the .lock file must not
+ * permanently block later updates; two reclaimers must not both own it.
  */
 async function withWatermarkLock(stateDir, caConfig, fn) {
   const dir = path.join(stateDir, WATERMARK_DIR);
   fs.mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   const lockPath = watermarkLockPath(stateDir, caConfig);
-
-  function tryAcquire() {
-    const fd = fs.openSync(lockPath, "wx");
-    try {
-      fs.writeSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
-    } finally {
-      fs.closeSync(fd);
-    }
-  }
-
-  function throwLocked() {
-    const locked = new Error("CA RequestId watermark is locked by a concurrent update");
-    locked.code = "ADCS_WATERMARK_LOCKED";
-    throw locked;
-  }
-
-  try {
-    tryAcquire();
-  } catch (err) {
-    if (err && err.code === "EEXIST" && isStoreLockStale(lockPath)) {
-      try {
-        fs.unlinkSync(lockPath);
-      } catch {
-        // Another racer may have cleaned or re-acquired; retry is authoritative.
-      }
-      try {
-        tryAcquire();
-      } catch (retryErr) {
-        if (retryErr && retryErr.code === "EEXIST") throwLocked();
-        throw retryErr;
-      }
-    } else if (err && err.code === "EEXIST") {
-      throwLocked();
-    } else {
-      throw err;
-    }
-  }
-
+  const lock = acquireExclusiveLockFile(
+    lockPath,
+    "ADCS_WATERMARK_LOCKED",
+    "CA RequestId watermark is locked by a concurrent update",
+  );
   try {
     return await fn();
   } finally {
-    try {
-      fs.unlinkSync(lockPath);
-    } catch {
-      // best-effort; stale recovery handles an abandoned file after a crash
-    }
+    lock.release();
   }
 }
 

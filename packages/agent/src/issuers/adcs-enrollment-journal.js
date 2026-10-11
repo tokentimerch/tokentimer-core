@@ -674,6 +674,34 @@ async function writeIssuedCertificateArtifacts({
   return { leafSha256, chainSha256 };
 }
 
+/**
+ * Remove a provisional Tier-2 candidate leaf/chain after the journal has
+ * cleared candidate identity. Best-effort; missing files are fine.
+ */
+function clearProvisionalLeafArtifacts(stateDir, enrollmentId) {
+  assertEnrollmentId(enrollmentId);
+  for (const dest of [
+    leafArtifactPath(stateDir, enrollmentId),
+    chainArtifactPath(stateDir, enrollmentId),
+  ]) {
+    try {
+      fs.unlinkSync(dest);
+    } catch (err) {
+      if (err && err.code !== "ENOENT") throw err;
+    }
+  }
+}
+
+/** States where leafSha256 is a committed enrollment leaf (not provisional). */
+const LEAF_SHA256_IMMUTABLE_STATES = new Set([
+  "issued",
+  "validation_deferred",
+  "installing",
+  "installed",
+  "install_failed",
+  "rejected_invalid",
+]);
+
 /** Fields that, once recorded, must survive every later transition. */
 const IMMUTABLE_STRING_FIELDS = Object.freeze([
   "containerName",
@@ -681,7 +709,7 @@ const IMMUTABLE_STRING_FIELDS = Object.freeze([
   "csrSpkiSha256",
   "templateOid",
   "csrSha256",
-  "leafSha256",
+  // leafSha256: immutable only after issued (see mergeImmutableJournalFields)
   "validationDeadlineAt",
 ]);
 
@@ -706,6 +734,33 @@ function mergeImmutableJournalFields(previousJournal, previousState, fields) {
       }
     } else {
       merged[field] = prior;
+    }
+  }
+
+  // leafSha256 is provisional on submission_uncertain (Tier-2 candidate) and
+  // may be cleared or replaced until the enrollment reaches issued.
+  {
+    const priorLeaf = previousJournal.leafSha256;
+    const nextLeaf = merged.leafSha256;
+    const leafCommitted = LEAF_SHA256_IMMUTABLE_STATES.has(previousState);
+    if (leafCommitted && typeof priorLeaf === "string" && HEX64.test(priorLeaf)) {
+      if (typeof nextLeaf === "string" && nextLeaf.length > 0) {
+        if (nextLeaf !== priorLeaf) {
+          throw new Error("journal field leafSha256 is immutable after commit");
+        }
+      } else if (!(Object.hasOwn(fields, "leafSha256") && fields.leafSha256 == null)) {
+        merged.leafSha256 = priorLeaf;
+      } else {
+        throw new Error("journal field leafSha256 is immutable after commit");
+      }
+    } else if (Object.hasOwn(fields, "leafSha256") && fields.leafSha256 == null) {
+      delete merged.leafSha256;
+    } else if (
+      !(typeof nextLeaf === "string" && HEX64.test(nextLeaf)) &&
+      typeof priorLeaf === "string" &&
+      HEX64.test(priorLeaf)
+    ) {
+      merged.leafSha256 = priorLeaf;
     }
   }
 
@@ -1048,6 +1103,7 @@ module.exports = {
   readKeygenIntent,
   writeCsrArtifact,
   writeIssuedCertificateArtifacts,
+  clearProvisionalLeafArtifacts,
   writeEnrollmentJournal,
   listProtectedEnrollmentContainers,
   looksLikeEnrollmentContainerName,

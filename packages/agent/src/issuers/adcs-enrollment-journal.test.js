@@ -11,6 +11,7 @@ const {
   readEnrollmentJournal,
   writeCsrArtifact,
   writeIssuedCertificateArtifacts,
+  clearProvisionalLeafArtifacts,
   writeEnrollmentJournal,
   listProtectedEnrollmentContainers,
   looksLikeEnrollmentContainerName,
@@ -20,6 +21,7 @@ const {
   legacyJournalPath,
   keygenIntentPath,
   csrArtifactPath,
+  leafArtifactPath,
   sha256HexOfString,
 } = require("./adcs-enrollment-journal");
 
@@ -548,6 +550,86 @@ describe("adcs-enrollment-journal", () => {
     const reloaded = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
     assert.equal(reloaded.kind, "corrupt");
     assert.match(reloaded.error, /deferred candidate requires leaf\.pem/);
+  });
+
+  it("allows replacing a rejected provisional tier-2 leaf with a later valid candidate", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "submission_uncertain",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      reconcileSearchFrom: 105,
+    });
+    const leafA = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n";
+    const leafB = "-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----\n";
+    const { leafSha256: hashA } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: leafA,
+    });
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "submission_uncertain",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      reconcileSearchFrom: 105,
+      reconcileCandidateRequestId: 105,
+      leafSha256: hashA,
+      validationDeadlineAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+
+    // Permanently reject A: clear provisional metadata then remove artifact.
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "submission_uncertain",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      reconcileSearchFrom: 105,
+      reconcileCandidateRequestId: null,
+      validationDeadlineAt: null,
+      leafSha256: null,
+    });
+    clearProvisionalLeafArtifacts(stateDir, ENROLLMENT_ID);
+    assert.equal(fs.existsSync(leafArtifactPath(stateDir, ENROLLMENT_ID)), false);
+
+    const { leafSha256: hashB } = await writeIssuedCertificateArtifacts({
+      stateDir,
+      enrollmentId: ENROLLMENT_ID,
+      leafPem: leafB,
+    });
+    assert.notEqual(hashA, hashB);
+    await writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "issued",
+      attempt: 1,
+      containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64),
+      csrSha256,
+      csrSpkiSha256: "c".repeat(64),
+      templateOid: TEMPLATE_OID,
+      jobId: "job:1",
+      leafSha256: hashB,
+      requestId: 110,
+    });
+    const read = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(read.kind, "valid");
+    assert.equal(read.journal.state, "issued");
+    assert.equal(read.journal.leafSha256, hashB);
+    assert.equal(read.artifacts.leafPem, leafB);
+    assert.equal(read.journal.requestId, 110);
   });
 
   it("preserves the first predecessorThumbprint across verify-stage journal updates", async () => {

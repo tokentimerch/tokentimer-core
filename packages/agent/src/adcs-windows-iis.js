@@ -27,6 +27,7 @@ const {
   writeCsrArtifact,
   writeEnrollmentJournal,
   writeIssuedCertificateArtifacts,
+  clearProvisionalLeafArtifacts,
   readEnrollmentJournal,
   recordHighestRequestId,
   captureEnrollmentReconcileSearchFrom,
@@ -2075,16 +2076,19 @@ function createAdcsWindowsIisExecutors(deps) {
           if (typeof journal.validationDeadlineAt === "string") {
             const deadlineMs = Date.parse(journal.validationDeadlineAt);
             if (Number.isFinite(deadlineMs) && Date.now() > deadlineMs) {
+              const expiredCandidateId = journal.reconcileCandidateRequestId;
               await persistUncertain({
                 reconcileSearchFrom: journal.reconcileSearchFrom,
                 reconcileCandidateRequestId: null,
                 validationDeadlineAt: null,
+                leafSha256: null,
               });
+              clearProvisionalLeafArtifacts(stateDir, decoded.enrollmentId);
               return {
                 status: "failed",
                 keyRotated: null,
                 errorMessage: boundErrorMessage(
-                  `tier-2 candidate RequestId ${journal.reconcileCandidateRequestId} validation deadline expired; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+                  `tier-2 candidate RequestId ${expiredCandidateId} validation deadline expired; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
                 ),
                 enrollmentResult: enrollmentResultFor(
                   decoded.enrollmentId,
@@ -2137,17 +2141,21 @@ function createAdcsWindowsIisExecutors(deps) {
               ),
             };
           }
-          // Hard rejection of this candidate: clear it, keep earliest unresolved cursor.
+          // Hard rejection: clear provisional candidate + leaf so a later
+          // valid candidate B can replace hash(A) without immutable conflict.
+          const rejectedCandidateId = journal.reconcileCandidateRequestId;
           await persistUncertain({
             reconcileSearchFrom: journal.reconcileSearchFrom,
             reconcileCandidateRequestId: null,
             validationDeadlineAt: null,
+            leafSha256: null,
           });
+          clearProvisionalLeafArtifacts(stateDir, decoded.enrollmentId);
           return {
             status: "failed",
             keyRotated: null,
             errorMessage: boundErrorMessage(
-              `tier-2 candidate RequestId ${journal.reconcileCandidateRequestId} failed validation; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
+              `tier-2 candidate RequestId ${rejectedCandidateId} failed validation; enrollment ${decoded.enrollmentId} remains submission_uncertain`,
             ),
             enrollmentResult: enrollmentResultFor(
               decoded.enrollmentId,

@@ -1151,6 +1151,31 @@ function isStoreLockStale(lockPath) {
  * @param {string} storeName Windows machine store name (e.g. "My").
  * @returns {{ lockPath: string, release: () => void }}
  */
+/**
+ * Atomically claim a stale lock pathname via rename (not unlink).
+ * Two contenders both seeing "stale" cannot both delete each other's
+ * freshly created lock: only one rename of the abandoned file succeeds.
+ *
+ * @returns {boolean} true when this caller claimed and removed the stale file
+ */
+function reclaimStaleLockFile(lockPath) {
+  if (!isStoreLockStale(lockPath)) return false;
+  const reclaimPath = `${lockPath}.reclaim.${process.pid}.${crypto.randomBytes(4).toString("hex")}`;
+  try {
+    fs.renameSync(lockPath, reclaimPath);
+  } catch (err) {
+    // ENOENT: another contender already renamed it away.
+    if (err && err.code === "ENOENT") return false;
+    return false;
+  }
+  try {
+    fs.unlinkSync(reclaimPath);
+  } catch {
+    // best-effort; reclaim marker is not the live lock pathname
+  }
+  return true;
+}
+
 function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   function tryAcquire() {
     return fs.openSync(lockPath, "wx");
@@ -1160,24 +1185,30 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
   try {
     fd = tryAcquire();
   } catch (err) {
-    if (err && err.code === "EEXIST" && isStoreLockStale(lockPath)) {
-      try {
-        fs.unlinkSync(lockPath);
-      } catch {
-        // Another racer may have already cleaned it up (or re-acquired
-        // it); either way, fall through to the single retry below, which
-        // is the actual source of truth.
-      }
-      try {
-        fd = tryAcquire();
-      } catch (retryErr) {
-        if (retryErr && retryErr.code === "EEXIST") {
-          throw buildError(busyMessage, busyCode);
+    if (err && err.code === "EEXIST") {
+      // Rename-based reclaim: never unlink the live lock pathname based on
+      // a prior stale observation (that race could delete a winner's new lock).
+      if (reclaimStaleLockFile(lockPath)) {
+        try {
+          fd = tryAcquire();
+        } catch (retryErr) {
+          if (retryErr && retryErr.code === "EEXIST") {
+            throw buildError(busyMessage, busyCode);
+          }
+          throw retryErr;
         }
-        throw retryErr;
+      } else {
+        // Not stale, or lost the reclaim race — one more wx attempt covers
+        // "peer reclaimed then released" without unlinking their lock.
+        try {
+          fd = tryAcquire();
+        } catch (retryErr) {
+          if (retryErr && retryErr.code === "EEXIST") {
+            throw buildError(busyMessage, busyCode);
+          }
+          throw retryErr;
+        }
       }
-    } else if (err && err.code === "EEXIST") {
-      throw buildError(busyMessage, busyCode);
     } else {
       throw err;
     }
@@ -1192,13 +1223,15 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
       if (released) return;
       released = true;
       try {
-        fs.unlinkSync(lockPath);
+        // Only unlink if we still own the file (pid match). Prevents a
+        // confused releaser from removing another process's lock.
+        const contents = fs.readFileSync(lockPath, "utf8");
+        const parsed = parseStoreLockContents(contents);
+        if (parsed && parsed.pid === process.pid) {
+          fs.unlinkSync(lockPath);
+        }
       } catch {
-        // best-effort; a lock file surviving past release (e.g. another
-        // process already stole it as stale in a race with this exact
-        // release call) is not a security issue -- nothing sensitive is
-        // in it -- and is exactly the scenario isStoreLockStale above
-        // exists to eventually recover from.
+        // best-effort
       }
     },
   };
@@ -1446,6 +1479,8 @@ module.exports = {
   mirrorAcceptedCertificateToStore,
   acquireStoreLock,
   acquireEnrollmentLock,
+  acquireExclusiveLockFile,
+  reclaimStaleLockFile,
   isProcessAlive,
   isStoreLockStale,
   parseStoreLockContents,
