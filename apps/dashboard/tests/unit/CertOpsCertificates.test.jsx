@@ -1341,6 +1341,30 @@ describe('CertOpsCertificates certificateId deep links', () => {
     );
   });
 
+  it('opens a fingerprintless provisional when the grouped list request fails', async () => {
+    getCertificateMock.mockResolvedValue({
+      certificate: {
+        id: managedId,
+        fingerprintSha256: null,
+        commonName: 'provisional.example',
+        status: 'provisioning',
+        source: 'manual',
+      },
+    });
+    listCertificatesMock.mockRejectedValue({
+      response: { status: 500, data: { error: 'list failed' } },
+      message: 'list failed',
+    });
+
+    renderPage([`/certops/certificates?certificateId=${managedId}`]);
+
+    await screen.findByRole('dialog');
+    expect(showErrorMock).not.toHaveBeenCalledWith(
+      'Certificate not found',
+      expect.anything()
+    );
+  });
+
   it('reports not found for a deleted certificate', async () => {
     getCertificateMock.mockRejectedValue({
       response: { status: 404, data: { error: 'Not found' } },

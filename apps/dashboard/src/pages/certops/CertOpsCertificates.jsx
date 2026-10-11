@@ -379,15 +379,41 @@ export default function CertOpsCertificates() {
           });
         }
         const fingerprint = cert?.fingerprintSha256;
-        const listed = await listCertificates(workspaceId, {
-          grouped: true,
-          // Fingerprint when present; otherwise search by managed-certificate
-          // id so provisional fingerprintless rows still resolve.
-          q: fingerprint || certificateIdInUrl,
-          limit: 20,
-          excludeRetired: false,
-          signal: controller.signal,
+        const identityFromManagedCert = sourceCert => ({
+          id: sourceCert.id,
+          managedCertificateId: sourceCert.id,
+          fingerprintSha256: sourceCert.fingerprintSha256 || null,
+          commonName: sourceCert.commonName || null,
+          subjectAltNames: sourceCert.subjectAltNames || [],
+          status: sourceCert.status || null,
+          source: sourceCert.source || null,
+          notAfter: sourceCert.notAfter || null,
+          sources: [
+            { id: sourceCert.id, managedCertificateId: sourceCert.id },
+          ],
         });
+        let listed;
+        try {
+          listed = await listCertificates(workspaceId, {
+            grouped: true,
+            // Fingerprint when present; otherwise search by managed-certificate
+            // id so provisional fingerprintless rows still resolve.
+            q: fingerprint || certificateIdInUrl,
+            limit: 20,
+            excludeRetired: false,
+            signal: controller.signal,
+          });
+        } catch (listErr) {
+          if (cancelled || listErr?.name === 'CanceledError') return;
+          // getCertificate already succeeded. For fingerprintless provisionals
+          // the grouped list is enrichment only; do not treat a list failure
+          // as "certificate not found".
+          if (!fingerprint) {
+            listed = { items: [] };
+          } else {
+            throw listErr;
+          }
+        }
         const items = Array.isArray(listed?.items) ? listed.items : [];
         const matchesManagedId = item =>
           String(item.id) === String(certificateIdInUrl) ||
@@ -406,23 +432,8 @@ export default function CertOpsCertificates() {
                   String(fingerprint).toLowerCase() || matchesManagedId(item)
             ) || items[0];
         } else {
-          identity = items.find(matchesManagedId) || null;
-          // Inventory supports fingerprintless provisional certificates as
-          // first-class rows; open the modal from the managed-cert payload
-          // when the list query does not return a grouped identity.
-          if (!identity) {
-            identity = {
-              id: cert.id,
-              managedCertificateId: cert.id,
-              fingerprintSha256: null,
-              commonName: cert.commonName || null,
-              subjectAltNames: cert.subjectAltNames || [],
-              status: cert.status || null,
-              source: cert.source || null,
-              notAfter: cert.notAfter || null,
-              sources: [{ id: cert.id, managedCertificateId: cert.id }],
-            };
-          }
+          identity =
+            items.find(matchesManagedId) || identityFromManagedCert(cert);
         }
         if (cancelled) return;
         if (identity) {

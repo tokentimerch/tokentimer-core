@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -80,26 +80,27 @@ describe('JobExecutionSummary trust-anchor links', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows an access explanation for managers instead of a link', async () => {
+  it('shows an access explanation for managers instead of a link', () => {
     useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
 
     renderSummary(trustJob);
 
-    await screen.findByTestId('trust-anchor-access-denied');
+    // Synchronous denial: no first-paint link, no trust-anchor fetch.
+    expect(screen.getByTestId('trust-anchor-access-denied')).toHaveTextContent(
+      /Only workspace admins can open trust anchors/
+    );
     expect(listTrustAnchorsMock).not.toHaveBeenCalled();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
-  it('shows an access explanation for viewers instead of a link', async () => {
+  it('shows an access explanation for viewers instead of a link', () => {
     useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
 
     renderSummary(trustJob);
 
-    await waitFor(() => {
-      expect(screen.getByTestId('trust-anchor-access-denied')).toHaveTextContent(
-        /Only workspace admins can open trust anchors/
-      );
-    });
+    expect(screen.getByTestId('trust-anchor-access-denied')).toHaveTextContent(
+      /Only workspace admins can open trust anchors/
+    );
     expect(screen.queryByRole('link', { name: /trust anchor/i })).toBeNull();
   });
 });

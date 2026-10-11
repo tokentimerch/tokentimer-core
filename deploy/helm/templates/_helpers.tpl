@@ -211,11 +211,14 @@ CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnable
        toString scientific notation cannot false-reject valid integers. */}}
 {{- $retention := .Values.config.certopsAgentLogRetentionDays }}
 {{- if and (not (kindIs "invalid" $retention)) (ne (toString $retention) "") }}
+{{- /* Digit syntax first (string or numeric), then the 0–3650 bound for both.
+       A previous string-only regex falsely accepted 3651–9999 via [1-9][0-9]{0,3}. */}}
 {{- if kindIs "string" $retention }}
-{{- if not (regexMatch "^(0|[1-9][0-9]{0,3}|[1-2][0-9]{4}|3[0-5][0-9]{2}|360[0-9]|3650)$" $retention) }}
+{{- if not (regexMatch "^(0|[1-9][0-9]*)$" $retention) }}
 {{- fail "config.certopsAgentLogRetentionDays must be an integer from 0 to 3650" }}
 {{- end }}
-{{- else if or (lt ($retention | float64) 0.0) (gt ($retention | float64) 3650.0) (ne (floor ($retention | float64)) ($retention | float64)) }}
+{{- end }}
+{{- if or (lt ($retention | float64) 0.0) (gt ($retention | float64) 3650.0) (ne (floor ($retention | float64)) ($retention | float64)) }}
 {{- fail "config.certopsAgentLogRetentionDays must be an integer from 0 to 3650" }}
 {{- end }}
 CERTOPS_AGENT_LOG_RETENTION_DAYS: {{ $retention | int64 | quote }}

@@ -300,22 +300,26 @@ function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
   const [label, setLabel] = useState(null);
   const [missing, setMissing] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  const subjectType = job?.subjectType ? String(job.subjectType) : '';
+  // Deny trust-anchor navigation synchronously so the first paint never
+  // briefly renders an "Open trust anchor" link for managers/viewers.
+  const trustAnchorDenied =
+    subjectType === 'trust_anchor' && !canOpenTrustAnchors;
 
   useEffect(() => {
     setLabel(null);
     setMissing(false);
     setAccessDenied(false);
-    if (!workspaceId || !job?.subjectId || !job?.subjectType) {
+    if (!workspaceId || !job?.subjectId || !subjectType || trustAnchorDenied) {
       return undefined;
     }
     let cancelled = false;
     const controller = new AbortController();
-    const type = String(job.subjectType);
     const id = String(job.subjectId);
 
     const load = async () => {
       try {
-        if (type === 'managed_certificate') {
+        if (subjectType === 'managed_certificate') {
           const data = await getCertificate(workspaceId, id, {
             signal: controller.signal,
           });
@@ -329,13 +333,8 @@ function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
           if (!cancelled) setLabel(name || null);
           return;
         }
-        if (type === 'trust_anchor') {
+        if (subjectType === 'trust_anchor') {
           // GET /certops/trust-anchors requires trust_anchor.manage (admin).
-          // Managers/viewers must not see a link to a page they cannot use.
-          if (!canOpenTrustAnchors) {
-            if (!cancelled) setAccessDenied(true);
-            return;
-          }
           const data = await listTrustAnchors(workspaceId, {
             signal: controller.signal,
           });
@@ -370,11 +369,15 @@ function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
   }, [
     workspaceId,
     job?.subjectId,
-    job?.subjectType,
-    canOpenTrustAnchors,
+    subjectType,
+    trustAnchorDenied,
   ]);
 
-  return { label, missing, accessDenied };
+  return {
+    label,
+    missing,
+    accessDenied: trustAnchorDenied || accessDenied,
+  };
 }
 
 /**

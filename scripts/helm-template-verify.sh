@@ -557,6 +557,13 @@ if helm template "${RELEASE_NAME}" "${CHART}" \
 else
   fail "rejected valid string agent-log bounds (3650 / 20971520)"
 fi
+for invalid_string in 3651 9999 10000; do
+  if helm template "${RELEASE_NAME}" "${CHART}" \
+    --set config.adminEmail=ci@example.com \
+    --set-string "config.certopsAgentLogRetentionDays=${invalid_string}" >/dev/null 2>&1; then
+    fail "accepted out-of-range string certopsAgentLogRetentionDays=${invalid_string}"
+  fi
+done
 if helm template "${RELEASE_NAME}" "${CHART}" \
   --set config.adminEmail=ci@example.com \
   --set-string config.certopsAgentLogDailyBytes=9007199254740992 >/dev/null 2>&1; then
