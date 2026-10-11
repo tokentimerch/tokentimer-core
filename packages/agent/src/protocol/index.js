@@ -31,6 +31,7 @@ const ROUTES = Object.freeze({
   RESULTS: "/api/v1/certops/agent/jobs/results",
   // B6: plain POST (no message envelope). Path is jobs/:jobId/lease.
   LEASE: "/api/v1/certops/agent/jobs",
+  LOGS: "/api/v1/certops/agent/jobs/{jobId}/logs",
 });
 
 const MESSAGE_TYPES = Object.freeze({
@@ -724,7 +725,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       throw new AgentProtocolError("postJobLogs requires a valid jobId", AGENT_PROTOCOL_ERROR_CODES.INVALID_MESSAGE);
     }
     const token = await resolveCredential(getCredential);
-    const route = `${ROUTES.LEASE}/${encodeURIComponent(jobId)}/logs`;
+    const route = ROUTES.LOGS.replace("{jobId}", encodeURIComponent(jobId));
     const { status, ok, json, retryAfterMs } = await send(route, token, buildEnvelope({
       agentId,
       protocolVersion,

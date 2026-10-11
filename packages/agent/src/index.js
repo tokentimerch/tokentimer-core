@@ -1990,10 +1990,6 @@ async function handleSignedJob({
   // success as "failed". Periodic lease heartbeat covers long ACME/DNS
   // stages that can approach the 15-minute lease TTL without stage-boundary
   // renews.
-  emitInfo(
-    `job ${jobId}: passed signature/replay/clock/policy verification, starting execution ` +
-      `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
-  );
   const logOffer = readClaimLogStream(claimedJob);
   const jobLogSession = logOffer?.enabled === true && agentLogStreamEnabled()
     ? createJobLogSession({
@@ -2003,73 +1999,78 @@ async function handleSignedJob({
       maxBatchBytes: logOffer.maxBatchBytes,
     })
     : null;
-  const evidenceBuffer = createEvidenceBuffer();
-  const leaseOpts = {
-    leaseClient: client,
-    jobId,
-    claimId,
-    log,
-    leaseState,
-  };
-  const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
-  let outcome;
+  // One try/finally so evidence-assert / transmit throws still send final:true
+  // and clear the session from the claims map.
   try {
-    outcome = await withJobConsole(jobLogSession, () => executeJob({
-      job,
-      jobId,
-      attemptId,
-      claimId,
-      policyEngine,
-      client: evidenceBuffer,
+    withJobConsole(jobLogSession, () => emitInfo(
+      `job ${jobId}: passed signature/replay/clock/policy verification, starting execution ` +
+        `(action=${job?.action || "unknown"}, mode=${resolveJobMode(job)})`,
+    ));
+    const evidenceBuffer = createEvidenceBuffer();
+    const leaseOpts = {
       leaseClient: client,
-      leaseState,
-      executionContext,
+      jobId,
+      claimId,
       log,
-      jobLog: jobLogSession?.logger,
-    }));
-    const heartbeatAbort = leaseHeartbeat.getAbort();
-    // Lease loss after a "clean" terminal must not be reported as success.
-    // awaiting_issuer is intentionally omitted: the CA request and RequestId
-    // journal already exist, so that status stays more accurate than orphaned.
-    if (
-      heartbeatAbort &&
-      outcome &&
-      (outcome.status === "succeeded" || outcome.status === "dry_run_complete")
-    ) {
-      outcome = heartbeatAbort;
-    }
-  } catch (err) {
-    emitLog(log, `job ${jobId} execution error: ${err.message}`, {
-      name: err?.name,
-      code: err?.code,
-    });
-    outcome = {
-      status: "failed",
-      errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
+      leaseState,
     };
-  } finally {
-    stopPeriodicLeaseRenewal(leaseHeartbeat);
-  }
-  const finishDetails =
-    outcome?.status === "failed"
-      ? {
-          errorMessage: outcome?.errorMessage,
-          failureCategory: outcome?.trustResult?.failureCategory,
-        }
-      : undefined;
-  withJobConsole(jobLogSession, () => emitInfo(
-    `job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`,
-    finishDetails,
-  ));
+    const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
+    let outcome;
+    try {
+      outcome = await withJobConsole(jobLogSession, () => executeJob({
+        job,
+        jobId,
+        attemptId,
+        claimId,
+        policyEngine,
+        client: evidenceBuffer,
+        leaseClient: client,
+        leaseState,
+        executionContext,
+        log,
+        jobLog: jobLogSession?.logger,
+      }));
+      const heartbeatAbort = leaseHeartbeat.getAbort();
+      // Lease loss after a "clean" terminal must not be reported as success.
+      // awaiting_issuer is intentionally omitted: the CA request and RequestId
+      // journal already exist, so that status stays more accurate than orphaned.
+      if (
+        heartbeatAbort &&
+        outcome &&
+        (outcome.status === "succeeded" || outcome.status === "dry_run_complete")
+      ) {
+        outcome = heartbeatAbort;
+      }
+    } catch (err) {
+      emitLog(log, `job ${jobId} execution error: ${err.message}`, {
+        name: err?.name,
+        code: err?.code,
+      });
+      outcome = {
+        status: "failed",
+        errorMessage: boundErrorMessage(`job execution failed: ${err.message}`),
+      };
+    } finally {
+      stopPeriodicLeaseRenewal(leaseHeartbeat);
+    }
+    const finishDetails =
+      outcome?.status === "failed"
+        ? {
+            errorMessage: outcome?.errorMessage,
+            failureCategory: outcome?.trustResult?.failureCategory,
+          }
+        : undefined;
+    withJobConsole(jobLogSession, () => emitInfo(
+      `job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`,
+      finishDetails,
+    ));
 
-  const evidenceBodies = evidenceBuffer.takeEvidence();
-  for (const body of evidenceBodies) {
-    assertEvidencePayloadSafe(body);
-  }
+    const evidenceBodies = evidenceBuffer.takeEvidence();
+    for (const body of evidenceBodies) {
+      assertEvidencePayloadSafe(body);
+    }
 
-  let transmitted;
-  try {
-    transmitted = await persistAndTransmitOutcome({
+    const transmitted = await persistAndTransmitOutcome({
       outboxDir: resolvedOutboxDir,
       client,
       result: {

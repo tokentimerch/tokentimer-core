@@ -234,6 +234,8 @@ const corsOptions = {
     "X-Requested-With",
     "X-CSRF-Token",
     "Idempotency-Key",
+    "Cache-Control",
+    "Pragma",
   ],
   maxAge: 86400, // 24 hours
 };
@@ -811,15 +813,19 @@ function validateStartupConfig() {
     );
   }
 
-  // Compose/env path: invalid CERTOPS_AGENT_LOG_* values fall back silently
-  // at resolve time; warn at boot so operators notice the mismatch. Helm
-  // rejects the same values at template time.
+  // Compose/env path: invalid retention falls back with a boot warning;
+  // invalid CERTOPS_AGENT_LOG_DAILY_BYTES fails closed (no silent unlimited).
+  // Helm rejects both at template time.
   try {
     const { warnInvalidAgentLogEnv } = require("./services/certops/agentJobLogs");
     warnInvalidAgentLogEnv(process.env, {
       warn: (message) => logger.warn(message),
     });
-  } catch (_err) {
+  } catch (err) {
+    if (err && err.code === "CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID") {
+      logger.error(err.message);
+      process.exit(1);
+    }
     // Module load failures are handled elsewhere; do not block boot here.
   }
 

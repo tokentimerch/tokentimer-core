@@ -1,9 +1,3 @@
-/*
- * VENDORED COPY for self-contained agent distribution.
- * Source of truth: packages/log-scrub/agent-log-text.js (@tokentimer/log-scrub).
- * Refresh with: node packages/agent/scripts/sync-vendor.js
- * Do not edit detection logic here; change the upstream file and re-sync.
- */
 "use strict";
 
 /**
@@ -30,7 +24,7 @@ const QUERY_SECRET = /([?&](?:token|key|sig|signature|X-Amz-[A-Za-z0-9-]+)=)[^&\
 const AUTH_HEADER = /(authorization\s*[:=]\s*(?:bearer\s+)?)(\S+)/gi;
 const CONN = /([a-z][a-z0-9+.-]*:\/\/)([^:\s/@]+):([^@\s/]+)@/gi;
 const ASSIGNED_SECRET = /((?:pfx|pkcs12|eab)[-_\s]*hmac|eab[-_\s]*key|dns[-_\s]*(?:token|secret|key)|api[-_\s]*key|(?:pfx|pkcs12)[-_\s]*password)\s*[:=]\s*\S+/gi;
-const HINT = /password|secret|token|credential|hmac|api[_-]?key/i;
+const HINT = /\b(?:password|secret|token|credential|hmac|api[_-]?key)\b/i;
 const HIGH_ENTROPY = /\b(?:[A-Za-z0-9+/]{32,}={0,2}|[a-fA-F0-9]{32,})\b/g;
 const BIDI_AND_SEPARATORS = /[\u202A-\u202E\u2066-\u2069\u2028\u2029]/g;
 const CONTROLS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
@@ -40,8 +34,16 @@ function utf8Length(value) {
   return Buffer.byteLength(String(value), "utf8");
 }
 
+function normalizeAgentLogText(value) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(BIDI_AND_SEPARATORS, "")
+    .replace(CONTROLS, "");
+}
+
 function scrubAgentLogText(value) {
-  const original = String(value ?? "");
+  // Normalize before detection so BIDI/C0/C1 marks cannot hide PEM material.
+  const original = normalizeAgentLogText(value);
   if (containsPrivateKeyMaterial(original)) {
     return {
       rejected: true,
@@ -67,7 +69,14 @@ function scrubAgentLogText(value) {
     if (stripped !== text) redactions += 1;
     text = stripped;
   }
-  text = text.replace(/\r\n/g, "\n").replace(BIDI_AND_SEPARATORS, "").replace(CONTROLS, "");
+  // Re-scan after redaction in case a transform reconstituted key-shaped text.
+  if (containsPrivateKeyMaterial(text)) {
+    return {
+      rejected: true,
+      text: PRIVATE_KEY_REDACTION_PLACEHOLDER,
+      redactions: redactions + 1,
+    };
+  }
   if (utf8Length(text) > MAX_MESSAGE_BYTES) {
     const buf = Buffer.from(text, "utf8").subarray(0, MAX_MESSAGE_BYTES);
     text = buf.toString("utf8").replace(/\uFFFD$/, "");

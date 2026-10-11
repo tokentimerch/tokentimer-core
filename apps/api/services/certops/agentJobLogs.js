@@ -114,14 +114,34 @@ function storageEnabled(env = process.env) {
   return resolveRetentionDays(env) !== 0;
 }
 
+function isValidDailyByteEnv(raw) {
+  return isExactNonNegativeIntEnv(raw, { max: Number.MAX_SAFE_INTEGER });
+}
+
 function resolveDailyByteLimit(env = process.env) {
-  return parseNonNegativeIntEnv(env.CERTOPS_AGENT_LOG_DAILY_BYTES, 0);
+  const dailyRaw = env.CERTOPS_AGENT_LOG_DAILY_BYTES;
+  // Unset / empty keeps the documented default (0 = unlimited). A present but
+  // invalid value must not fall back to unlimited: that would silently disable
+  // a quota the operator tried to set.
+  if (
+    dailyRaw != null &&
+    String(dailyRaw).trim() !== "" &&
+    !isValidDailyByteEnv(dailyRaw)
+  ) {
+    const err = new Error(
+      "CERTOPS_AGENT_LOG_DAILY_BYTES is invalid; refusing to apply a quota " +
+        "(must be a safe non-negative integer; 0 = unlimited)",
+    );
+    err.code = "CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID";
+    throw err;
+  }
+  return parseNonNegativeIntEnv(dailyRaw, 0);
 }
 
 /**
- * Warn when Compose/env operators set CERTOPS_AGENT_LOG_* to a value the
- * resolvers would silently replace. Helm rejects these at template time;
- * Compose still reaches process.env, so surface the mismatch at boot.
+ * Retention: warn when Compose/env sets a value the resolver replaces.
+ * Daily bytes: fail closed (throw) when set but invalid so a mistyped
+ * quota cannot become unlimited. Helm rejects both at template time.
  */
 function warnInvalidAgentLogEnv(env = process.env, { warn = console.warn } = {}) {
   // Do not echo the raw env value: CodeQL treats process.env as sensitive
@@ -137,17 +157,8 @@ function warnInvalidAgentLogEnv(env = process.env, { warn = console.warn } = {})
         `(valid range 0–${MAX_AGENT_LOG_RETENTION_DAYS})`,
     );
   }
-  const dailyRaw = env.CERTOPS_AGENT_LOG_DAILY_BYTES;
-  if (
-    dailyRaw != null &&
-    String(dailyRaw).trim() !== "" &&
-    !isExactNonNegativeIntEnv(dailyRaw, { max: Number.MAX_SAFE_INTEGER })
-  ) {
-    warn(
-      `CERTOPS_AGENT_LOG_DAILY_BYTES is invalid; using ${resolveDailyByteLimit(env)} ` +
-        `(0 = unlimited; must be a safe non-negative integer)`,
-    );
-  }
+  // Throws CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID when set but invalid.
+  resolveDailyByteLimit(env);
 }
 
 function assertLockSequence(names) {

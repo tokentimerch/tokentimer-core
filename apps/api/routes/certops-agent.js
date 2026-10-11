@@ -277,7 +277,7 @@ async function writeAgentRejectionAudit(req) {
   });
 }
 
-async function rejectAgentPrivateMaterial(req, res, next) {
+async function rejectAgentPrivateMaterial(req, res, next, responseCode = PRIVATE_KEY_MATERIAL_REJECTED) {
   try {
     // Sits after authentication but before rollout or handler logic: the
     // machine boundary must synchronously audit and reject key material
@@ -301,9 +301,21 @@ async function rejectAgentPrivateMaterial(req, res, next) {
     }
     return res.status(422).json({
       error: "Private key material is not accepted on CertOps agent routes",
-      code: PRIVATE_KEY_MATERIAL_REJECTED,
+      code: responseCode,
     });
   }
+}
+
+// Logs protocol uses CERTOPS_AGENT_LOG_PRIVATE_MATERIAL so agents can match
+// the documented ack / retry surface (ingest scrub uses the same code).
+const CERTOPS_AGENT_LOG_PRIVATE_MATERIAL = "CERTOPS_AGENT_LOG_PRIVATE_MATERIAL";
+async function rejectAgentLogPrivateMaterial(req, res, next) {
+  return rejectAgentPrivateMaterial(
+    req,
+    res,
+    next,
+    CERTOPS_AGENT_LOG_PRIVATE_MATERIAL,
+  );
 }
 
 // --- Shared route guards ---
@@ -697,9 +709,16 @@ function createCertOpsAgentRouter(options = {}) {
   );
 
   // Execution console. Best effort, so it is never on the result path.
+  // Swap the shared private-material gate for the log-specific 422 code.
+  const logCredentialChain = credentialChain.map((mw) =>
+    mw === rejectPrivateMaterialMiddleware
+      ? options.rejectLogPrivateMaterialMiddleware ||
+        rejectAgentLogPrivateMaterial
+      : mw,
+  );
   certOpsAgentRouter.post(
     CERTOPS_AGENT_JOBS_LOGS_PATH,
-    ...credentialChain,
+    ...logCredentialChain,
     requireNonRetiredAgent,
     (req, res) => logsHandler(req, res, options),
   );
@@ -729,6 +748,7 @@ module.exports._test = {
   logRateBuckets,
   registerHandler,
   rejectAgentPrivateMaterial,
+  rejectAgentLogPrivateMaterial,
   requireNonRetiredAgent,
   resultsHandler,
   logsHandler,

@@ -403,26 +403,39 @@ describe("agent job log ingest", () => {
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "3651" }), 30);
     assert.equal(resolveRetentionDays({ CERTOPS_AGENT_LOG_RETENTION_DAYS: "2147483648" }), 30);
     assert.equal(MAX_AGENT_LOG_RETENTION_DAYS, 3650);
-    assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "100MB" }), 0);
     assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "1048576" }), 1048576);
-    assert.equal(
-      resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "9007199254740992" }),
-      0,
+    assert.equal(resolveDailyByteLimit({}), 0);
+    assert.equal(resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "" }), 0);
+    assert.throws(
+      () => resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "100MB" }),
+      (err) => err && err.code === "CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID",
+    );
+    assert.throws(
+      () => resolveDailyByteLimit({ CERTOPS_AGENT_LOG_DAILY_BYTES: "9007199254740992" }),
+      (err) => err && err.code === "CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID",
     );
 
     const warnings = [];
     warnInvalidAgentLogEnv(
-      {
-        CERTOPS_AGENT_LOG_RETENTION_DAYS: "3651",
-        CERTOPS_AGENT_LOG_DAILY_BYTES: "9007199254740992",
-      },
+      { CERTOPS_AGENT_LOG_RETENTION_DAYS: "3651" },
       { warn: (message) => warnings.push(message) },
     );
-    assert.equal(warnings.length, 2);
+    assert.equal(warnings.length, 1);
     assert.match(warnings[0], /CERTOPS_AGENT_LOG_RETENTION_DAYS is invalid; using 30/);
-    assert.match(warnings[1], /CERTOPS_AGENT_LOG_DAILY_BYTES is invalid; using 0/);
     assert.doesNotMatch(warnings[0], /3651/);
-    assert.doesNotMatch(warnings[1], /9007199254740992/);
+
+    let dailyErr = null;
+    try {
+      warnInvalidAgentLogEnv(
+        { CERTOPS_AGENT_LOG_DAILY_BYTES: "9007199254740992" },
+        { warn: () => {} },
+      );
+    } catch (err) {
+      dailyErr = err;
+    }
+    assert.ok(dailyErr);
+    assert.equal(dailyErr.code, "CERTOPS_AGENT_LOG_DAILY_BYTES_INVALID");
+    assert.doesNotMatch(String(dailyErr.message), /9007199254740992/);
 
     const quiet = [];
     warnInvalidAgentLogEnv(
