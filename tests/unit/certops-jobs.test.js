@@ -2108,8 +2108,20 @@ describe("CertOps jobs service", () => {
     assert.ok(orphaned.completedAt, "orphaned_unknown_effect must set completed_at");
   });
 
-  it("sets completed_at when transitioning to awaiting_issuer", async () => {
+  it("rejects unbound awaiting_issuer on create and status update", async () => {
     const client = createMemoryClient();
+    await assert.rejects(
+      createCertificateJob({
+        client,
+        workspaceId: WORKSPACE_A,
+        operation: "renew",
+        subjectType: "managed_certificate",
+        subjectId: "cert-1",
+        status: "awaiting_issuer",
+        payload: { target: "host/web" },
+      }),
+      (error) => error.code === CERTOPS_JOB_STATUS_INVALID,
+    );
     const job = await createCertificateJob({
       client,
       workspaceId: WORKSPACE_A,
@@ -2118,39 +2130,15 @@ describe("CertOps jobs service", () => {
       subjectId: "cert-1",
       payload: { target: "host/web" },
     });
-    assert.equal(job.completedAt, null);
-
-    const claimed = await updateCertificateJobStatus({
-      client,
-      workspaceId: WORKSPACE_A,
-      jobId: job.id,
-      status: "claimed",
-    });
-    assert.equal(claimed.completedAt, null);
-
-    const awaiting = await updateCertificateJobStatus({
-      client,
-      workspaceId: WORKSPACE_A,
-      jobId: job.id,
-      status: "awaiting_issuer",
-    });
-    assert.equal(awaiting.status, "awaiting_issuer");
-    assert.ok(awaiting.completedAt, "awaiting_issuer must set completed_at");
-  });
-
-  it("sets completed_at when creating a job already in awaiting_issuer", async () => {
-    const client = createMemoryClient();
-    const job = await createCertificateJob({
-      client,
-      workspaceId: WORKSPACE_A,
-      operation: "renew",
-      subjectType: "managed_certificate",
-      subjectId: "cert-1",
-      status: "awaiting_issuer",
-      payload: { target: "host/web" },
-    });
-    assert.equal(job.status, "awaiting_issuer");
-    assert.ok(job.completedAt, "create-time awaiting_issuer must set completed_at");
+    await assert.rejects(
+      updateCertificateJobStatus({
+        client,
+        workspaceId: WORKSPACE_A,
+        jobId: job.id,
+        status: "awaiting_issuer",
+      }),
+      (error) => error.code === CERTOPS_JOB_STATUS_INVALID,
+    );
   });
 
   it("requires a valid renewalProfile for automation renew jobs", async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme';
 
 import CreateManualJobModal from '../../src/components/certops/CreateManualJobModal.jsx';
 
@@ -66,14 +67,16 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
 function renderModal(props = {}) {
   return render(
     <ChakraProvider>
-      <MemoryRouter>
-        <CreateManualJobModal
-          isOpen
-          onClose={vi.fn()}
-          onCreated={vi.fn()}
-          {...props}
-        />
-      </MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter>
+          <CreateManualJobModal
+            isOpen
+            onClose={vi.fn()}
+            onCreated={vi.fn()}
+            {...props}
+          />
+        </MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }

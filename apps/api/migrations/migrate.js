@@ -4651,6 +4651,98 @@ const migrations = [
     name: "certops_agent_job_logs",
     sql: fs.readFileSync(require("path").join(__dirname, "069-certops-agent-job-logs.sql"), "utf8"),
   },
+  {
+    version: 70,
+    name: "certops_certificate_enrollments",
+    sql: `
+      CREATE TABLE IF NOT EXISTS certificate_issuers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('acme', 'adcs')),
+        name TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 128),
+        current_version INTEGER NOT NULL DEFAULT 0,
+        revalidation_required BOOLEAN NOT NULL DEFAULT false,
+        last_preflight JSONB NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_issuers_workspace_id UNIQUE (workspace_id, id)
+      );
+
+      CREATE TABLE IF NOT EXISTS certificate_issuer_versions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        issuer_id UUID NOT NULL,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        ca_config TEXT NOT NULL,
+        template TEXT NOT NULL,
+        transport TEXT NOT NULL DEFAULT 'dcom' CHECK (transport = 'dcom'),
+        ca_key_sha256 TEXT NULL CHECK (ca_key_sha256 IS NULL OR ca_key_sha256 ~ '^[a-f0-9]{64}$'),
+        confirmed_at TIMESTAMPTZ NULL,
+        config JSONB NOT NULL DEFAULT '{}'::jsonb,
+        CONSTRAINT uq_certificate_issuer_versions UNIQUE (workspace_id, issuer_id, version),
+        CONSTRAINT fk_certificate_issuer_versions_issuer
+          FOREIGN KEY (workspace_id, issuer_id)
+          REFERENCES certificate_issuers(workspace_id, id)
+          ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS certificate_enrollments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        certificate_id UUID NULL,
+        issuer_id UUID NOT NULL,
+        issuer_version INTEGER NOT NULL,
+        agent_id UUID NULL,
+        state TEXT NOT NULL CHECK (state IN (
+          'requested', 'prepared', 'submitting', 'pending_issuance',
+          'submission_uncertain', 'issued', 'validation_deferred', 'validated',
+          'installing', 'installed', 'install_failed', 'denied',
+          'rejected_invalid', 'validation_expired', 'refused', 'abandoned',
+          'expired', 'cancelled'
+        )),
+        attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+        snapshot_bytes BYTEA NOT NULL,
+        snapshot_sha256 TEXT NOT NULL CHECK (snapshot_sha256 ~ '^[a-f0-9]{64}$'),
+        request_id BIGINT NULL CHECK (request_id IS NULL OR request_id >= 1),
+        operator_request_id BIGINT NULL CHECK (operator_request_id IS NULL OR operator_request_id >= 1),
+        last_error_code TEXT NULL,
+        pending_since TIMESTAMPTZ NULL,
+        next_poll_at TIMESTAMPTZ NULL,
+        current_job_id UUID NULL,
+        installed_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_certificate_enrollments_workspace_id UNIQUE (workspace_id, id),
+        CONSTRAINT fk_certificate_enrollments_issuer
+          FOREIGN KEY (workspace_id, issuer_id)
+          REFERENCES certificate_issuers(workspace_id, id)
+      );
+
+      ALTER TABLE certificate_jobs
+        ADD COLUMN IF NOT EXISTS enrollment_id UUID NULL;
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS fk_certificate_jobs_enrollment;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT fk_certificate_jobs_enrollment
+          FOREIGN KEY (workspace_id, enrollment_id)
+          REFERENCES certificate_enrollments(workspace_id, id);
+
+      ALTER TABLE certificate_jobs
+        DROP CONSTRAINT IF EXISTS certificate_jobs_operation_check;
+      ALTER TABLE certificate_jobs
+        ADD CONSTRAINT certificate_jobs_operation_check CHECK (
+          operation IN (
+            'issue', 'renew', 'deploy', 'reload', 'revoke', 'noop',
+            'protocol_smoke', 'distribute-trust', 'revoke-trust',
+            'continue-enrollment', 'adcs-preflight'
+          )
+        );
+
+      CREATE INDEX IF NOT EXISTS idx_certificate_enrollments_due
+        ON certificate_enrollments(next_poll_at)
+        WHERE next_poll_at IS NOT NULL;
+    `,
+  },
 ];
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored

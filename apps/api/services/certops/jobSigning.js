@@ -656,6 +656,15 @@ async function signJobForDispatch(options = {}) {
     );
   }
   const canonicalBytes = Buffer.from(canonical, "utf8");
+  if (
+    (signedJob.issuerKind === "adcs" || signedJob.action === "adcs-preflight") &&
+    canonicalBytes.length > 49152
+  ) {
+    throw serviceError(
+      "signed AD CS payload exceeds 49152 bytes",
+      "CERTOPS_SIGNING_PAYLOAD_TOO_LARGE",
+    );
+  }
 
   if (envelopeVersion === ENVELOPE_VERSION_2) {
     return buildV2Envelope({
