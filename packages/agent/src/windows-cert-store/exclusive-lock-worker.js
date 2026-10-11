@@ -45,7 +45,9 @@ function signal(code) {
 
 function startHeartbeat() {
   const tick = () => {
-    Atomics.store(state, 1, Date.now() & 0x7fffffff);
+    // Never store 0: parent treats beat===0 as "not heartbeating", and
+    // Date.now()&0x7fffffff is 0 for 1ms every ~24.85 days.
+    Atomics.store(state, 1, (Date.now() & 0x7fffffff) || 1);
   };
   tick();
   heartbeatTimer = setInterval(tick, 50);
@@ -80,6 +82,10 @@ function onAddrInUse() {
 }
 
 /**
+ * Exclusive reclaim-gate acquisition. `mkdir` is the fast path. An aged
+ * abandoned gate is stolen with `rename` (only one rename wins), then the
+ * stolen inode is age-checked again so a concurrent peer cannot yank a
+ * freshly created live gate via a stale pre-steal `stat`.
  * @param {string} gatePath
  * @returns {boolean}
  */
@@ -93,14 +99,45 @@ function tryAcquireReclaimGate(gatePath) {
     try {
       st = fs.statSync(gatePath);
     } catch {
-      return false;
+      try {
+        fs.mkdirSync(gatePath);
+        return true;
+      } catch {
+        return false;
+      }
     }
     if (Date.now() - st.mtimeMs <= MAX_RECLAIM_GATE_AGE_MS) {
       return false;
     }
-    // Crash left an empty gate directory; reclaim it and retry once.
+    const stolenPath =
+      `${gatePath}.stolen-${process.pid}-${Date.now().toString(36)}-` +
+      Math.random().toString(16).slice(2, 10);
     try {
-      fs.rmdirSync(gatePath);
+      fs.renameSync(gatePath, stolenPath);
+    } catch {
+      return false;
+    }
+    // Re-check age on the inode we uniquely own. If another reclaimer had
+    // already replaced the gate with a young directory, put it back.
+    try {
+      const stolenSt = fs.statSync(stolenPath);
+      if (Date.now() - stolenSt.mtimeMs <= MAX_RECLAIM_GATE_AGE_MS) {
+        try {
+          fs.renameSync(stolenPath, gatePath);
+        } catch {
+          try {
+            fs.rmdirSync(stolenPath);
+          } catch {
+            // litter
+          }
+        }
+        return false;
+      }
+      try {
+        fs.rmdirSync(stolenPath);
+      } catch {
+        // litter; still try to take the live gate name
+      }
     } catch {
       return false;
     }
@@ -127,21 +164,37 @@ function releaseReclaimGate(gatePath) {
  */
 function probeSocketFresh() {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     const probe = net.connect({ path: ipcPath });
+    const timer = setTimeout(() => {
+      try {
+        probe.destroy();
+      } catch {
+        // ignore
+      }
+      finish("unknown");
+    }, 1000);
+    if (typeof timer.unref === "function") timer.unref();
     probe.once("connect", () => {
       probe.destroy();
-      resolve("live");
+      finish("live");
     });
     probe.once("error", (err) => {
       if (err && err.code === "ECONNREFUSED") {
-        resolve("stale");
+        finish("stale");
         return;
       }
       if (err && err.code === "ENOENT") {
-        resolve("missing");
+        finish("missing");
         return;
       }
-      resolve("unknown");
+      finish("unknown");
     });
   });
 }

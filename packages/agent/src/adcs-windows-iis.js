@@ -1402,11 +1402,15 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       throw err;
     } finally {
+      // Never delkey after lock loss: a successor may already own the
+      // enrollment mutex and be creating/using the same container.
+      const lockLost = Boolean(enrollmentLock && enrollmentLock.lost);
       const journalledCleanupOutcome = resolveCleanupOutcome({
         stateDir,
         enrollmentId: decoded?.enrollmentId,
       });
       if (
+        !lockLost &&
         containerName &&
         shouldCleanupAbandonedCngKey({
           submitStarted,
@@ -2666,12 +2670,14 @@ function createAdcsWindowsIisExecutors(deps) {
       }
       throw err;
     } finally {
+      const lockLost = Boolean(enrollmentLock && enrollmentLock.lost);
       const continueOutcome = continueOutcomeRef.value;
       const journalledCleanupOutcome = resolveCleanupOutcome({
         stateDir,
         enrollmentId: decoded?.enrollmentId,
       });
       if (
+        !lockLost &&
         containerName &&
         continueOutcome &&
         shouldCleanupAbandonedCngKey({

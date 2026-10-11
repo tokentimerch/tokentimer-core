@@ -3866,8 +3866,14 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
       for (const lock of locks) lock.assertHeld();
     },
     async run(work) {
+      // Compose per-store run fences so any single lock loss aborts and
+      // terminates that worker; remaining locks are released in finally.
+      if (locks.length === 1) {
+        return locks[0].run(work);
+      }
       this.assertHeld();
       let settled = false;
+      const ac = new AbortController();
       const lossWatch = new Promise((_, reject) => {
         const timer = setInterval(() => {
           if (settled) {
@@ -3878,13 +3884,31 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
             this.assertHeld();
           } catch (err) {
             clearInterval(timer);
+            for (const lock of locks) {
+              try {
+                lock.release();
+              } catch {
+                // best-effort drop listens
+              }
+            }
+            try {
+              ac.abort(err);
+            } catch {
+              // ignore
+            }
             reject(err);
           }
         }, 50);
         if (typeof timer.unref === "function") timer.unref();
       });
+      const invoke = () => {
+        if (typeof work === "function" && work.length >= 1) {
+          return work(ac.signal);
+        }
+        return work();
+      };
       try {
-        return await Promise.race([work(), lossWatch]);
+        return await Promise.race([Promise.resolve().then(invoke), lossWatch]);
       } finally {
         settled = true;
       }

@@ -1267,15 +1267,19 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
       }
     },
     /**
-     * Race `work` against lock loss so an in-flight async critical section
-     * cannot continue after the worker dies (even between explicit asserts).
+     * Race `work` against lock loss. On loss the worker is terminated so the
+     * IPC listen drops for a successor, and an AbortSignal is aborted for
+     * cooperative cancellation (`work(signal)`). Callers that ignore the
+     * signal must still treat the rejected `run` as authority loss and must
+     * not perform further protected mutations (including finally cleanup).
      * @template T
-     * @param {() => Promise<T>} work
+     * @param {((signal: AbortSignal) => Promise<T>)|(() => Promise<T>)} work
      * @returns {Promise<T>}
      */
     async run(work) {
       this.assertHeld();
       let settled = false;
+      const ac = new AbortController();
       const lossWatch = new Promise((_, reject) => {
         const timer = setInterval(() => {
           if (settled) {
@@ -1286,13 +1290,30 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
             this.assertHeld();
           } catch (err) {
             clearInterval(timer);
+            lost = true;
+            try {
+              worker.terminate();
+            } catch {
+              // best-effort
+            }
+            try {
+              ac.abort(err);
+            } catch {
+              // ignore
+            }
             reject(err);
           }
         }, 50);
         if (typeof timer.unref === "function") timer.unref();
       });
+      const invoke = () => {
+        if (typeof work === "function" && work.length >= 1) {
+          return work(ac.signal);
+        }
+        return work();
+      };
       try {
-        return await Promise.race([work(), lossWatch]);
+        return await Promise.race([Promise.resolve().then(invoke), lossWatch]);
       } finally {
         settled = true;
       }
@@ -1305,6 +1326,9 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
     release() {
       if (released) return;
       released = true;
+      // Always terminate: heartbeat-based `lost` can be a false positive
+      // (scheduler delay / sleep-resume) while the worker still holds the
+      // listen. Skipping terminate would leave STORE_LOCKED until process exit.
       if (!lost) {
         try {
           worker.postMessage("release");
@@ -1312,11 +1336,11 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
         } catch {
           // best-effort
         }
-        try {
-          worker.terminate();
-        } catch {
-          // best-effort
-        }
+      }
+      try {
+        worker.terminate();
+      } catch {
+        // best-effort
       }
       try {
         const current = fs.readFileSync(lockPath, "utf8");
@@ -1355,7 +1379,14 @@ function acquireStoreLock(stateDir, storeName) {
  *
  * @param {string} stateDir
  * @param {string} enrollmentId lowercase UUID
- * @returns {{ lockPath: string, release: () => void }}
+ * @returns {{
+ *   lockPath: string,
+ *   ownerToken: string,
+ *   lost: boolean,
+ *   assertHeld: () => void,
+ *   run: (work: Function) => Promise<unknown>,
+ *   release: () => void,
+ * }}
  */
 function acquireEnrollmentLock(stateDir, enrollmentId) {
   if (typeof enrollmentId !== "string" || !ENROLLMENT_ID_PATTERN.test(enrollmentId)) {

@@ -1090,10 +1090,24 @@ describe("acquireStoreLock", () => {
     const stateDir = makeTempDir();
     const lock = acquireStoreLock(stateDir, "My");
     let afterLoss = false;
-    const work = lock.run(async () => {
+    const work = lock.run(async (signal) => {
       await new Promise((r) => setTimeout(r, 50));
       await lock._workerForTests.terminate();
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((resolve, reject) => {
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        const timer = setTimeout(resolve, 2000);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
       afterLoss = true;
       return "should-not-resolve";
     });
@@ -1104,6 +1118,19 @@ describe("acquireStoreLock", () => {
     assert.equal(afterLoss, false);
     lock.release();
     const next = acquireStoreLock(stateDir, "My");
+    next.release();
+  });
+
+  it("release after worker death still frees the IPC name for a successor", async () => {
+    const stateDir = makeTempDir();
+    const lock = acquireStoreLock(stateDir, "My");
+    await lock._workerForTests.terminate();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(lock.lost, true);
+    // release() must not skip terminate when lost is already set.
+    lock.release();
+    const next = acquireStoreLock(stateDir, "My");
+    assert.equal(typeof next.ownerToken, "string");
     next.release();
   });
 
