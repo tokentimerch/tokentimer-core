@@ -829,10 +829,13 @@ async function scanner() {
       address: "http://customers:18020",
       token: "ux-lab-only-vault-token",
       include: { kv: true, pki: false },
-      mounts: ["secret"],
+      mounts: ["secret/"],
       pathPrefix,
     });
     assert.deepEqual(result.items, []);
+    assert.equal(result.summary.length, 1, "The scanner must select the real KV v2 mount");
+    assert.equal(result.summary[0].hasExcludedPaths, true);
+    assert.equal(result.summary[0].complete, false);
   }
   const requests = (await customer("scanner-requests")).requests.slice(before);
   assert.ok(requests.length >= 5);
