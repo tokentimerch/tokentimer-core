@@ -42,7 +42,12 @@ services:
     environment: { VAULT_DEV_ROOT_TOKEN_ID: ux-lab-only-vault-token }
     cap_add: [IPC_LOCK]
     cpus: 0.5
-    mem_limit: 256m
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD-SHELL, "VAULT_ADDR=http://127.0.0.1:8200 vault status >/dev/null"]
+      interval: 2s
+      retries: 30
+      start_period: 10s
   challtestsrv:
     image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
     command: ["-defaultIPv6", "", "-defaultIPv4", "127.0.0.1"]
@@ -122,7 +127,10 @@ services:
       ]
     cpus: 1.5
     mem_limit: 768m
-    depends_on: [api, vault, pebble]
+    depends_on:
+      api: { condition: service_started }
+      vault: { condition: service_healthy }
+      pebble: { condition: service_started }
 volumes:
   postgres:
   customers:

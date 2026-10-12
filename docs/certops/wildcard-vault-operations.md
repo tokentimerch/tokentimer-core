@@ -83,6 +83,8 @@ issuer or consumer credentials. Protect Vault backups as private keys.
    settings and `publicationDestination` containing only `materialStoreRef`,
    `issuanceProfileRef`, `profileRevision`. Supply the existing issuance
    idempotency key. Filesystem/reload/probe destinations are forbidden here.
+   `issue` is the stored control-plane operation; signed agent dispatch uses
+   the existing `renew` wire action for initial issuance as well as renewal.
 2. The server creates one managed source, active management period and group.
    A logical material-version UUID is allocated for this job. Renewals retain
    that owner and group; consumers never become renewal owners. Successful
@@ -116,6 +118,8 @@ shows desired/observed logical versions, generation, fingerprint, deployed
 expiry, verification method/time and latest deployment failure. Convergence
 requires a fresh, unexpired proof for the current binding revision and active
 identity. It is never inferred from publication alone.
+An optional consumer whose authorization changed makes a completed rollout
+`degraded`, even if a successful historical receipt remains available.
 
 ## Pause, retry, drift and rollback
 
@@ -206,7 +210,9 @@ and rollback. No automated deletion is introduced by this candidate.
 
 Review and commit Core first. Cloud pins that exact candidate SHA, materializes
 manifest-mapped files, retains its quota/private-material/continuing-result
-policy and runs its own migrations 86–90. Enterprise composes the same candidate, retaining
+policy and runs its own migrations 86–91. Its enrollment tables are appended
+after the existing distribution history. Enterprise preserves its applied
+Core migration history and appends enrollment tables at migration 73, retaining
 RBAC/SSO and base CertOps independently of licensed compliance reports. Candidate
 SHA compatibility and locally built images are not published release references.
 Only after full agent/customer qualification and real release gates should the
