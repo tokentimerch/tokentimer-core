@@ -1061,6 +1061,60 @@ function liveKeyPathFromRotationStaging(stagingPath) {
   return path.join(path.dirname(stagingPath), match[1]);
 }
 
+function custodyQuarantineMarkerPath(liveCustodyPath) {
+  return `${liveCustodyPath}.custody-quarantine`;
+}
+
+function rotationStagingSiblings(keysDir, liveBaseName, fsImpl = fs) {
+  let names = [];
+  try {
+    names = fsImpl.readdirSync(keysDir);
+  } catch (_err) {
+    return [];
+  }
+  const prefix = `.${liveBaseName}.staging-`;
+  return names
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => path.join(keysDir, name))
+    .sort();
+}
+
+/**
+ * Live custody path to use for a later renew or standalone deploy.
+ * A quarantine marker means promotion failed. The live filename may still
+ * hold the previous key if moving it aside also failed, so it is never
+ * returned. A kept rotation staging sibling is the replacement.
+ *
+ * @param {string} keysDir
+ * @param {string} certificateId
+ * @param {{ existsSync?: Function, readdirSync?: Function, accessSync?: Function }} [fsImpl]
+ * @returns {{ path: string|null, quarantined: boolean }}
+ */
+function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs) {
+  const liveBaseName = `${certificateId}.key.pem`;
+  const live = path.join(keysDir, liveBaseName);
+  const marker = custodyQuarantineMarkerPath(live);
+  let quarantined = false;
+  try {
+    if (typeof fsImpl.accessSync === "function") {
+      fsImpl.accessSync(marker);
+      quarantined = true;
+    } else {
+      quarantined = fsImpl.existsSync(marker) === true;
+    }
+  } catch (_err) {
+    quarantined = false;
+  }
+  if (!quarantined && fsImpl.existsSync(live)) {
+    return { path: live, quarantined: false };
+  }
+  const siblings = rotationStagingSiblings(keysDir, liveBaseName, fsImpl);
+  if (siblings.length > 0) {
+    return { path: siblings[siblings.length - 1], quarantined };
+  }
+  return { path: null, quarantined };
+}
+
 /**
  * Atomically deploys a matched certificate + private-key pair.
  *
@@ -1434,11 +1488,28 @@ async function deployCertificateAndKey({
             throw new Error("custody key promotion verification failed");
           }
           canRemoveStaging = true;
+          try {
+            await fspImpl.unlink(custodyQuarantineMarkerPath(custodyResolved));
+          } catch (_unlinkErr) {
+            // No marker, or it could not be removed. A later lookup still
+            // prefers the live file once the marker is gone.
+          }
         } catch (_err) {
           // Production install already committed; keep staging for recovery.
+          // The marker is written before the rename so a failed move still
+          // stops later jobs from reading the old key at the live filename.
           canRemoveStaging = false;
           custodyPromotionFailed = true;
           if (custodyResolved !== realKeyDestination) {
+            try {
+              await fspImpl.writeFile(
+                custodyQuarantineMarkerPath(custodyResolved),
+                "custody promotion failed\n",
+                { mode: 0o600 },
+              );
+            } catch (_markerErr) {
+              // Without the marker, quarantine is only the rename below.
+            }
             try {
               await fspImpl.access(custodyResolved);
               const staleAsidePath = path.join(
@@ -1447,7 +1518,8 @@ async function deployCertificateAndKey({
               );
               await fspImpl.rename(custodyResolved, staleAsidePath);
             } catch (_renameErr) {
-              // Leave stale live custody in place; caller must not reuse it.
+              // Live filename may still hold the old key. The marker, when
+              // written, is what blocks reuse.
             }
           }
         }
@@ -1602,6 +1674,7 @@ module.exports = {
   validateTargetConfig,
   deployCertificate,
   deployCertificateAndKey,
+  resolveAgentCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   pruneDeployBackups,

@@ -133,6 +133,7 @@ const { executeAdcsPreflight } = require("./issuers/adcs-preflight");
 const {
   deployCertificate,
   deployCertificateAndKey,
+  resolveAgentCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   getDeployMetrics,
@@ -2922,11 +2923,24 @@ async function executeRenewJob({
   emitInfo(`job ${jobId}: generating/reusing private key for CN ${csrCommonName}`);
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
+  const custodyChoice = resolveAgentCustodyKey(execution.keysDir, job.certificateId);
+  if (custodyChoice.quarantined && !custodyChoice.path) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "agent custody key is quarantined after a failed promotion and no rotation staging key remains",
+      ),
+      keyRotated: false,
+    };
+  }
   const forceRotation = job.keyRotation === true;
-  const keyExisted = fs.existsSync(keyPath);
-  const keyRotated = forceRotation || !keyExisted;
+  let keyExisted = fs.existsSync(keyPath) && !custodyChoice.quarantined;
+  let keyRotated = forceRotation || !keyExisted;
   let stagedKeyPath = keyPath;
-  if (keyRotated) {
+  if (custodyChoice.quarantined && custodyChoice.path) {
+    stagedKeyPath = custodyChoice.path;
+    keyRotated = true;
+  } else if (keyRotated) {
     const generateOpts = {
       keyPath,
       overwrite: forceRotation,
@@ -5905,9 +5919,9 @@ async function executeDeployJob({
     keysDir.length > 0 &&
     isValidCertificateId(job.certificateId)
   ) {
-    const candidate = path.join(keysDir, `${job.certificateId}.key.pem`);
-    if (fs.existsSync(candidate)) {
-      keyPath = candidate;
+    const custodyChoice = resolveAgentCustodyKey(keysDir, job.certificateId);
+    if (custodyChoice.path) {
+      keyPath = custodyChoice.path;
     }
   }
 
