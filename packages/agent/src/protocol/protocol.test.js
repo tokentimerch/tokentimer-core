@@ -500,6 +500,37 @@ test("reportResult: sends correct envelope shape (messageType + resultBody field
   assert.equal(calls[0].parsedBody.body.status, "succeeded");
   assert.equal(calls[0].parsedBody.body.keyRotated, true);
   assert.equal(calls[0].parsedBody.body.rejectionReason, null);
+  assert.equal("preflightResult" in calls[0].parsedBody.body, false);
+  assert.equal("enrollmentResult" in calls[0].parsedBody.body, false);
+});
+
+test("reportResult: forwards preflight and enrollment results when provided", async () => {
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  const preflightResult = {
+    caConfig: "ca.example\\Issuing CA",
+    template: "WebServer",
+    templateCheck: { verdict: "safe", reasons: [] },
+    caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+    caCertificates: [],
+  };
+  const enrollmentResult = { state: "issued" };
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "succeeded",
+    preflightResult,
+    enrollmentResult,
+  });
+
+  assert.deepEqual(calls[0].parsedBody.body.preflightResult, preflightResult);
+  assert.deepEqual(calls[0].parsedBody.body.enrollmentResult, enrollmentResult);
 });
 
 test("reportResult: forwards claimId and nonce in the body when provided", async () => {

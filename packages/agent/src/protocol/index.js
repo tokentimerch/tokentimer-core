@@ -788,7 +788,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
    * report stays schema-minimal (the results route falls back to attemptId
    * when claimId is absent).
    */
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null } = {}) {
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null } = {}) {
     const body = {
       jobId,
       attemptId,
@@ -798,9 +798,11 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       errorMessage,
       ...(claimId !== null ? { claimId } : {}),
       ...(nonce !== null ? { nonce } : {}),
-      // Only trust-anchor jobs set this; every other job family's body stays
-      // exactly as before (property omitted, not sent as null).
+      // Only the job family that produced each object sets it. Other result
+      // bodies stay byte-identical: the property is omitted, not sent as null.
       ...(trustResult !== null ? { trustResult } : {}),
+      ...(enrollmentResult !== null ? { enrollmentResult } : {}),
+      ...(preflightResult !== null ? { preflightResult } : {}),
     };
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
