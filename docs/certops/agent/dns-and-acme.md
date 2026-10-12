@@ -213,6 +213,16 @@ from every log line, evidence record, and error message (including the JSON
 verdicts), an authentication failure shows *that* auth failed and never the
 token that failed — verify credentials against the provider directly.
 
+<a id="acme-gateway-in-front-of-ad-cs"></a>
+
+## ACME gateway in front of AD CS
+
+The native AD CS path is for a domain-joined Windows agent that can reach the CA over DCOM. It does not cover Linux hosts, or a Windows host with no RPC path to the CA.
+
+For those hosts, put an ACME gateway that your CA already trusts in front of AD CS, and point the agent at that gateway with the DNS-01 path above. TokenTimer still does not store CA credentials. The gateway is yours. This product does not ship one, and it does not enable AD CS enrollment by configuring the gateway.
+
+See [Microsoft AD CS](adcs.md) for the native Windows path. Enrollment there stays off until the release gate passes.
+
 ## Related
 
-[Agent overview](../agent.md) · [Configuration](configuration.md) · [Operations](operations.md)
+[Agent overview](../agent.md) · [Configuration](configuration.md) · [Microsoft AD CS](adcs.md) · [Operations](operations.md)

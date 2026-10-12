@@ -13,6 +13,7 @@ An agent with `execution.enabled: false` registers, heartbeats, and can report c
 ## Task guides
 
 - [DNS and ACME](agent/dns-and-acme.md): provider credentials, zone routing, DNS-01, and the external HTTP-01 workflow.
+- [Microsoft AD CS](agent/adcs.md): domain-joined Windows enrollment from an enterprise CA. Enrollment stays off until the release gate passes. Linux and non-domain hosts use an ACME gateway instead.
 - [Trust and signing-key rotation](agent/trust-and-key-rotation.md): CA distribution/revocation and signing-key changes.
 - [Operations](agent/operations.md): upgrades, troubleshooting, compatibility, and retirement.
 
