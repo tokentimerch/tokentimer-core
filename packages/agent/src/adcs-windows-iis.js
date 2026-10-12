@@ -5,9 +5,7 @@
  * Holds acquireEnrollmentLock across CNG keygen, certreq submit/retrieve,
  * and (on issued) the deploy tail.
  *
- * Executable selection remains gated off in IMPLEMENTED_ISSUER_KINDS until
- * durable journal recovery and continuation scheduling land; decision-6
- * validation runs on the dormant path before accept.
+ * Decision-6 validation runs before accept.
  */
 
 const path = require("node:path");

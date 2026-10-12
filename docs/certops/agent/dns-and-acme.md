@@ -221,7 +221,7 @@ The native AD CS path is for a domain-joined Windows agent that can reach the CA
 
 For those hosts, put an ACME gateway that your CA already trusts in front of AD CS, and point the agent at that gateway with the DNS-01 path above. TokenTimer still does not store CA credentials. The gateway is yours. This product does not ship one, and it does not enable AD CS enrollment by configuring the gateway.
 
-See [Microsoft AD CS](adcs.md) for the native Windows path. Enrollment there stays off until the release gate passes.
+See [Microsoft AD CS](adcs.md) for the native Windows path. The agent contacts a CA only when a local enrollment rule names it.
 
 ## Related
 

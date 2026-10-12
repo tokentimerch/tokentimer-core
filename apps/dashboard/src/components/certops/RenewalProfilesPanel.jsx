@@ -120,7 +120,7 @@ function IssuerChoice({ profile, issuers, saving, onSave }) {
         maxW='160px'
         aria-label={`Issuer for ${profile.name}`}
         aria-busy={saving ? 'true' : undefined}
-        title='ACME renews from a public CA. Choosing an AD CS issuer does not enable enrollment.'
+        title='ACME renews from a public CA. An AD CS issuer enrolls only when an agent enrollment rule names that CA and template.'
         value={value}
         isDisabled={saving}
         autoFocus
@@ -562,7 +562,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                                 profile,
                                 { issuerId: next },
                                 next
-                                  ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
+                                  ? 'AD CS issuer selected. Enrollment runs only for a CA and template named by an agent enrollment rule.'
                                   : 'Profile stays on ACME'
                               )
                             }

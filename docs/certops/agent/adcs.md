@@ -2,7 +2,7 @@
 
 The Windows agent can enroll from an enterprise Active Directory Certificate Services CA as the computer account. The private key stays on the host. TokenTimer does not store CA credentials.
 
-**Enrollment is not enabled.** Creating an issuer, running preflight, or selecting that issuer on a renewal profile does not issue a certificate. Issuance stays off until the release gate in [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md) passes on real hosts.
+A job with issuer kind `adcs` enrolls and renews. The agent contacts a CA only when a local enrollment rule names that CA and template. Creating an issuer or selecting it on a profile does not issue a certificate by itself. See [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md).
 
 Linux hosts, and any host that cannot reach the CA over DCOM, use an [ACME gateway in front of AD CS](dns-and-acme.md#acme-gateway-in-front-of-ad-cs) instead.
 

@@ -19,7 +19,7 @@ function AdcsDisclosure() {
   return (
     <SettingsIntegrationCard
       title='AD CS issuers'
-      description='For profiles that renew from Active Directory. Creating an issuer does not enable enrollment.'
+      description='For profiles that renew from Active Directory. Enrollment runs only when an agent enrollment rule names that CA and template.'
       icon={<Icon as={FiServer} boxSize={6} color='blue.500' />}
       status={{ label: 'Enrollment off', scheme: 'orange' }}
       isOpen={open}

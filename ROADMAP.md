@@ -1,8 +1,8 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-11. Control-plane enrollment records are on main
-in [#345](https://github.com/tokentimerch/tokentimer-core/pull/345). `adcs`
-is still not executable.
+Last reviewed: 2026-10-12. `adcs` is an executable issuer kind on the
+Windows agent. The agent still contacts a CA only when a local enrollment
+rule names it.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -81,8 +81,8 @@ called stable while it is open.
   ([#343](https://github.com/tokentimerch/tokentimer-core/pull/343)) and
   control-plane enrollment records, continuation scheduling, and issuer
   preflight ([#345](https://github.com/tokentimerch/tokentimer-core/pull/345))
-  are on `main` and stay inert. `adcs` remains out of the executable issuer
-  kinds until the ADR-0014 release gate passes on real hosts.
+  are on `main`. `adcs` is an executable issuer kind. The agent contacts a
+  CA only when a local enrollment rule names that CA and template.
 
 ---
 

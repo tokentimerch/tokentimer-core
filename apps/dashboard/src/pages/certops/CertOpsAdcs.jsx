@@ -796,7 +796,7 @@ export default function CertOpsAdcs() {
       await createIssuer(workspaceId, { kind, name: name.trim() });
       setName('');
       showSuccess(
-        'Issuer created. AD CS enrollment stays disabled until the release gate passes.'
+        'Issuer created. Enrollment runs only for a CA and template named by an agent enrollment rule.'
       );
       await reload();
     } catch (err) {

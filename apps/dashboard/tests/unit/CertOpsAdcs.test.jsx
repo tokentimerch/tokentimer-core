@@ -214,7 +214,7 @@ describe('CertOpsAdcs', () => {
       });
     });
     expect(showSuccessMock).toHaveBeenCalledWith(
-      expect.stringContaining('stays disabled until the release gate passes')
+      expect.stringContaining('named by an agent enrollment rule')
     );
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => {

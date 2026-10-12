@@ -41,10 +41,9 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "uncertain",
 ]);
 
-// AD CS executor + decision-6 validation may land incrementally, but
-// executable selection stays off until durable enrollment journal recovery
-// and control-plane continuation scheduling are integrated.
-const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme"]);
+// AD CS runs only after resolveJobIssuerKind accepts the kind. The agent
+// still refuses a CA that no local enrollment rule names.
+const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
 const MAX_REQUEST_ID = 0xffffffff;
