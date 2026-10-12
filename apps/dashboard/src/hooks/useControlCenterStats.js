@@ -226,26 +226,32 @@ const PAGINATED_LIST_PAGE_SIZE = 20;
  */
 export function useControlCenterListPage(endpointFn, seed) {
   const { workspaceId } = useWorkspace();
-  const [items, setItems] = useState(seed.items);
-  const [hasMore, setHasMore] = useState(seed.hasMore);
+  // null = show the stats seed as-is (avoids an empty first paint while a
+  // setState-during-render reseed is still pending).
+  const [pageItems, setPageItems] = useState(
+    /** @type {Array<object>|null} */ (null)
+  );
+  const [pageHasMore, setPageHasMore] = useState(
+    /** @type {boolean|null} */ (null)
+  );
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState(/** @type {string | null} */ (null));
   const seedKeyRef = useRef(null);
   const inFlightRef = useRef(false);
 
-  // Re-seed whenever the underlying stats payload changes (e.g. a manual
-  // refresh, or switching workspaces) rather than on every render, so
-  // in-progress infinite-scroll pagination isn't reset by unrelated
-  // re-renders.
-  const seedKey = `${workspaceId || ''}:${seed.items.length}:${seed.hasMore}`;
+  // Reset pagination overlay whenever the stats seed identity changes.
+  const seedKey = `${workspaceId || ''}:${seed.items.length}:${seed.hasMore}:${seed.items[0]?.id || ''}`;
   if (seedKeyRef.current !== seedKey) {
     seedKeyRef.current = seedKey;
-    if (items !== seed.items) {
-      setItems(seed.items);
-      setHasMore(seed.hasMore);
+    if (pageItems !== null || pageHasMore !== null || error !== null) {
+      setPageItems(null);
+      setPageHasMore(null);
       setError(null);
     }
   }
+
+  const items = pageItems ?? seed.items;
+  const hasMore = pageHasMore ?? seed.hasMore;
 
   const loadMore = useCallback(async () => {
     if (!workspaceId || inFlightRef.current || !hasMore) return;
@@ -259,12 +265,13 @@ export function useControlCenterListPage(endpointFn, seed) {
       });
       const page = response?.data || {};
       const nextItems = Array.isArray(page.items) ? page.items : [];
-      setItems(prev => {
-        const seen = new Set(prev.map(item => item.id));
+      setPageItems(prev => {
+        const base = prev ?? seed.items;
+        const seen = new Set(base.map(item => item.id));
         const deduped = nextItems.filter(item => !seen.has(item.id));
-        return [...prev, ...deduped];
+        return [...base, ...deduped];
       });
-      setHasMore(Boolean(page.hasMore));
+      setPageHasMore(Boolean(page.hasMore));
     } catch (err) {
       const message =
         err?.response?.data?.error ||
@@ -275,7 +282,7 @@ export function useControlCenterListPage(endpointFn, seed) {
       inFlightRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [workspaceId, hasMore, items.length, endpointFn]);
+  }, [workspaceId, hasMore, items.length, endpointFn, seed.items]);
 
   return { items, hasMore, isLoadingMore, error, loadMore };
 }

@@ -133,6 +133,7 @@ const { executeAdcsPreflight } = require("./issuers/adcs-preflight");
 const {
   deployCertificate,
   deployCertificateAndKey,
+  resolveAgentCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   getDeployMetrics,
@@ -1060,6 +1061,20 @@ async function reportIssuanceEvidence(client, jobId, issuance) {
 function resolveJobCertPath(job) {
   if (isAbsolutePathLike(job?.certPath)) return job.certPath;
   if (isAbsolutePathLike(job?.target?.reference)) return job.target.reference;
+  return null;
+}
+
+function readDeployedCertificatePem(deployTargets) {
+  const targets = Array.isArray(deployTargets) ? deployTargets : [];
+  for (const target of targets) {
+    if (typeof target.certPath !== "string" || target.certPath.length === 0) continue;
+    try {
+      const pem = fs.readFileSync(target.certPath, "utf8");
+      if (typeof pem === "string" && pem.includes("BEGIN CERTIFICATE")) return pem;
+    } catch (err) {
+      if (!err || err.code !== "ENOENT") return { unreadable: true };
+    }
+  }
   return null;
 }
 
@@ -2922,11 +2937,39 @@ async function executeRenewJob({
   emitInfo(`job ${jobId}: generating/reusing private key for CN ${csrCommonName}`);
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
+  const deployedCertificatePem = readDeployedCertificatePem(deployTargets);
+  if (deployedCertificatePem && deployedCertificatePem.unreadable) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "deployed certificate could not be read to verify the agent custody key",
+      ),
+      keyRotated: false,
+    };
+  }
+  const custodyChoice = resolveAgentCustodyKey(
+    execution.keysDir,
+    job.certificateId,
+    fs,
+    deployedCertificatePem ? { certificatePem: deployedCertificatePem } : {},
+  );
+  if (custodyChoice.quarantined && !custodyChoice.path) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "agent custody key is quarantined after a failed promotion and no rotation staging key remains",
+      ),
+      keyRotated: false,
+    };
+  }
   const forceRotation = job.keyRotation === true;
-  const keyExisted = fs.existsSync(keyPath);
-  const keyRotated = forceRotation || !keyExisted;
+  let keyExisted = fs.existsSync(keyPath) && !custodyChoice.quarantined;
+  let keyRotated = forceRotation || !keyExisted;
   let stagedKeyPath = keyPath;
-  if (keyRotated) {
+  if (custodyChoice.quarantined && custodyChoice.path) {
+    stagedKeyPath = custodyChoice.path;
+    keyRotated = true;
+  } else if (keyRotated) {
     const generateOpts = {
       keyPath,
       overwrite: forceRotation,
@@ -4812,6 +4855,12 @@ async function rollbackAfterFailedTail({
   if (!restored) {
     emitLog(log, `rollback restore failed for job ${jobId} at stage ${restore.stage}`);
   }
+  if (restore.custodyPromotionFailed === true) {
+    const custodyWarnMsg =
+      `job ${jobId}: restored certificate is installed but the agent custody key was not updated and must not be reused`;
+    defaultAgentLogger.warn(custodyWarnMsg);
+    mirrorToJobConsole("warn", custodyWarnMsg);
+  }
 
   // Best-effort re-reload so the service serves the restored content again.
   let reloadNote = "not requested";
@@ -5557,6 +5606,12 @@ async function runDeployReloadVerify({
       ? `job ${jobId}: deploy skipped, destination already up to date`
       : `job ${jobId}: deploy succeeded at ${certPath}`,
   );
+  if (deployResult.custodyPromotionFailed === true) {
+    const custodyWarnMsg =
+      `job ${jobId}: production certificate install succeeded but the agent custody key was not updated and must not be reused`;
+    defaultAgentLogger.warn(custodyWarnMsg);
+    mirrorToJobConsole("warn", custodyWarnMsg);
+  }
   await reportStepEvidence(client, jobId, [
     buildEvidenceItem({
       eventType: "deployment.updated",
@@ -5893,9 +5948,11 @@ async function executeDeployJob({
     keysDir.length > 0 &&
     isValidCertificateId(job.certificateId)
   ) {
-    const candidate = path.join(keysDir, `${job.certificateId}.key.pem`);
-    if (fs.existsSync(candidate)) {
-      keyPath = candidate;
+    const custodyChoice = resolveAgentCustodyKey(keysDir, job.certificateId, fs, {
+      certificatePem: job.certificatePem,
+    });
+    if (custodyChoice.path) {
+      keyPath = custodyChoice.path;
     }
   }
 

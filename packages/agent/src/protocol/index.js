@@ -21,6 +21,8 @@ const { validateAgentProtocolMessage } = require("./schemaValidation");
 
 const SCHEMA_VERSION = 1;
 const REQUEST_TIMEOUT_MS = 15_000;
+/** Log drain must finish inside job-log SHUTDOWN_DRAIN_MS (5000). */
+const JOB_LOG_POST_TIMEOUT_MS = 4000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_OUTBOUND_ENVELOPE_BYTES = 512 * 1024;
 
@@ -571,6 +573,15 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   const routeUrl = (route) => `${baseUrl}${route}`;
   const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl, onServerDate });
   const sendPlain = (route, token, body) => postPlainJson(routeUrl(route), { token, body, signal, requestTimeoutMs, fetchImpl, onServerDate });
+  // Shutdown aborts the run-loop signal before log drain; log posts use timeout only.
+  const sendJobLogs = (route, token, envelope) => postJson(routeUrl(route), {
+    token,
+    envelope,
+    signal: undefined,
+    requestTimeoutMs: JOB_LOG_POST_TIMEOUT_MS,
+    fetchImpl,
+    onServerDate,
+  });
 
   // Per-agent monotonically increasing message counter, included as the
   // envelope's `sequence` field on every outbound message (register,
@@ -726,7 +737,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     }
     const token = await resolveCredential(getCredential);
     const route = ROUTES.LOGS.replace("{jobId}", encodeURIComponent(jobId));
-    const { status, ok, json, retryAfterMs } = await send(route, token, buildEnvelope({
+    const { status, ok, json, retryAfterMs } = await sendJobLogs(route, token, buildEnvelope({
       agentId,
       protocolVersion,
       messageType: MESSAGE_TYPES.LOG,

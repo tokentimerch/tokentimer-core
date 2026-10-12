@@ -10,6 +10,7 @@ const {
   validateTargetConfig,
   deployCertificate,
   deployCertificateAndKey,
+  resolveAgentCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   parseDeployFileMode,
@@ -864,10 +865,217 @@ describe("deployCertificateAndKey", () => {
     });
 
     assert.equal(result.deployed, true);
+    assert.equal(result.custodyPromotionFailed, true);
     assert.equal(fs.existsSync(stagingKeyPath), true);
     assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
     assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
+    const liveCustodyStillStale =
+      fs.existsSync(custodyKeyPath) &&
+      fs.readFileSync(custodyKeyPath, "utf8") === OTHER_KEY_PEM;
+    assert.equal(liveCustodyStillStale, false);
+  });
+
+  it("does not reuse the live custody key when quarantine rename fails", async () => {
+    const dir = makeTempDir();
+    const prodDir = path.join(dir, "prod");
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const certPath = path.join(prodDir, "server.crt");
+    const prodKeyPath = path.join(prodDir, "server.key");
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    const stagingKeyPath = path.join(
+      custodyDir,
+      ".cert-1.key.pem.staging-1-abcdef",
+    );
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagingKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const realRename = require("node:fs/promises").rename;
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath: prodKeyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagingKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: (from, to) => {
+          const destination = String(to);
+          if (
+            destination === custodyKeyPath ||
+            destination.includes(".stale-")
+          ) {
+            return Promise.reject(new Error("injected custody rename failure"));
+          }
+          return realRename(from, to);
+        },
+      },
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(result.custodyPromotionFailed, true);
+    assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
     assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+    assert.equal(
+      fs.existsSync(`${custodyKeyPath}.custody-quarantine`),
+      true,
+    );
+    const next = resolveAgentCustodyKey(custodyDir, "cert-1");
+    assert.equal(next.quarantined, true);
+    assert.equal(next.path, stagingKeyPath);
+    assert.notEqual(next.path, custodyKeyPath);
+  });
+
+  it("does not reuse the live custody key when marker write and rename both fail", async () => {
+    const dir = makeTempDir();
+    const prodDir = path.join(dir, "prod");
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const certPath = path.join(prodDir, "server.crt");
+    const prodKeyPath = path.join(prodDir, "server.key");
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    const stagingKeyPath = path.join(
+      custodyDir,
+      ".cert-1.key.pem.staging-1-abcdef",
+    );
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagingKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+
+    const realRename = require("node:fs/promises").rename;
+    const realWriteFile = require("node:fs/promises").writeFile;
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath: prodKeyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagingKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: (from, to) => {
+          const destination = String(to);
+          if (
+            destination === custodyKeyPath ||
+            destination.includes(".stale-")
+          ) {
+            return Promise.reject(new Error("injected custody rename failure"));
+          }
+          return realRename(from, to);
+        },
+        writeFile: (file, data, options) => {
+          if (String(file).endsWith(".custody-quarantine")) {
+            return Promise.reject(new Error("injected marker write failure"));
+          }
+          return realWriteFile(file, data, options);
+        },
+      },
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(result.custodyPromotionFailed, true);
+    assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.equal(fs.existsSync(`${custodyKeyPath}.custody-quarantine`), false);
+    assert.notEqual(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+    const next = resolveAgentCustodyKey(custodyDir, "cert-1");
+    assert.equal(next.path, stagingKeyPath);
+    assert.notEqual(next.path, custodyKeyPath);
+  });
+
+  it("does not reuse a stale custody key when marker, rename, and truncate all fail", async () => {
+    const dir = makeTempDir();
+    const prodDir = path.join(dir, "prod");
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(prodDir, { recursive: true });
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const certPath = path.join(prodDir, "server.crt");
+    const prodKeyPath = path.join(prodDir, "server.key");
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    const stagingKeyPath = path.join(
+      custodyDir,
+      ".cert-1.key.pem.staging-1-abcdef",
+    );
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagingKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(certPath, CERT_PEM, { mode: 0o644 });
+
+    const realRename = require("node:fs/promises").rename;
+    const realWriteFile = require("node:fs/promises").writeFile;
+    const result = await deployCertificateAndKey({
+      target: {
+        type: "endpoint",
+        reference: "pair",
+        certPath,
+        keyPath: prodKeyPath,
+      },
+      certificatePem: CERT_PEM,
+      privateKeyPath: stagingKeyPath,
+      checkPath: makeCheckPath(dir),
+      _fsOverrides: {
+        rename: (from, to) => {
+          const destination = String(to);
+          if (
+            destination === custodyKeyPath ||
+            destination.includes(".stale-")
+          ) {
+            return Promise.reject(new Error("injected custody rename failure"));
+          }
+          return realRename(from, to);
+        },
+        writeFile: (file, data, options) => {
+          if (String(file).endsWith(".custody-quarantine")) {
+            return Promise.reject(new Error("injected marker write failure"));
+          }
+          return realWriteFile(file, data, options);
+        },
+        truncate: () => Promise.reject(new Error("injected truncate failure")),
+      },
+    });
+
+    assert.equal(result.deployed, true);
+    assert.equal(result.custodyPromotionFailed, true);
+    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+    assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
+    assert.equal(fs.existsSync(`${custodyKeyPath}.custody-quarantine`), false);
+    const deployed = fs.readFileSync(certPath, "utf8");
+    const next = resolveAgentCustodyKey(custodyDir, "cert-1", fs, {
+      certificatePem: deployed,
+    });
+    assert.equal(next.path, stagingKeyPath);
+    assert.notEqual(next.path, custodyKeyPath);
+  });
+
+  it("fails closed when the custody quarantine marker cannot be read", () => {
+    const dir = makeTempDir();
+    const custodyDir = path.join(dir, "keys");
+    fs.mkdirSync(custodyDir, { recursive: true });
+    const custodyKeyPath = path.join(custodyDir, "cert-1.key.pem");
+    const stagingKeyPath = path.join(
+      custodyDir,
+      ".cert-1.key.pem.staging-1-abcdef",
+    );
+    fs.writeFileSync(custodyKeyPath, OTHER_KEY_PEM, { mode: 0o600 });
+    fs.writeFileSync(stagingKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
+    const next = resolveAgentCustodyKey(custodyDir, "cert-1", {
+      ...fs,
+      accessSync(markerPath) {
+        if (String(markerPath).endsWith(".custody-quarantine")) {
+          const err = new Error("injected marker read failure");
+          err.code = "EACCES";
+          throw err;
+        }
+        return fs.accessSync(markerPath);
+      },
+    });
+    assert.equal(next.quarantined, true);
+    assert.equal(next.path, stagingKeyPath);
+    assert.notEqual(next.path, custodyKeyPath);
   });
 
   it("rolls back BOTH key and cert when the key write fails after cert write", async () => {

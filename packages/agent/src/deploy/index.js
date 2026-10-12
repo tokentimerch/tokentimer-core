@@ -1061,6 +1061,105 @@ function liveKeyPathFromRotationStaging(stagingPath) {
   return path.join(path.dirname(stagingPath), match[1]);
 }
 
+function custodyQuarantineMarkerPath(liveCustodyPath) {
+  return `${liveCustodyPath}.custody-quarantine`;
+}
+
+function rotationStagingSiblings(keysDir, liveBaseName, fsImpl = fs) {
+  let names = [];
+  try {
+    names = fsImpl.readdirSync(keysDir);
+  } catch (_err) {
+    return [];
+  }
+  const prefix = `.${liveBaseName}.staging-`;
+  return names
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => path.join(keysDir, name))
+    .sort();
+}
+
+function readPrivateKeyPem(filePath, fsImpl) {
+  try {
+    const text = fsImpl.readFileSync(filePath, "utf8");
+    if (typeof text !== "string" || !text.includes("PRIVATE KEY")) return null;
+    return text;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function privateKeyMatchesCertificate(keyPem, certificatePem) {
+  if (typeof certificatePem !== "string" || !certificatePem.includes("BEGIN CERTIFICATE")) {
+    return null;
+  }
+  try {
+    const certificate = new crypto.X509Certificate(certificatePem);
+    const fromKey = crypto.createPublicKey(keyPem);
+    return fromKey.equals(certificate.publicKey) === true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+/**
+ * Live custody path to use for a later renew or standalone deploy.
+ * A quarantine marker, an unreadable marker, or a live file that is no
+ * longer a private key means the previous key must not be reused. When
+ * certificatePem is set, a candidate is usable only if its public key
+ * matches that certificate, so a stale file left after a failed wipe is
+ * not selected. A kept rotation staging sibling is the replacement.
+ *
+ * @param {string} keysDir
+ * @param {string} certificateId
+ * @param {{ existsSync?: Function, readdirSync?: Function, accessSync?: Function, readFileSync?: Function }} [fsImpl]
+ * @param {{ certificatePem?: string }} [options]
+ * @returns {{ path: string|null, quarantined: boolean }}
+ */
+function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs, options = {}) {
+  const liveBaseName = `${certificateId}.key.pem`;
+  const live = path.join(keysDir, liveBaseName);
+  const marker = custodyQuarantineMarkerPath(live);
+  let quarantined = false;
+  try {
+    if (typeof fsImpl.accessSync === "function") {
+      fsImpl.accessSync(marker);
+      quarantined = true;
+    } else {
+      quarantined = fsImpl.existsSync(marker) === true;
+    }
+  } catch (err) {
+    // Missing marker is the normal case. Any other read error means we
+    // cannot prove the live key is safe to reuse.
+    quarantined = !err || err.code !== "ENOENT";
+  }
+  const certificatePem = options && options.certificatePem;
+  const livePem =
+    !quarantined && fsImpl.existsSync(live)
+      ? readPrivateKeyPem(live, fsImpl)
+      : null;
+  const liveMatches = livePem
+    ? privateKeyMatchesCertificate(livePem, certificatePem)
+    : false;
+  if (livePem && (liveMatches === null || liveMatches === true)) {
+    return { path: live, quarantined: false };
+  }
+  const siblings = rotationStagingSiblings(keysDir, liveBaseName, fsImpl);
+  if (typeof certificatePem === "string" && certificatePem.includes("BEGIN CERTIFICATE")) {
+    for (let index = siblings.length - 1; index >= 0; index -= 1) {
+      const siblingPem = readPrivateKeyPem(siblings[index], fsImpl);
+      if (siblingPem && privateKeyMatchesCertificate(siblingPem, certificatePem) === true) {
+        return { path: siblings[index], quarantined: true };
+      }
+    }
+    return { path: null, quarantined: quarantined || livePem !== null };
+  }
+  if (siblings.length > 0) {
+    return { path: siblings[siblings.length - 1], quarantined };
+  }
+  return { path: null, quarantined };
+}
+
 /**
  * Atomically deploys a matched certificate + private-key pair.
  *
@@ -1405,6 +1504,7 @@ async function deployCertificateAndKey({
     // production destination is a different path — otherwise a later
     // standalone deploy cannot find a permitted local key reference.
     const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
+    let custodyPromotionFailed = false;
     if (
       retainPrivateKeyStaging !== true &&
       isRotationStagingKeyPath(normalizedPrivateKeyPath) &&
@@ -1414,15 +1514,16 @@ async function deployCertificateAndKey({
         normalizedPrivateKeyPath,
       );
       let canRemoveStaging = true;
-      if (
+      const custodyResolved =
         liveCustodyPath &&
         path.normalize(path.resolve(liveCustodyPath)) !== realKeyDestination
-      ) {
+          ? path.normalize(path.resolve(liveCustodyPath))
+          : null;
+      if (custodyResolved) {
         canRemoveStaging = false;
         try {
           // Promote via atomic write so a failed custody update never
           // deletes the only remaining copy of the rotated key.
-          const custodyResolved = path.normalize(path.resolve(liveCustodyPath));
           const stagingKeyBytes = await fspImpl.readFile(normalizedPrivateKeyPath);
           await atomicWrite(fspImpl, custodyResolved, stagingKeyBytes, {
             mode: DEPLOYED_KEY_DEFAULT_MODE,
@@ -1432,9 +1533,58 @@ async function deployCertificateAndKey({
             throw new Error("custody key promotion verification failed");
           }
           canRemoveStaging = true;
+          try {
+            await fspImpl.unlink(custodyQuarantineMarkerPath(custodyResolved));
+          } catch (_unlinkErr) {
+            // No marker, or it could not be removed. A later lookup still
+            // prefers the live file once the marker is gone.
+          }
         } catch (_err) {
           // Production install already committed; keep staging for recovery.
+          // The marker is written before the rename so a failed move still
+          // stops later jobs from reading the old key at the live filename.
           canRemoveStaging = false;
+          custodyPromotionFailed = true;
+          if (custodyResolved !== realKeyDestination) {
+            let markerWritten = false;
+            try {
+              await fspImpl.writeFile(
+                custodyQuarantineMarkerPath(custodyResolved),
+                "custody promotion failed\n",
+                { mode: 0o600 },
+              );
+              markerWritten = true;
+            } catch (_markerErr) {
+              markerWritten = false;
+            }
+            let movedAside = false;
+            try {
+              await fspImpl.access(custodyResolved);
+              const staleAsidePath = path.join(
+                path.dirname(custodyResolved),
+                `${path.basename(custodyResolved)}.stale-${process.pid}`,
+              );
+              await fspImpl.rename(custodyResolved, staleAsidePath);
+              movedAside = true;
+            } catch (_renameErr) {
+              movedAside = false;
+            }
+            // Directory permission can block both a new marker and a rename
+            // while the existing file is still writable. Wipe it in place so
+            // the old key bytes cannot be selected by a later job.
+            if (!markerWritten && !movedAside) {
+              try {
+                if (typeof fspImpl.truncate === "function") {
+                  await fspImpl.truncate(custodyResolved, 0);
+                } else {
+                  await fspImpl.writeFile(custodyResolved, "", { flag: "r+" });
+                }
+              } catch (_wipeErr) {
+                // Last resort failed. Lookup still refuses a non-key file
+                // and an unreadable marker.
+              }
+            }
+          }
         }
       }
       if (canRemoveStaging) {
@@ -1496,6 +1646,7 @@ async function deployCertificateAndKey({
       },
       firstDeploy:
         existingCert === null && existingKey === null && existingChain === null,
+      ...(custodyPromotionFailed ? { custodyPromotionFailed: true } : {}),
     };
   });
 }
@@ -1586,6 +1737,7 @@ module.exports = {
   validateTargetConfig,
   deployCertificate,
   deployCertificateAndKey,
+  resolveAgentCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   pruneDeployBackups,

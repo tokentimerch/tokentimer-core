@@ -357,8 +357,21 @@ export default function CertificateIdentityDetailModal({
       );
   const hiddenPeriodCount =
     (detail.sources || []).length - visibleSources.length;
+  // Job history keys off managed-certificate id. Deep links from jobs often
+  // open without token enrichment, so certificateFields may be null; fall
+  // back to the identity's managedCertificateId / source ids. Never use
+  // detail.id when identityId is set: that id is the identity, not the subject.
+  const managedCertificateId =
+    certificateFields?.id ||
+    detail.managedCertificateId ||
+    (detail.sources || [])
+      .map(source => source.managedCertificateId || source.id)
+      .find(Boolean) ||
+    (!detail.identityId ? detail.id : null) ||
+    null;
   const certificateFacts = {
     ...certificateFields,
+    ...(managedCertificateId ? { id: managedCertificateId } : {}),
     lifecycleStatus: detail.lifecycleStatus,
     lifecycleDisplay: detail.lifecycleDisplay,
     status:

@@ -390,6 +390,7 @@ export default function CertOpsCertificates() {
         const identityFromManagedCert = sourceCert => ({
           id: sourceCert.id,
           managedCertificateId: sourceCert.id,
+          tokenId: sourceCert.tokenId ?? null,
           fingerprintSha256: sourceCert.fingerprintSha256 || null,
           commonName: sourceCert.commonName || null,
           subjectAltNames: sourceCert.subjectAltNames || [],
@@ -438,7 +439,14 @@ export default function CertOpsCertificates() {
         if (cancelled) return;
         if (identity) {
           setCsrModalOpen(false);
-          setDetailsTarget(identity);
+          // Pin the URL managed-certificate id even when list enrichment
+          // returns a grouped identity (open-period managed id may differ
+          // from a historical job subject matched via sources).
+          setDetailsTarget({
+            ...identity,
+            managedCertificateId: certificateIdInUrl,
+            tokenId: identity.tokenId ?? cert.tokenId ?? null,
+          });
           stripCertificateId();
         } else {
           setFocusedCertificateId('');
