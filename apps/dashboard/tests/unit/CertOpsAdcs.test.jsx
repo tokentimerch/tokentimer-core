@@ -159,25 +159,13 @@ describe('CertOpsAdcs', () => {
 
     renderPage();
 
-    expect(
-      await screen.findByText(
-        (_, node) =>
-          node?.tagName === 'P' &&
-          node.textContent.startsWith('Awaiting CA approval ·')
-      )
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Awaiting CA approval')).toBeInTheDocument();
     expect(screen.getByText(/RequestId\s+42/)).toBeInTheDocument();
     expect(screen.getAllByText(/key prefix abababababab/)).toHaveLength(2);
     expect(screen.getByText(/stays on issuer version 1/)).toBeInTheDocument();
     expect(screen.queryByText(/Cancel and re-enroll/)).not.toBeInTheDocument();
     expect(screen.getAllByText(/CA key changed/).length).toBeGreaterThan(0);
-    expect(
-      screen.getByText(
-        (_, node) =>
-          node?.tagName === 'P' &&
-          node.textContent.startsWith('Submission uncertain ·')
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText('Submission uncertain')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Reconcile/ })
     ).toBeInTheDocument();
