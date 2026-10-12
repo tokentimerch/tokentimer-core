@@ -6,12 +6,29 @@ import {
   Icon,
   SimpleGrid,
 } from '@chakra-ui/react';
-import { FiServer } from 'react-icons/fi';
+import { FiRefreshCw, FiServer } from 'react-icons/fi';
 import { useOutletContext } from 'react-router';
-import { DashboardPanel } from '../../components/DashboardPrimitives.jsx';
 import { SettingsIntegrationCard } from '../../components/SettingsIntegrationHub.jsx';
 import RenewalProfilesPanel from '../../components/certops/RenewalProfilesPanel.jsx';
 import CertOpsAdcs from './CertOpsAdcs.jsx';
+
+function ProfilesDisclosure() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <SettingsIntegrationCard
+      title='Renewal profiles'
+      description='The renewal contract for the certificates that use it. A profile is created from a successful issuance, and its deployment details stay fixed to what already worked.'
+      icon={<Icon as={FiRefreshCw} boxSize={6} color='blue.500' />}
+      hideStatus
+      isOpen={open}
+      onToggle={() => setOpen(current => !current)}
+      panelId='certops-renewal-profiles'
+    >
+      <RenewalProfilesPanel />
+    </SettingsIntegrationCard>
+  );
+}
 
 function AdcsDisclosure() {
   const [open, setOpen] = useState(false);
@@ -21,7 +38,7 @@ function AdcsDisclosure() {
       title='AD CS issuers'
       description='For profiles that renew from Active Directory. Enrollment runs only when an agent enrollment rule names that CA and template.'
       icon={<Icon as={FiServer} boxSize={6} color='blue.500' />}
-      status={{ label: 'Enrollment off', scheme: 'orange' }}
+      hideStatus
       isOpen={open}
       onToggle={() => setOpen(current => !current)}
       unmountOnExit
@@ -56,9 +73,7 @@ export default function CertOpsRenewals() {
           </AlertDescription>
         </Alert>
       ) : null}
-      <DashboardPanel>
-        <RenewalProfilesPanel />
-      </DashboardPanel>
+      <ProfilesDisclosure />
       <AdcsDisclosure />
     </SimpleGrid>
   );

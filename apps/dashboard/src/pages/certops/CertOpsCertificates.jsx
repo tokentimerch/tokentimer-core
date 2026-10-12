@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from 'react-router';
 import {
   Box,
   Button,
+  Checkbox,
   Flex,
   HStack,
   IconButton,
@@ -60,7 +61,6 @@ import {
   expiryDescriptor,
   formatDate,
   isRetiredCertificate,
-  isRetiredStatus,
   renewalSetupDescriptor,
   sourceLabel,
   statusLabel,
@@ -220,15 +220,46 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
   return count;
 }
 
+function useUnmanagedCertificateCount({ workspaceId, enabled, source, tick }) {
+  const [count, setCount] = useState(null);
+
+  useEffect(() => {
+    if (!workspaceId || enabled !== true) {
+      setCount(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    listCertificates(workspaceId, {
+      grouped: true,
+      limit: 1,
+      offset: 0,
+      source,
+      unmanaged: true,
+      excludeRetired: true,
+      signal: controller.signal,
+    })
+      .then(page => {
+        if (!cancelled) setCount(Number(page?.pagination?.total ?? 0));
+      })
+      .catch(() => {
+        if (!cancelled) setCount(null);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [workspaceId, enabled, source, tick]);
+
+  return count;
+}
+
 /**
  * Certificates tab: the managed certificate inventory for this workspace.
  *
- * Retired certificates (revoked/decommissioned) are hidden by default via
- * `excludeRetired`, the same convention the token inventory and the Control
- * Center summary use (see isRetiredStatus/RETIRE_STATUSES), so the daily view
- * is not dominated by dead certificates. The "Retired" toggle asks the server
- * for them explicitly rather than filtering a fetched page client-side, so
- * the total and pagination stay correct for whichever population is shown.
+ * Retired certificates (revoked/decommissioned) and unmanaged certificates
+ * (no open management period) are hidden by default. Each checkbox asks the
+ * server for that population, so the page total stays correct.
  */
 export default function CertOpsCertificates() {
   const location = useLocation();
@@ -299,13 +330,9 @@ export default function CertOpsCertificates() {
   } = useCertOpsListUrlState({ filters: CERTOPS_CERTIFICATE_FILTERS });
 
   const showRetired = filters.showRetired === 'true';
-  const statusImpliesRetired = isRetiredStatus(filters.status);
-  // When Status is Revoked/Decommissioned, retired rows are in the result set
-  // even if the lifecycle control still says "Active only" in the URL.
-  const lifecycleIncludesRetired = showRetired || statusImpliesRetired;
-  const unmanagedOnly = filters.management === 'unmanaged';
-  // An explicit status pick is more precise than the coarse retired toggle;
-  // let it through even if that status happens to be revoked/decommissioned.
+  const showUnmanaged =
+    filters.showUnmanaged === 'true' || filters.management === 'unmanaged';
+  // An explicit revoked/decommissioned status already asks for those rows.
   const excludeRetired = !filters.status && !showRetired ? true : undefined;
   const [sort, setSort] = useState({ key: 'expiry', direction: 'asc' });
   const [searchResetSignal, setSearchResetSignal] = useState(0);
@@ -321,17 +348,20 @@ export default function CertOpsCertificates() {
       status: filters.status || undefined,
       source: filters.source || undefined,
       excludeRetired,
-      unmanaged: unmanagedOnly || undefined,
+      unmanaged: showUnmanaged ? undefined : false,
       q: filters.q || undefined,
       sort: sort.key,
       direction: sort.direction,
     });
   // Active only also hides a revoked or decommissioned row a stale server
   // still returned. An explicit status filter is left as the server sent it.
-  const visibleCertificates =
-    filters.status || showRetired
-      ? certificates
-      : certificates.filter(item => !isRetiredCertificate(item));
+  const visibleCertificates = certificates.filter(item => {
+    if (!filters.status && !showRetired && isRetiredCertificate(item)) {
+      return false;
+    }
+    if (!showUnmanaged && item.managed === false) return false;
+    return true;
+  });
   const searchIconColor = useColorModeValue(
     'var(--chakra-colors-gray-500)',
     'rgba(148, 163, 184, 0.86)'
@@ -507,6 +537,12 @@ export default function CertOpsCertificates() {
     source: filters.source || undefined,
     tick: retiredCountTick,
   });
+  const unmanagedCount = useUnmanagedCertificateCount({
+    workspaceId,
+    enabled,
+    source: filters.source || undefined,
+    tick: retiredCountTick,
+  });
 
   const firstPage = () => setPage({ offset: 0 });
   const pageIsPastEnd = Boolean(
@@ -545,6 +581,7 @@ export default function CertOpsCertificates() {
   const visibleFilterLabels = activeFilterLabels.filter(
     entry =>
       entry.key !== 'showRetired' &&
+      entry.key !== 'showUnmanaged' &&
       entry.key !== 'q' &&
       entry.key !== 'management'
   );
@@ -638,57 +675,40 @@ export default function CertOpsCertificates() {
             </option>
           ))}
         </Select>
-        <Select
-          size='sm'
-          maxW='280px'
-          value={lifecycleIncludesRetired ? 'including' : 'active'}
-          onChange={event =>
-            setFilter(
-              'showRetired',
-              event.target.value === 'including' ? 'true' : ''
-            )
-          }
-          aria-label='Filter by certificate lifecycle'
-          title={
-            retiredCount !== null
-              ? `${retiredCount} retired certificate${retiredCount === 1 ? '' : 's'} in this workspace`
-              : undefined
-          }
-        >
-          <option value='active'>
-            Active only
-            {retiredCount !== null ? ` (${retiredCount} retired hidden)` : ''}
-          </option>
-          <option value='including'>Including retired</option>
-        </Select>
-        <Select
-          size='sm'
-          maxW='180px'
-          value={unmanagedOnly ? 'unmanaged' : ''}
-          onChange={event => setFilter('management', event.target.value)}
-          aria-label='Filter by management state'
-        >
-          <option value=''>All management</option>
-          <option value='unmanaged'>Unmanaged only</option>
-        </Select>
+        {retiredCount > 0 || showRetired ? (
+          <Checkbox
+            isChecked={showRetired}
+            onChange={event =>
+              setFilter('showRetired', event.target.checked ? 'true' : '')
+            }
+            size='sm'
+          >
+            Show retired{retiredCount > 0 ? ` (${retiredCount})` : ''}
+          </Checkbox>
+        ) : null}
+        {unmanagedCount > 0 || showUnmanaged ? (
+          <Checkbox
+            isChecked={showUnmanaged}
+            onChange={event =>
+              setFilter({
+                showUnmanaged: event.target.checked ? 'true' : '',
+                management: '',
+              })
+            }
+            size='sm'
+          >
+            Show unmanaged{unmanagedCount > 0 ? ` (${unmanagedCount})` : ''}
+          </Checkbox>
+        ) : null}
       </HStack>
 
-      {filters.q ||
-      lifecycleIncludesRetired ||
-      unmanagedOnly ||
-      visibleFilterLabels.length > 0 ? (
+      {filters.q || visibleFilterLabels.length > 0 ? (
         <HStack spacing={2} mb={2} flexWrap='wrap' align='center'>
           <Text fontSize='xs' color={muted}>
             Filtered by{' '}
             {[
               ...(filters.q ? [{ label: 'Search', value: filters.q }] : []),
               ...visibleFilterLabels,
-              ...(lifecycleIncludesRetired
-                ? [{ label: 'Lifecycle', value: 'Including retired' }]
-                : []),
-              ...(unmanagedOnly
-                ? [{ label: 'Management', value: 'Unmanaged only' }]
-                : []),
             ]
               .map(entry => `${entry.label}: ${entry.value}`)
               .join(', ')}
@@ -723,12 +743,16 @@ export default function CertOpsCertificates() {
             title={
               hasActiveFilters
                 ? 'No certificates match these filters'
-                : 'No managed certificates yet'
+                : retiredCount > 0 || unmanagedCount > 0
+                  ? 'No certificates in view'
+                  : 'No managed certificates yet'
             }
             description={
               hasActiveFilters
                 ? 'Clear the filters above to see the rest of the inventory.'
-                : 'Certificates appear here once TokenTimer discovers, imports, or issues one for this workspace.'
+                : retiredCount > 0 || unmanagedCount > 0
+                  ? 'Retired and unmanaged certificates are hidden. Show them to see revoked, decommissioned, and unregistered certificates.'
+                  : 'Certificates appear here once TokenTimer discovers, imports, or issues one for this workspace.'
             }
             py={6}
           />

@@ -53,6 +53,7 @@ const {
   resolveRenewalPerCaCap,
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
+const { createEnrollment } = require("./certificateEnrollments");
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
@@ -251,6 +252,7 @@ async function findCertificatesDueForRenewal({
             cp.key_mode AS profile_key_mode,
             cp.public_metadata AS profile_public_metadata,
             cp.renew_before_days AS profile_renew_before_days,
+            cp.issuer_id AS profile_issuer_id,
             NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
               AS certificate_ca_endpoint,
             NULLIF(
@@ -353,6 +355,176 @@ async function countCertificatesWithAutoRenewDisabled({
   return Number(result.rows?.[0]?.disabled_count) || 0;
 }
 
+function incompleteRenewalProfile(message) {
+  const error = new Error(message);
+  error.code = CERTOPS_RENEWAL_PROFILE_INCOMPLETE;
+  return error;
+}
+
+function adcsFieldsFromProfile(certificate) {
+  const profile = certificate.profile_public_metadata?.renewalProfile;
+  const target = profile?.target;
+  const binding = target?.binding;
+  if (
+    !target ||
+    target.type !== "windows-iis" ||
+    typeof target.reference !== "string" ||
+    typeof target.store !== "string" ||
+    !binding ||
+    typeof binding.site !== "string" ||
+    !Number.isInteger(binding.port)
+  ) {
+    throw incompleteRenewalProfile(
+      "AD CS renewal profile needs a windows-iis target with store and binding",
+    );
+  }
+  const sans = profile.sanPolicy?.sans;
+  if (!Array.isArray(sans) || sans.length === 0 || !sans.includes(target.reference)) {
+    throw incompleteRenewalProfile(
+      "AD CS renewal profile names must include the certificate name",
+    );
+  }
+  if (profile.keyAlgorithm !== "rsa" && profile.keyAlgorithm !== "ecdsa") {
+    throw incompleteRenewalProfile("AD CS renewal profile key algorithm is missing");
+  }
+  if (!Number.isInteger(profile.keySize)) {
+    throw incompleteRenewalProfile("AD CS renewal profile key size is missing");
+  }
+  return {
+    target,
+    authorizedDnsNames: sans,
+    keyAlgorithm: profile.keyAlgorithm,
+    keySize: profile.keySize,
+  };
+}
+
+const OPEN_ENROLLMENT_STATES = [
+  "requested",
+  "prepared",
+  "submitting",
+  "pending_issuance",
+  "submission_uncertain",
+  "issued",
+  "validation_deferred",
+  "validated",
+  "installing",
+  "install_failed",
+];
+
+async function createAutomaticAdcsRenewal({
+  dbPool,
+  certificate,
+  mode,
+  env,
+  auditWriter,
+}) {
+  const issuer = await dbPool.query(
+    `SELECT kind FROM certificate_issuers WHERE workspace_id = $1 AND id = $2`,
+    [certificate.workspace_id, certificate.profile_issuer_id],
+  );
+  if (issuer.rows[0]?.kind !== "adcs") return null;
+
+  const fields = adcsFieldsFromProfile(certificate);
+  const agent = await dbPool.query(
+    `SELECT id
+       FROM certops_agents
+      WHERE workspace_id = $1
+        AND status = 'active'
+        AND declared_target_selectors @> jsonb_build_array($2::text)
+      ORDER BY last_seen_at DESC NULLS LAST
+      LIMIT 1`,
+    [certificate.workspace_id, fields.target.reference],
+  );
+  if (!agent.rows[0]) {
+    const error = new Error("no active agent declares this AD CS renewal target");
+    error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+    throw error;
+  }
+  const open = await dbPool.query(
+    `SELECT id
+       FROM certificate_enrollments
+      WHERE workspace_id = $1
+        AND certificate_id = $2
+        AND state = ANY($3::text[])
+      LIMIT 1`,
+    [certificate.workspace_id, certificate.id, OPEN_ENROLLMENT_STATES],
+  );
+  if (open.rows[0]) return { job: { id: null, operation: "renew" }, created: false };
+
+  const idempotencyKey = renewalIdempotencyKey(
+    certificate.id,
+    certificate.not_after,
+  );
+  const existingJob = await dbPool.query(
+    `SELECT id
+       FROM certificate_jobs
+      WHERE workspace_id = $1
+        AND idempotency_key = $2
+      LIMIT 1`,
+    [certificate.workspace_id, idempotencyKey],
+  );
+  if (existingJob.rows[0]) {
+    return { job: { id: existingJob.rows[0].id, operation: "renew" }, created: false };
+  }
+
+  let created;
+  try {
+    created = await createEnrollment({
+      client: dbPool,
+      workspaceId: certificate.workspace_id,
+      profileId: certificate.profile_id,
+      certificateId: certificate.id,
+      agentId: agent.rows[0].id,
+      source: "automation",
+      mode,
+      env,
+      idempotencyKey,
+      target: {
+        type: "windows-iis",
+        reference: fields.target.reference,
+        store: fields.target.store,
+        binding: {
+          site: fields.target.binding.site,
+          port: fields.target.binding.port,
+          ...(fields.target.binding.sniHost
+            ? { sniHost: fields.target.binding.sniHost }
+            : {}),
+        },
+      },
+      authorizedDnsNames: fields.authorizedDnsNames,
+      keyAlgorithm: fields.keyAlgorithm,
+      keySize: fields.keySize,
+    });
+  } catch (error) {
+    if (error?.code === "CERTOPS_ENROLLMENT_REPLAY") {
+      return { job: { id: null, operation: "renew" }, created: false };
+    }
+    throw error;
+  }
+  await auditWriter({
+    client: dbPool,
+    actorUserId: null,
+    subjectUserId: null,
+    action: "CERTOPS_JOB_CREATED_AUTOMATIC",
+    targetType: "certificate_job",
+    targetId: null,
+    workspaceId: certificate.workspace_id,
+    metadata: {
+      jobId: String(created.jobId),
+      enrollmentId: String(created.enrollmentId),
+      operation: "renew",
+      mode,
+      subjectType: "managed_certificate",
+      subjectId: String(certificate.id),
+      commonName: certificate.common_name || null,
+      issuerId: String(certificate.profile_issuer_id),
+      source: "automation",
+      trigger: "renewal_scheduler",
+    },
+  });
+  return { job: { id: created.jobId, operation: "renew" }, created: true };
+}
+
 async function createRenewalJobForCertificate({
   dbPool,
   certificate,
@@ -371,6 +543,17 @@ async function createRenewalJobForCertificate({
     throw new Error(
       "renewalScheduler: 'renew' must never be a trust-anchor operation",
     );
+  }
+
+  if (certificate.profile_issuer_id) {
+    const adcsRenewal = await createAutomaticAdcsRenewal({
+      dbPool,
+      certificate,
+      env,
+      mode,
+      auditWriter,
+    });
+    if (adcsRenewal) return adcsRenewal;
   }
 
   // Resolve the immutable execution contract BEFORE opening the insert

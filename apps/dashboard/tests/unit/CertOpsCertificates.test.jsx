@@ -46,6 +46,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
+  useCertOpsEnabled: () => true,
 }));
 
 vi.mock('../../src/components/certops/useCertOpsCertificates.js', () => ({
@@ -593,40 +594,52 @@ describe('CertOpsCertificates list states', () => {
 });
 
 describe('CertOpsCertificates filters', () => {
-  it('excludes retired certificates by default', () => {
+  it('excludes retired and unmanaged certificates by default', () => {
     renderPage();
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ excludeRetired: true })
+      expect.objectContaining({ excludeRetired: true, unmanaged: false })
     );
   });
 
-  it('includes retired certificates once lifecycle is set to Including retired', () => {
+  it('includes retired certificates when Show retired is checked', async () => {
+    listCertificatesMock.mockImplementation((_workspaceId, params) =>
+      Promise.resolve({
+        items: [],
+        pagination: {
+          limit: 1,
+          offset: 0,
+          total: params?.status === 'revoked' || params?.status === 'decommissioned' ? 1 : 0,
+        },
+      })
+    );
     renderPage();
 
-    fireEvent.change(screen.getByLabelText('Filter by certificate lifecycle'), {
-      target: { value: 'including' },
-    });
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Show retired \(2\)/ }));
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ excludeRetired: undefined })
     );
-    expect(
-      screen.getByText(/Lifecycle: Including retired/)
-    ).toBeInTheDocument();
   });
 
-  it('filters unmanaged certificates from the management control', () => {
+  it('includes unmanaged certificates when Show unmanaged is checked', async () => {
+    listCertificatesMock.mockImplementation((_workspaceId, params) =>
+      Promise.resolve({
+        items: [],
+        pagination: {
+          limit: 1,
+          offset: 0,
+          total: params?.unmanaged === true ? 4 : 0,
+        },
+      })
+    );
     renderPage();
 
-    fireEvent.change(screen.getByLabelText('Filter by management state'), {
-      target: { value: 'unmanaged' },
-    });
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Show unmanaged \(4\)/ }));
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ unmanaged: true })
+      expect.objectContaining({ unmanaged: undefined })
     );
-    expect(screen.getByText(/Management: Unmanaged only/)).toBeInTheDocument();
   });
 
   it('keeps CSR workflows in the header as a secondary action', () => {
@@ -1277,7 +1290,7 @@ describe('CertOpsCertificates renewal setup and detach', () => {
 });
 
 describe('CertOpsCertificates retired count badge', () => {
-  it('shows a retired count on the lifecycle filter once the probe resolves', async () => {
+  it('shows a retired count on the checkbox once the probe resolves', async () => {
     listCertificatesMock.mockImplementation((_workspaceId, params) =>
       Promise.resolve({
         items: [],
@@ -1291,22 +1304,19 @@ describe('CertOpsCertificates retired count badge', () => {
 
     renderPage();
 
-    const lifecycle = await screen.findByLabelText(
-      'Filter by certificate lifecycle'
-    );
-    await vi.waitFor(() => {
-      expect(lifecycle).toHaveDisplayValue(/3 retired hidden/);
-    });
+    expect(
+      await screen.findByRole('checkbox', { name: 'Show retired (3)' })
+    ).not.toBeChecked();
   });
 
-  it('does not show a retired count while the probe is still loading', () => {
+  it('does not show a retired checkbox while the probe is still loading', () => {
     listCertificatesMock.mockImplementation(() => new Promise(() => {}));
 
     renderPage();
 
-    const lifecycle = screen.getByLabelText('Filter by certificate lifecycle');
-    expect(lifecycle).toHaveDisplayValue('Active only');
-    expect(lifecycle).not.toHaveDisplayValue(/retired hidden/);
+    expect(
+      screen.queryByRole('checkbox', { name: /Show retired/ })
+    ).not.toBeInTheDocument();
   });
 
   it('re-probes the retired count after a certificate is retired', async () => {
@@ -1328,7 +1338,7 @@ describe('CertOpsCertificates retired count badge', () => {
 
     renderPage();
 
-    await screen.findByLabelText('Filter by certificate lifecycle');
+    await screen.findByRole('checkbox', { name: /Show retired/ });
     const callsBeforeRetire = listCertificatesMock.mock.calls.length;
 
     fireEvent.click(screen.getByRole('button', { name: 'Change lifecycle' }));
@@ -1462,7 +1472,7 @@ describe('CertOpsCertificates certificateId deep links', () => {
 });
 
 describe('CertOpsCertificates combined lifecycle filters', () => {
-  it('shows Including retired when Status is Revoked', async () => {
+  it('includes revoked rows from the status filter without checking Show retired', async () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({ certificates: [certificate({ status: 'revoked' })] })
     );
@@ -1474,15 +1484,12 @@ describe('CertOpsCertificates combined lifecycle filters', () => {
     });
 
     await waitFor(() => {
-      expect(
-        screen.getByLabelText('Filter by certificate lifecycle')
-      ).toHaveValue('including');
+      expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: 'revoked',
+          excludeRetired: undefined,
+        })
+      );
     });
-    expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        status: 'revoked',
-        excludeRetired: undefined,
-      })
-    );
   });
 });

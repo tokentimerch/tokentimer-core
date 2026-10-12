@@ -41,18 +41,18 @@ export const CERTOPS_JOB_FILTERS = {
 };
 
 /**
- * Filters the certificate list accepts. `showRetired` is a display toggle
- * rather than a server field name: 'true' means the retired
- * (revoked/decommissioned) rows are included, and the default ('', hidden)
- * is what the server sees translated into `excludeRetired=true`, not a
- * literal query param of its own. `management=unmanaged` is the URL form of
- * the unmanaged-only inventory filter.
+ * Filters the certificate list accepts. `showRetired` and `showUnmanaged`
+ * are display toggles: 'true' includes that population, and the default
+ * ('', hidden) is translated into `excludeRetired=true` and `unmanaged=false`.
+ * `management=unmanaged` remains readable so older links still reveal
+ * unmanaged certificates.
  */
 export const CERTOPS_CERTIFICATE_FILTERS = {
   q: { label: 'Search', default: '' },
   status: { label: 'Status', default: '' },
   source: { label: 'Source', default: '' },
   showRetired: { label: 'Lifecycle', default: '' },
+  showUnmanaged: { label: 'Management', default: '' },
   management: { label: 'Management', default: '' },
 };
 
@@ -253,7 +253,13 @@ export function useCertOpsListUrlState(options = {}) {
   // longer exist. Landing on an empty page reads as "nothing matches", which is
   // the wrong answer, so a filter change always returns to the first page.
   const setFilter = useCallback(
-    (key, value) => patchParams({ [key]: value, offset: 0 }),
+    (key, value) => {
+      if (key !== null && typeof key === 'object') {
+        patchParams({ ...key, offset: 0 });
+        return;
+      }
+      patchParams({ [key]: value, offset: 0 });
+    },
     [patchParams]
   );
 

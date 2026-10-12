@@ -18,6 +18,7 @@ export function SettingsIntegrationCard({
   icon,
   configured = false,
   status,
+  hideStatus = false,
   isOpen = false,
   onToggle,
   unmountOnExit = false,
@@ -62,7 +63,7 @@ export function SettingsIntegrationCard({
             <Text fontWeight='bold' fontSize='md'>
               {title}
             </Text>
-            {status ? (
+            {hideStatus ? null : status ? (
               <Badge colorScheme={status.scheme || 'gray'}>
                 {status.label}
               </Badge>

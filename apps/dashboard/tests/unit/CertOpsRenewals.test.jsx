@@ -93,6 +93,13 @@ vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   };
 });
 
+async function openRenewalProfiles() {
+  const header = await screen.findByRole('button', { name: /Renewal profiles/ });
+  if (header.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(header);
+  }
+}
+
 function renderPage(initialEntries = ['/certops/renewals']) {
   // The renewals tab renders inside the CertOps layout, which owns the
   // availability gate and the kill-switch banner, so the tests exercise it
@@ -170,6 +177,7 @@ beforeEach(() => {
 describe('CertOpsRenewals page', () => {
   it('shows the renewal profiles', async () => {
     renderPage();
+    await openRenewalProfiles();
 
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
     expect(screen.queryByText('Upcoming renewals')).not.toBeInTheDocument();
@@ -179,6 +187,7 @@ describe('CertOpsRenewals page', () => {
 
   it('sorts renewal profiles on the server and resets the page', async () => {
     renderPage(['/certops/renewals?profileOffset=20']);
+    await openRenewalProfiles();
 
     const profilesTable = await screen.findByRole('table');
     expect(
@@ -201,6 +210,7 @@ describe('CertOpsRenewals page', () => {
 
   it('requires confirmation before switching automatic renewal off', async () => {
     renderPage();
+    await openRenewalProfiles();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch off' }));
 
@@ -222,6 +232,7 @@ describe('CertOpsRenewals page', () => {
     );
 
     renderPage();
+    await openRenewalProfiles();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch off' }));
     fireEvent.click(
@@ -253,6 +264,7 @@ describe('CertOpsRenewals page', () => {
     updateRenewalProfileMock.mockResolvedValue(profile());
 
     renderPage();
+    await openRenewalProfiles();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch on' }));
 
@@ -273,6 +285,7 @@ describe('CertOpsRenewals page', () => {
     useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
     expect(
@@ -292,6 +305,7 @@ describe('CertOpsRenewals page', () => {
     );
 
     renderPage();
+    await openRenewalProfiles();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     fireEvent.change(screen.getByLabelText('Renewal lead time in days'), {
@@ -312,6 +326,7 @@ describe('CertOpsRenewals page', () => {
 
   it('refuses to save a lead time the server would reject', async () => {
     renderPage();
+    await openRenewalProfiles();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     fireEvent.change(screen.getByLabelText('Renewal lead time in days'), {
@@ -340,6 +355,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage();
+    await openRenewalProfiles();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Switch off' }));
     fireEvent.click(
@@ -363,6 +379,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage();
+    await openRenewalProfiles();
 
     // 'Archived' shows in both the status badge and the actions cell; what
     // matters is that no control is offered.
@@ -384,6 +401,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(
       await screen.findByText('No renewal profiles yet.')
@@ -397,6 +415,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(
       await screen.findByText('Failed to list renewal profiles')
@@ -410,6 +429,7 @@ describe('CertOpsRenewals page', () => {
     listRenewalProfilesMock.mockRejectedValue({ response: { status: 403 } });
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(
       await screen.findByText(
@@ -425,6 +445,7 @@ describe('CertOpsRenewals page', () => {
     listRenewalProfilesMock.mockReturnValue(new Promise(() => {}));
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(
       await screen.findByText('Loading renewal profiles...')
@@ -438,6 +459,7 @@ describe('CertOpsRenewals page', () => {
     useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(
       await screen.findByText('Derived: app.example.com')
@@ -470,6 +492,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage();
+    await openRenewalProfiles();
 
     expect(
       await screen.findByRole('navigation', {
@@ -493,6 +516,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage(['/certops/renewals?profileOffset=20']);
+    await openRenewalProfiles();
 
     await waitFor(() => {
       expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
@@ -511,6 +535,7 @@ describe('CertOpsRenewals page', () => {
     });
 
     renderPage(['/certops/renewals?profileOffset=200']);
+    await openRenewalProfiles();
 
     expect(
       await screen.findByText('This page is past the end of the list.')

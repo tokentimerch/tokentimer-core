@@ -145,6 +145,20 @@ describe('CertOpsAdcs', () => {
           lastErrorCode: 'ADCS_CA_KEY_CHANGED',
         },
         {
+          id: 'enr-requested',
+          state: 'requested',
+          caConfig: 'ca01.corp.example.com\\Corp Issuing CA 01',
+          template: 'TokenTimerWebServer',
+          jobStatus: 'failed',
+          jobErrorMessage: 'helper binary is not installed',
+        },
+        {
+          id: 'enr-cancelled',
+          state: 'cancelled',
+          caConfig: 'ca01.corp.example.com\\Corp Issuing CA 01',
+          template: 'TokenTimerWebServer',
+        },
+        {
           id: 'enr-2',
           state: 'submission_uncertain',
           caConfig: 'ca01.corp.example.com\\Corp Issuing CA 01',
@@ -170,9 +184,17 @@ describe('CertOpsAdcs', () => {
       screen.getByRole('button', { name: /Reconcile/ })
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /Confirm key/ })
+      screen.queryByRole('button', { name: /Use this certificate/ })
     ).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Abandon/ })).toHaveLength(1);
+    expect(screen.getByText(/14-day limit has not started/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Cancel enrollment/ })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/helper binary is not installed/)).toBeInTheDocument();
+    expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Show finished \(1\)/ }));
+    expect(screen.getByText('Cancelled')).toBeInTheDocument();
     expect(screen.queryByText(/MIIB/)).not.toBeInTheDocument();
   });
 
@@ -192,57 +214,98 @@ describe('CertOpsAdcs', () => {
     renderPage();
 
     expect(
-      await screen.findByRole('button', { name: /Confirm key abababababab/ })
+      await screen.findByRole('button', {
+        name: /Use this certificate abababababab/,
+      })
     ).toBeInTheDocument();
   });
 
-  it('creates an issuer without claiming enrollment is enabled', async () => {
+  it('does not create an issuer until the CA check starts', async () => {
     isAdminMock.mockReturnValue(true);
     createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-2' } });
 
     renderPage();
     await screen.findByText(/No enrollments yet/);
+    fireEvent.click(screen.getByRole('button', { name: 'New issuer' }));
     fireEvent.change(screen.getByLabelText('Issuer name'), {
       target: { value: 'Corp CA' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Create issuer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    await waitFor(() => {
-      expect(createIssuerMock).toHaveBeenCalledWith('ws-1', {
-        kind: 'adcs',
-        name: 'Corp CA',
-      });
+    expect(createIssuerMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('CA config')).toBeInTheDocument();
+    expect(screen.getByText(/Template name, not the display name/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'Where the template name comes from' })
+    ).toHaveAttribute('href', expect.stringContaining('#certificate-template'));
+  });
+
+  it('hides an AD CS issuer that has no chosen certificate', async () => {
+    isAdminMock.mockReturnValue(true);
+    listIssuersMock.mockResolvedValue({
+      items: [issuer({ currentVersion: 0, name: 'Draft CA' }), issuer()],
     });
-    expect(showSuccessMock).toHaveBeenCalledWith(
-      expect.stringContaining('named by an agent enrollment rule')
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => {
-      expect(listIssuersMock.mock.calls.length).toBeGreaterThan(1);
-    });
+
+    renderPage();
+
+    expect(await screen.findByText('Issuing CA')).toBeInTheDocument();
+    expect(screen.queryByText('Draft CA')).not.toBeInTheDocument();
   });
 
   it('keeps asking for a preflight verdict after dispatch', async () => {
     isAdminMock.mockReturnValue(true);
+    listAgentsMock.mockResolvedValue({
+      items: [{ id: 'agent-1', name: 'member-1' }],
+    });
     listIssuersMock.mockResolvedValue({ items: [issuer()] });
     dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-1' } });
 
     renderPage();
-    await screen.findByRole('button', { name: /Run preflight/ });
-    fireEvent.change(screen.getByLabelText('CA config for Issuing CA'), {
-      target: { value: 'ca01\\Corp CA' },
-    });
-    fireEvent.change(screen.getByLabelText('Template for Issuing CA'), {
-      target: { value: 'TokenTimerWebServer' },
+    await screen.findByRole('button', { name: /Run check for Issuing CA/ });
+    expect(screen.queryByLabelText('CA config for Issuing CA')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Agent for Issuing CA'), {
+      target: { value: 'agent-1' },
     });
     fireEvent.submit(
-      screen.getByRole('button', { name: /Run preflight/ }).closest('form')
+      screen.getByRole('button', { name: /Run check for Issuing CA/ }).closest('form')
     );
 
+    await waitFor(() => expect(dispatchIssuerPreflightMock).toHaveBeenCalled());
+    expect(dispatchIssuerPreflightMock).toHaveBeenCalledWith(
+      'ws-1',
+      'issuer-1',
+      expect.objectContaining({
+        agentId: 'agent-1',
+        caConfig: 'ca01.corp.example.com\\Corp Issuing CA 01',
+        template: 'TokenTimerWebServer',
+      })
+    );
     expect(
       await screen.findByText(
         /Waiting for Issuing CA to report the preflight verdict/
       )
     ).toBeInTheDocument();
+  });
+
+  it('does not offer a new CA or template on a confirmed issuer', async () => {
+    isAdminMock.mockReturnValue(true);
+    listIssuersMock.mockResolvedValue({
+      items: [
+        issuer({
+          revalidationRequired: false,
+          caConfig: 'ca01.corp.example.com\\Corp Issuing CA 01',
+          template: 'TokenTimerWebServer',
+        }),
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/A different pair is a new issuer/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Agent for Issuing CA')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(screen.getByLabelText('Agent for Issuing CA')).toBeInTheDocument();
+    expect(screen.queryByLabelText('CA config for Issuing CA')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Use this certificate/ })).not.toBeInTheDocument();
   });
 });

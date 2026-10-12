@@ -6,10 +6,12 @@ const { requireCertOpsEnabled } = require("../middleware/require-certops-enabled
 const { authorize } = require("../services/rbac");
 const {
   abandonEnrollment,
+  cancelEnrollment,
   confirmIssuerKey,
   countInstalledEnrollments,
   createEnrollment,
   createIssuer,
+  discardUnconfiguredIssuer,
   dispatchPreflight,
   listEnrollments,
   listIssuers,
@@ -47,6 +49,7 @@ router.get(
         workspaceId: req.workspace.id,
         limit: req.query.limit,
         offset: req.query.offset,
+        includeUnconfigured: req.query.includeUnconfigured === "true",
       });
       return res.json(page);
     } catch (err) {
@@ -69,6 +72,27 @@ router.post(
         actorUserId: req.user?.id || null,
       });
       return res.status(201).json({ issuer });
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);
+
+router.delete(
+  "/api/v1/workspaces/:id/certops/issuers/:issuerId",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.issuer.manage"),
+  async (req, res) => {
+    try {
+      if (!UUID.test(String(req.params.issuerId || ""))) {
+        return res.status(404).json({ error: "issuer not found", code: "CERTOPS_ISSUER_NOT_FOUND" });
+      }
+      await discardUnconfiguredIssuer({
+        workspaceId: req.workspace.id,
+        issuerId: req.params.issuerId,
+      });
+      return res.status(204).send();
     } catch (err) {
       return fail(res, err);
     }
@@ -178,6 +202,25 @@ router.post(
         workspaceId: req.workspace.id,
         enrollmentId: req.params.enrollmentId,
         requestId: req.body?.requestId,
+        actorUserId: req.user?.id || null,
+      });
+      return res.status(204).end();
+    } catch (err) {
+      return fail(res, err);
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/enrollments/:enrollmentId/cancel",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  authorize("certops.issuer.manage"),
+  async (req, res) => {
+    try {
+      await cancelEnrollment({
+        workspaceId: req.workspace.id,
+        enrollmentId: req.params.enrollmentId,
         actorUserId: req.user?.id || null,
       });
       return res.status(204).end();

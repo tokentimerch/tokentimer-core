@@ -554,6 +554,205 @@ async function updateRenewalProfile({
   }
 }
 
+const ADCS_HOST_PATTERN =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const ADCS_STORE_PATTERN = /^[A-Za-z0-9 _.-]{1,64}$/;
+const ADCS_SITE_PATTERN = /^[A-Za-z0-9 _.:-]{1,256}$/;
+const ADCS_RSA_SIZES = new Set([2048, 3072, 4096]);
+const ADCS_ECDSA_SIZES = new Set([256, 384]);
+
+function adcsHost(value, field) {
+  if (typeof value !== "string" || !ADCS_HOST_PATTERN.test(value.trim())) {
+    throw profileError(`${field} must be a DNS name`);
+  }
+  return value.trim();
+}
+
+function normalizeAdcsProfileInput(body) {
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!name || name.length > 128) {
+    throw profileError("name must be 1 to 128 characters");
+  }
+  const description =
+    body?.description == null || body.description === ""
+      ? null
+      : String(body.description).trim();
+  if (description && description.length > 500) {
+    throw profileError("description must be 500 characters or fewer");
+  }
+  const issuerId = String(body?.issuerId || "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(issuerId)) {
+    throw profileError("issuerId must be a confirmed AD CS issuer");
+  }
+  const target = body?.target;
+  const binding = target?.binding;
+  const reference = adcsHost(target?.reference, "certificate name");
+  if (!target || target.type !== "windows-iis") {
+    throw profileError("target must be a windows-iis binding");
+  }
+  if (typeof target.store !== "string" || !ADCS_STORE_PATTERN.test(target.store.trim())) {
+    throw profileError("store must name a Windows certificate store, usually My");
+  }
+  if (
+    !binding ||
+    typeof binding.site !== "string" ||
+    !ADCS_SITE_PATTERN.test(binding.site.trim())
+  ) {
+    throw profileError("IIS site name is invalid");
+  }
+  const port = Number(binding.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw profileError("IIS port must be an integer from 1 to 65535");
+  }
+  const sniHost =
+    binding.sniHost == null || binding.sniHost === ""
+      ? null
+      : adcsHost(binding.sniHost, "SNI hostname");
+  const extraNames = Array.isArray(body?.dnsNames) ? body.dnsNames : [];
+  const dnsNames = [];
+  for (const entry of [reference, ...extraNames]) {
+    const host = adcsHost(entry, "DNS name");
+    if (!dnsNames.includes(host)) dnsNames.push(host);
+  }
+  if (dnsNames.length > 16) {
+    throw profileError("a renewal profile accepts at most 16 DNS names");
+  }
+  const keyAlgorithm = body?.keyAlgorithm;
+  if (keyAlgorithm !== "rsa" && keyAlgorithm !== "ecdsa") {
+    throw profileError("keyAlgorithm must be rsa or ecdsa");
+  }
+  const keySize = Number(body?.keySize);
+  const allowed = keyAlgorithm === "rsa" ? ADCS_RSA_SIZES : ADCS_ECDSA_SIZES;
+  if (!allowed.has(keySize)) {
+    throw profileError(`keySize is invalid for ${keyAlgorithm}`);
+  }
+  return {
+    name,
+    description,
+    issuerId,
+    renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? 30),
+    renewalProfile: {
+      target: {
+        type: "windows-iis",
+        reference,
+        store: target.store.trim(),
+        binding: {
+          site: binding.site.trim(),
+          port,
+          ...(sniHost ? { sniHost } : {}),
+        },
+      },
+      sanPolicy: { sans: dnsNames },
+      keyAlgorithm,
+      keySize,
+    },
+  };
+}
+
+async function createAdcsRenewalProfile({
+  dbPool = pool,
+  workspaceId,
+  body,
+  actorUserId = null,
+  auditWriter = writeAudit,
+} = {}) {
+  const input = normalizeAdcsProfileInput(body);
+  const client = await dbPool.connect();
+  let started = false;
+  try {
+    await client.query("BEGIN");
+    started = true;
+    const issuer = await client.query(
+      `SELECT i.kind, i.revalidation_required, i.current_version, v.ca_key_sha256
+         FROM certificate_issuers i
+         LEFT JOIN certificate_issuer_versions v
+           ON v.workspace_id = i.workspace_id
+          AND v.issuer_id = i.id
+          AND v.version = i.current_version
+        WHERE i.workspace_id = $1 AND i.id = $2
+        FOR UPDATE OF i`,
+      [workspaceId, input.issuerId],
+    );
+    const row = issuer.rows[0];
+    if (!row || row.kind !== "adcs") {
+      throw profileError("issuerId must be a confirmed AD CS issuer", "CERTOPS_PROFILE_ISSUER_NOT_FOUND");
+    }
+    if (row.revalidation_required === true || !row.ca_key_sha256) {
+      throw profileError(
+        "Confirm a CA certificate on this issuer before creating a renewal profile",
+      );
+    }
+    const inserted = await client.query(
+      `INSERT INTO certificate_profiles (
+         workspace_id, name, description, status, source, source_ref,
+         issuer_id, renew_before_days, key_mode, public_metadata, created_by
+       ) VALUES (
+         $1, $2, $3, 'active', 'manual', $4, $5, $6, 'os-store-managed', $7::jsonb, $8
+       )
+       RETURNING id`,
+      [
+        workspaceId,
+        input.name,
+        input.description,
+        `adcs-profile:${input.renewalProfile.target.reference}`,
+        input.issuerId,
+        input.renewBeforeDays,
+        JSON.stringify({
+          [OPERATOR_OWNED_METADATA_KEY]: true,
+          renewalProfile: input.renewalProfile,
+        }),
+        Number.isInteger(actorUserId) ? actorUserId : null,
+      ],
+    );
+    const profileId = inserted.rows[0].id;
+    const agent = await client.query(
+      `SELECT id
+         FROM certops_agents
+        WHERE workspace_id = $1
+          AND status = 'active'
+          AND declared_target_selectors @> jsonb_build_array($2::text)
+        LIMIT 1`,
+      [workspaceId, input.renewalProfile.target.reference],
+    );
+    await auditWriter({
+      client,
+      actorUserId,
+      subjectUserId: actorUserId,
+      action: "CERTOPS_RENEWAL_PROFILE_CREATED",
+      targetType: "certificate_profile",
+      targetId: String(profileId),
+      workspaceId,
+      metadata: {
+        profileId: String(profileId),
+        profileName: input.name,
+        issuerId: input.issuerId,
+        reference: input.renewalProfile.target.reference,
+      },
+    });
+    await client.query("COMMIT");
+    started = false;
+    const profile = await getRenewalProfile({ db: dbPool, workspaceId, profileId });
+    return {
+      ...profile,
+      agentDeclaresName: Boolean(agent.rows[0]),
+    };
+  } catch (error) {
+    if (started) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // Keep the original failure.
+      }
+    }
+    if (error?.code === "23505") {
+      throw profileError("A renewal profile with this name already exists");
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Why a certificate will not be renewed automatically, or null when it will.
  *
@@ -839,6 +1038,7 @@ module.exports = {
   applyRenewalProfilePatch,
   classifyRenewalBlock,
   resolveDeferredRenewalReason,
+  createAdcsRenewalProfile,
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,

@@ -4,12 +4,24 @@ function workspaceBase(workspaceId) {
   return `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/certops`;
 }
 
-export async function listIssuers(workspaceId, { signal, limit } = {}) {
+export async function listIssuers(
+  workspaceId,
+  { signal, limit, includeUnconfigured } = {}
+) {
+  const params = {};
+  if (limit) params.limit = limit;
+  if (includeUnconfigured) params.includeUnconfigured = 'true';
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/issuers`, {
     signal,
-    params: limit ? { limit } : undefined,
+    params,
   });
   return res.data;
+}
+
+export async function discardIssuer(workspaceId, issuerId) {
+  await apiClient.delete(
+    `${workspaceBase(workspaceId)}/issuers/${encodeURIComponent(issuerId)}`
+  );
 }
 
 export async function createIssuer(workspaceId, body) {
@@ -52,6 +64,12 @@ export async function proposeEnrollmentRequestId(
   await apiClient.post(
     `${workspaceBase(workspaceId)}/enrollments/${encodeURIComponent(enrollmentId)}/reconcile`,
     { requestId }
+  );
+}
+
+export async function cancelEnrollment(workspaceId, enrollmentId) {
+  await apiClient.post(
+    `${workspaceBase(workspaceId)}/enrollments/${encodeURIComponent(enrollmentId)}/cancel`
   );
 }
 

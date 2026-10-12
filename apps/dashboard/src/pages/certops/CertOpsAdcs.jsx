@@ -4,6 +4,7 @@ import {
   AlertDescription,
   AlertIcon,
   Box,
+  Checkbox,
   Collapse,
   Flex,
   FormControl,
@@ -22,10 +23,11 @@ import { useOutletContext } from 'react-router';
 import CopyableId from '../../components/CopyableId.jsx';
 import { listAgents } from '../../components/certops/certopsAgentsApi';
 import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
+import { formatDate } from '../../components/certops/certopsFormat.js';
 import {
   abandonEnrollment,
+  cancelEnrollment,
   confirmIssuerKey,
-  createIssuer,
   dispatchIssuerPreflight,
   enrollmentStateLabel,
   listEnrollments,
@@ -42,6 +44,7 @@ import {
 } from '../../components/DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
+import AdcsIssuerWizard from '../../components/certops/AdcsIssuerWizard.jsx';
 import { showError, showSuccess } from '../../utils/toast.js';
 
 const PREFLIGHT_POLL_MS = 3000;
@@ -121,10 +124,17 @@ function IssuerNotices({ issuer }) {
   if (!issuer?.revalidationRequired) return null;
   return (
     <Notice>
-      The CA key changed. Run preflight again and confirm the new key before
-      creating enrollments.
+      The CA key changed. Run the check again and choose the new certificate
+      before creating enrollments. The CA and template stay the same.
     </Notice>
   );
+}
+
+function pinnedPair(issuer) {
+  return {
+    caConfig: issuer?.caConfig || issuer?.lastPreflight?.caConfig || '',
+    template: issuer?.template || issuer?.lastPreflight?.template || '',
+  };
 }
 
 function EnrollmentNotices({ enrollment }) {
@@ -154,6 +164,21 @@ function EnrollmentNotices({ enrollment }) {
 
 const PAGE_LIMIT = 100;
 
+const FINISHED_ENROLLMENT_STATES = new Set([
+  'cancelled',
+  'denied',
+  'refused',
+  'rejected_invalid',
+  'validation_expired',
+  'abandoned',
+  'expired',
+  'installed',
+]);
+
+function enrollmentIsFinished(enrollment) {
+  return FINISHED_ENROLLMENT_STATES.has(enrollment?.state);
+}
+
 function actionProps(busyKey, key, blocked) {
   return {
     isLoading: busyKey === key,
@@ -180,18 +205,68 @@ function enrollmentMeta(enrollment) {
   return `${idLine} · key prefix ${enrollment.caKeySha256.slice(0, 12)}`;
 }
 
+function preflightIsSafe(issuer) {
+  return (
+    issuer.lastPreflight?.templateCheck?.verdict === 'safe' &&
+    issuer.lastPreflight?.caCheck?.verdict === 'safe'
+  );
+}
+
 function keyStatus(issuer) {
-  if (issuer.revalidationRequired) return 'Key changed';
+  if (issuer.revalidationRequired) return 'New certificate';
   if (issuer.currentVersion > 0 && issuer.confirmedKeySha256) {
-    return 'Confirmed';
+    return 'Certificate chosen';
   }
-  return 'Unconfirmed';
+  if (preflightIsSafe(issuer)) return 'Choose a certificate';
+  return null;
 }
 
 function keyScheme(issuer) {
   if (issuer.revalidationRequired) return 'orange';
   if (issuer.currentVersion > 0 && issuer.confirmedKeySha256) return 'green';
-  return 'gray';
+  return 'blue';
+}
+
+function certTime(value) {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function groupCaCertificates(certs) {
+  const groups = [];
+  const indexByKey = new Map();
+  certs.forEach((cert, index) => {
+    const keySha256 = cert?.keySha256;
+    if (!keySha256) return;
+    let group = indexByKey.get(keySha256);
+    if (!group) {
+      group = { keySha256, certificates: [], firstIndex: index };
+      indexByKey.set(keySha256, group);
+      groups.push(group);
+    }
+    group.certificates.push(cert);
+  });
+  for (const group of groups) {
+    group.certificates.sort(
+      (a, b) => certTime(b.notBefore) - certTime(a.notBefore)
+    );
+    group.newestNotBefore = certTime(group.certificates[0]?.notBefore);
+    group.thumbprintSha1 = group.certificates.find(
+      cert => cert.thumbprintSha1
+    )?.thumbprintSha1;
+  }
+  groups.sort(
+    (a, b) =>
+      b.newestNotBefore - a.newestNotBefore || a.firstIndex - b.firstIndex
+  );
+  return groups;
+}
+
+function validityLine(cert) {
+  if (!cert?.notBefore && !cert?.notAfter) return 'Validity was not reported';
+  const end = certTime(cert.notAfter);
+  const state = end > 0 && end < Date.now() ? 'Expired' : 'Valid';
+  return `${state} ${formatDate(cert.notBefore)} to ${formatDate(cert.notAfter)}`;
 }
 
 const fieldLabelProps = {
@@ -200,43 +275,102 @@ const fieldLabelProps = {
   mb: 1,
 };
 
-function ConfirmKeys({ issuer, busyKey, paused, onConfirm }) {
-  const certs = issuer.lastPreflight?.caCertificates || [];
-  const alreadyPinned =
-    !issuer.revalidationRequired && issuer.currentVersion > 0;
-  const pending = certs.filter(
-    cert => !alreadyPinned || cert.keySha256 !== issuer.confirmedKeySha256
+function ConfirmKeys({ issuer, busyKey, paused, muted, onConfirm }) {
+  const { border } = useDashboardTheme();
+  const groups = groupCaCertificates(
+    issuer.lastPreflight?.caCertificates || []
   );
-  if (pending.length === 0) {
+  const chosenKey =
+    !issuer.revalidationRequired && issuer.currentVersion > 0
+      ? issuer.confirmedKeySha256
+      : null;
+  if (groups.length === 0) {
     return (
-      <Text fontSize='sm'>
-        This CA key is already confirmed on version {issuer.currentVersion}.
+      <Text fontSize='sm' color={muted}>
+        Preflight did not return a CA certificate to choose.
       </Text>
     );
   }
   return (
-    <Flex gap={2} wrap='wrap'>
-      {pending.map(cert => {
-        const prefix = cert.keySha256?.slice(0, 12);
-        return (
-          <DashboardActionButton
-            key={cert.keySha256}
-            variant='outline'
-            {...actionProps(
-              busyKey,
-              `confirm:${issuer.id}:${cert.keySha256}`,
-              paused
-            )}
-            aria-label={`Confirm key ${prefix} for ${issuer.name}`}
-            onClick={() =>
-              onConfirm(issuer.id, cert.keySha256, issuer.lastPreflight)
-            }
-          >
-            Confirm key {prefix}
-          </DashboardActionButton>
-        );
-      })}
-    </Flex>
+    <Stack spacing={3}>
+      <Text fontSize='sm'>
+        Choose the CA certificate that should sign new enrollments. A CA keeps
+        older certificates after a renewal, so the newest is listed first.
+        Choosing one pins that public key. A later renewal that uses a different
+        key stops enrollments until you choose the new certificate.
+      </Text>
+      <Stack spacing={2}>
+        {groups.map((group, index) => {
+          const inUse = chosenKey === group.keySha256;
+          const title =
+            groups.length === 1
+              ? 'CA certificate'
+              : index === 0
+                ? 'Newest CA certificate'
+                : 'Earlier CA certificate';
+          return (
+            <Flex
+              key={group.keySha256}
+              direction={{ base: 'column', md: 'row' }}
+              align={{ md: 'center' }}
+              justify='space-between'
+              gap={3}
+              p={3}
+              borderWidth='1px'
+              borderColor={border}
+              borderRadius='md'
+            >
+              <Box minW={0}>
+                <HStack spacing={2} mb={1}>
+                  <Text fontSize='sm' fontWeight='semibold'>
+                    {title}
+                  </Text>
+                  {inUse ? (
+                    <CertOpsBadge colorScheme='green'>In use</CertOpsBadge>
+                  ) : null}
+                </HStack>
+                {group.certificates.map(cert => (
+                  <Text
+                    key={`${cert.thumbprintSha1 || ''}:${cert.notBefore || ''}:${cert.notAfter || ''}`}
+                    fontSize='xs'
+                    color={muted}
+                  >
+                    {validityLine(cert)}
+                  </Text>
+                ))}
+                {group.thumbprintSha1 ? (
+                  <Box mt={1}>
+                    <CopyableId
+                      id={group.thumbprintSha1}
+                      label='Thumbprint'
+                      display={`${group.thumbprintSha1.slice(0, 8)}…${group.thumbprintSha1.slice(-8)}`}
+                      size='xs'
+                    />
+                  </Box>
+                ) : null}
+              </Box>
+              {inUse ? null : (
+                <DashboardActionButton
+                  variant='outline'
+                  flexShrink={0}
+                  {...actionProps(
+                    busyKey,
+                    `confirm:${issuer.id}:${group.keySha256}`,
+                    paused
+                  )}
+                  aria-label={`Use this certificate ${group.keySha256.slice(0, 12)} for ${issuer.name}`}
+                  onClick={() =>
+                    onConfirm(issuer.id, group.keySha256, issuer.lastPreflight)
+                  }
+                >
+                  Use this certificate
+                </DashboardActionButton>
+              )}
+            </Flex>
+          );
+        })}
+      </Stack>
+    </Stack>
   );
 }
 
@@ -257,84 +391,101 @@ function IssuerWork({
   onPreflight,
   onConfirm,
 }) {
-  const safe =
-    issuer.lastPreflight?.templateCheck?.verdict === 'safe' &&
-    issuer.lastPreflight?.caCheck?.verdict === 'safe';
+  const pinned = pinnedPair(issuer);
+  const [checkVersion, setCheckVersion] = useState(null);
+  const [checkBaseline, setCheckBaseline] = useState(null);
+  const checking =
+    issuer.revalidationRequired || checkVersion === issuer.currentVersion;
+  const safe = preflightIsSafe(issuer);
+  const freshResult =
+    checkBaseline != null &&
+    preflightSignature(issuer.lastPreflight) !== checkBaseline;
+  const showResult = issuer.revalidationRequired || freshResult;
   return (
     <Stack spacing={3}>
       <IssuerNotices issuer={issuer} />
+      <Stack spacing={1}>
+        <Text fontSize='sm' overflowWrap='anywhere'>
+          {pinned.caConfig || 'CA not recorded'} / {pinned.template || 'template not recorded'}
+        </Text>
+        <Text fontSize='xs' color={muted}>
+          The CA and template stay with this issuer. A different pair is a new
+          issuer.
+        </Text>
+      </Stack>
       {issuer.lastPreflight ? (
         <Text fontSize='sm' color={muted} overflowWrap='anywhere'>
-          Preflight {issuer.lastPreflight.caConfig} /{' '}
-          {issuer.lastPreflight.template}: template{' '}
-          {checkSummary(issuer.lastPreflight.templateCheck)}, CA{' '}
-          {checkSummary(issuer.lastPreflight.caCheck)}.
+          Last check: template {checkSummary(issuer.lastPreflight.templateCheck)},
+          CA {checkSummary(issuer.lastPreflight.caCheck)}.
         </Text>
+      ) : null}
+      {checking ? (
+        <form
+          onSubmit={event => {
+            setCheckBaseline(preflightSignature(issuer.lastPreflight));
+            onPreflight(event, issuer.id);
+          }}
+        >
+          <input type='hidden' name='caConfig' value={pinned.caConfig} />
+          <input type='hidden' name='template' value={pinned.template} />
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+            <FormControl isRequired>
+              <FormLabel {...fieldLabelProps}>Agent that reads the CA</FormLabel>
+              <Select
+                name='agentId'
+                size='sm'
+                aria-label={`Agent for ${issuer.name}`}
+                required
+                isDisabled={paused}
+              >
+                <option value=''>Select an agent</option>
+                {agents.map(agent => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name || agent.agentId}
+                  </option>
+                ))}
+                </Select>
+                <Text mt={1} fontSize='xs' color={muted}>
+                  Pick a Windows agent that can reach this CA and already allows
+                  this template. The choice is only for this read. It is not
+                  saved, and it does not decide who renews later.
+                </Text>
+              </FormControl>
+            <Flex align='flex-end'>
+              <DashboardActionButton
+                type='submit'
+                variant='outline'
+                {...actionProps(busyKey, `preflight:${issuer.id}`, paused)}
+                aria-label={`Run check for ${issuer.name}`}
+              >
+                Run check
+              </DashboardActionButton>
+            </Flex>
+          </SimpleGrid>
+        </form>
       ) : (
-        <Text fontSize='sm' color={muted}>
-          No preflight yet.
-        </Text>
+        <Box>
+          <DashboardActionButton
+            variant='outline'
+            isDisabled={paused || !pinned.caConfig || !pinned.template}
+            onClick={() => setCheckVersion(issuer.currentVersion)}
+          >
+            Check again
+          </DashboardActionButton>
+        </Box>
       )}
-      <form onSubmit={event => onPreflight(event, issuer.id)}>
-        <SimpleGrid columns={{ base: 1, lg: 4 }} spacing={3}>
-          <FormControl isRequired>
-            <FormLabel {...fieldLabelProps}>Agent</FormLabel>
-            <Select
-              name='agentId'
-              size='sm'
-              aria-label={`Agent for ${issuer.name}`}
-              required
-              isDisabled={paused}
-            >
-              <option value=''>Select an agent</option>
-              {agents.map(agent => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name || agent.agentId}
-                </option>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl isRequired>
-            <FormLabel {...fieldLabelProps}>CA config</FormLabel>
-            <Input
-              name='caConfig'
-              size='sm'
-              aria-label={`CA config for ${issuer.name}`}
-              placeholder={'host\\CA Name'}
-              required
-              isDisabled={paused}
-            />
-          </FormControl>
-          <FormControl isRequired>
-            <FormLabel {...fieldLabelProps}>Template</FormLabel>
-            <Input
-              name='template'
-              size='sm'
-              aria-label={`Template for ${issuer.name}`}
-              placeholder='Template common name'
-              required
-              isDisabled={paused}
-            />
-          </FormControl>
-          <Flex align='flex-end'>
-            <DashboardActionButton
-              type='submit'
-              variant='outline'
-              {...actionProps(busyKey, `preflight:${issuer.id}`, paused)}
-              aria-label={`Run preflight for ${issuer.name}`}
-            >
-              Run preflight
-            </DashboardActionButton>
-          </Flex>
-        </SimpleGrid>
-      </form>
-      {safe ? (
+      {showResult && safe ? (
         <ConfirmKeys
           issuer={issuer}
           busyKey={busyKey}
           paused={paused}
+          muted={muted}
           onConfirm={onConfirm}
         />
+      ) : showResult && issuer.lastPreflight && !safe ? (
+        <Text fontSize='sm' color={muted}>
+          Both checks have to be safe before you can choose a CA certificate.
+        </Text>
       ) : null}
     </Stack>
   );
@@ -430,9 +581,11 @@ function IssuerRow({
               />
             </>
           ) : null}
-          <CertOpsBadge colorScheme={keyScheme(issuer)}>
-            {keyStatus(issuer)}
-          </CertOpsBadge>
+          {keyStatus(issuer) ? (
+            <CertOpsBadge colorScheme={keyScheme(issuer)}>
+              {keyStatus(issuer)}
+            </CertOpsBadge>
+          ) : null}
         </HStack>
         {preflightLine ? (
           <Text
@@ -487,6 +640,7 @@ function EnrollmentRow({
   onAbandon,
   onAskAbandon,
   onKeep,
+  onCancel,
 }) {
   const target = `${enrollment.caConfig || ''} / ${enrollment.template || ''}`;
   const names = enrollment.authorizedDnsNames || [];
@@ -549,11 +703,39 @@ function EnrollmentRow({
             Last error {enrollment.lastErrorCode}
           </Text>
         ) : null}
+        {enrollment.jobErrorMessage ? (
+          <Text mt={1} fontSize='xs' color={muted}>
+            Last attempt: {enrollment.jobErrorMessage}
+          </Text>
+        ) : null}
         <Box mt={2}>
           <EnrollmentNotices enrollment={enrollment} />
+          {enrollment.state === 'requested' ||
+          enrollment.state === 'prepared' ? (
+            <Notice>
+              The CA has not accepted this request, so the 14-day limit has not
+              started. Cancel the enrollment to take it off this list.
+            </Notice>
+          ) : null}
         </Box>
       </Box>
-      {enrollment.state === 'submission_uncertain' ? (
+      {enrollment.state === 'requested' || enrollment.state === 'prepared' ? (
+        enrollment.jobStatus === 'claimed' ||
+        enrollment.jobStatus === 'running' ? (
+          <Text fontSize='xs' color={muted} maxW='280px'>
+            An attempt is running. Wait for it to finish before cancelling.
+          </Text>
+        ) : (
+          <DashboardActionButton
+            variant='outline'
+            {...actionProps(busyKey, `cancel:${enrollment.id}`, paused)}
+            aria-label={`Cancel enrollment ${shortId(enrollment.id)}`}
+            onClick={() => onCancel(enrollment.id)}
+          >
+            Cancel enrollment
+          </DashboardActionButton>
+        )
+      ) : enrollment.state === 'submission_uncertain' ? (
         <Stack spacing={2} align='flex-start' flexShrink={0}>
           <form onSubmit={event => onReconcile(event, enrollment.id)}>
             <Flex gap={2} align='center' wrap='wrap'>
@@ -629,8 +811,7 @@ export default function CertOpsAdcs() {
   const [enrollments, setEnrollments] = useState([]);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState('adcs');
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [busyKey, setBusyKey] = useState(null);
   const [waitingForPreflight, setWaitingForPreflight] = useState(null);
   const [preflightNote, setPreflightNote] = useState('');
@@ -638,6 +819,7 @@ export default function CertOpsAdcs() {
   const [issuerTotal, setIssuerTotal] = useState(0);
   const [enrollmentTotal, setEnrollmentTotal] = useState(0);
   const [pendingAbandonId, setPendingAbandonId] = useState(null);
+  const [showFinished, setShowFinished] = useState(false);
   const [openIssuerId, setOpenIssuerId] = useState(null);
   const pollRef = useRef(null);
   const issuerListReady = useRef(false);
@@ -789,23 +971,6 @@ export default function CertOpsAdcs() {
     );
   }
 
-  async function handleCreate(event) {
-    event.preventDefault();
-    setBusyKey('create');
-    try {
-      await createIssuer(workspaceId, { kind, name: name.trim() });
-      setName('');
-      showSuccess(
-        'Issuer created. Enrollment runs only for a CA and template named by an agent enrollment rule.'
-      );
-      await reload();
-    } catch (err) {
-      showError(errorText(err, 'Could not create the issuer.'));
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
   async function handlePreflight(event, issuerId) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -876,6 +1041,19 @@ export default function CertOpsAdcs() {
     }
   }
 
+  async function handleCancel(enrollmentId) {
+    setBusyKey(`cancel:${enrollmentId}`);
+    try {
+      await cancelEnrollment(workspaceId, enrollmentId);
+      showSuccess('Enrollment cancelled. The CA was not contacted.');
+      await reload();
+    } catch (err) {
+      showError(errorText(err, 'Could not cancel the enrollment.'));
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function handleAbandon(enrollmentId) {
     setBusyKey(`abandon:${enrollmentId}`);
     try {
@@ -889,24 +1067,38 @@ export default function CertOpsAdcs() {
     }
   }
 
+  const finishedEnrollmentCount =
+    enrollments.filter(enrollmentIsFinished).length;
+  const visibleEnrollments = showFinished
+    ? enrollments
+    : enrollments.filter(enrollment => !enrollmentIsFinished(enrollment));
+
   return (
     <Stack spacing={4}>
       <DashboardPanel>
         <DashboardPanelHeader
           title='Issuers'
-          description='Preflight checks a CA and template. It does not issue a certificate, and enrollment stays off.'
+          description='Preflight checks a CA and template. It does not issue a certificate. Enrollment runs when an agent rule names that pair.'
           action={
-            <DashboardActionButton
-              variant='outline'
-              {...actionProps(busyKey, 'refresh', paused)}
-              onClick={() =>
-                reload().catch(err =>
-                  showError(errorText(err, 'Could not refresh AD CS issuers.'))
-                )
-              }
-            >
-              Refresh
-            </DashboardActionButton>
+            <HStack spacing={2}>
+              <DashboardActionButton
+                {...actionProps(busyKey, 'create', paused)}
+                onClick={() => setWizardOpen(true)}
+              >
+                New issuer
+              </DashboardActionButton>
+              <DashboardActionButton
+                variant='outline'
+                {...actionProps(busyKey, 'refresh', paused)}
+                onClick={() =>
+                  reload().catch(err =>
+                    showError(errorText(err, 'Could not refresh AD CS issuers.'))
+                  )
+                }
+              >
+                Refresh
+              </DashboardActionButton>
+            </HStack>
           }
         />
         {waitingForPreflight ? (
@@ -919,58 +1111,31 @@ export default function CertOpsAdcs() {
             {preflightNote}
           </Text>
         ) : null}
-        <Flex
-          as='form'
-          onSubmit={handleCreate}
-          direction={{ base: 'column', md: 'row' }}
-          align={{ md: 'flex-end' }}
-          gap={3}
-          mb={issuers.length > 0 || !loading ? 4 : 0}
-        >
-          <FormControl maxW={{ md: '160px' }}>
-            <FormLabel {...fieldLabelProps}>Kind</FormLabel>
-            <Select
-              size='sm'
-              value={kind}
-              onChange={event => setKind(event.target.value)}
-              aria-label='Issuer kind'
-            >
-              <option value='adcs'>AD CS</option>
-              <option value='acme'>ACME</option>
-            </Select>
-          </FormControl>
-          <FormControl flex='1'>
-            <FormLabel {...fieldLabelProps}>Name</FormLabel>
-            <Input
-              size='sm'
-              value={name}
-              onChange={event => setName(event.target.value)}
-              placeholder='Issuer name'
-              aria-label='Issuer name'
-              maxLength={128}
-              required
-            />
-          </FormControl>
-          <DashboardActionButton
-            type='submit'
-            {...actionProps(busyKey, 'create', paused)}
-          >
-            Create issuer
-          </DashboardActionButton>
-        </Flex>
+        <AdcsIssuerWizard
+          isOpen={wizardOpen}
+          onClose={() => setWizardOpen(false)}
+          workspaceId={workspaceId}
+          agents={agents}
+          paused={paused}
+          onChanged={reload}
+        />
         {loading ? (
           <DashboardState
             type='loading'
             title='Loading issuers and enrollments...'
             py={6}
           />
-        ) : issuers.length === 0 ? (
+        ) : issuers.filter(
+            item => item.kind !== 'adcs' || Number(item.currentVersion) > 0
+          ).length === 0 ? (
           <Text fontSize='sm' color={muted}>
             No issuers yet.
           </Text>
         ) : (
           <VStack align='stretch' spacing={1}>
-            {issuers.map(issuer => (
+            {issuers
+              .filter(item => item.kind !== 'adcs' || Number(item.currentVersion) > 0)
+              .map(issuer => (
               <IssuerRow
                 key={issuer.id}
                 issuer={issuer}
@@ -1004,6 +1169,17 @@ export default function CertOpsAdcs() {
           <DashboardPanelHeader
             title='Enrollments'
             description='Pending approval waits for the CA. An uncertain submission needs the RequestId before it can be reconciled.'
+            action={
+              finishedEnrollmentCount > 0 ? (
+                <Checkbox
+                  isChecked={showFinished}
+                  onChange={event => setShowFinished(event.target.checked)}
+                  size='sm'
+                >
+                  Show finished ({finishedEnrollmentCount})
+                </Checkbox>
+              ) : null
+            }
           />
           {enrollmentTotal > enrollments.length ? (
             <Text fontSize='sm' color={muted} mb={3}>
@@ -1012,15 +1188,23 @@ export default function CertOpsAdcs() {
           ) : null}
           {loadError ? (
             <DashboardErrorAlert>{loadError}</DashboardErrorAlert>
-          ) : enrollments.length === 0 ? (
+          ) : visibleEnrollments.length === 0 ? (
             <DashboardState
               py={6}
-              title='No enrollments yet'
-              description='Enrollment stays off. This list will show requests after that gate passes.'
+              title={
+                enrollments.length === 0
+                  ? 'No enrollments yet'
+                  : 'No enrollments in progress'
+              }
+              description={
+                enrollments.length === 0
+                  ? 'A renew job creates an enrollment when an agent rule names the CA and template.'
+                  : 'Finished enrollments are hidden. Show finished to see cancelled, failed, and completed requests.'
+              }
             />
           ) : (
             <VStack align='stretch' spacing={1}>
-              {enrollments.map(enrollment => (
+              {visibleEnrollments.map(enrollment => (
                 <EnrollmentRow
                   key={enrollment.id}
                   enrollment={enrollment}
@@ -1033,6 +1217,7 @@ export default function CertOpsAdcs() {
                   onAbandon={handleAbandon}
                   onAskAbandon={setPendingAbandonId}
                   onKeep={() => setPendingAbandonId(null)}
+                  onCancel={handleCancel}
                 />
               ))}
             </VStack>

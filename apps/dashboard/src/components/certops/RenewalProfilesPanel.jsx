@@ -53,6 +53,7 @@ import {
   useCertOpsRenewalProfiles,
   useUpdateRenewalProfile,
 } from './useCertOpsRenewals.js';
+import AdcsProfileWizard from './AdcsProfileWizard.jsx';
 import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
 import {
   CertOpsMobileFieldLabel,
@@ -314,6 +315,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
   const [issuers, setIssuers] = useState([]);
+  const [profileWizardOpen, setProfileWizardOpen] = useState(false);
   // Both lists on this tab page independently, so each scopes its own search
   // params; sharing `offset` would move them together.
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -345,7 +347,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, workspaceId]);
+  }, [isAdmin, workspaceId, profileWizardOpen]);
 
   const [disableTarget, setDisableTarget] = useState(null);
   const [detailsTarget, setDetailsTarget] = useState(null);
@@ -424,20 +426,32 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
 
   return (
     <Box>
-      <HStack justify='space-between' align='flex-start' mb={1} spacing={3}>
-        <Text fontSize='md' fontWeight='bold' color={titleColor}>
-          Renewal profiles
-        </Text>
-        {loading ? <Spinner size='sm' /> : null}
-      </HStack>
-      <Text fontSize='sm' color={muted} mb={3}>
-        A profile is the renewal contract for the certificates that use it:
-        which names to request, which key to generate, and which command and
-        host deploy the result. Profiles are created automatically from a
-        successful issuance, so the deployment details are fixed to what already
-        worked and changing them means issuing again.
-      </Text>
-
+      <AdcsProfileWizard
+        isOpen={profileWizardOpen}
+        onClose={() => setProfileWizardOpen(false)}
+        workspaceId={workspaceId}
+        issuers={issuers}
+        onCreated={refresh}
+      />
+      {isAdmin || (!loading && profiles.length > 0 && pagination) ? (
+        <Flex align='center' justify='flex-end' gap={3} mb={4} wrap='wrap'>
+          {isAdmin ? (
+            <Button size='sm' colorScheme='blue' onClick={() => setProfileWizardOpen(true)}>
+              New AD CS profile
+            </Button>
+          ) : null}
+          {!loading && profiles.length > 0 && pagination ? (
+            <DashboardPagination
+              limit={pagination.limit || limit}
+              offset={offset}
+              total={pagination.total}
+              pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
+              noun='renewal profiles'
+              onChange={setPage}
+            />
+          ) : null}
+        </Flex>
+      ) : null}
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
       {saveError ? (
         <DashboardErrorAlert>{saveError}</DashboardErrorAlert>
@@ -467,8 +481,8 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                 No renewal profiles yet.
               </Text>
               <Text fontSize='sm' color={muted} mt={1}>
-                A profile is created automatically the first time an agent
-                issues a certificate for this workspace.
+                Create an AD CS profile here, or issue a certificate and
+                TokenTimer derives an ACME profile from that run.
               </Text>
             </>
           )}
@@ -477,18 +491,6 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
 
       {!loading && profiles.length > 0 ? (
         <>
-          {pagination ? (
-            <Flex justify='flex-end' mb={4}>
-              <DashboardPagination
-                limit={pagination.limit || limit}
-                offset={offset}
-                total={pagination.total}
-                pageSizeOptions={CERTOPS_PAGE_SIZE_OPTIONS}
-                noun='renewal profiles'
-                onChange={setPage}
-              />
-            </Flex>
-          ) : null}
           <TableContainer {...tableStyles.tableContainerProps}>
             <Table {...tableStyles.tableProps}>
               <Thead {...tableStyles.theadProps}>

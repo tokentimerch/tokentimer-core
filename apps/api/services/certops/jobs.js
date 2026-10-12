@@ -939,6 +939,15 @@ function validateRenewalProfileOnPayload(
   const hasProfile =
     payload &&
     Object.prototype.hasOwnProperty.call(payload, "renewalProfile");
+  // AD CS renewals bind the CA and template on the enrollment snapshot.
+  // They do not carry the ACME renewalProfile contract.
+  if (
+    !hasProfile &&
+    payload?.keyMode === "os-store-managed" &&
+    payload?.target?.type === "windows-iis"
+  ) {
+    return null;
+  }
   if (!hasProfile && !required) return null;
   try {
     return validateRenewalProfile(payload?.renewalProfile);

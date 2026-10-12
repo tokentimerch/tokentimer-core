@@ -26,6 +26,7 @@ const {
   listCertificateJobs,
   updateCertificateJobStatus,
   validateJobPayloadForOperation,
+  validateRenewalProfileOnPayload,
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
@@ -2195,6 +2196,24 @@ describe("CertOps jobs service", () => {
           payload: { certificateId: "cert-1" },
         }),
       (error) => error?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
+    );
+  });
+
+  it("accepts an AD CS automation renew payload without an ACME profile", () => {
+    const payload = {
+      schemaVersion: 1,
+      certificateId: "cert-1",
+      keyMode: "os-store-managed",
+      target: {
+        type: "windows-iis",
+        reference: "www.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+    };
+    assert.equal(
+      validateRenewalProfileOnPayload(payload, "renew", { required: true }),
+      null,
     );
   });
 

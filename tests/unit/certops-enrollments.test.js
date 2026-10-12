@@ -14,6 +14,7 @@ const {
 } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const {
   abandonEnrollment,
+  cancelEnrollment,
   confirmIssuerKey,
   createEnrollment,
   dispatchPreflight,
@@ -365,6 +366,13 @@ function rowDb() {
         row.next_poll_at = new Date();
         return { rows: [] };
       }
+      if (text.includes("SET state = 'cancelled'")) {
+        const row = enrollments.get(params[1]);
+        row.state = "cancelled";
+        row.next_poll_at = params[2];
+        return { rows: [] };
+      }
+      if (text.includes("UPDATE certificate_jobs")) return { rows: [] };
       if (text.includes("INSERT INTO certificate_issuer_versions")) {
         const issuer = issuers.get(params[1]);
         issuer.confirmed = {
@@ -738,6 +746,41 @@ describe("enrollment rows", () => {
       );
       assert.equal(early.enrollments.get(ENROLLMENT).state, state);
     }
+  });
+
+  it("cancels an enrollment that never reached the CA without scheduling key cleanup", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "requested", {
+      attempt: 1,
+      job_status: "failed",
+      current_job_id: "job-1",
+    }));
+    await cancelEnrollment({
+      client: db,
+      workspaceId: WORKSPACE,
+      enrollmentId: ENROLLMENT,
+      audit,
+    });
+    const row = db.enrollments.get(ENROLLMENT);
+    assert.equal(row.state, "cancelled");
+    assert.equal(row.next_poll_at, null);
+  });
+
+  it("refuses to cancel an enrollment while the agent is still running the attempt", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "requested", {
+      attempt: 1,
+      job_status: "running",
+    }));
+    await assert.rejects(
+      cancelEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        audit,
+      }),
+      (error) => error.code === "CERTOPS_ENROLLMENT_JOB_ACTIVE",
+    );
   });
 
   it("refuses a profile enrollment while that issuer requires revalidation", async () => {

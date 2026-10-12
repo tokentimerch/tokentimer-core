@@ -62,13 +62,8 @@ function revokeErrorMessage(err) {
   );
 }
 
-/**
- * Bootstrap-token inventory, inline on the Agents tab (U4): ongoing
- * credential state, unlike the one-time install wizard in DeployAgentModal,
- * so it stays on the page rather than behind a modal. Paginated
- * server-side, same as the fleet table it sits next to.
- */
-export default function BootstrapTokenList() {
+/** Bootstrap-token inventory. Opened from the Agents page modal. */
+export default function BootstrapTokenList({ hideTitle = false }) {
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const { limit, offset, setPage } = useCertOpsListUrlState({
@@ -109,9 +104,11 @@ export default function BootstrapTokenList() {
 
   return (
     <Stack spacing={3} align='stretch'>
-      <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
-        Bootstrap tokens
-      </Text>
+      {hideTitle ? null : (
+        <Text fontSize='sm' fontWeight='semibold' color={titleColor}>
+          Bootstrap tokens
+        </Text>
+      )}
 
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
 

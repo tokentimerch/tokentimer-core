@@ -18,7 +18,17 @@ The transport is DCOM, the `certreq` default. The agent never passes `-rpc` to `
 
 The member needs TCP 135 and the CA's dynamic RPC range, outbound to the CA. Blocking TCP 135 makes the submit fail before the CA records a request. The agent then retries the same CSR. It does not create a second request for a submit that never arrived.
 
-## Template
+## Certificate template
+
+<a id="certificate-template"></a>
+
+The template name in the issuer wizard is not created by TokenTimer. It is the template common name already published on the enterprise CA.
+
+In Certificate Templates (`certtmpl.msc`), copy the **Template name**, not the display name. A display name such as "Web Server" can hide a template name such as `WebServer`. Publish that template on the issuing CA, and grant Enroll to the agent computer account (`DOMAIN\HOST$`) or to a group that contains it.
+
+Type that same template name in the wizard. The dashboard does not list the CA catalog. The name must also appear, with the same CA, in the agent [enrollment rule](#enrollment-rules). A pair that is not in that rule is rejected before the CA is contacted.
+
+<a id="template"></a>
 
 Use a template the CA publishes, schema version 2 or later. EC keys need schema version 3 or later, and the qualified curves are P-256 and P-384 on a version 4 template.
 
@@ -40,7 +50,15 @@ Preflight reads two CA settings and refuses with `ADCS_CA_CONFIG_UNSAFE` when ei
 
 If the agent identity cannot read either value, preflight refuses unless local policy carries an explicit attestation for that CA.
 
+## CA config
+
+<a id="ca-config"></a>
+
+`caConfig` is `DNS host\CA name`. The host is the CA computer's DNS name. The CA name is the name in the Certification Authority console, which can differ from the Windows computer name. Use that exact string in the issuer wizard and in the agent enrollment rule.
+
 ## Enrollment rules
+
+<a id="enrollment-rules"></a>
 
 On the agent, `config.json` lists the only CA and template pairs that host may contact:
 
@@ -58,6 +76,14 @@ On the agent, `config.json` lists the only CA and template pairs that host may c
 ```
 
 `caConfig` is `host\CA name`. `template` is the template common name. A preflight or enrollment whose pair is not in this list is rejected with `issuer_not_allowlisted` and does not contact the CA. Separate CA and template allowlists are not used, because the cross product would allow pairs nobody chose.
+
+## Renewal profile
+
+<a id="renewal-profile"></a>
+
+A renewal profile does not choose the template. It selects an issuer that already has a pinned CA certificate, then records the certificate DNS name, the IIS site and port, the certificate store, the key, and how many days before expiry renewal starts.
+
+The certificate name must be a DNS name an active agent declares as a target selector. Attach the profile to that certificate in the inventory and turn automation on. The sweep enrolls only when the certificate is inside the lead time.
 
 ## Preflight and the CA key
 

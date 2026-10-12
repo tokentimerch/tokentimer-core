@@ -151,6 +151,7 @@ const {
   CERTOPS_PROFILE_INVALID,
   CERTOPS_PROFILE_NOT_FOUND,
   CERTOPS_PROFILE_NO_CHANGES,
+  createAdcsRenewalProfile,
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,
@@ -3799,6 +3800,41 @@ router.get(
       });
       return res.status(500).json({
         error: "Failed to list upcoming renewals",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/profiles",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"),
+  async (req, res) => {
+    try {
+      const profile = await createAdcsRenewalProfile({
+        workspaceId: req.workspace.id,
+        body: req.body,
+        actorUserId: req.user?.id || null,
+      });
+      return res.status(201).json(profile);
+    } catch (err) {
+      if (err?.code === "CERTOPS_PROFILE_ISSUER_NOT_FOUND") {
+        return res.status(404).json({ error: err.message, code: err.code });
+      }
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps renewal profile create failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create renewal profile",
         code: "INTERNAL_ERROR",
       });
     }
