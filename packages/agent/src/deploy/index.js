@@ -1079,15 +1079,24 @@ function rotationStagingSiblings(keysDir, liveBaseName, fsImpl = fs) {
     .sort();
 }
 
+function liveCustodyKeyReusable(livePath, fsImpl) {
+  try {
+    const text = fsImpl.readFileSync(livePath, "utf8");
+    return typeof text === "string" && text.includes("PRIVATE KEY");
+  } catch (_err) {
+    return false;
+  }
+}
+
 /**
  * Live custody path to use for a later renew or standalone deploy.
- * A quarantine marker means promotion failed. The live filename may still
- * hold the previous key if moving it aside also failed, so it is never
- * returned. A kept rotation staging sibling is the replacement.
+ * A quarantine marker, an unreadable marker, or a live file that is no
+ * longer a private key means the previous key must not be reused. A kept
+ * rotation staging sibling is the replacement.
  *
  * @param {string} keysDir
  * @param {string} certificateId
- * @param {{ existsSync?: Function, readdirSync?: Function, accessSync?: Function }} [fsImpl]
+ * @param {{ existsSync?: Function, readdirSync?: Function, accessSync?: Function, readFileSync?: Function }} [fsImpl]
  * @returns {{ path: string|null, quarantined: boolean }}
  */
 function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs) {
@@ -1102,10 +1111,16 @@ function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs) {
     } else {
       quarantined = fsImpl.existsSync(marker) === true;
     }
-  } catch (_err) {
-    quarantined = false;
+  } catch (err) {
+    // Missing marker is the normal case. Any other read error means we
+    // cannot prove the live key is safe to reuse.
+    quarantined = !err || err.code !== "ENOENT";
   }
-  if (!quarantined && fsImpl.existsSync(live)) {
+  if (
+    !quarantined &&
+    fsImpl.existsSync(live) &&
+    liveCustodyKeyReusable(live, fsImpl)
+  ) {
     return { path: live, quarantined: false };
   }
   const siblings = rotationStagingSiblings(keysDir, liveBaseName, fsImpl);
@@ -1501,15 +1516,18 @@ async function deployCertificateAndKey({
           canRemoveStaging = false;
           custodyPromotionFailed = true;
           if (custodyResolved !== realKeyDestination) {
+            let markerWritten = false;
             try {
               await fspImpl.writeFile(
                 custodyQuarantineMarkerPath(custodyResolved),
                 "custody promotion failed\n",
                 { mode: 0o600 },
               );
+              markerWritten = true;
             } catch (_markerErr) {
-              // Without the marker, quarantine is only the rename below.
+              markerWritten = false;
             }
+            let movedAside = false;
             try {
               await fspImpl.access(custodyResolved);
               const staleAsidePath = path.join(
@@ -1517,9 +1535,24 @@ async function deployCertificateAndKey({
                 `${path.basename(custodyResolved)}.stale-${process.pid}`,
               );
               await fspImpl.rename(custodyResolved, staleAsidePath);
+              movedAside = true;
             } catch (_renameErr) {
-              // Live filename may still hold the old key. The marker, when
-              // written, is what blocks reuse.
+              movedAside = false;
+            }
+            // Directory permission can block both a new marker and a rename
+            // while the existing file is still writable. Wipe it in place so
+            // the old key bytes cannot be selected by a later job.
+            if (!markerWritten && !movedAside) {
+              try {
+                if (typeof fspImpl.truncate === "function") {
+                  await fspImpl.truncate(custodyResolved, 0);
+                } else {
+                  await fspImpl.writeFile(custodyResolved, "", { flag: "r+" });
+                }
+              } catch (_wipeErr) {
+                // Last resort failed. Lookup still refuses a non-key file
+                // and an unreadable marker.
+              }
             }
           }
         }
