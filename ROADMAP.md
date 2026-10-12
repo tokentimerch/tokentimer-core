@@ -1,8 +1,10 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-11 for AD CS durable journal recovery work in draft
-[#343](https://github.com/tokentimerch/tokentimer-core/pull/343) (gated; `adcs`
-still not executable).
+Last reviewed: 2026-10-12. Dropped the optional already-expired-import
+notification ask ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
+quiet historical imports stay the default without a toggle. AD CS durable
+journal recovery remains in draft [#343](https://github.com/tokentimerch/tokentimer-core/pull/343)
+(gated; `adcs` still not executable).
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -36,9 +38,6 @@ compliance reporting are not deliverables of this repository.
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
 called stable while they are open.
 
-- **Optional notification for already-expired imports**
-  ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231)).
-  Quiet historical imports remain the default.
 - **CertOps destinations: store issued material and distribute it**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
   Name filesystem, IIS, or customer Vault locations on a certificate.

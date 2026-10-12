@@ -431,7 +431,14 @@ export default function CertOpsCertificates() {
         if (cancelled) return;
         if (identity) {
           setCsrModalOpen(false);
-          setDetailsTarget(identity);
+          // Pin the URL managed-certificate id even when list enrichment
+          // returns a grouped identity (open-period managed id may differ
+          // from a historical job subject matched via sources).
+          setDetailsTarget({
+            ...identity,
+            managedCertificateId: certificateIdInUrl,
+            tokenId: identity.tokenId ?? cert.tokenId ?? null,
+          });
           stripCertificateId();
         } else {
           setFocusedCertificateId('');
