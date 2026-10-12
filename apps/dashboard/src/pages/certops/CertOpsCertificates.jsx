@@ -632,7 +632,7 @@ export default function CertOpsCertificates() {
         </Select>
         <Select
           size='sm'
-          maxW='220px'
+          maxW='280px'
           value={lifecycleIncludesRetired ? 'including' : 'active'}
           onChange={event =>
             setFilter(
@@ -893,7 +893,17 @@ export default function CertOpsCertificates() {
                         <MobileFieldLabel color={muted}>
                           Status
                         </MobileFieldLabel>
-                        <CertificateLifecycleBadge certificate={certificate} />
+                        {certificate.stillObserved && retired ? (
+                          <Tooltip label='Retired, and a recent scan still saw this certificate deployed.'>
+                            <CertificateLifecycleBadge
+                              certificate={certificate}
+                            />
+                          </Tooltip>
+                        ) : (
+                          <CertificateLifecycleBadge
+                            certificate={certificate}
+                          />
+                        )}
                         {certificate.reconciliationReason ? (
                           <Tooltip
                             label={`Facts on this certificate may be stale: ${certificate.reconciliationReason}`}

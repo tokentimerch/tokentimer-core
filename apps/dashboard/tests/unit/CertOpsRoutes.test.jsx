@@ -147,14 +147,11 @@ describe('CertOpsRoutes redirects', () => {
     expect(screen.getByText('Machine executor jobs')).toBeInTheDocument();
   });
 
-  it('sends /certops/adcs to the renewals tab', () => {
+  it('treats /certops/adcs as an unknown path', () => {
     renderAt('/certops/adcs');
 
-    expect(screen.getByText('Renewal profiles')).toBeInTheDocument();
-    expect(screen.getByText('AD CS issuers')).toBeInTheDocument();
-    const current = screen.getAllByRole('link', { current: 'page' });
-    expect(current).toHaveLength(1);
-    expect(current[0]).toHaveTextContent('Renewals');
+    expect(screen.getByText('Machine executor jobs')).toBeInTheDocument();
+    expect(screen.queryByText('Renewal profiles')).not.toBeInTheDocument();
   });
 });
 

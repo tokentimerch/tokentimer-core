@@ -418,14 +418,18 @@ function IssuerRow({
           <Text fontSize='xs' color={muted} flexShrink={0}>
             v{issuer.currentVersion || 0}
           </Text>
-          <VerdictBadge
-            label='Template'
-            verdict={issuer.lastPreflight?.templateCheck?.verdict}
-          />
-          <VerdictBadge
-            label='CA'
-            verdict={issuer.lastPreflight?.caCheck?.verdict}
-          />
+          {issuer.lastPreflight ? (
+            <>
+              <VerdictBadge
+                label='Template'
+                verdict={issuer.lastPreflight.templateCheck?.verdict}
+              />
+              <VerdictBadge
+                label='CA'
+                verdict={issuer.lastPreflight.caCheck?.verdict}
+              />
+            </>
+          ) : null}
           <CertOpsBadge colorScheme={keyScheme(issuer)}>
             {keyStatus(issuer)}
           </CertOpsBadge>
@@ -890,7 +894,7 @@ export default function CertOpsAdcs() {
       <DashboardPanel>
         <DashboardPanelHeader
           title='Issuers'
-          description='Creating an AD CS issuer does not enable enrollment. Preflight is read-only and only runs when the agent allowlists that CA and template.'
+          description='Preflight checks a CA and template. It does not issue a certificate, and enrollment stays off.'
           action={
             <DashboardActionButton
               variant='outline'
@@ -999,7 +1003,7 @@ export default function CertOpsAdcs() {
         <DashboardPanel>
           <DashboardPanelHeader
             title='Enrollments'
-            description='Awaiting CA approval stays pending until a continuation retrieves the certificate. An uncertain submission needs the RequestId from the CA.'
+            description='Pending approval waits for the CA. An uncertain submission needs the RequestId before it can be reconciled.'
           />
           {enrollmentTotal > enrollments.length ? (
             <Text fontSize='sm' color={muted} mb={3}>
@@ -1012,7 +1016,7 @@ export default function CertOpsAdcs() {
             <DashboardState
               py={6}
               title='No enrollments yet'
-              description='This page does not start one. AD CS enrollment stays off until the release gate passes.'
+              description='Enrollment stays off. This list will show requests after that gate passes.'
             />
           ) : (
             <VStack align='stretch' spacing={1}>

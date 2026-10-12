@@ -408,7 +408,7 @@ describe('CertOpsCertificates list states', () => {
     expect(screen.getByText('At CA capacity')).toBeInTheDocument();
     const neverRow = screen.getByText('never.example.test').closest('tr');
     expect(within(neverRow).getByText('Never renewed')).toBeInTheDocument();
-    expect(screen.getByText('Succeeded')).toBeInTheDocument();
+    expect(screen.getByText('Last renewal: Succeeded')).toBeInTheDocument();
     const olderRow = screen.getByText('older.example.test').closest('tr');
     expect(
       within(olderRow).queryByText('Never renewed')

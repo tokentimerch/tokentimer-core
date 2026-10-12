@@ -75,8 +75,15 @@ import {
  * anyway would be refused.
  */
 
-function IssuerChoice({ profile, issuers, disabled, onSave }) {
+function issuerLabel(value, issuers) {
+  if (!value) return 'ACME';
+  const match = issuers.find(issuer => issuer.id === value);
+  return match ? `AD CS · ${match.name}` : 'AD CS issuer';
+}
+
+function IssuerChoice({ profile, issuers, saving, onSave }) {
   const [value, setValue] = useState(profile.issuerId || '');
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     setValue(profile.issuerId || '');
@@ -84,28 +91,55 @@ function IssuerChoice({ profile, issuers, disabled, onSave }) {
 
   const known = !value || issuers.some(issuer => issuer.id === value);
 
+  if (!editing) {
+    return (
+      <HStack spacing={2}>
+        <Text fontSize='sm'>{issuerLabel(value, issuers)}</Text>
+        <Button
+          size='xs'
+          variant='ghost'
+          aria-label={`Change issuer for ${profile.name}`}
+          onClick={() => setEditing(true)}
+        >
+          Change
+        </Button>
+      </HStack>
+    );
+  }
+
   return (
-    <Select
-      size='sm'
-      aria-label={`Issuer for ${profile.name}`}
-      value={value}
-      isDisabled={disabled}
-      onChange={async event => {
-        const next = event.target.value;
-        const previous = value;
-        setValue(next);
-        const saved = await onSave(next || null);
-        if (!saved) setValue(previous);
-      }}
-    >
-      <option value=''>ACME</option>
-      {known ? null : <option value={value}>AD CS issuer</option>}
-      {issuers.map(issuer => (
-        <option key={issuer.id} value={issuer.id}>
-          {issuer.name}
-        </option>
-      ))}
-    </Select>
+    <HStack spacing={2}>
+      <Select
+        size='sm'
+        maxW='220px'
+        aria-label={`Issuer for ${profile.name}`}
+        aria-busy={saving ? 'true' : undefined}
+        title='ACME renews from a public CA. Choosing an AD CS issuer does not enable enrollment.'
+        value={value}
+        isDisabled={saving}
+        autoFocus
+        onChange={async event => {
+          const next = event.target.value;
+          const previous = value;
+          setValue(next);
+          const saved = await onSave(next || null);
+          if (!saved) setValue(previous);
+          else setEditing(false);
+        }}
+      >
+        <option value=''>ACME</option>
+        {known ? null : <option value={value}>AD CS issuer</option>}
+        {issuers.map(issuer => (
+          <option key={issuer.id} value={issuer.id}>
+            {`AD CS · ${issuer.name}`}
+          </option>
+        ))}
+      </Select>
+      {saving ? <Spinner size='xs' /> : null}
+      <Button size='xs' variant='ghost' onClick={() => setEditing(false)}>
+        Close
+      </Button>
+    </HStack>
   );
 }
 
@@ -439,7 +473,6 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                       onSort={handleSort}
                     />
                   ))}
-                  <Th>Issuer</Th>
                   <Th textAlign='right' {...stickyActions}>
                     Actions
                   </Th>
@@ -480,6 +513,31 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             />
                           ) : null}
                         </HStack>
+                        <Box mt={2}>
+                          <Text fontSize='xs' color={muted} mb={1}>
+                            Issuer
+                          </Text>
+                          {isAdmin && !archived ? (
+                            <IssuerChoice
+                              profile={profile}
+                              issuers={issuers}
+                              saving={rowSaving}
+                              onSave={next =>
+                                applyChange(
+                                  profile,
+                                  { issuerId: next },
+                                  next
+                                    ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
+                                    : 'Profile stays on ACME'
+                                )
+                              }
+                            />
+                          ) : (
+                            <Text fontSize='sm'>
+                              {profile.issuerId ? 'AD CS issuer' : 'ACME'}
+                            </Text>
+                          )}
+                        </Box>
                       </Td>
                       <Td {...tableStyles.cellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
@@ -521,31 +579,6 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             ? `${String(renewal.keyAlgorithm).toUpperCase()} ${renewal.keySize || ''}`.trim()
                             : '--'}
                         </Text>
-                      </Td>
-                      <Td {...tableStyles.cellProps}>
-                        <CertOpsMobileFieldLabel color={muted}>
-                          Issuer
-                        </CertOpsMobileFieldLabel>
-                        {isAdmin && !archived ? (
-                          <IssuerChoice
-                            profile={profile}
-                            issuers={issuers}
-                            disabled={rowSaving}
-                            onSave={next =>
-                              applyChange(
-                                profile,
-                                { issuerId: next },
-                                next
-                                  ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
-                                  : 'Profile stays on ACME'
-                              )
-                            }
-                          />
-                        ) : (
-                          <Text fontSize='sm'>
-                            {profile.issuerId ? 'AD CS issuer' : 'ACME'}
-                          </Text>
-                        )}
                       </Td>
                       <Td
                         {...tableStyles.actionCellProps}

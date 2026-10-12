@@ -443,7 +443,10 @@ export default function CertificateDetailsModal({
                     <RenewalBadge renewal={certificate.renewal} />
                   ) : null}
                   {hasRenewalData ? (
-                    <RenewalScheduleFacts renewal={certificate.renewal} />
+                    <RenewalScheduleFacts
+                      renewal={certificate.renewal}
+                      placement='detail'
+                    />
                   ) : null}
                   {certificate?.renewalPathState &&
                   certificate.renewalPathState !== 'healthy' ? (
@@ -770,7 +773,10 @@ export default function CertificateDetailsModal({
                   <DetailRow label='Automatic renewal'>
                     <VStack align='start' spacing={1}>
                       <RenewalBadge renewal={certificate.renewal} />
-                      <RenewalScheduleFacts renewal={certificate.renewal} />
+                      <RenewalScheduleFacts
+                        renewal={certificate.renewal}
+                        placement='detail'
+                      />
                       <Text fontSize='xs' color='dashboard.modal.muted'>
                         {renewal.help}
                       </Text>

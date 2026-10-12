@@ -1,19 +1,19 @@
-import { Text, Tooltip } from '@chakra-ui/react';
+import { Text, Tooltip, VStack } from '@chakra-ui/react';
 import CertOpsBadge from './CertOpsBadge.jsx';
-import JobStatusBadge from './JobStatusBadge.jsx';
+import { jobStatusLabel } from './certopsJobsFormat';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 
 /**
- * Schedule facts that used to live only on the upcoming-renewals list:
- * a capacity deferral, and the latest renew job (or that there has never
- * been one). Renewal state badges stay on RenewalBadge.
+ * Capacity wait and the latest renewal job. The renewal badge already says
+ * whether automatic renewal can run. These two facts must not look like a
+ * second certificate status.
  */
 const DEFERRED_REASONS = {
   ca_capacity: {
     label: 'At CA capacity',
     scheme: 'yellow',
     tooltip:
-      'This certificate is due for renewal, but its issuing CA already has as many renewals in flight as the per-CA limit allows. The capacity constraint itself clears automatically once earlier renewals for that CA finish; it does not mean nothing here needs attention, since one of those in-flight jobs could be waiting on something else, such as an approval.',
+      'Renewal is waiting because this CA already has as many renewals in flight as it allows. It continues on its own when an earlier renewal for that CA finishes. A job waiting on approval can still need attention.',
   },
 };
 
@@ -21,7 +21,7 @@ const DEFERRED_FALLBACK = {
   label: 'Deferred',
   scheme: 'gray',
   tooltip:
-    'Renewal is temporarily deferred. It will proceed once the underlying condition clears.',
+    'Renewal is waiting on a temporary condition. It is not a missing profile or a missing key.',
 };
 
 const NEVER_RENEWED_STATES = new Set(['auto', 'disabled', 'not-configured']);
@@ -30,7 +30,7 @@ function deferredDescriptor(reason) {
   return DEFERRED_REASONS[reason] || DEFERRED_FALLBACK;
 }
 
-export default function RenewalScheduleFacts({ renewal }) {
+export default function RenewalScheduleFacts({ renewal, placement = 'row' }) {
   const { muted } = useDashboardTheme();
   if (!renewal || typeof renewal !== 'object') return null;
 
@@ -48,11 +48,18 @@ export default function RenewalScheduleFacts({ renewal }) {
     typeof lastRenewJobStatus === 'string' ? lastRenewJobStatus.trim() : '';
   const showNeverRenewed =
     hasLastAttempt && !jobStatus && NEVER_RENEWED_STATES.has(renewal.state);
+  const attemptText = jobStatus
+    ? `Last renewal: ${jobStatusLabel(jobStatus)}`
+    : showNeverRenewed
+      ? placement === 'detail'
+        ? 'No renewal job has run yet.'
+        : 'Never renewed'
+      : '';
 
-  if (!deferred && !jobStatus && !showNeverRenewed) return null;
+  if (!deferred && !attemptText) return null;
 
   return (
-    <>
+    <VStack align='flex-start' spacing={1}>
       {deferred ? (
         <Tooltip
           label={deferred.tooltip}
@@ -68,13 +75,11 @@ export default function RenewalScheduleFacts({ renewal }) {
           </CertOpsBadge>
         </Tooltip>
       ) : null}
-      {jobStatus ? (
-        <JobStatusBadge status={jobStatus} />
-      ) : showNeverRenewed ? (
+      {attemptText ? (
         <Text fontSize='xs' color={muted}>
-          Never renewed
+          {attemptText}
         </Text>
       ) : null}
-    </>
+    </VStack>
   );
 }
