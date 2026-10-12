@@ -5,6 +5,7 @@ import {
   Button,
   Flex,
   HStack,
+  IconButton,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -30,6 +31,7 @@ import {
   VStack,
   useColorModeValue,
 } from '@chakra-ui/react';
+import { MoreVertical } from 'lucide-react';
 import {
   DashboardModalDescription,
   DashboardModalFrame,
@@ -93,11 +95,15 @@ function IssuerChoice({ profile, issuers, saving, onSave }) {
 
   if (!editing) {
     return (
-      <HStack spacing={2}>
-        <Text fontSize='sm'>{issuerLabel(value, issuers)}</Text>
+      <HStack spacing={2} maxW='240px'>
+        <CertOpsTruncatedText
+          value={issuerLabel(value, issuers)}
+          fontSize='sm'
+        />
         <Button
           size='xs'
-          variant='ghost'
+          variant='outline'
+          flexShrink={0}
           aria-label={`Change issuer for ${profile.name}`}
           onClick={() => setEditing(true)}
         >
@@ -108,10 +114,10 @@ function IssuerChoice({ profile, issuers, saving, onSave }) {
   }
 
   return (
-    <HStack spacing={2}>
+    <HStack spacing={2} maxW='240px'>
       <Select
-        size='sm'
-        maxW='220px'
+        size='xs'
+        maxW='160px'
         aria-label={`Issuer for ${profile.name}`}
         aria-busy={saving ? 'true' : undefined}
         title='ACME renews from a public CA. Choosing an AD CS issuer does not enable enrollment.'
@@ -233,13 +239,18 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
   if (!editing) {
     return (
       <HStack spacing={2}>
-        <Text fontSize='sm'>
+        <Text fontSize='sm' noOfLines={1}>
           {profile.renewBeforeDays == null
             ? 'Deployment default'
             : `${profile.renewBeforeDays} days`}
         </Text>
         {disabled ? null : (
-          <Button size='xs' variant='ghost' onClick={() => setEditing(true)}>
+          <Button
+            size='xs'
+            variant='outline'
+            flexShrink={0}
+            onClick={() => setEditing(true)}
+          >
             Change
           </Button>
         )}
@@ -354,6 +365,24 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
     '-8px 0 8px -8px rgba(0, 0, 0, 0.25)',
     '-8px 0 8px -8px rgba(0, 0, 0, 0.6)'
   );
+  const actionColor = useColorModeValue('gray.600', 'rgba(203, 213, 225, 0.9)');
+  const actionHoverBg = useColorModeValue('gray.100', 'rgba(30, 41, 59, 0.72)');
+  const actionFocusShadow = useColorModeValue(
+    '0 0 0 2px rgba(37, 99, 235, 0.28)',
+    '0 0 0 2px rgba(96, 165, 250, 0.34)'
+  );
+  const actionButtonProps = {
+    size: 'sm',
+    variant: 'ghost',
+    color: actionColor,
+    borderRadius: 'md',
+    _hover: { bg: actionHoverBg },
+    _active: { bg: actionHoverBg },
+    _focusVisible: {
+      bg: actionHoverBg,
+      boxShadow: actionFocusShadow,
+    },
+  };
 
   /**
    * Keeps the Actions column visible when the table overflows.
@@ -464,15 +493,20 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
             <Table {...tableStyles.tableProps}>
               <Thead {...tableStyles.theadProps}>
                 <Tr>
-                  {PROFILE_COLUMNS.map(([key, label]) => (
-                    <CertOpsSortableHeader
-                      key={key}
-                      label={label}
-                      sortKey={key}
-                      sort={sort}
-                      onSort={handleSort}
-                    />
-                  ))}
+                  {PROFILE_COLUMNS.flatMap(([key, label]) => {
+                    const header = (
+                      <CertOpsSortableHeader
+                        key={key}
+                        label={label}
+                        sortKey={key}
+                        sort={sort}
+                        onSort={handleSort}
+                      />
+                    );
+                    return key === 'profile'
+                      ? [header, <Th key='issuer'>Issuer</Th>]
+                      : [header];
+                  })}
                   <Th textAlign='right' {...stickyActions}>
                     Actions
                   </Th>
@@ -513,31 +547,32 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             />
                           ) : null}
                         </HStack>
-                        <Box mt={2}>
-                          <Text fontSize='xs' color={muted} mb={1}>
-                            Issuer
-                          </Text>
-                          {isAdmin && !archived ? (
-                            <IssuerChoice
-                              profile={profile}
-                              issuers={issuers}
-                              saving={rowSaving}
-                              onSave={next =>
-                                applyChange(
-                                  profile,
-                                  { issuerId: next },
-                                  next
-                                    ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
-                                    : 'Profile stays on ACME'
-                                )
-                              }
-                            />
-                          ) : (
-                            <Text fontSize='sm'>
-                              {profile.issuerId ? 'AD CS issuer' : 'ACME'}
-                            </Text>
-                          )}
-                        </Box>
+                      </Td>
+                      <Td {...tableStyles.cellProps}>
+                        <CertOpsMobileFieldLabel color={muted}>
+                          Issuer
+                        </CertOpsMobileFieldLabel>
+                        {isAdmin && !archived ? (
+                          <IssuerChoice
+                            profile={profile}
+                            issuers={issuers}
+                            saving={rowSaving}
+                            onSave={next =>
+                              applyChange(
+                                profile,
+                                { issuerId: next },
+                                next
+                                  ? 'AD CS issuer selected. Enrollment stays disabled until the release gate passes.'
+                                  : 'Profile stays on ACME'
+                              )
+                            }
+                          />
+                        ) : (
+                          <CertOpsTruncatedText
+                            value={issuerLabel(profile.issuerId, issuers)}
+                            fontSize='sm'
+                          />
+                        )}
                       </Td>
                       <Td {...tableStyles.cellProps}>
                         <CertOpsMobileFieldLabel color={muted}>
@@ -586,13 +621,14 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                         {...stickyActions}
                       >
                         <HStack spacing={1} justify='flex-end'>
-                          <Button
-                            size='xs'
-                            variant='ghost'
-                            onClick={() => setDetailsTarget(profile)}
-                          >
-                            Details
-                          </Button>
+                          <Tooltip label='Details' hasArrow openDelay={250}>
+                            <IconButton
+                              {...actionButtonProps}
+                              aria-label='Details'
+                              icon={<MoreVertical size={16} />}
+                              onClick={() => setDetailsTarget(profile)}
+                            />
+                          </Tooltip>
                           {isAdmin ? (
                             archived ? (
                               <Text fontSize='xs' color={muted}>

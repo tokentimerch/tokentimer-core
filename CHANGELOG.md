@@ -18,7 +18,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Revoked and decommissioned certificates stay out of the active certificate inventory even when they are still observed. The Including retired view still shows that a retired certificate is deployed.
-- The renewal schedule section is gone. Certificate rows now show when a renewal is waiting because the issuing CA is at capacity, and the last renewal attempt.
+- The renewal schedule section is gone. Certificate rows show a CA capacity wait separately from the last renewal attempt, which is a job-status badge.
+- Renewal profiles list the issuer in its own column. Issuer and lead time both use an outline Change button, and profile details uses the same icon as the certificate inventory. AD CS issuers sit on the Renewals tab in the system settings card. Creating an issuer does not enable enrollment.
 - An IIS renewal on Windows now fails with `UNSUPPORTED_BINDING_SETTINGS` and leaves the binding untouched when the binding has a setting the agent cannot carry over to the new certificate, such as one this host's `netsh` cannot set. The error detail names the setting. Earlier versions dropped such settings on renewal. **Operator guidance:** remove the named setting, or rebind that certificate manually.
 
 ### Fixed

@@ -1,12 +1,11 @@
-import { Text, Tooltip, VStack } from '@chakra-ui/react';
+import { Tooltip, VStack } from '@chakra-ui/react';
 import CertOpsBadge from './CertOpsBadge.jsx';
-import { jobStatusLabel } from './certopsJobsFormat';
-import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { jobStatusLabel, jobStatusScheme } from './certopsJobsFormat';
 
 /**
  * Capacity wait and the latest renewal job. The renewal badge already says
- * whether automatic renewal can run. These two facts must not look like a
- * second certificate status.
+ * whether automatic renewal can run. The last attempt uses the job status
+ * color and names that job, so it does not read as a second certificate status.
  */
 const DEFERRED_REASONS = {
   ca_capacity: {
@@ -30,8 +29,15 @@ function deferredDescriptor(reason) {
   return DEFERRED_REASONS[reason] || DEFERRED_FALLBACK;
 }
 
+function AttemptBadge({ children, scheme = 'gray', label }) {
+  return (
+    <CertOpsBadge colorScheme={scheme} aria-label={label || children}>
+      {children}
+    </CertOpsBadge>
+  );
+}
+
 export default function RenewalScheduleFacts({ renewal, placement = 'row' }) {
-  const { muted } = useDashboardTheme();
   if (!renewal || typeof renewal !== 'object') return null;
 
   const { deferredReason, lastRenewJobStatus } = renewal;
@@ -76,9 +82,12 @@ export default function RenewalScheduleFacts({ renewal, placement = 'row' }) {
         </Tooltip>
       ) : null}
       {attemptText ? (
-        <Text fontSize='xs' color={muted}>
+        <AttemptBadge
+          scheme={jobStatus ? jobStatusScheme(jobStatus) : 'gray'}
+          label={attemptText}
+        >
           {attemptText}
-        </Text>
+        </AttemptBadge>
       ) : null}
     </VStack>
   );
