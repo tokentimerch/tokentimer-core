@@ -382,6 +382,9 @@ async function publish() {
   if ((await job(state.issueJob)).status === "pending_approval")
     await approve(state.issueJob);
   const j = await terminal(state.issueJob);
+    assert.equal(j.operation, "issue", "Initial publication must exercise issuance, not renewal");
+    assert.equal(j.status, "succeeded");
+    check("initial issue publishes successfully through signed agent dispatch", { jobId: j.id });
   state.versionId = j.payload.publication.materialVersionId;
   state.firstFacts = await customer("facts", "issuer", {
     certificateId: state.certificateId,

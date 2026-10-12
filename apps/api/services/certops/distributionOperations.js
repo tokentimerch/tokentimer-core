@@ -133,7 +133,9 @@ async function advanceRollout(client, workspaceId, groupId, rolloutId) {
   }
   const outstanding = rows.filter((d)=>!done(d) && !failed(d));
   if (!outstanding.length) {
-    await client.query(`UPDATE certops_distribution_rollouts SET state=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId,rows.every(done)?"verified":"degraded"]);
+    // Historical verification cannot authorize a changed or inactive binding.
+    // Keep its receipt, but report optional failures as degraded.
+    await client.query(`UPDATE certops_distribution_rollouts SET state=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,rolloutId,rows.every((d)=>done(d) && !failed(d))?"verified":"degraded"]);
     return { queued:true,reason:"rollout_completed" };
   }
   const wave = Math.min(...outstanding.map((d)=>d.wave));

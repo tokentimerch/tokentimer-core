@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { createRequire } = require("node:module");
 // Dedicated synthetic database only; never load the workstation's .env.
 assert.equal(process.env.DB_HOST, "127.0.0.1");
-assert.equal(process.env.DB_PORT, "59470");
+assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : "59470");
 assert.match(process.env.DB_NAME || "", /^pr329_review/);
 process.env.NODE_ENV = "test";
 process.env.CERTOPS_ENABLED = "true";
@@ -29,7 +29,7 @@ test.before(async () => {
 });
 test.after(() => pool.end());
 
-async function fixture({ expired = false, validFor = "1 day" } = {}) {
+async function fixture({ expired = false, validFor = "1 day", required = true } = {}) {
   const workspaceId = uuid();
   async function user() {
     return (
@@ -131,7 +131,7 @@ async function fixture({ expired = false, validFor = "1 day" } = {}) {
     agentId: consumer,
     deploymentProfileRef: "web",
     profileRevision: 1,
-    required: true,
+    required,
     wave: 0,
     verificationPolicy: "served",
     freshnessSeconds: 3600,
@@ -203,6 +203,65 @@ async function fixture({ expired = false, validFor = "1 day" } = {}) {
     approved,
   };
 }
+
+async function deploymentFixture(f) {
+  const approval = await f.approved();
+  const snapshot = await operations.transaction((client) => material.createRolloutSnapshot({
+    client, ...f, approvalJobId: approval.id,
+    approvedIntentHash: material.hashIntent(approval.payload.distributionRollout),
+  }));
+  await operations.transaction((client) => operations.advanceRollout(client, f.workspaceId, f.groupId, snapshot.rolloutId));
+  const child = (await pool.query(`UPDATE certificate_jobs SET status='running',attempt_count=1,
+    claim_id=gen_random_uuid(),claimed_by_agent_id=$2,lease_expires_at=clock_timestamp()+interval '5 minutes'
+    WHERE id=(SELECT job_id FROM certops_consumer_deployments WHERE rollout_id=$1) RETURNING *`,
+  [snapshot.rolloutId, f.consumer])).rows[0];
+  const version = (await pool.query("SELECT * FROM certops_material_versions WHERE id=$1", [f.materialVersionId])).rows[0];
+  const receipt = { schemaVersion: 1, workspaceId: f.workspaceId, groupId: f.groupId,
+    bindingId: f.bindingId, materialVersionId: f.materialVersionId, generation: Number(snapshot.generation),
+    fetched: true, installed: true, bound: true, servedVerified: true, trustValidated: false,
+    fingerprintSha256: version.fingerprint_sha256, validTo: new Date(version.valid_to).toISOString(), observedAt: new Date().toISOString() };
+  return { snapshot, child, receipt };
+}
+
+test("optional authorization changes concurrent with successful receipts yield a degraded rollout and retain audit proof", async (t) => {
+  for (const bindingFirst of [false, true]) await t.test(bindingFirst ? "binding commits first" : "receipt commits first", async () => {
+    const f = await fixture({ required: false });
+    const { snapshot, child, receipt } = await deploymentFixture(f);
+    const client = await pool.connect();
+    let competing;
+    try {
+      await client.query("BEGIN");
+      await material.lockGroup(client, f.workspaceId, f.groupId);
+      if (bindingFirst) {
+        // Hold the real group lock while a receipt arrives on another connection.
+        await client.query("UPDATE certops_consumer_bindings SET profile_revision=2,authorization_revision=authorization_revision+1 WHERE id=$1", [f.bindingId]);
+        competing = operations.transaction((tx) => material.acceptDeploymentReceipt({
+          client: tx, workspaceId: f.workspaceId, agentId: f.consumer, job: child, receipt, jobStatus: "succeeded",
+        }));
+      } else {
+        const accepted = await material.acceptDeploymentReceipt({
+          client, workspaceId: f.workspaceId, agentId: f.consumer, job: child, receipt, jobStatus: "succeeded",
+        });
+        assert.equal(accepted.historicalOnly, false);
+        competing = operations.putBinding({ ...f, binding: { ...f.binding, profileRevision: 2 }, actorUserId: f.actor });
+      }
+      await client.query("COMMIT");
+      const result = await competing;
+      if (bindingFirst) assert.equal(result.historicalOnly, true);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+      if (competing) await competing.catch(() => {});
+    }
+    await pool.query("UPDATE certificate_jobs SET status='succeeded',completed_at=NOW() WHERE id=$1", [child.id]);
+    await operations.transaction((tx) => operations.advanceRollout(tx, f.workspaceId, f.groupId, snapshot.rolloutId));
+    assert.equal((await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1", [snapshot.rolloutId])).rows[0].state, "degraded");
+    const proof = (await pool.query("SELECT stage,authorization_revision FROM certops_consumer_deployments WHERE rollout_id=$1", [snapshot.rolloutId])).rows[0];
+    assert.equal(proof.stage, "served_verified");
+    assert.equal(proof.authorization_revision, 1);
+    assert.equal((await material.consumerMatrix({ client: pool, workspaceId: f.workspaceId, groupId: f.groupId }))[0].converged, false);
+  });
+});
 
 test("distribution mutations require session managers through real upstream worker/workspace middleware", async () => {
   const f = await fixture();

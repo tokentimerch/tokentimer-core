@@ -53,7 +53,7 @@ The localhost-only customer control endpoint at BasePort + 5 (`60805` in the exa
 | Phase | User/API behavior |
 |---|---|
 | setup | Normal startup, invite/register/verify/login, bootstrap and full agent enrollment |
-| publish | Approval, SAN-only DNS-01 issuance, Vault write, automatic renewal profile, custom canonical key directory and permissions; repair replay/admin/input checks |
+| publish | Explicit initial `issue` job, approval, SAN-only DNS-01 issuance, Vault write, automatic renewal profile, custom canonical key directory and permissions; repair replay/admin/input checks |
 | bindings | Two real TLS consumers, concurrent identical PUTs, unchanged proof, idempotent retries before approval and after completion, changed parameters rejected, changed membership replay |
 | validation | Nine malformed distribution requests return 422 and create no jobs |
 | scanner | Scan actual published Vault bundle prefixes with five raw/encoded forms; customer-side HTTP observations prove no private object request occurs |

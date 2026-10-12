@@ -748,12 +748,11 @@ async function scanVault({
   // Validate address format
   try {
     new URL(address);
-  } catch (e) {
-    logger.error("Invalid Vault address format", {
-      address: address.substring(0, 50),
-      error: e.message,
-    });
-    throw new Error(`Invalid Vault address: ${e.message}`, { cause: e });
+  } catch {
+    // URL parser errors retain the raw input, including credentials. Neither
+    // log that input nor attach the parser error as a serialized cause.
+    logger.error("Invalid Vault address format");
+    throw new Error("Invalid Vault address format");
   }
 
   // Allowlist of asset categories to keep (e.g. only "cert"). Empty/absent

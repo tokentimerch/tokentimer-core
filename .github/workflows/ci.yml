@@ -446,6 +446,8 @@ jobs:
             await client.connect();
             try {
               await client.query('CREATE DATABASE pr329_distribution_upgrade_ci_test');
+              await client.query('CREATE DATABASE pr329_review_distribution_ci_test');
+              await client.query('CREATE DATABASE pr329_final_distribution_ci_test');
             } finally {
               await client.end();
             }
@@ -453,6 +455,20 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Exercise rollout authorization and concurrent receipt transitions
+        env:
+          DB_NAME: pr329_review_distribution_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/wildcard-vault/pr329-review.test.cjs
+      - name: Exercise public inventory transfer with safe and unsafe publication states
+        env:
+          DB_NAME: pr329_final_distribution_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/wildcard-vault/transfer.test.cjs
 
   helm_chart:
     name: Helm Chart Validation

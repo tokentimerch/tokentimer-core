@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 assert.equal(process.env.DB_HOST, "127.0.0.1");
-assert.equal(process.env.DB_PORT, "60470");
+assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_final_distribution_ci_test" ? "5432" : "60470");
 assert.match(process.env.DB_NAME || "", /^pr329_final/);
 process.env.NODE_ENV = "test";
 process.env.CERTOPS_ENABLED = "true";
@@ -29,7 +29,7 @@ const cert = api("./services/certops/parser").parsePublicCertificateMaterial(
 )[0];
 test.after(() => pool.end());
 
-async function fixture({ ordinary = false, published = true } = {}) {
+async function fixture({ ordinary = false, published = true, neverStarted = false } = {}) {
   const actor = (
     await pool.query(
       "INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Transfer review','fixture-only','local') RETURNING id",
@@ -115,8 +115,9 @@ async function fixture({ ordinary = false, published = true } = {}) {
       issued.job.payload.publication);
     publishingJob = (
       await pool.query(
-        "UPDATE certificate_jobs SET status='running',attempt_count=1,claim_id=gen_random_uuid(),claimed_by_agent_id=$2,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",
-        [issued.job.id, issuer],
+        neverStarted ? "SELECT * FROM certificate_jobs WHERE id=$1" :
+          "UPDATE certificate_jobs SET status='running',attempt_count=1,claim_id=gen_random_uuid(),claimed_by_agent_id=$2,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",
+        neverStarted ? [issued.job.id] : [issued.job.id, issuer],
       )
     ).rows[0];
     if (published)
@@ -583,12 +584,11 @@ test("an active result/job lock yields a bounded reconciliation response rather 
   }
 });
 
-test("never-started publication is cancelled and releases only its unused allocation", async () => {
-  const f = await fixture({ published: false });
-  await pool.query(
-    "UPDATE certificate_jobs SET status='pending',attempt_count=0,claim_id=NULL,claimed_by_agent_id=NULL,lease_expires_at=NULL,lease_renewed_at=NULL,started_at=NULL WHERE id=$1",
-    [f.publishingJob.id],
-  );
+test("never-started initial publication is cancelled and releases only its unused allocation", async () => {
+  const f = await fixture({ published: false, neverStarted: true });
+  assert.equal(f.publishingJob.operation, "issue");
+  assert.equal(f.publishingJob.attempt_count, 0);
+  assert.equal(f.publishingJob.management_period_id, f.managementPeriodId);
   const before = (
     await pool.query("SELECT payload FROM certificate_jobs WHERE id=$1", [
       f.publishingJob.id,
@@ -611,6 +611,31 @@ test("never-started publication is cancelled and releases only its unused alloca
   assert.equal(version.state, "failed");
   assert.equal(version.allocation_release_reason, "cancelled_before_execution");
   assert.ok(version.allocation_released_at);
+});
+
+test("transfer terminalizes every unstarted publication admission state and leaves no claimable source work", async (t) => {
+  for (const status of ["pending", "pending_approval", "approved"]) {
+    await t.test(status, async () => {
+      const f = await fixture({ published: false, neverStarted: true });
+      await pool.query("UPDATE certificate_jobs SET status=$2 WHERE id=$1", [f.publishingJob.id, status]);
+      assert.equal((await f.transfer()).status, 200);
+      const after = (await pool.query("SELECT * FROM certificate_jobs WHERE id=$1", [f.publishingJob.id])).rows[0];
+      assert.equal(after.status, "cancelled");
+      assert.equal(after.workspace_id, f.workspaceId);
+      assert.equal(after.claim_id, null);
+      assert.equal(after.attempt_count, 0);
+      const agent = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [f.issuer])).rows[0];
+      const claimed = await api("./services/certops/agentDispatch").claimJobs({
+        agent: { id: f.issuer, workspaceId: f.workspaceId, agentId: agent.agent_id,
+          status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" },
+        body: { supportedActions: ["renew"], maxJobs: 1 },
+      });
+      assert.deepEqual(claimed.jobs, []);
+      const version = (await pool.query("SELECT * FROM certops_material_versions WHERE id=$1", [f.materialVersionId])).rows[0];
+      assert.equal(version.allocation_release_reason, "cancelled_before_execution");
+      assert.equal(version.workspace_id, f.workspaceId);
+    });
+  }
 });
 
 test("attempted pending renewal and unresolved publication require reconciliation", async (t) => {
