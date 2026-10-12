@@ -17,14 +17,12 @@ const {
   useCertOpsAvailabilityMock,
   useCertOpsIsWorkspaceAdminMock,
   listRenewalProfilesMock,
-  listUpcomingRenewalsMock,
   updateRenewalProfileMock,
   showSuccessMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
   useCertOpsIsWorkspaceAdminMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
-  listUpcomingRenewalsMock: vi.fn(),
   updateRenewalProfileMock: vi.fn(),
   showSuccessMock: vi.fn(),
 }));
@@ -80,6 +78,10 @@ vi.mock('../../src/components/certops/certopsEnrollmentsApi.js', () => ({
   listIssuers: vi.fn().mockResolvedValue({ items: [] }),
 }));
 
+vi.mock('../../src/pages/certops/CertOpsAdcs.jsx', () => ({
+  default: () => <div>AD CS issuers</div>,
+}));
+
 vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   const actual = await vi.importActual(
     '../../src/components/certops/certopsRenewalApi.js'
@@ -87,7 +89,6 @@ vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   return {
     ...actual,
     listRenewalProfiles: listRenewalProfilesMock,
-    listUpcomingRenewals: listUpcomingRenewalsMock,
     updateRenewalProfile: updateRenewalProfileMock,
   };
 });
@@ -149,22 +150,6 @@ function profile(overrides = {}) {
   };
 }
 
-function upcoming(overrides = {}) {
-  return {
-    certificateId: 'cert-1',
-    commonName: 'app.example.com',
-    notAfter: new Date(Date.now() + 20 * 86400000).toISOString(),
-    renewsFrom: new Date(Date.now() - 2 * 86400000).toISOString(),
-    profileId: 'profile-1',
-    profileName: 'Derived: app.example.com',
-    autoRenewEnabled: true,
-    blockedReason: null,
-    renewBeforeDays: 30,
-    lastRenewJobStatus: 'succeeded',
-    ...overrides,
-  };
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   useCertOpsAvailabilityMock.mockReturnValue({
@@ -180,84 +165,25 @@ beforeEach(() => {
     limit: 50,
     offset: 0,
   });
-  listUpcomingRenewalsMock.mockResolvedValue({
-    items: [upcoming()],
-    total: 1,
-    limit: 50,
-    offset: 0,
-  });
 });
 
 describe('CertOpsRenewals page', () => {
-  it('shows the renewal schedule and the profiles that drive it', async () => {
+  it('shows the renewal profiles', async () => {
     renderPage();
 
-    expect(await screen.findByText('Upcoming renewals')).toBeInTheDocument();
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
-    // The profile name appears in both panels by design (schedule row subtitle
-    // and profile row title), so assert on the count rather than uniqueness.
-    expect(await screen.findAllByText('Derived: app.example.com')).toHaveLength(
-      2
-    );
-    expect(await screen.findByText('app.example.com')).toBeInTheDocument();
+    expect(screen.queryByText('Upcoming renewals')).not.toBeInTheDocument();
+    expect(screen.getByText('Derived: app.example.com')).toBeInTheDocument();
+    expect(screen.getByText('AD CS issuers')).toBeInTheDocument();
   });
 
-  it('offers exact server sorts and leaves derived upcoming auto-renew static', async () => {
-    renderPage();
+  it('sorts renewal profiles on the server and resets the page', async () => {
+    renderPage(['/certops/renewals?profileOffset=20']);
 
-    expect(await screen.findByText('Upcoming renewals')).toBeInTheDocument();
-    expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
-    const [upcomingTable, profilesTable] = screen.getAllByRole('table');
+    const profilesTable = await screen.findByRole('table');
     expect(
-      within(upcomingTable).getByRole('button', {
-        name: 'Sort by Certificate',
-      })
+      within(profilesTable).getByRole('button', { name: 'Sort by Auto-renew' })
     ).toBeInTheDocument();
-    expect(
-      within(upcomingTable).queryByRole('button', {
-        name: 'Sort by Auto-renew',
-      })
-    ).not.toBeInTheDocument();
-    expect(
-      within(profilesTable).getByRole('button', {
-        name: 'Sort by Auto-renew',
-      })
-    ).toBeInTheDocument();
-  });
-
-  it('resets each list offset and requests ascending and descending server sorts', async () => {
-    renderPage(['/certops/renewals?scheduleOffset=20&profileOffset=20']);
-
-    await screen.findByText('Upcoming renewals');
-    const [, profilesTable] = screen.getAllByRole('table');
-    fireEvent.click(
-      within(screen.getAllByRole('table')[0]).getByRole('button', {
-        name: 'Sort by Certificate',
-      })
-    );
-    await waitFor(() => {
-      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
-        'ws-1',
-        expect.objectContaining({
-          offset: 0,
-          sort: 'certificate',
-          direction: 'asc',
-        })
-      );
-    });
-
-    fireEvent.click(
-      within(screen.getAllByRole('table')[0]).getByRole('button', {
-        name: 'Sort by Certificate',
-      })
-    );
-    await waitFor(() => {
-      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
-        'ws-1',
-        expect.objectContaining({ direction: 'desc' })
-      );
-    });
-
     fireEvent.click(
       within(profilesTable).getByRole('button', { name: 'Sort by Profile' })
     );
@@ -271,251 +197,6 @@ describe('CertOpsRenewals page', () => {
         })
       );
     });
-  });
-
-  it('says a certificate is already in its renewal window rather than showing a past date', async () => {
-    // A renewsFrom in the past means the scheduler is acting on it now. Showing
-    // a stale date would read as "nothing happening until then".
-    renderPage();
-
-    expect(await screen.findByText('Due now')).toBeInTheDocument();
-  });
-
-  it('warns when a listed certificate will not renew automatically', async () => {
-    // The failure this page exists to prevent: a certificate counting down to
-    // expiry with renewal quietly switched off.
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: false,
-          blockedReason: 'auto_renew_disabled',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(
-      await screen.findByText(
-        '1 certificate has automatic renewal switched off. Affected certificates will expire unless they are renewed by hand.'
-      )
-    ).toBeInTheDocument();
-  });
-
-  it('distinguishes a missing renewal profile from a deliberate switch-off', async () => {
-    // These need different words because they need different responses. A
-    // switched-off certificate is a decision the operator can reverse from the
-    // panel below; one with no profile is a broken issuance no toggle will fix.
-    // Labelling both "Off" would send them to a control that cannot help.
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: false,
-          blockedReason: 'no_profile',
-          profileId: null,
-          profileName: null,
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(await screen.findByText('No profile')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        '1 certificate will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
-      )
-    ).toBeInTheDocument();
-    expect(screen.queryByText('Off')).not.toBeInTheDocument();
-  });
-
-  it('flags a certificate no agent can renew, separately from a profile problem', async () => {
-    // The blocker the schedule used to hide: a valid profile is not enough if no
-    // agent holds the key. The scheduler only refuses this at job creation, so
-    // this row previously read as covered while never renewing. It must not be
-    // labelled a profile fault, because re-issuing a profile cannot fix it.
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: false,
-          blockedReason: 'not_agent_deployable',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(await screen.findByText('No key access')).toBeInTheDocument();
-    expect(screen.queryByText('Off')).not.toBeInTheDocument();
-    expect(screen.queryByText('No profile')).not.toBeInTheDocument();
-  });
-
-  it('flags a profile the scheduler cannot execute', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: false,
-          blockedReason: 'incomplete_profile',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(await screen.findByText('Incomplete')).toBeInTheDocument();
-  });
-
-  it("shows an 'At CA capacity' badge for a certificate deferred by CA capacity, distinct from a blocked badge", async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: true,
-          blockedReason: null,
-          deferredReason: 'ca_capacity',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(await screen.findByText('At CA capacity')).toBeInTheDocument();
-    expect(screen.getAllByText('On').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Off')).not.toBeInTheDocument();
-    expect(screen.queryByText('No profile')).not.toBeInTheDocument();
-    expect(screen.queryByText('Incomplete')).not.toBeInTheDocument();
-    expect(screen.queryByText('No key access')).not.toBeInTheDocument();
-    expect(screen.queryByText('No expiry')).not.toBeInTheDocument();
-  });
-
-  it("does not claim blanket 'no action needed' in the capacity-wait tooltip, since an approval elsewhere in the same CA bucket can still need attention", async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: true,
-          blockedReason: null,
-          deferredReason: 'ca_capacity',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    const badge = await screen.findByLabelText(/clears automatically/i);
-    expect(badge).toBeInTheDocument();
-    expect(badge.getAttribute('aria-label')).not.toMatch(
-      /no action is needed/i
-    );
-  });
-
-  it('renders a fallback deferred badge for an unknown deferredReason instead of crashing', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: true,
-          blockedReason: null,
-          deferredReason: 'future_reason_unknown_to_ui',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(await screen.findByText('Deferred')).toBeInTheDocument();
-    expect(screen.getByLabelText(/temporarily deferred/i)).toBeInTheDocument();
-  });
-
-  it('adds a non-alarming capacity-wait sentence separate from the blocked-certificate warning', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          certificateId: 'cert-blocked',
-          autoRenewEnabled: false,
-          blockedReason: 'no_profile',
-          profileId: null,
-          profileName: null,
-        }),
-        upcoming({
-          certificateId: 'cert-deferred',
-          autoRenewEnabled: true,
-          blockedReason: null,
-          deferredReason: 'ca_capacity',
-        }),
-      ],
-      total: 2,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(
-      await screen.findByText(
-        '1 certificate will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
-      )
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText(
-        '1 certificate is due but waiting for capacity to free up at its issuing CA; this happens automatically once earlier renewals for that CA finish.'
-      )
-    ).toBeInTheDocument();
-  });
-
-  it("does not count a capacity-deferred certificate in the 'will not be renewed automatically' warning", async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({
-          autoRenewEnabled: true,
-          blockedReason: null,
-          deferredReason: 'ca_capacity',
-        }),
-      ],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    await screen.findByText('At CA capacity');
-    expect(
-      screen.queryByText(
-        '1 certificate will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
-      )
-    ).not.toBeInTheDocument();
-  });
-
-  it('reports a certificate that has never been renewed instead of leaving the cell blank', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [upcoming({ lastRenewJobStatus: null })],
-      total: 1,
-      limit: 50,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(await screen.findByText('Never renewed')).toBeInTheDocument();
   });
 
   it('requires confirmation before switching automatic renewal off', async () => {
@@ -694,95 +375,73 @@ describe('CertOpsRenewals page', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('explains an empty schedule instead of rendering a bare table', async () => {
+  it('explains an empty profile list instead of rendering a bare table', async () => {
     listRenewalProfilesMock.mockResolvedValue({
       items: [],
       total: 0,
       limit: 50,
       offset: 0,
     });
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [],
-      total: 0,
-      limit: 50,
-      offset: 0,
-    });
 
     renderPage();
 
-    expect(
-      await screen.findByText('No renewable certificates.')
-    ).toBeInTheDocument();
     expect(
       await screen.findByText('No renewal profiles yet.')
     ).toBeInTheDocument();
+    expect(screen.queryByText('Upcoming renewals')).not.toBeInTheDocument();
   });
 
-  it('surfaces a load failure rather than looking like an empty workspace', async () => {
-    listUpcomingRenewalsMock.mockRejectedValue({
-      response: { data: { error: 'Failed to list upcoming renewals' } },
+  it('surfaces a profile load failure rather than looking like an empty workspace', async () => {
+    listRenewalProfilesMock.mockRejectedValue({
+      response: { data: { error: 'Failed to list renewal profiles' } },
     });
 
     renderPage();
 
     expect(
-      await screen.findByText('Failed to list upcoming renewals')
+      await screen.findByText('Failed to list renewal profiles')
     ).toBeInTheDocument();
-    // The all-clear message must not accompany a failed read.
     expect(
-      screen.queryByText('No renewable certificates.')
+      screen.queryByText('No renewal profiles yet.')
     ).not.toBeInTheDocument();
   });
 
-  it('says a refused read was refused instead of showing an empty schedule', async () => {
-    // A 403 carries no body worth showing, so without special handling it would
-    // degrade into "nothing scheduled to renew" and read as all-clear.
-    listUpcomingRenewalsMock.mockRejectedValue({ response: { status: 403 } });
+  it('says a refused profile read was refused instead of showing an empty list', async () => {
     listRenewalProfilesMock.mockRejectedValue({ response: { status: 403 } });
 
     renderPage();
 
     expect(
-      await screen.findAllByText(
+      await screen.findByText(
         'You do not have permission to view renewal automation for this workspace.'
       )
-    ).toHaveLength(2);
-    expect(
-      screen.queryByText('No renewable certificates.')
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(
       screen.queryByText('No renewal profiles yet.')
     ).not.toBeInTheDocument();
   });
 
-  it('shows loading rather than an all-clear while a read is still in flight', async () => {
-    // The regression this guards: an unresolved read rendering the empty state
-    // makes a workspace full of expiring certificates look safe.
-    listUpcomingRenewalsMock.mockReturnValue(new Promise(() => {}));
+  it('shows loading rather than an all-clear while a profile read is still in flight', async () => {
     listRenewalProfilesMock.mockReturnValue(new Promise(() => {}));
 
     renderPage();
 
     expect(
-      await screen.findByText('Loading renewal schedule...')
+      await screen.findByText('Loading renewal profiles...')
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText('No renewable certificates.')
-    ).not.toBeInTheDocument();
     expect(
       screen.queryByText('No renewal profiles yet.')
     ).not.toBeInTheDocument();
   });
 
-  it('reads the schedule for a manager, leaving the write refusal to the server', async () => {
-    // Reads are not gated client-side: a role lookup that has not resolved or
-    // has failed must not be able to hide an expiring certificate.
+  it('reads renewal profiles for a non-admin, leaving the write refusal to the server', async () => {
     useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
 
     renderPage();
 
-    expect(await screen.findByText('app.example.com')).toBeInTheDocument();
-    expect(listUpcomingRenewalsMock).toHaveBeenCalled();
+    expect(
+      await screen.findByText('Derived: app.example.com')
+    ).toBeInTheDocument();
     expect(listRenewalProfilesMock).toHaveBeenCalled();
   });
 
@@ -802,13 +461,7 @@ describe('CertOpsRenewals page', () => {
     expect(screen.queryByText('Renewal profiles')).not.toBeInTheDocument();
   });
 
-  it('gives each list a page control instead of a caption when more rows exist', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [upcoming()],
-      total: 57,
-      limit: 20,
-      offset: 0,
-    });
+  it('gives the profile list a page control when more rows exist', async () => {
     listRenewalProfilesMock.mockResolvedValue({
       items: [profile()],
       total: 42,
@@ -819,71 +472,19 @@ describe('CertOpsRenewals page', () => {
     renderPage();
 
     expect(
-      await screen.findByRole('navigation', { name: 'certificates pagination' })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('navigation', { name: 'renewal profiles pagination' })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('Showing 1 to 20 of 57 certificates')
+      await screen.findByRole('navigation', {
+        name: 'renewal profiles pagination',
+      })
     ).toBeInTheDocument();
     expect(
       screen.getByText('Showing 1 to 20 of 42 renewal profiles')
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('navigation', { name: 'certificates pagination' })
+    ).not.toBeInTheDocument();
   });
 
-  it('pages the two lists independently through separately scoped parameters', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [upcoming()],
-      total: 57,
-      limit: 20,
-      offset: 0,
-    });
-    listRenewalProfilesMock.mockResolvedValue({
-      items: [profile()],
-      total: 42,
-      limit: 20,
-      offset: 0,
-    });
-
-    renderPage();
-
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Next page of certificates',
-      })
-    );
-
-    await waitFor(() => {
-      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
-        'ws-1',
-        expect.objectContaining({ limit: 20, offset: 20 })
-      );
-    });
-    // Paging the schedule must not move the profiles table underneath it.
-    expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
-      'ws-1',
-      expect.objectContaining({ offset: 0 })
-    );
-
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Previous page of certificates' })
-    );
-    await waitFor(() => {
-      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
-        'ws-1',
-        expect.objectContaining({ offset: 0 })
-      );
-    });
-  });
-
-  it('restores each list page position from the URL on load', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [upcoming()],
-      total: 300,
-      limit: 50,
-      offset: 50,
-    });
+  it('restores the profile page position from the URL on load', async () => {
     listRenewalProfilesMock.mockResolvedValue({
       items: [profile()],
       total: 42,
@@ -891,29 +492,17 @@ describe('CertOpsRenewals page', () => {
       offset: 20,
     });
 
-    renderPage([
-      '/certops/renewals?scheduleLimit=50&scheduleOffset=50&profileOffset=20',
-    ]);
+    renderPage(['/certops/renewals?profileOffset=20']);
 
     await waitFor(() => {
-      expect(listUpcomingRenewalsMock).toHaveBeenLastCalledWith(
+      expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
         'ws-1',
-        expect.objectContaining({ limit: 50, offset: 50 })
+        expect.objectContaining({ limit: 20, offset: 20 })
       );
     });
-    expect(listRenewalProfilesMock).toHaveBeenLastCalledWith(
-      'ws-1',
-      expect.objectContaining({ limit: 20, offset: 20 })
-    );
   });
 
   it('offers a way back rather than an empty state when a shared link points past the end', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [],
-      total: 3,
-      limit: 20,
-      offset: 200,
-    });
     listRenewalProfilesMock.mockResolvedValue({
       items: [],
       total: 3,
@@ -921,38 +510,13 @@ describe('CertOpsRenewals page', () => {
       offset: 200,
     });
 
-    renderPage(['/certops/renewals?scheduleOffset=200&profileOffset=200']);
+    renderPage(['/certops/renewals?profileOffset=200']);
 
     expect(
-      await screen.findByText('This page is past the end of the schedule.')
+      await screen.findByText('This page is past the end of the list.')
     ).toBeInTheDocument();
-    expect(
-      screen.getByText('This page is past the end of the list.')
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText('No renewable certificates.')
-    ).not.toBeInTheDocument();
     expect(
       screen.queryByText('No renewal profiles yet.')
     ).not.toBeInTheDocument();
-  });
-
-  it('scopes the not-renewing count to the page when the schedule spans several', async () => {
-    listUpcomingRenewalsMock.mockResolvedValue({
-      items: [
-        upcoming({ autoRenewEnabled: false, blockedReason: 'no_profile' }),
-      ],
-      total: 57,
-      limit: 20,
-      offset: 0,
-    });
-
-    renderPage();
-
-    expect(
-      await screen.findByText(
-        '1 certificate on this page will not be renewed automatically, for the reason shown against it. Affected certificates will expire unless they are renewed by hand.'
-      )
-    ).toBeInTheDocument();
   });
 });

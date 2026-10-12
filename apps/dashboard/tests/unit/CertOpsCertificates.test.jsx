@@ -370,6 +370,82 @@ describe('CertOpsCertificates list states', () => {
     expect(screen.getByText('No managed certificates yet')).toBeInTheDocument();
   });
 
+  it('shows capacity deferral and the last renewal attempt on the certificate row', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            id: 'cert-capacity',
+            commonName: 'capacity.example.test',
+            renewal: { state: 'auto', deferredReason: 'ca_capacity' },
+          }),
+          certificate({
+            id: 'cert-never',
+            commonName: 'never.example.test',
+            renewal: { state: 'auto', lastRenewJobStatus: null },
+          }),
+          certificate({
+            id: 'cert-job',
+            commonName: 'job.example.test',
+            renewal: { state: 'auto', lastRenewJobStatus: 'succeeded' },
+          }),
+          certificate({
+            id: 'cert-older',
+            commonName: 'older.example.test',
+            renewal: { state: 'auto' },
+          }),
+          certificate({
+            id: 'cert-ineligible',
+            commonName: 'ineligible.example.test',
+            renewal: { state: 'not-eligible', lastRenewJobStatus: null },
+          }),
+        ],
+      })
+    );
+
+    renderPage();
+
+    expect(screen.getByText('At CA capacity')).toBeInTheDocument();
+    const neverRow = screen.getByText('never.example.test').closest('tr');
+    expect(within(neverRow).getByText('Never renewed')).toBeInTheDocument();
+    expect(screen.getByText('Succeeded')).toBeInTheDocument();
+    const olderRow = screen.getByText('older.example.test').closest('tr');
+    expect(
+      within(olderRow).queryByText('Never renewed')
+    ).not.toBeInTheDocument();
+    const ineligibleRow = screen
+      .getByText('ineligible.example.test')
+      .closest('tr');
+    expect(
+      within(ineligibleRow).queryByText('Never renewed')
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides a still-observed revoked certificate from the active inventory', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            id: 'cert-live',
+            commonName: 'live.example.test',
+          }),
+          certificate({
+            id: 'cert-retired',
+            commonName: 'retired.example.test',
+            status: 'discovered',
+            lifecycleStatus: 'revoked',
+            stillObserved: true,
+          }),
+        ],
+      })
+    );
+
+    renderPage();
+
+    expect(screen.getByText('live.example.test')).toBeInTheDocument();
+    expect(screen.queryByText('retired.example.test')).not.toBeInTheDocument();
+  });
+
   it('renders a certificate row with its status, expiry and renewal badges', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({ certificates: [certificate()] })
@@ -535,7 +611,9 @@ describe('CertOpsCertificates filters', () => {
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ excludeRetired: undefined })
     );
-    expect(screen.getByText(/Lifecycle: Including retired/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Lifecycle: Including retired/)
+    ).toBeInTheDocument();
   });
 
   it('filters unmanaged certificates from the management control', () => {

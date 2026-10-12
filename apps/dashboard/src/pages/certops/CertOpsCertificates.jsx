@@ -38,6 +38,7 @@ import {
 import { AssetSearchInput } from '../../components/AssetFilters.jsx';
 import CopyableId from '../../components/CopyableId.jsx';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
+import RenewalScheduleFacts from '../../components/certops/RenewalScheduleFacts.jsx';
 import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
 import KeyLocalityBadge from '../../components/certops/KeyLocalityBadge.jsx';
 import RetireCertificateModal from '../../components/certops/RetireCertificateModal.jsx';
@@ -58,6 +59,7 @@ import {
   RENEWAL_STATES,
   expiryDescriptor,
   formatDate,
+  isRetiredCertificate,
   isRetiredStatus,
   renewalSetupDescriptor,
   sourceLabel,
@@ -324,6 +326,12 @@ export default function CertOpsCertificates() {
       sort: sort.key,
       direction: sort.direction,
     });
+  // Active only also hides a revoked or decommissioned row a stale server
+  // still returned. An explicit status filter is left as the server sent it.
+  const visibleCertificates =
+    filters.status || showRetired
+      ? certificates
+      : certificates.filter(item => !isRetiredCertificate(item));
   const searchIconColor = useColorModeValue(
     'var(--chakra-colors-gray-500)',
     'rgba(148, 163, 184, 0.86)'
@@ -690,7 +698,7 @@ export default function CertOpsCertificates() {
           type='loading'
           title='Loading managed certificates...'
         />
-      ) : !loading && !error && certificates.length === 0 ? (
+      ) : !loading && !error && visibleCertificates.length === 0 ? (
         pageIsPastEnd ? (
           <DashboardState
             title='This page is past the end of the list'
@@ -786,13 +794,13 @@ export default function CertOpsCertificates() {
                 display={{ base: 'grid', lg: 'table-row-group' }}
                 gap={{ base: 3, lg: 0 }}
               >
-                {certificates.map(certificate => {
+                {visibleCertificates.map(certificate => {
                   const expiry = expiryDescriptor(certificate.notAfter);
                   const sans = Array.isArray(certificate.subjectAltNames)
                     ? certificate.subjectAltNames
                     : [];
                   const extraSans = Math.max(0, sans.length - 1);
-                  const retired = isRetiredStatus(certificate.status);
+                  const retired = isRetiredCertificate(certificate);
                   const focusId = focusedCertificateId || detailsTarget?.id;
                   const isFocused =
                     Boolean(focusId) &&
@@ -935,6 +943,7 @@ export default function CertOpsCertificates() {
                         </MobileFieldLabel>
                         <VStack align='flex-start' spacing={1}>
                           <RenewalBadge renewal={certificate.renewal} />
+                          <RenewalScheduleFacts renewal={certificate.renewal} />
                           <RenewalPathBadge certificate={certificate} />
                           <RenewalSetupStatus
                             renewalSetup={certificate.renewalSetup}

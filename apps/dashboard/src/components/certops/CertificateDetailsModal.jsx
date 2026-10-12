@@ -47,6 +47,7 @@ import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
 import KeyLocalityList from './KeyLocalityList.jsx';
 import RenewalBadge from './RenewalBadge.jsx';
+import RenewalScheduleFacts from './RenewalScheduleFacts.jsx';
 import RenewalPathBadge from './RenewalPathBadge.jsx';
 import {
   expiryDescriptor,
@@ -441,6 +442,9 @@ export default function CertificateDetailsModal({
                   {hasRenewalData ? (
                     <RenewalBadge renewal={certificate.renewal} />
                   ) : null}
+                  {hasRenewalData ? (
+                    <RenewalScheduleFacts renewal={certificate.renewal} />
+                  ) : null}
                   {certificate?.renewalPathState &&
                   certificate.renewalPathState !== 'healthy' ? (
                     <RenewalPathBadge certificate={certificate} />
@@ -766,6 +770,7 @@ export default function CertificateDetailsModal({
                   <DetailRow label='Automatic renewal'>
                     <VStack align='start' spacing={1}>
                       <RenewalBadge renewal={certificate.renewal} />
+                      <RenewalScheduleFacts renewal={certificate.renewal} />
                       <Text fontSize='xs' color='dashboard.modal.muted'>
                         {renewal.help}
                       </Text>

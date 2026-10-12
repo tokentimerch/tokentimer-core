@@ -440,6 +440,17 @@ export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
 }
 
+/** A certificate object is retired when either status field says so. */
+export function isRetiredCertificate(certificate) {
+  if (!certificate || typeof certificate !== 'object') {
+    return isRetiredStatus(certificate);
+  }
+  return (
+    isRetiredStatus(certificate.status) ||
+    isRetiredStatus(certificate.lifecycleStatus)
+  );
+}
+
 /**
  * Partitions the workspace CertOps inventory for the Control Center summary.
  *
@@ -475,7 +486,7 @@ export function summarizeManagedCertificates(certificates, options = {}) {
     ? options.highlightLimit
     : 5;
   const items = Array.isArray(certificates) ? certificates : [];
-  const active = items.filter(cert => !isRetiredStatus(cert?.status));
+  const active = items.filter(cert => !isRetiredCertificate(cert));
 
   const linked = active.filter(cert => cert?.tokenId != null);
   const unlinked = active.filter(cert => cert?.tokenId == null);
@@ -519,8 +530,8 @@ export function sortCertificatesForToken(certificates) {
     return Number.isFinite(time) ? time : 0;
   };
   return items.sort((a, b) => {
-    const aRetired = isRetiredStatus(a?.status) ? 1 : 0;
-    const bRetired = isRetiredStatus(b?.status) ? 1 : 0;
+    const aRetired = isRetiredCertificate(a) ? 1 : 0;
+    const bRetired = isRetiredCertificate(b) ? 1 : 0;
     if (aRetired !== bRetired) return aRetired - bRetired;
     const diff = ts(b) - ts(a);
     if (diff !== 0) return diff;
@@ -563,7 +574,7 @@ export function resolveTokenCertificate(certificates) {
     // Ambiguity must never make a linked token eligible for hard deletion.
     hasManagedLinks: items.length > 0,
     allRetired:
-      items.length > 0 && items.every(item => isRetiredStatus(item.status)),
+      items.length > 0 && items.every(item => isRetiredCertificate(item)),
   };
 }
 

@@ -161,9 +161,10 @@ async function listCertificateIdentities({
         : `display_status = $${params.length}`,
     );
   } else if (excludeRetired) {
-    conditions.push(
-      "(display_status NOT IN ('revoked', 'decommissioned') OR still_observed)",
-    );
+    // Still being observed does not keep a revoked or decommissioned
+    // certificate in the active inventory. The row stays available, with
+    // stillObserved set, when retired certificates are included.
+    conditions.push("display_status NOT IN ('revoked', 'decommissioned')");
   }
   if (normalizedSource) {
     params.push(normalizedSource);

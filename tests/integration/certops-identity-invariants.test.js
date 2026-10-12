@@ -807,15 +807,24 @@ describe("CertOps identity invariants on PostgreSQL", function () {
         await (observationFirst ? capture : lifecycle).query("COMMIT");
         await (observationFirst ? lifecycle : capture).query("COMMIT");
       });
-      const listing = await listCertificateIdentities({
+      const hidden = await listCertificateIdentities({
         client: db,
         workspaceId: ws,
         excludeRetired: true,
       });
+      assert.equal(
+        hidden.items.find((item) => item.identityId === id.id),
+        undefined,
+      );
+      const listing = await listCertificateIdentities({
+        client: db,
+        workspaceId: ws,
+      });
       const row = listing.items.find((item) => item.identityId === id.id);
-      assert(row, "Retired certificate with fresh use remains visible");
+      assert(row, "Retired certificate stays visible when retired rows are included");
       assert.equal(row.lifecycleStatus, "decommissioned");
       assert.equal(row.stillObserved, true);
+      assert.match(String(row.lifecycleDisplay), /Still observed/);
     });
   }
   it("retirement skips a contended source while preserving authoritative lifecycle and token state", async () => {

@@ -70,9 +70,6 @@ vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
 vi.mock('../../src/components/certops/RenewalProfilesPanel.jsx', () => ({
   default: () => <div>Renewal profiles</div>,
 }));
-vi.mock('../../src/components/certops/UpcomingRenewalsPanel.jsx', () => ({
-  default: () => <div>Upcoming renewals</div>,
-}));
 vi.mock('../../src/pages/certops/CertOpsAdcs.jsx', () => ({
   default: () => <div>AD CS issuers</div>,
 }));
@@ -113,7 +110,6 @@ const TAB_PANELS = {
   '/certops/jobs': 'Machine executor jobs',
   '/certops/certificates': 'Certificates tab',
   '/certops/renewals': 'Renewal profiles',
-  '/certops/adcs': 'AD CS issuers',
   '/certops/agents': 'Agent fleet',
   '/certops/settings': 'Machine API tokens',
 };
@@ -149,6 +145,16 @@ describe('CertOpsRoutes redirects', () => {
     renderAt('/certops/does-not-exist');
 
     expect(screen.getByText('Machine executor jobs')).toBeInTheDocument();
+  });
+
+  it('sends /certops/adcs to the renewals tab', () => {
+    renderAt('/certops/adcs');
+
+    expect(screen.getByText('Renewal profiles')).toBeInTheDocument();
+    expect(screen.getByText('AD CS issuers')).toBeInTheDocument();
+    const current = screen.getAllByRole('link', { current: 'page' });
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent('Renewals');
   });
 });
 
@@ -186,7 +192,6 @@ describe('CertOpsRoutes tabs', () => {
       'Jobs',
       'Certificates',
       'Renewals',
-      'AD CS',
       'Agents',
       'Settings',
     ]);

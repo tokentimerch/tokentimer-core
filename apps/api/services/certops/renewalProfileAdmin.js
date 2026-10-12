@@ -612,6 +612,29 @@ function classifyRenewalBlock(row) {
 }
 
 /**
+ * Capacity deferral for one certificate, using the same guards as the sweep.
+ *
+ * Only a certificate the scheduler would otherwise act on this pass (no block,
+ * due, and no active renew job) can be waiting on the per-CA in-flight cap.
+ * A real block is never rewritten into a capacity wait.
+ *
+ * @returns {"ca_capacity"|null}
+ */
+function resolveDeferredRenewalReason(
+  row,
+  { workspaceId, inFlightByCa, perCaCap, now = Date.now() } = {},
+) {
+  if (classifyRenewalBlock(row) != null) return null;
+  if (row?.renews_from == null) return null;
+  const dueAt = new Date(row.renews_from).getTime();
+  // NaN is not due. A future window is not due either.
+  if (!(dueAt <= now) || row.has_active_renew_job) return null;
+  const capKey = caCapKey(workspaceId, certificateCaBucket(row));
+  const inFlight = inFlightByCa.get(capKey) || 0;
+  return inFlight >= perCaCap ? "ca_capacity" : null;
+}
+
+/**
  * Certificates the renewal scheduler is expected to act on next.
  *
  * Reports every renewable certificate regardless of whether it is inside the
@@ -758,25 +781,12 @@ async function listUpcomingRenewals({
     items: result.rows.map((row) => {
       const blockedReason = classifyRenewalBlock(row);
       const autoRenewEnabled = blockedReason == null;
-
-      // Deferral is a separate, independent fact from blockedReason: only a
-      // certificate the scheduler would otherwise act on this pass (covered,
-      // due, and not already jobbed) can be "waiting", so none of these
-      // guards ever downgrade a real block into a capacity wait. Whether a
-      // job already exists is has_active_renew_job (any non-terminal job for
-      // the certificate), matching the sweep's own EXISTS check, not just the
-      // most recent job's status.
-      let deferredReason = null;
-      if (
-        autoRenewEnabled &&
-        row.renews_from != null &&
-        new Date(row.renews_from).getTime() <= now &&
-        !row.has_active_renew_job
-      ) {
-        const capKey = caCapKey(workspaceId, certificateCaBucket(row));
-        const inFlight = inFlightByCa.get(capKey) || 0;
-        deferredReason = inFlight >= perCaCap ? "ca_capacity" : null;
-      }
+      const deferredReason = resolveDeferredRenewalReason(row, {
+        workspaceId,
+        inFlightByCa,
+        perCaCap,
+        now,
+      });
 
       return {
         certificateId: String(row.id),
@@ -828,6 +838,7 @@ module.exports = {
   SETTABLE_PROFILE_STATUSES,
   applyRenewalProfilePatch,
   classifyRenewalBlock,
+  resolveDeferredRenewalReason,
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,

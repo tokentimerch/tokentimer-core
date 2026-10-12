@@ -134,8 +134,11 @@ const {
 const {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
+  RENEWAL_JOB_TERMINAL_STATUSES,
+  countInFlightRenewalJobsByCaEndpoint,
   resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
+const { resolveRenewalPerCaCap } = require("../services/certops/renewalCapacity");
 const {
   CERTOPS_RENEWAL_OVERRIDE_INVALID,
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
@@ -151,6 +154,7 @@ const {
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,
+  resolveDeferredRenewalReason,
   updateRenewalProfile,
 } = require("../services/certops/renewalProfileAdmin");
 const {
@@ -3267,9 +3271,9 @@ async function loadCertificateRenewalRows({
   db = pool,
   workspaceId,
   certificateIds,
+  env = process.env,
 }) {
-  const result = await db.query(
-    `SELECT mc.id,
+  const profileColumns = `SELECT mc.id,
             mc.status,
             mc.key_mode,
             mc.not_after,
@@ -3280,15 +3284,72 @@ async function loadCertificateRenewalRows({
             cp.status AS profile_status,
             cp.key_mode AS profile_key_mode,
             cp.public_metadata AS profile_public_metadata,
-            cp.renew_before_days AS profile_renew_before_days
+            cp.renew_before_days AS profile_renew_before_days`;
+  // Same schedule columns listUpcomingRenewals selects. Profile metadata stays
+  // on the server row so the client never receives deployment topology.
+  const scheduleColumns = `,
+            mc.not_after
+              - (COALESCE(cp.renew_before_days, $3) || ' days')::interval
+              AS renews_from,
+            (
+              SELECT cj.status
+                FROM certificate_jobs cj
+               WHERE cj.workspace_id = mc.workspace_id
+                 AND cj.operation = 'renew'
+                 AND cj.subject_type = 'managed_certificate'
+                 AND cj.subject_id = mc.id::text
+               ORDER BY cj.created_at DESC
+               LIMIT 1
+            ) AS last_renew_job_status,
+            EXISTS (
+              SELECT 1
+                FROM certificate_jobs cj
+               WHERE cj.workspace_id = mc.workspace_id
+                 AND cj.operation = 'renew'
+                 AND cj.subject_type = 'managed_certificate'
+                 AND cj.subject_id = mc.id::text
+                 AND NOT (cj.status = ANY($4::text[]))
+            ) AS has_active_renew_job,
+            NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
+              AS certificate_ca_endpoint,
+            NULLIF(
+              BTRIM(
+                COALESCE(
+                  cp.public_metadata->'renewalProfile'->'ca'->>'endpoint',
+                  cp.public_metadata->>'caEndpoint'
+                )
+              ),
+              ''
+            ) AS profile_ca_endpoint`;
+  const fromClause = `
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.workspace_id = $1
-        AND mc.id = ANY($2::uuid[])`,
-    [workspaceId, certificateIds],
-  );
-  return result.rows;
+        AND mc.id = ANY($2::uuid[])`;
+  try {
+    const result = await db.query(
+      `${profileColumns}${scheduleColumns}${fromClause}`,
+      [
+        workspaceId,
+        certificateIds,
+        String(resolveRenewalThresholdDays(env)),
+        RENEWAL_JOB_TERMINAL_STATUSES,
+      ],
+    );
+    return { rows: result.rows, scheduleFacts: true };
+  } catch (err) {
+    // Schedule facts are enrichment. A failure here must not 500 the list.
+    logger.warn("CertOps renewal schedule enrichment failed", {
+      error: err.message,
+      workspaceId,
+    });
+    const result = await db.query(`${profileColumns}${fromClause}`, [
+      workspaceId,
+      certificateIds,
+    ]);
+    return { rows: result.rows, scheduleFacts: false };
+  }
 }
 
 /**
@@ -3379,9 +3440,9 @@ async function withRenewalState({
     .map(String);
   if (certificateIds.length === 0) return items;
 
-  const [rows, setupIntentsById, preflightsById, workspaceRow, renewalPathById] =
+  const [renewalLoad, setupIntentsById, preflightsById, workspaceRow, renewalPathById] =
     await Promise.all([
-      loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
+      loadCertificateRenewalRows({ db, env, workspaceId, certificateIds }),
       loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
       includePreflight
         ? loadResumablePreflights({ db, workspaceId, certificateIds })
@@ -3411,33 +3472,86 @@ async function withRenewalState({
         env,
       }).catch(() => new Map()),
     ]);
+  const rows = renewalLoad?.rows || [];
   const rowsById = new Map(rows.map((row) => [String(row.id), row]));
   const workspacePaused = workspaceRow?.rows?.[0]?.certops_paused === true;
+  let scheduleFactsById = null;
+  if (renewalLoad?.scheduleFacts && rows.length > 0) {
+    try {
+      const perCaCap = resolveRenewalPerCaCap(env);
+      const inFlightByCa = await countInFlightRenewalJobsByCaEndpoint({
+        db,
+        terminalStatuses: RENEWAL_JOB_TERMINAL_STATUSES,
+        workspaceId,
+      });
+      const now = Date.now();
+      scheduleFactsById = new Map(
+        rows.map((row) => [
+          String(row.id),
+          {
+            deferredReason: resolveDeferredRenewalReason(row, {
+              workspaceId,
+              inFlightByCa,
+              perCaCap,
+              now,
+            }),
+            lastRenewJobStatus: row.last_renew_job_status || null,
+          },
+        ]),
+      );
+    } catch (err) {
+      // The job status is already on the row. Only the capacity lookup failed,
+      // so keep the attempt and leave deferredReason off rather than claiming
+      // the CA has room.
+      logger.warn("CertOps renewal schedule enrichment failed", {
+        error: err.message,
+        workspaceId,
+      });
+      scheduleFactsById = new Map(
+        rows.map((row) => [
+          String(row.id),
+          { lastRenewJobStatus: row.last_renew_job_status || null },
+        ]),
+      );
+    }
+  }
 
-  return items.map((certificate) => ({
-    ...certificate,
-    renewal: deriveCertificateRenewalState(
+  return items.map((certificate) => {
+    const scheduleFacts = scheduleFactsById?.get(String(certificate.id));
+    const renewal = deriveCertificateRenewalState(
       rowsById.get(String(certificate.id)) ||
         renewalRowFromInventoryRecord(certificate),
       { env, workspacePaused },
-    ),
-    renewalSetup: projectRenewalSetupState(
-      setupIntentsById.get(String(certificate.id)) || null,
-    ),
-    ...(renewalPathById.get(String(certificate.id)) || {
-      renewalPathState: null,
-      renewalPathReason: null,
-      renewalPathSummary: null,
-      dependencies: [],
-    }),
-    ...(includePreflight
-      ? {
-          renewalPreflight: projectRenewalPreflight(
-            preflightsById.get(String(certificate.id)) || null,
-          ),
-        }
-      : {}),
-  }));
+    );
+    return {
+      ...certificate,
+      renewal: scheduleFacts
+        ? {
+            ...renewal,
+            ...("deferredReason" in scheduleFacts
+              ? { deferredReason: scheduleFacts.deferredReason }
+              : {}),
+            lastRenewJobStatus: scheduleFacts.lastRenewJobStatus,
+          }
+        : renewal,
+      renewalSetup: projectRenewalSetupState(
+        setupIntentsById.get(String(certificate.id)) || null,
+      ),
+      ...(renewalPathById.get(String(certificate.id)) || {
+        renewalPathState: null,
+        renewalPathReason: null,
+        renewalPathSummary: null,
+        dependencies: [],
+      }),
+      ...(includePreflight
+        ? {
+            renewalPreflight: projectRenewalPreflight(
+              preflightsById.get(String(certificate.id)) || null,
+            ),
+          }
+        : {}),
+    };
+  });
 }
 
 router.get(
