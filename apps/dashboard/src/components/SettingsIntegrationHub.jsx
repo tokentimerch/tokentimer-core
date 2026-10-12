@@ -63,7 +63,9 @@ export function SettingsIntegrationCard({
               {title}
             </Text>
             {status ? (
-              <Badge colorScheme={status.scheme || 'gray'}>{status.label}</Badge>
+              <Badge colorScheme={status.scheme || 'gray'}>
+                {status.label}
+              </Badge>
             ) : configured ? (
               <Badge
                 colorScheme='green'
