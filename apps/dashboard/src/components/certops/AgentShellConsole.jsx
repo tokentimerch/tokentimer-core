@@ -181,10 +181,7 @@ function statusHintFromPayload(payload, failed) {
   const hasLiveStream = streams.some(
     stream => stream.status === 'streaming' || stream.status === 'open'
   );
-  if (
-    !hasLiveStream &&
-    streams.some(stream => stream.status === 'abandoned')
-  ) {
+  if (!hasLiveStream && streams.some(stream => stream.status === 'abandoned')) {
     const job = String(payload.jobStatus || '').toLowerCase();
     if (
       job === 'succeeded' ||
