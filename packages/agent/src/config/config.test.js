@@ -344,6 +344,40 @@ describe("loadAgentConfig", () => {
     });
   });
 
+  it("loads AD CS enrollment rules and rejects a malformed rule", () => {
+    const dir = makeTempConfigDir();
+    ensureConfigDir(dir);
+    const caConfig = "TTADCSDC.ad.ttlab.internal\\TTLab Issuing CA";
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        adcs: { enrollmentRules: [{ caConfig, template: "TTWebServer", operatorAttested: false }] },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.deepEqual(loadAgentConfig({ configDir: dir }).adcs, {
+        enrollmentRules: [{ caConfig, template: "TTWebServer", operatorAttested: false }],
+      });
+    });
+
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({
+        serverUrl: "https://control-plane.example.com",
+        adcs: { enrollmentRules: [{ caConfig: "not a ca", template: "TTWebServer" }] },
+      }),
+      "utf8",
+    );
+    withEnv({ TOKENTIMER_AGENT_SERVER_URL: undefined }, () => {
+      assert.throws(
+        () => loadAgentConfig({ configDir: dir }),
+        /adcs\.enrollmentRules\[0\]\.caConfig is invalid/,
+      );
+    });
+  });
+
   it("rejects a non-object policy in config.json", () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);

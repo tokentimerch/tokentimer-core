@@ -989,8 +989,51 @@ function validateExecutionObject(execution, configDir) {
  *   dnsProviders: object|null,
  *   acmeAccounts: object|null,
  *   dnsPropagation: object,
+ *   adcs: {enrollmentRules: Array<{caConfig: string, template: string, operatorAttested?: boolean}>},
  * }}
  */
+const ADCS_CA_CONFIG_PATTERN =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\[A-Za-z0-9 ._()-]{1,64}$/;
+const ADCS_TEMPLATE_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+const MAX_ADCS_ENROLLMENT_RULES = 32;
+
+function validateAdcsObject(value) {
+  if (value == null) return { enrollmentRules: [] };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("tokentimer-agent: adcs in config.json must be an object");
+  }
+  if (value.enrollmentRules == null) return { enrollmentRules: [] };
+  if (!Array.isArray(value.enrollmentRules)) {
+    throw new Error("tokentimer-agent: adcs.enrollmentRules must be an array");
+  }
+  if (value.enrollmentRules.length > MAX_ADCS_ENROLLMENT_RULES) {
+    throw new Error("tokentimer-agent: adcs.enrollmentRules exceeds 32 rules");
+  }
+  return {
+    enrollmentRules: value.enrollmentRules.map((rule, index) => {
+      if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
+        throw new Error(`tokentimer-agent: adcs.enrollmentRules[${index}] must be an object`);
+      }
+      if (typeof rule.caConfig !== "string" || !ADCS_CA_CONFIG_PATTERN.test(rule.caConfig)) {
+        throw new Error(`tokentimer-agent: adcs.enrollmentRules[${index}].caConfig is invalid`);
+      }
+      if (typeof rule.template !== "string" || !ADCS_TEMPLATE_PATTERN.test(rule.template)) {
+        throw new Error(`tokentimer-agent: adcs.enrollmentRules[${index}].template is invalid`);
+      }
+      const normalized = { caConfig: rule.caConfig, template: rule.template };
+      if (rule.operatorAttested !== undefined) {
+        if (typeof rule.operatorAttested !== "boolean") {
+          throw new Error(
+            `tokentimer-agent: adcs.enrollmentRules[${index}].operatorAttested must be a boolean`,
+          );
+        }
+        normalized.operatorAttested = rule.operatorAttested;
+      }
+      return normalized;
+    }),
+  };
+}
+
 function loadAgentConfig({ configDir } = {}) {
   const resolvedDir = resolveConfigDir(configDir);
   const fileConfig = readConfigFile(resolvedDir);
@@ -1110,6 +1153,9 @@ function loadAgentConfig({ configDir } = {}) {
 
   // DNS-01 propagation wait (authoritative + optional recursive polling).
   const dnsPropagation = normalizeDnsPropagationConfig(fileConfig.dnsPropagation);
+  // Enrollment rules are the preflight allowlist. Leaving them out of this
+  // object made every control-plane preflight look unlisted.
+  const adcs = validateAdcsObject(fileConfig.adcs);
 
   return {
     serverUrl,
@@ -1131,6 +1177,7 @@ function loadAgentConfig({ configDir } = {}) {
     dnsProviders,
     acmeAccounts,
     dnsPropagation,
+    adcs,
   };
 }
 
