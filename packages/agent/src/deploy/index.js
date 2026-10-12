@@ -1079,10 +1079,24 @@ function rotationStagingSiblings(keysDir, liveBaseName, fsImpl = fs) {
     .sort();
 }
 
-function liveCustodyKeyReusable(livePath, fsImpl) {
+function readPrivateKeyPem(filePath, fsImpl) {
   try {
-    const text = fsImpl.readFileSync(livePath, "utf8");
-    return typeof text === "string" && text.includes("PRIVATE KEY");
+    const text = fsImpl.readFileSync(filePath, "utf8");
+    if (typeof text !== "string" || !text.includes("PRIVATE KEY")) return null;
+    return text;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function privateKeyMatchesCertificate(keyPem, certificatePem) {
+  if (typeof certificatePem !== "string" || !certificatePem.includes("BEGIN CERTIFICATE")) {
+    return null;
+  }
+  try {
+    const certificate = new crypto.X509Certificate(certificatePem);
+    const fromKey = crypto.createPublicKey(keyPem);
+    return fromKey.equals(certificate.publicKey) === true;
   } catch (_err) {
     return false;
   }
@@ -1091,15 +1105,18 @@ function liveCustodyKeyReusable(livePath, fsImpl) {
 /**
  * Live custody path to use for a later renew or standalone deploy.
  * A quarantine marker, an unreadable marker, or a live file that is no
- * longer a private key means the previous key must not be reused. A kept
- * rotation staging sibling is the replacement.
+ * longer a private key means the previous key must not be reused. When
+ * certificatePem is set, a candidate is usable only if its public key
+ * matches that certificate, so a stale file left after a failed wipe is
+ * not selected. A kept rotation staging sibling is the replacement.
  *
  * @param {string} keysDir
  * @param {string} certificateId
  * @param {{ existsSync?: Function, readdirSync?: Function, accessSync?: Function, readFileSync?: Function }} [fsImpl]
+ * @param {{ certificatePem?: string }} [options]
  * @returns {{ path: string|null, quarantined: boolean }}
  */
-function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs) {
+function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs, options = {}) {
   const liveBaseName = `${certificateId}.key.pem`;
   const live = path.join(keysDir, liveBaseName);
   const marker = custodyQuarantineMarkerPath(live);
@@ -1116,14 +1133,27 @@ function resolveAgentCustodyKey(keysDir, certificateId, fsImpl = fs) {
     // cannot prove the live key is safe to reuse.
     quarantined = !err || err.code !== "ENOENT";
   }
-  if (
-    !quarantined &&
-    fsImpl.existsSync(live) &&
-    liveCustodyKeyReusable(live, fsImpl)
-  ) {
+  const certificatePem = options && options.certificatePem;
+  const livePem =
+    !quarantined && fsImpl.existsSync(live)
+      ? readPrivateKeyPem(live, fsImpl)
+      : null;
+  const liveMatches = livePem
+    ? privateKeyMatchesCertificate(livePem, certificatePem)
+    : false;
+  if (livePem && (liveMatches === null || liveMatches === true)) {
     return { path: live, quarantined: false };
   }
   const siblings = rotationStagingSiblings(keysDir, liveBaseName, fsImpl);
+  if (typeof certificatePem === "string" && certificatePem.includes("BEGIN CERTIFICATE")) {
+    for (let index = siblings.length - 1; index >= 0; index -= 1) {
+      const siblingPem = readPrivateKeyPem(siblings[index], fsImpl);
+      if (siblingPem && privateKeyMatchesCertificate(siblingPem, certificatePem) === true) {
+        return { path: siblings[index], quarantined: true };
+      }
+    }
+    return { path: null, quarantined: quarantined || livePem !== null };
+  }
   if (siblings.length > 0) {
     return { path: siblings[siblings.length - 1], quarantined };
   }

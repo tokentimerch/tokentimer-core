@@ -1064,6 +1064,20 @@ function resolveJobCertPath(job) {
   return null;
 }
 
+function readDeployedCertificatePem(deployTargets) {
+  const targets = Array.isArray(deployTargets) ? deployTargets : [];
+  for (const target of targets) {
+    if (typeof target.certPath !== "string" || target.certPath.length === 0) continue;
+    try {
+      const pem = fs.readFileSync(target.certPath, "utf8");
+      if (typeof pem === "string" && pem.includes("BEGIN CERTIFICATE")) return pem;
+    } catch (err) {
+      if (!err || err.code !== "ENOENT") return { unreadable: true };
+    }
+  }
+  return null;
+}
+
 /**
  * Profile/job keyAlgorithm+keySize -> keys.generateKeyPairToFile algorithm id.
  * Returns null when both fields are absent (caller keeps the module default).
@@ -2923,7 +2937,22 @@ async function executeRenewJob({
   emitInfo(`job ${jobId}: generating/reusing private key for CN ${csrCommonName}`);
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
-  const custodyChoice = resolveAgentCustodyKey(execution.keysDir, job.certificateId);
+  const deployedCertificatePem = readDeployedCertificatePem(deployTargets);
+  if (deployedCertificatePem && deployedCertificatePem.unreadable) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "deployed certificate could not be read to verify the agent custody key",
+      ),
+      keyRotated: false,
+    };
+  }
+  const custodyChoice = resolveAgentCustodyKey(
+    execution.keysDir,
+    job.certificateId,
+    fs,
+    deployedCertificatePem ? { certificatePem: deployedCertificatePem } : {},
+  );
   if (custodyChoice.quarantined && !custodyChoice.path) {
     return {
       status: "failed",
@@ -5919,7 +5948,9 @@ async function executeDeployJob({
     keysDir.length > 0 &&
     isValidCertificateId(job.certificateId)
   ) {
-    const custodyChoice = resolveAgentCustodyKey(keysDir, job.certificateId);
+    const custodyChoice = resolveAgentCustodyKey(keysDir, job.certificateId, fs, {
+      certificatePem: job.certificatePem,
+    });
     if (custodyChoice.path) {
       keyPath = custodyChoice.path;
     }
