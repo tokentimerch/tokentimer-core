@@ -1451,3 +1451,46 @@ test("log batches omit sequence and do not block heartbeats", async () => {
   const ack = await pendingLog;
   assert.equal(ack.status, 200);
 });
+
+test("postJobLogs completes when client shutdown signal is already aborted", async () => {
+  const shutdown = new AbortController();
+  shutdown.abort();
+  const calls = [];
+  global.fetch = (url, init) => {
+    calls.push({ url: String(url), init });
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        ackThroughSeq: 0,
+        newlyStored: 0,
+        duplicateCount: 0,
+        serverDroppedCount: 0,
+        streamDisabled: false,
+      }),
+    });
+  };
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+    signal: shutdown.signal,
+  });
+  const ack = await client.postJobLogs({
+    jobId: "job-1",
+    body: {
+      jobId: "job-1",
+      claimId: "claim-1",
+      final: true,
+      lines: [],
+      droppedBefore: 0,
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/logs$/);
+  assert.equal(calls[0].init.signal.aborted, false);
+  assert.equal(ack.ok, true);
+  assert.equal(ack.status, 200);
+});

@@ -4812,6 +4812,12 @@ async function rollbackAfterFailedTail({
   if (!restored) {
     emitLog(log, `rollback restore failed for job ${jobId} at stage ${restore.stage}`);
   }
+  if (restore.custodyPromotionFailed === true) {
+    const custodyWarnMsg =
+      `job ${jobId}: production certificate install succeeded but the agent custody key was not updated and must not be reused`;
+    defaultAgentLogger.warn(custodyWarnMsg);
+    mirrorToJobConsole("warn", custodyWarnMsg);
+  }
 
   // Best-effort re-reload so the service serves the restored content again.
   let reloadNote = "not requested";
@@ -5557,6 +5563,12 @@ async function runDeployReloadVerify({
       ? `job ${jobId}: deploy skipped, destination already up to date`
       : `job ${jobId}: deploy succeeded at ${certPath}`,
   );
+  if (deployResult.custodyPromotionFailed === true) {
+    const custodyWarnMsg =
+      `job ${jobId}: production certificate install succeeded but the agent custody key was not updated and must not be reused`;
+    defaultAgentLogger.warn(custodyWarnMsg);
+    mirrorToJobConsole("warn", custodyWarnMsg);
+  }
   await reportStepEvidence(client, jobId, [
     buildEvidenceItem({
       eventType: "deployment.updated",

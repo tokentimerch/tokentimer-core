@@ -1405,6 +1405,7 @@ async function deployCertificateAndKey({
     // production destination is a different path — otherwise a later
     // standalone deploy cannot find a permitted local key reference.
     const normalizedPrivateKeyPath = path.normalize(path.resolve(privateKeyPath));
+    let custodyPromotionFailed = false;
     if (
       retainPrivateKeyStaging !== true &&
       isRotationStagingKeyPath(normalizedPrivateKeyPath) &&
@@ -1414,15 +1415,16 @@ async function deployCertificateAndKey({
         normalizedPrivateKeyPath,
       );
       let canRemoveStaging = true;
-      if (
+      const custodyResolved =
         liveCustodyPath &&
         path.normalize(path.resolve(liveCustodyPath)) !== realKeyDestination
-      ) {
+          ? path.normalize(path.resolve(liveCustodyPath))
+          : null;
+      if (custodyResolved) {
         canRemoveStaging = false;
         try {
           // Promote via atomic write so a failed custody update never
           // deletes the only remaining copy of the rotated key.
-          const custodyResolved = path.normalize(path.resolve(liveCustodyPath));
           const stagingKeyBytes = await fspImpl.readFile(normalizedPrivateKeyPath);
           await atomicWrite(fspImpl, custodyResolved, stagingKeyBytes, {
             mode: DEPLOYED_KEY_DEFAULT_MODE,
@@ -1435,6 +1437,19 @@ async function deployCertificateAndKey({
         } catch (_err) {
           // Production install already committed; keep staging for recovery.
           canRemoveStaging = false;
+          custodyPromotionFailed = true;
+          if (custodyResolved !== realKeyDestination) {
+            try {
+              await fspImpl.access(custodyResolved);
+              const staleAsidePath = path.join(
+                path.dirname(custodyResolved),
+                `${path.basename(custodyResolved)}.stale-${process.pid}`,
+              );
+              await fspImpl.rename(custodyResolved, staleAsidePath);
+            } catch (_renameErr) {
+              // Leave stale live custody in place; caller must not reuse it.
+            }
+          }
         }
       }
       if (canRemoveStaging) {
@@ -1496,6 +1511,7 @@ async function deployCertificateAndKey({
       },
       firstDeploy:
         existingCert === null && existingKey === null && existingChain === null,
+      ...(custodyPromotionFailed ? { custodyPromotionFailed: true } : {}),
     };
   });
 }

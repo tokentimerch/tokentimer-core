@@ -178,7 +178,28 @@ function statusHintFromPayload(payload, failed) {
   if (!payload) return 'connecting';
   if (payload.storageEnabled === false) return 'disabled';
   const streams = payload.streams || [];
-  if (streams.some(stream => stream.status === 'abandoned')) return 'failed';
+  const hasLiveStream = streams.some(
+    stream => stream.status === 'streaming' || stream.status === 'open'
+  );
+  if (
+    !hasLiveStream &&
+    streams.some(stream => stream.status === 'abandoned')
+  ) {
+    const job = String(payload.jobStatus || '').toLowerCase();
+    if (
+      job === 'succeeded' ||
+      job === 'success' ||
+      job === 'dry_run_complete'
+    ) {
+      return 'incomplete';
+    }
+    if (job === 'failed' || job === 'orphaned_unknown_effect') return 'failed';
+    if (job === 'cancelled') return 'cancelled';
+    if (job === 'rejected') return 'rejected';
+    if (job === 'awaiting_issuer') return 'awaiting_issuer';
+    if (job === 'blocked') return 'blocked';
+    return 'incomplete';
+  }
   const dropped = streamDroppedLines(streams);
   if (payload.logsComplete) {
     if (dropped > 0) return 'incomplete';

@@ -864,10 +864,14 @@ describe("deployCertificateAndKey", () => {
     });
 
     assert.equal(result.deployed, true);
+    assert.equal(result.custodyPromotionFailed, true);
     assert.equal(fs.existsSync(stagingKeyPath), true);
     assert.equal(fs.readFileSync(stagingKeyPath, "utf8"), MATCHING_KEY_PEM);
     assert.equal(fs.readFileSync(prodKeyPath, "utf8"), MATCHING_KEY_PEM);
-    assert.equal(fs.readFileSync(custodyKeyPath, "utf8"), OTHER_KEY_PEM);
+    const liveCustodyStillStale =
+      fs.existsSync(custodyKeyPath) &&
+      fs.readFileSync(custodyKeyPath, "utf8") === OTHER_KEY_PEM;
+    assert.equal(liveCustodyStillStale, false);
   });
 
   it("rolls back BOTH key and cert when the key write fails after cert write", async () => {
