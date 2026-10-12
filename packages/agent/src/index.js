@@ -4814,7 +4814,7 @@ async function rollbackAfterFailedTail({
   }
   if (restore.custodyPromotionFailed === true) {
     const custodyWarnMsg =
-      `job ${jobId}: production certificate install succeeded but the agent custody key was not updated and must not be reused`;
+      `job ${jobId}: restored certificate is installed but the agent custody key was not updated and must not be reused`;
     defaultAgentLogger.warn(custodyWarnMsg);
     mirrorToJobConsole("warn", custodyWarnMsg);
   }
