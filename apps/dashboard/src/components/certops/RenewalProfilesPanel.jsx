@@ -282,7 +282,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
       ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
     });
   const {
-    saving,
+    savingIds,
     error: saveError,
     clearError,
     save,
@@ -449,7 +449,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                 {profiles.map(profile => {
                   const badge = statusBadge(profile);
                   const renewal = profile.renewalProfile || {};
-                  const rowSaving = saving === profile.id;
+                  const rowSaving = savingIds.has(profile.id);
                   const archived = profile.status === 'archived';
                   return (
                     <Tr key={profile.id} {...tableStyles.rowProps}>
@@ -612,7 +612,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         isOpen={Boolean(disableTarget)}
         onClose={() => setDisableTarget(null)}
         profile={disableTarget}
-        saving={disableTarget ? saving === disableTarget.id : false}
+        saving={disableTarget ? savingIds.has(disableTarget.id) : false}
         onConfirm={async () => {
           const updated = await applyChange(
             disableTarget,

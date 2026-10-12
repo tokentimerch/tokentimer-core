@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import {
   listRenewalProfiles,
@@ -241,26 +241,26 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal, page = {}) {
 /**
  * Mutation helper for renewal profiles.
  *
- * `saving` carries the profile id being written rather than a boolean so a table
- * of profiles can disable only the row in flight instead of freezing every
- * control on the page.
+ * `savingIds` lists every profile write still in flight, so one row keeps its
+ * indicator when another row starts a save.
  *
- * @returns {{ saving: string|null, error: string, clearError: function, save: function }}
+ * @returns {{ savingIds: Set<string>, error: string, clearError: function, save: function }}
  */
 export function useUpdateRenewalProfile() {
   const { workspaceId } = useWorkspace();
-  const [saving, setSaving] = useState(null);
+  const [savingIds, setSavingIds] = useState(() => new Set());
   const [error, setError] = useState('');
-  const saveGeneration = useRef(0);
 
   const clearError = useCallback(() => setError(''), []);
 
   const save = useCallback(
     async (profileId, changes) => {
       if (!workspaceId || !profileId) return null;
-      const generation = saveGeneration.current + 1;
-      saveGeneration.current = generation;
-      setSaving(profileId);
+      setSavingIds(current => {
+        const next = new Set(current);
+        next.add(profileId);
+        return next;
+      });
       setError('');
       try {
         return await updateRenewalProfile(workspaceId, profileId, changes);
@@ -277,11 +277,15 @@ export function useUpdateRenewalProfile() {
         );
         return null;
       } finally {
-        if (saveGeneration.current === generation) setSaving(null);
+        setSavingIds(current => {
+          const next = new Set(current);
+          next.delete(profileId);
+          return next;
+        });
       }
     },
     [workspaceId]
   );
 
-  return { saving, error, clearError, save };
+  return { savingIds, error, clearError, save };
 }

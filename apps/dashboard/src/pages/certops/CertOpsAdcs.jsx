@@ -158,8 +158,9 @@ export default function CertOpsAdcs() {
     isAdmin,
     retry: retryAdmin,
   } = useCertOpsWorkspaceAdminState();
-  const { certOpsPaused } = useOutletContext() || {};
-  const paused = Boolean(certOpsPaused);
+  const outlet = useOutletContext();
+  const pauseResolved = !outlet || outlet.killSwitchResolved === true;
+  const paused = !pauseResolved || Boolean(outlet?.certOpsPaused);
   const { workspaceId } = useWorkspace();
   const { muted } = useDashboardThemeColors();
   const [issuers, setIssuers] = useState([]);
