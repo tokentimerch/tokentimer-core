@@ -124,17 +124,22 @@ describe("adcs-preflight certutil parsing", () => {
         if (joined.includes("-dstemplate")) return { stdout: SAFE_TEMPLATE };
         if (joined.includes("EditFlags")) return { stdout: "EditFlags REG_DWORD = 0x10000 (65536)" };
         if (joined.includes("InterfaceFlags")) return { stdout: "InterfaceFlags REG_DWORD = 0x200 (512)" };
-        if (joined.includes("certcount")) return { stdout: "Cert count: 0" };
+        if (joined.includes("certcount")) return { stdout: "Cert count: 1" };
         return { stdout: "" };
       },
     });
-    assert.deepEqual(argv.map((call) => call[1][0]), ["-config", "-config", "-config", "-config"]);
-    assert.ok(argv.every((call) => call[1][1] === CA));
+    assert.deepEqual(argv.map((call) => call[1][0]), ["-dstemplate", "-config", "-config", "-config", "-config"]);
+    assert.ok(argv.slice(1).every((call) => call[1][1] === CA));
     assert.equal(outcome.preflightResult.templateCheck.verdict, "safe");
     assert.equal(outcome.preflightResult.caCheck.verdict, "safe");
     assert.equal(JSON.stringify(outcome).includes(SAFE_TEMPLATE), false);
     const templateCall = argv.find((call) => call[1].includes("-dstemplate"));
-    assert.deepEqual(templateCall[1], ["-config", CA, "-dstemplate", TEMPLATE]);
+    assert.deepEqual(templateCall[1], ["-dstemplate", TEMPLATE]);
+    assert.equal(templateCall[1].includes("-config"), false);
+    const caCertCall = argv.find((call) => call[1].includes("-ca.cert"));
+    assert.equal(caCertCall[1][2], "-ca.cert");
+    assert.equal(caCertCall[1][4], "0");
+    assert.match(caCertCall[1][3], /0\.cer$/);
   });
 
   it("queries the named template and does not treat another template's dump as safe", async () => {
@@ -187,5 +192,70 @@ describe("adcs-preflight certutil parsing", () => {
     });
     assert.equal(confused.preflightResult.templateCheck.verdict, "unreadable");
     assert.ok(confused.preflightResult.templateCheck.reasons.includes("template_unreadable"));
+  });
+
+  it("parses quoted certutil template dumps and parenthesized flag values", () => {
+    const quoted = [
+      '[TTWebServer]',
+      '    cn = "TTWebServer"',
+      '    pKIExtendedKeyUsage = "1.3.6.1.5.5.7.3.1"',
+      '    msPKI-Certificate-Name-Flag = "1"',
+      '    msPKI-Minimal-Key-Size = "2048"',
+      '    msPKI-Template-Schema-Version = "2"',
+      '    msPKI-Cert-Template-OID = "1.3.6.1.4.1.311.21.8.1.2.3.4.5.6"',
+      '    msPKI-Certificate-Application-Policy = "1.3.6.1.5.5.7.3.1"',
+    ].join("\n");
+    const templateCheck = parseTemplateDump(quoted, "TTWebServer");
+    assert.equal(templateCheck.verdict, "safe");
+    assert.equal(templateCheck.schemaVersion, 2);
+    assert.equal(templateCheck.templateOid, "1.3.6.1.4.1.311.21.8.1.2.3.4.5.6");
+    assert.equal(templateCheck.minimalKeySize, 2048);
+    const mixed = quoted.replace(
+      'msPKI-Certificate-Application-Policy = "1.3.6.1.5.5.7.3.1"',
+      'msPKI-Certificate-Application-Policy = "1.3.6.1.5.5.7.3.2", "1.3.6.1.5.5.7.3.1"',
+    );
+    const unsafe = parseTemplateDump(mixed, "TTWebServer");
+    assert.equal(unsafe.verdict, "unsafe");
+    assert.ok(unsafe.reasons.includes("application_policy_not_server_auth_only"));
+    const caCheck = parseCaCheck(
+      "EditFlags REG_DWORD = 11014e (1114446)",
+      "InterfaceFlags REG_DWORD = 641 (1601)",
+      false,
+    );
+    assert.equal(caCheck.verdict, "safe");
+    assert.deepEqual(caCheck.reasons, []);
+  });
+
+  it("decodes a UTF-16 certutil pipe before parsing", async () => {
+    const dump = Buffer.from(
+      [
+        'cn = "TokenTimerWebServer"',
+        "msPKI-Cert-Template-OID = 1.3.6.1.4.1.311.21.8.1.2.3.4.5.6",
+        "msPKI-Template-Schema-Version = 2",
+        "pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.1",
+        "msPKI-Certificate-Application-Policy = 1.3.6.1.5.5.7.3.1",
+        "msPKI-Minimal-Key-Size = 2048",
+        "msPKI-Certificate-Name-Flag = 1",
+      ].join("\r\n"),
+      "utf16le",
+    );
+    const outcome = await runCertutilPreflight({
+      caConfig: CA,
+      template: TEMPLATE,
+      execFileImpl(_file, args) {
+        const joined = args.join(" ");
+        if (joined.includes("-dstemplate")) return { stdout: dump };
+        if (joined.includes("EditFlags")) {
+          return { stdout: Buffer.from("EditFlags REG_DWORD = 11014e (1114446)", "utf16le") };
+        }
+        if (joined.includes("InterfaceFlags")) {
+          return { stdout: Buffer.from("InterfaceFlags REG_DWORD = 641 (1601)", "utf16le") };
+        }
+        if (joined.includes("certcount")) return { stdout: Buffer.from("Cert count: 0", "utf16le") };
+        return { stdout: Buffer.alloc(0) };
+      },
+    });
+    assert.equal(outcome.preflightResult.templateCheck.verdict, "safe");
+    assert.equal(outcome.preflightResult.caCheck.verdict, "safe");
   });
 });

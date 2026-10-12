@@ -40,6 +40,10 @@ function matchEnrollmentRule(rules, caConfig, template) {
   );
 }
 
+function unquote(value) {
+  return String(value || "").trim().replace(/^"+|"+$/g, "");
+}
+
 function attributeValues(text, name) {
   const wanted = name.toLowerCase();
   const values = [];
@@ -60,7 +64,8 @@ function oidList(values) {
   const oids = [];
   for (const value of values) {
     for (const part of value.split(/[\s,;]+/)) {
-      if (/^\d+(?:\.\d+)+$/.test(part)) oids.push(part);
+      const token = unquote(part);
+      if (/^\d+(?:\.\d+)+$/.test(token)) oids.push(token);
     }
   }
   return oids;
@@ -75,7 +80,7 @@ function templateIdentities(text) {
   const seen = new Set();
   for (const key of ["cn", "TemplatePropCommonName"]) {
     for (const value of attributeValues(text, key)) {
-      const token = String(value).split(/[\s,;]+/)[0];
+      const token = unquote(value).split(/[\s,;]+/)[0];
       if (!TEMPLATE_PATTERN.test(token) || seen.has(token)) continue;
       seen.add(token);
       names.push(token);
@@ -109,7 +114,8 @@ function parseTemplateDump(text, expectedTemplate) {
     return unreadableTemplate();
   }
   const reasons = [];
-  const schemaVersion = /^\d+$/.test(schemaRaw[0] || "") ? Number(schemaRaw[0]) : null;
+  const schemaText = unquote(schemaRaw[0] || "");
+  const schemaVersion = /^\d+$/.test(schemaText) ? Number(schemaText) : null;
   if (schemaVersion == null) reasons.push("template_unreadable");
   else if (schemaVersion === 1) reasons.push("schema_version_1");
   const eku = oidList(ekuRaw);
@@ -119,10 +125,10 @@ function parseTemplateDump(text, expectedTemplate) {
     reasons.push("application_policy_not_server_auth_only");
   }
   const uniqueReasons = [...new Set(reasons)].slice(0, 4);
-  const oid = attributeValues(text, "msPKI-Cert-Template-OID")[0] || null;
-  const keyRaw = attributeValues(text, "msPKI-Minimal-Key-Size")[0];
-  const nameFlag = attributeValues(text, "msPKI-Certificate-Name-Flag")[0];
-  const algorithm = attributeValues(text, "msPKI-Asymmetric-Algorithm")[0] || null;
+  const oid = unquote(attributeValues(text, "msPKI-Cert-Template-OID")[0] || "") || null;
+  const keyRaw = unquote(attributeValues(text, "msPKI-Minimal-Key-Size")[0]);
+  const nameFlag = unquote(attributeValues(text, "msPKI-Certificate-Name-Flag")[0]);
+  const algorithm = unquote(attributeValues(text, "msPKI-Asymmetric-Algorithm")[0] || "") || null;
   const parsed = /^\d+$/.test(nameFlag || "") ? Number(nameFlag) : null;
   return {
     verdict: uniqueReasons.length === 0 ? "safe" : uniqueReasons.includes("template_unreadable") ? "unreadable" : "unsafe",
@@ -136,10 +142,18 @@ function parseTemplateDump(text, expectedTemplate) {
 }
 
 function parseRegDword(text) {
-  const match = String(text || "").match(/REG_DWORD\s*=\s*(0x[0-9a-fA-F]+|\d+)/i);
+  // certutil prints hex without 0x, then the decimal in parentheses: 641 (1601).
+  const match = String(text || "").match(
+    /REG_DWORD\s*=\s*(0x[0-9a-fA-F]+|[0-9a-fA-F]+)(?:\s*\((\d+)\))?/i,
+  );
   if (!match) return null;
   const raw = match[1];
-  const value = raw.toLowerCase().startsWith("0x") ? Number.parseInt(raw, 16) : Number(raw);
+  const paren = match[2] != null ? Number(match[2]) : null;
+  let value;
+  if (Number.isInteger(paren)) value = paren;
+  else if (raw.toLowerCase().startsWith("0x") || /[a-f]/i.test(raw)) {
+    value = Number.parseInt(raw.replace(/^0x/i, ""), 16);
+  } else value = Number(raw);
   if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) return null;
   return value;
 }
@@ -224,7 +238,11 @@ async function runCertutilPreflight({
   }
   function textOf(result) {
     const stdout = result && result.stdout != null ? result.stdout : result;
-    return Buffer.isBuffer(stdout) ? stdout.toString("utf8") : String(stdout || "");
+    if (!Buffer.isBuffer(stdout)) return String(stdout || "");
+    const utf16 =
+      (stdout.length >= 2 && stdout[0] === 0xff && stdout[1] === 0xfe) ||
+      (stdout.length >= 4 && stdout[1] === 0 && stdout[3] === 0);
+    return stdout.toString(utf16 ? "utf16le" : "utf8").replace(/^\uFEFF/, "");
   }
 
   let templateText = "";
@@ -232,7 +250,8 @@ async function runCertutilPreflight({
   let interfaceText = "";
   let countText = "";
   try {
-    templateText = textOf(await call(["-config", caConfig, "-dstemplate", template]));
+    // -dsTemplate rejects -config. The template lives in AD, so this call does not select a CA.
+    templateText = textOf(await call(["-dstemplate", template]));
     editText = textOf(await call(["-config", caConfig, "-getreg", "policy\\EditFlags"]));
     interfaceText = textOf(await call(["-config", caConfig, "-getreg", "CA\\InterfaceFlags"]));
     countText = textOf(await call(["-config", caConfig, "-cainfo", "certcount"]));
@@ -261,7 +280,8 @@ async function runCertutilPreflight({
       for (let index = 0; index < limit; index += 1) {
         const certPath = path.join(dir, `${index}.cer`);
         try {
-          await call(["-config", caConfig, "-ca.cert", String(index), certPath]);
+          // certutil -ca.cert takes the output file, then the index. Index-first is ERROR_INVALID_PARAMETER.
+          await call(["-config", caConfig, "-ca.cert", certPath, String(index)]);
           const der = await fs.readFile(certPath);
           const parsed = certificateFromDer(der);
           if (parsed && parsed.notBefore && parsed.notAfter) caCertificates.push(parsed);
