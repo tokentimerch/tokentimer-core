@@ -343,6 +343,22 @@ export function renewalPathDescriptor(certificate) {
       isWarning: true,
     };
   }
+  // Reported as unavailable on the wire; the reason separates "nothing can
+  // run" from "a CA check must run first", which operators act on differently.
+  if (
+    state === 'unavailable' &&
+    certificate?.renewalPathReason === 'waiting_for_fresh_preflight'
+  ) {
+    return {
+      state,
+      label: 'Waiting for CA check',
+      scheme: 'yellow',
+      help:
+        summary ||
+        'The renewal is waiting for an agent to run a fresh CA check before it can start.',
+      isWarning: true,
+    };
+  }
   if (state === 'unavailable') {
     return {
       state,
