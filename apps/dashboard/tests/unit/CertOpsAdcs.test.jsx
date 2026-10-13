@@ -421,4 +421,34 @@ describe('CertOpsAdcs', () => {
       screen.getByText(/attaches the profile to a certificate already in inventory/)
     ).toBeInTheDocument();
   });
+
+  it('loads the next page of issuers past the first 100', async () => {
+    isAdminMock.mockReturnValue(true);
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      issuer({ id: `issuer-${index}`, name: `CA ${index}` })
+    );
+    listIssuersMock
+      .mockResolvedValueOnce({ items: firstPage, pagination: { total: 101 } })
+      .mockResolvedValueOnce({
+        items: [issuer({ id: 'issuer-100', name: 'CA 100' })],
+        pagination: { total: 101 },
+      });
+
+    renderPage();
+
+    expect(
+      await screen.findByText('Showing 100 of 101 issuers.')
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more issuers' }));
+
+    await waitFor(() => {
+      expect(listIssuersMock).toHaveBeenLastCalledWith('ws-1', {
+        limit: 100,
+        offset: 100,
+        includeUnconfigured: true,
+      });
+    });
+    expect(await screen.findByText('CA 100')).toBeInTheDocument();
+    expect(screen.queryByText(/Showing \d+ of \d+ issuers/)).not.toBeInTheDocument();
+  });
 });

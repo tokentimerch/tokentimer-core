@@ -164,6 +164,20 @@ function EnrollmentNotices({ enrollment }) {
 
 const PAGE_LIMIT = 100;
 
+// Refreshing the first page keeps any extra pages the operator already loaded.
+function refreshPage(fresh, previous) {
+  const seen = new Set(fresh.map(item => item.id));
+  return [
+    ...fresh,
+    ...previous.slice(PAGE_LIMIT).filter(item => !seen.has(item.id)),
+  ];
+}
+
+function appendPage(previous, page) {
+  const seen = new Set(previous.map(item => item.id));
+  return [...previous, ...page.filter(item => !seen.has(item.id))];
+}
+
 const FINISHED_ENROLLMENT_STATES = new Set([
   'cancelled',
   'denied',
@@ -838,6 +852,7 @@ export default function CertOpsAdcs() {
   const [loadError, setLoadError] = useState('');
   const [issuerTotal, setIssuerTotal] = useState(0);
   const [enrollmentTotal, setEnrollmentTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState('');
   const [pendingAbandonId, setPendingAbandonId] = useState(null);
   const [showFinished, setShowFinished] = useState(false);
   const [showParked, setShowParked] = useState(false);
@@ -863,8 +878,8 @@ export default function CertOpsAdcs() {
       listEnrollments(workspaceId, { limit: PAGE_LIMIT }),
       listAgents(workspaceId),
     ]);
-    setIssuers(issuerPage.items || []);
-    setEnrollments(enrollmentPage.items || []);
+    setIssuers(previous => refreshPage(issuerPage.items || [], previous));
+    setEnrollments(previous => refreshPage(enrollmentPage.items || [], previous));
     setAgents(agentPage.items || []);
     setIssuerTotal(Number(issuerPage.pagination?.total || 0));
     setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
@@ -892,6 +907,39 @@ export default function CertOpsAdcs() {
       cancelled = true;
     };
   }, [isAdmin, reload]);
+
+  const loadMoreIssuers = useCallback(async () => {
+    setLoadingMore('issuers');
+    try {
+      const page = await listIssuers(workspaceId, {
+        limit: PAGE_LIMIT,
+        offset: issuers.length,
+        includeUnconfigured: true,
+      });
+      setIssuers(previous => appendPage(previous, page.items || []));
+      setIssuerTotal(Number(page.pagination?.total || 0));
+    } catch (err) {
+      showError(errorText(err, 'Could not load more issuers.'));
+    } finally {
+      setLoadingMore('');
+    }
+  }, [workspaceId, issuers.length]);
+
+  const loadMoreEnrollments = useCallback(async () => {
+    setLoadingMore('enrollments');
+    try {
+      const page = await listEnrollments(workspaceId, {
+        limit: PAGE_LIMIT,
+        offset: enrollments.length,
+      });
+      setEnrollments(previous => appendPage(previous, page.items || []));
+      setEnrollmentTotal(Number(page.pagination?.total || 0));
+    } catch (err) {
+      showError(errorText(err, 'Could not load more enrollments.'));
+    } finally {
+      setLoadingMore('');
+    }
+  }, [workspaceId, enrollments.length]);
 
   useEffect(() => () => stopPreflightPoll(), [workspaceId, stopPreflightPoll]);
 
@@ -930,7 +978,7 @@ export default function CertOpsAdcs() {
           });
           if (poll.cancelled || pollRef.current !== poll) return;
           const items = page.items || [];
-          setIssuers(items);
+          setIssuers(previous => refreshPage(items, previous));
           const current = items.find(item => item.id === issuerId);
           const changed =
             preflightSignature(current?.lastPreflight) !== previousSignature;
@@ -1204,9 +1252,18 @@ export default function CertOpsAdcs() {
           );
         })()}
         {issuerTotal > issuers.length ? (
-          <Text fontSize='sm' color={muted} mt={3}>
-            Showing {issuers.length} of {issuerTotal} issuers.
-          </Text>
+          <HStack justify='space-between' mt={3}>
+            <Text fontSize='sm' color={muted}>
+              Showing {issuers.length} of {issuerTotal} issuers.
+            </Text>
+            <DashboardActionButton
+              variant='outline'
+              onClick={loadMoreIssuers}
+              isDisabled={loadingMore !== ''}
+            >
+              {loadingMore === 'issuers' ? 'Loading...' : 'Load more issuers'}
+            </DashboardActionButton>
+          </HStack>
         ) : null}
       </DashboardPanel>
 
@@ -1241,9 +1298,20 @@ export default function CertOpsAdcs() {
             }
           />
           {enrollmentTotal > enrollments.length ? (
-            <Text fontSize='sm' color={muted} mb={3}>
-              Showing {enrollments.length} of {enrollmentTotal} enrollments.
-            </Text>
+            <HStack justify='space-between' mb={3}>
+              <Text fontSize='sm' color={muted}>
+                Showing {enrollments.length} of {enrollmentTotal} enrollments.
+              </Text>
+              <DashboardActionButton
+                variant='outline'
+                onClick={loadMoreEnrollments}
+                isDisabled={loadingMore !== ''}
+              >
+                {loadingMore === 'enrollments'
+                  ? 'Loading...'
+                  : 'Load more enrollments'}
+              </DashboardActionButton>
+            </HStack>
           ) : null}
           {loadError ? (
             <DashboardErrorAlert>{loadError}</DashboardErrorAlert>

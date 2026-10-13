@@ -6,11 +6,12 @@ function workspaceBase(workspaceId) {
 
 export async function listIssuers(
   workspaceId,
-  { signal, limit, includeUnconfigured } = {}
+  { signal, limit, includeUnconfigured, offset } = {}
 ) {
   const params = {};
   if (limit) params.limit = limit;
   if (includeUnconfigured) params.includeUnconfigured = 'true';
+  if (offset) params.offset = offset;
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/issuers`, {
     signal,
     params,
@@ -48,10 +49,13 @@ export async function confirmIssuerKey(workspaceId, issuerId, body) {
   return res.data;
 }
 
-export async function listEnrollments(workspaceId, { signal, limit } = {}) {
+export async function listEnrollments(
+  workspaceId,
+  { signal, limit, offset } = {}
+) {
   const res = await apiClient.get(`${workspaceBase(workspaceId)}/enrollments`, {
     signal,
-    params: limit ? { limit } : undefined,
+    params: { limit, offset },
   });
   return res.data;
 }
