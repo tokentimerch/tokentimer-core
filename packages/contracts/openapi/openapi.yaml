@@ -8846,6 +8846,8 @@ components:
             - no_profile
             - certificate_retired
             - assigned_agent_retired
+            - assigned_agent_ineligible
+            - adcs_enroll_capability_unavailable
             - null
           description: Machine-readable reason code for `renewalPathState`.
         renewalPathSummary:

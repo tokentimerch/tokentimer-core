@@ -1597,14 +1597,16 @@ describe("keyReference maxLength parity (C6)", () => {
 
 describe("CertOps OpenAPI response parity", () => {
   it("documents every renewalPathReason emitted by the runtime resolver", () => {
+    const {
+      RENEWAL_PATH_REASONS,
+    } = require("../../apps/api/services/certops/renewalPathHealth");
     const managedCertificate = openApiComponentSchema(
       "CertOpsManagedCertificate",
     );
-    assert.ok(
-      managedCertificate.properties.renewalPathReason.enum.includes(
-        "assigned_agent_retired",
-      ),
-    );
+    const documented = managedCertificate.properties.renewalPathReason.enum;
+    for (const reason of Object.values(RENEWAL_PATH_REASONS)) {
+      assert.ok(documented.includes(reason), `openapi enum is missing ${reason}`);
+    }
   });
 
   it("accepts the nested target object returned by toInstanceRecord and rejects undeclared target fields", () => {
