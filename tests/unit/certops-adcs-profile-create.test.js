@@ -44,7 +44,7 @@ const body = {
 describe("createAdcsRenewalProfile", () => {
   it("refuses an issuer that is not a confirmed AD CS issuer", async () => {
     const db = poolFrom(async (sql) => {
-      if (sql.includes("FROM certificate_issuers")) {
+      if (sql.includes("FROM certificate_issuers i")) {
         return {
           rows: [{ kind: "acme", revalidation_required: false, ca_key_sha256: "ab" }],
         };
@@ -67,7 +67,7 @@ describe("createAdcsRenewalProfile", () => {
     let stored = null;
     const db = poolFrom(async (sql, params) => {
       if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
-      if (sql.includes("FROM certificate_issuers")) {
+      if (sql.includes("FROM certificate_issuers i")) {
         return {
           rows: [
             {
@@ -116,7 +116,7 @@ describe("createAdcsRenewalProfile", () => {
 
   it("refuses an AD CS issuer that has no pinned CA certificate", async () => {
     const db = poolFrom(async (sql) => {
-      if (sql.includes("FROM certificate_issuers")) {
+      if (sql.includes("FROM certificate_issuers i")) {
         return {
           rows: [
             {
@@ -164,7 +164,7 @@ describe("createAdcsRenewalProfile", () => {
   it("refuses a profile name that already exists", async () => {
     const db = poolFrom(async (sql) => {
       if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
-      if (sql.includes("FROM certificate_issuers")) {
+      if (sql.includes("FROM certificate_issuers i")) {
         return {
           rows: [
             {

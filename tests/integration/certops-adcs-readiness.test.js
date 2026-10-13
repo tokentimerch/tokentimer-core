@@ -210,7 +210,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
-  it("requires a check dispatched after re-confirmation even when nothing changed", async () => {
+  it("requires a new preflight job created after re-confirmation even when nothing changed", async () => {
     const { issuerId, agentId } = await scenario();
     await addPreflight({ issuerId, agentId, verdict: verdict() });
     await TestUtils.execQuery(

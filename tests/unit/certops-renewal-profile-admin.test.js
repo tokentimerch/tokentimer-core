@@ -1138,9 +1138,10 @@ describe("CertOps renewal-profile AD CS issuer compatibility", () => {
   const ISSUER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
   const PROFILE_ID = "11111111-0000-4000-8000-000000000001";
   const adcsIssuer = { kind: "adcs", revalidation_required: false, ca_key_sha256: "ab".repeat(32) };
+  // The certificate name must also be in the SAN list, so the reference is a DNS name.
   const adcsTarget = {
     type: "windows-iis",
-    reference: "iis-01/webhosting",
+    reference: "app.example.com",
     store: "WebHosting",
     binding: { site: "Shop", port: 443 },
   };
@@ -1186,6 +1187,114 @@ describe("CertOps renewal-profile AD CS issuer compatibility", () => {
       auditWriter: pool.auditWriter,
     });
     assert.ok(pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")));
+  });
+
+  it("refuses an AD CS switch when the certificate name is not in the SAN list", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: {
+          renewalProfile: storedProfile({
+            target: { ...adcsTarget, reference: "iis-01/webhosting" },
+            deploymentTargets: [adcsTarget],
+          }),
+        },
+      }),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        issuerId: ISSUER_ID,
+        actorUserId: 7,
+        auditWriter: pool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE", message: /DNS names must include the certificate name/ },
+    );
+    assert.equal(
+      pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")),
+      false,
+    );
+  });
+
+  // Regression: an ACME-shaped profile moved to AD CS kept ACME edit rules,
+  // so ACME-only settings were accepted after the switch.
+  it("edits an ACME-shaped Windows/IIS profile under AD CS rules once it is on an AD CS issuer", async () => {
+    const acmeShaped = storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] });
+    const switchPool = createUpdatePool({
+      row: profileRow({ public_metadata: { renewalProfile: acmeShaped } }),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await updateRenewalProfile({
+      dbPool: switchPool,
+      workspaceId: "ws-1",
+      profileId: PROFILE_ID,
+      issuerId: ISSUER_ID,
+      actorUserId: 7,
+      auditWriter: switchPool.auditWriter,
+    });
+    assert.ok(switchPool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")));
+
+    // The stored row after the switch: same ACME-shaped JSON, now bound to AD CS.
+    const editPool = () =>
+      createUpdatePool({
+        row: profileRow({ issuer_id: ISSUER_ID, public_metadata: { renewalProfile: acmeShaped } }),
+        issuers: [ISSUER_ID],
+        issuerRow: adcsIssuer,
+      });
+    const acmeOnlyPool = editPool();
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: acmeOnlyPool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        renewalProfile: {
+          verification: { host: "app.example.com", port: 443, requireMatch: true },
+        },
+        actorUserId: 7,
+        auditWriter: acmeOnlyPool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_INVALID" },
+    );
+
+    const adcsPool = editPool();
+    await updateRenewalProfile({
+      dbPool: adcsPool,
+      workspaceId: "ws-1",
+      profileId: PROFILE_ID,
+      renewalProfile: { keyAlgorithm: "rsa", keySize: 2048 },
+      actorUserId: 7,
+      auditWriter: adcsPool.auditWriter,
+    });
+    const write = adcsPool.captured.queries.find((q) => q.sql.startsWith("UPDATE certificate_profiles"));
+    const written = JSON.parse(write.params[5]).renewalProfile;
+    assert.equal(written.keyAlgorithm, "rsa");
+    assert.equal(written.keySize, 2048);
+    assert.equal(written.target.reference, "app.example.com");
+  });
+
+  it("advertises edit fields by the issuer kind, not only the stored shape", async () => {
+    const acmeShaped = storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] });
+    const readWithKind = (issuerKind) =>
+      admin.getRenewalProfile({
+        db: {
+          async query() {
+            return {
+              rows: [profileRow({ issuer_id: issuerKind ? ISSUER_ID : null, issuer_kind: issuerKind, public_metadata: { renewalProfile: acmeShaped } })],
+            };
+          },
+        },
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+      });
+
+    const onAdcs = await readWithKind("adcs");
+    assert.deepEqual(onAdcs.editableFields, ["sanPolicy", "keyAlgorithm", "keySize"]);
+    const onAcme = await readWithKind(null);
+    assert.deepEqual(onAcme.editableFields, [...EDITABLE_PROFILE_FIELDS]);
   });
 
   it("refuses an AD CS issuer that still needs revalidation", async () => {

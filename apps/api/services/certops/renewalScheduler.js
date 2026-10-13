@@ -439,8 +439,8 @@ async function createAutomaticAdcsRenewal({
 
   const fields = adcsFieldsFromProfile(certificate);
   // Evidence must describe the confirmed version (config, template, pinned key)
-  // and be dispatched after its confirmation. Template ACLs can change in AD
-  // without the name changing, so a pre-confirmation check does not qualify.
+  // and come from a preflight job created after confirmation. Template ACLs can
+  // change in AD without the name changing, so an older check does not qualify.
   const confirmed = await dbPool.query(
     `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at
        FROM certificate_issuers i
