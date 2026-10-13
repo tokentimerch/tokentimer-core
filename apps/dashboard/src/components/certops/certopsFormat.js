@@ -223,7 +223,7 @@ export function renewalDescriptor(renewal) {
         state,
         label: 'Auto-renew on (workspace paused)',
         scheme: 'yellow',
-        help: 'Automatic renewal is configured for this certificate, but Certificate Management is paused for this workspace, so no renewal will run until it is resumed.',
+        help: 'Automatic renewal is configured, but new renewal work is paused for this workspace. Already-leased jobs can finish.',
         isWarning: true,
       };
     }
