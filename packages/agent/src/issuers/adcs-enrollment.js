@@ -141,6 +141,24 @@ function pinnedCaCertPath(stateDir, caKeySha256) {
   return path.join(stateDir, "adcs-ca", `${caKeySha256}.cer`);
 }
 
+// Cached CA pins and template OIDs come from a preflight. Older entries are
+// not reused, so the next renewal waits for a fresh adcs-preflight.
+const PREFLIGHT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function isWithinPreflightTtl(timestampMs, nowMs = Date.now()) {
+  if (!Number.isFinite(timestampMs)) return false;
+  const ageMs = nowMs - timestampMs;
+  return ageMs >= 0 && ageMs <= PREFLIGHT_CACHE_TTL_MS;
+}
+
+function isFreshPinnedCaCert(file) {
+  try {
+    return isWithinPreflightTtl(fs.statSync(file).mtimeMs);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Stages or reuses a CA certificate whose SPKI SHA-256 matches the pin.
  * Prefer an explicit path (tests / operator), then the agent cache.
@@ -155,7 +173,8 @@ function resolvePinnedCaCertPath({ stateDir, caKeySha256, caCertPath }) {
     candidates.push(caCertPath);
   }
   if (typeof stateDir === "string" && stateDir.length > 0) {
-    candidates.push(pinnedCaCertPath(stateDir, caKeySha256));
+    const cached = pinnedCaCertPath(stateDir, caKeySha256);
+    if (isFreshPinnedCaCert(cached)) candidates.push(cached);
   }
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate)) continue;
@@ -265,7 +284,8 @@ function resolveTemplateOid({ stateDir, caConfig, template, templateOid }) {
     const parsed = JSON.parse(fs.readFileSync(dest, "utf8"));
     if (
       typeof parsed.templateOid === "string" &&
-      /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(parsed.templateOid)
+      /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(parsed.templateOid) &&
+      isWithinPreflightTtl(Date.parse(parsed.updatedAt))
     ) {
       return { ok: true, templateOid: parsed.templateOid };
     }
@@ -354,6 +374,7 @@ const {
 } = require("./adcs-enrollment-reconcile");
 
 module.exports = {
+  PREFLIGHT_CACHE_TTL_MS,
   filesystemSafeJobId,
   computeSpkiSha256Hex,
   decodeEnrollmentSnapshot,

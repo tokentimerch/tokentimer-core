@@ -11,13 +11,22 @@ const { X509Certificate } = require("node:crypto");
 
 const {
   filesystemSafeJobId,
+  computeSpkiSha256Hex,
   decodeEnrollmentSnapshot,
   mapSnapshotKeyAlgorithm,
   resolvePinnedCaCertPath,
   cachePinnedCaCert,
+  cacheTemplateOid,
+  resolveTemplateOid,
+  templateOidCachePath,
+  PREFLIGHT_CACHE_TTL_MS,
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
 } = require("./adcs-enrollment");
+
+const CA_CONFIG = "ca01.corp.example.com\\Corp Issuing CA 01";
+const TEMPLATE = "TokenTimerWebServer";
+const TEMPLATE_OID = "1.3.6.1.4.1.311.21.8.1.2";
 
 function makeOpenSslCa(dir) {
   const keyPath = path.join(dir, "ca.key");
@@ -156,6 +165,44 @@ describe("pinned CA cert cache and RequestId journal", () => {
     });
     assert.equal(wrong.ok, false);
     assert.equal(wrong.errorCode, "ADCS_CA_KEY_UNPINNED");
+  });
+
+  it("reuses a cached template OID only within the preflight TTL", async () => {
+    await cacheTemplateOid({ stateDir, caConfig: CA_CONFIG, template: TEMPLATE, templateOid: TEMPLATE_OID });
+    const args = { stateDir, caConfig: CA_CONFIG, template: TEMPLATE };
+    const file = templateOidCachePath(stateDir, CA_CONFIG, TEMPLATE);
+    const writeUpdatedAt = (updatedAt) => {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+      fs.writeFileSync(file, JSON.stringify({ ...parsed, updatedAt }));
+    };
+
+    writeUpdatedAt(new Date(Date.now() - PREFLIGHT_CACHE_TTL_MS + 60_000).toISOString());
+    assert.deepEqual(resolveTemplateOid(args), { ok: true, templateOid: TEMPLATE_OID });
+
+    writeUpdatedAt(new Date(Date.now() - PREFLIGHT_CACHE_TTL_MS - 60_000).toISOString());
+    assert.equal(resolveTemplateOid(args).ok, false);
+
+    writeUpdatedAt("not-a-date");
+    assert.equal(resolveTemplateOid(args).ok, false);
+  });
+
+  it("reuses a pinned CA cert only within the preflight TTL", async () => {
+    const certBytes = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "ca.crt.pem"));
+    const caKeySha256 = computeSpkiSha256Hex(certBytes);
+    const dest = await cachePinnedCaCert({ stateDir, caKeySha256, certBytes });
+    const agedAt = (ageMs) => {
+      const when = new Date(Date.now() - ageMs);
+      fs.utimesSync(dest, when, when);
+    };
+    const resolve = () => resolvePinnedCaCertPath({ stateDir, caKeySha256 });
+
+    agedAt(PREFLIGHT_CACHE_TTL_MS - 60_000);
+    assert.equal(resolve().ok, true);
+
+    agedAt(PREFLIGHT_CACHE_TTL_MS + 60_000);
+    const stale = resolve();
+    assert.equal(stale.ok, false);
+    assert.equal(stale.errorCode, "ADCS_CA_KEY_UNPINNED");
   });
 
   it("round-trips the RequestId journal", async () => {
