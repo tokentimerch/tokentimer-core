@@ -545,7 +545,7 @@ function adcsRenewalRequirements(renewalProfile, certificateRow) {
   };
 }
 
-function acmeRenewalRequirements(renewalProfile, certificateRow, issuerKind) {
+function acmeRenewalRequirements(renewalProfile, certificateRow) {
   const profile = validateRenewalProfile(renewalProfile);
   const payload = executionFieldsFromRenewalProfile(profile);
   return {
@@ -555,7 +555,6 @@ function acmeRenewalRequirements(renewalProfile, certificateRow, issuerKind) {
       payload,
     }),
     subjectIsProvisioning: certificateRow.status === "provisioning",
-    issuerKind,
   };
 }
 
@@ -617,15 +616,14 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
   const renewalProfile = profileMetadata.renewalProfile;
-  const issuerKind = certificateRow.profile_issuer_kind === "adcs" ? "adcs" : null;
   let jobRequirements;
   try {
-    // The issuer decides the rules, as it does for the scheduler. A native AD CS
-    // profile has no ACME schemaVersion and must not be judged by ACME fields.
+    // The issuer decides the rules, as it does for the scheduler. An ACME-shaped
+    // profile switched to AD CS keeps its ACME fields, so shape cannot decide.
     jobRequirements =
-      issuerKind === "adcs" && renewalProfile?.schemaVersion === undefined
+      certificateRow.profile_issuer_kind === "adcs"
         ? adcsRenewalRequirements(renewalProfile, certificateRow)
-        : acmeRenewalRequirements(renewalProfile, certificateRow, issuerKind);
+        : acmeRenewalRequirements(renewalProfile, certificateRow);
   } catch (_error) {
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNKNOWN,

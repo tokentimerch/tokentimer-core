@@ -855,8 +855,37 @@ describe("renewalPathHealth: native AD CS profiles", () => {
 });
 
 describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
+  // An ACME-shaped profile moved onto an AD CS issuer: it keeps schemaVersion
+  // and the ACME fields, and gains the Windows/IIS target AD CS requires.
+  const switchedAdcsProfile = () => ({
+    ...executableRenewalProfile(),
+    target: {
+      type: "windows-iis",
+      reference: "app.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+    },
+    deploymentTargets: [
+      {
+        type: "windows-iis",
+        reference: "app.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+    ],
+    sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+  });
+  const switchedRow = (overrides = {}) =>
+    certRow({
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: { renewalProfile: switchedAdcsProfile() },
+      ...overrides,
+    });
+
   function adcsIndex({ id = "agent-a", declaredCapabilities = [], updatedAtMs = NOW } = {}) {
-    const agentIndex = buildAgentIndex([onlineAgentRow({ id })]);
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id, targetSelectors: ["app.example.com"] }),
+    ]);
     const candidate = agentIndex.byRowId.get(id);
     candidate.declaredCapabilities = declaredCapabilities;
     candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
@@ -865,7 +894,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
 
   it("missing declaration -> Renewal path unavailable naming adcs-enroll-v1, not healthy", () => {
     const result = resolveRenewalPathForRow({
-      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      certificateRow: switchedRow(),
       agentIndex: adcsIndex({ declaredCapabilities: [] }),
       now: NOW,
     });
@@ -880,7 +909,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
 
   it("stale declaration past the capability epoch -> blocked with the same reason", () => {
     const result = resolveRenewalPathForRow({
-      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      certificateRow: switchedRow(),
       agentIndex: adcsIndex({
         declaredCapabilities: ["adcs-enroll-v1"],
         updatedAtMs: NOW - 60 * 60 * 1000,
@@ -896,7 +925,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
 
   it("fresh declaration -> Healthy with the declaring agent as the dependency", () => {
     const result = resolveRenewalPathForRow({
-      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      certificateRow: switchedRow(),
       agentIndex: adcsIndex({
         declaredCapabilities: ["adcs-enroll-v1"],
         updatedAtMs: NOW - 30_000,
@@ -910,14 +939,14 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
 
   it("an undeclared agent does not count as a redundant AD CS path", () => {
     const agentIndex = buildAgentIndex([
-      onlineAgentRow({ id: "agent-a" }),
-      onlineAgentRow({ id: "agent-b" }),
+      onlineAgentRow({ id: "agent-a", targetSelectors: ["app.example.com"] }),
+      onlineAgentRow({ id: "agent-b", targetSelectors: ["app.example.com"] }),
     ]);
     const declaring = agentIndex.byRowId.get("agent-b");
     declaring.declaredCapabilities = ["adcs-enroll-v1"];
     declaring.capabilitiesUpdatedAt = new Date(NOW - 30_000).toISOString();
     const result = resolveRenewalPathForRow({
-      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      certificateRow: switchedRow(),
       agentIndex,
       now: NOW,
     });
@@ -931,7 +960,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
   it("ACME renewal without any adcs-enroll-v1 declaration is unchanged (healthy)", () => {
     const result = resolveRenewalPathForRow({
       certificateRow: certRow({ profile_issuer_kind: "acme" }),
-      agentIndex: adcsIndex({ declaredCapabilities: [] }),
+      agentIndex: buildAgentIndex([onlineAgentRow({ id: "agent-a" })]),
       now: NOW,
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
@@ -940,10 +969,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
 
   it("pinned AD CS renewal without declaration names the capability", () => {
     const result = resolveRenewalPathForRow({
-      certificateRow: certRow({
-        profile_issuer_kind: "adcs",
-        discovery_agent_id: "agent-a",
-      }),
+      certificateRow: switchedRow({ discovery_agent_id: "agent-a" }),
       agentIndex: adcsIndex({ declaredCapabilities: [] }),
       now: NOW,
     });
@@ -958,10 +984,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
     const agentIndex = adcsIndex({ declaredCapabilities: [] });
     agentIndex.byRowId.get("agent-a").supportedOperations = ["issue"];
     const result = resolveRenewalPathForRow({
-      certificateRow: certRow({
-        profile_issuer_kind: "adcs",
-        discovery_agent_id: "agent-a",
-      }),
+      certificateRow: switchedRow({ discovery_agent_id: "agent-a" }),
       agentIndex,
       now: NOW,
     });
@@ -970,6 +993,57 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
       result.renewalPathReason,
       RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
     );
+  });
+});
+
+describe("renewalPathHealth: switched profiles follow the AD CS rules", () => {
+  const switchedProfile = () => ({
+    ...executableRenewalProfile(),
+    target: {
+      type: "windows-iis",
+      reference: "app.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+    },
+    sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+  });
+  const indexWith = (declaredCapabilities, updatedAtMs) => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", targetSelectors: ["app.example.com"] }),
+    ]);
+    const candidate = agentIndex.byRowId.get("agent-a");
+    candidate.declaredCapabilities = declaredCapabilities;
+    candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
+    return agentIndex;
+  };
+
+  it("ACME-shaped profile switched to AD CS with no adcs-enroll-v1 is unavailable, not healthy", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        profile_public_metadata: { renewalProfile: switchedProfile() },
+      }),
+      agentIndex: indexWith([], NOW),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("ACME-shaped profile switched to AD CS with a fresh adcs-enroll-v1 reports its normal state", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        profile_public_metadata: { renewalProfile: switchedProfile() },
+      }),
+      agentIndex: indexWith(["adcs-enroll-v1"], NOW - 30_000),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
   });
 });
 
