@@ -762,6 +762,125 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
   });
 });
 
+describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
+  function adcsIndex({ id = "agent-a", declaredCapabilities = [], updatedAtMs = NOW } = {}) {
+    const agentIndex = buildAgentIndex([onlineAgentRow({ id })]);
+    const candidate = agentIndex.byRowId.get(id);
+    candidate.declaredCapabilities = declaredCapabilities;
+    candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
+    return agentIndex;
+  }
+
+  it("missing declaration -> Renewal path unavailable naming adcs-enroll-v1, not healthy", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      agentIndex: adcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+    assert.match(result.renewalPathSummary, /adcs-enroll-v1/);
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("stale declaration past the capability epoch -> blocked with the same reason", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      agentIndex: adcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 60 * 60 * 1000,
+      }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("fresh declaration -> Healthy with the declaring agent as the dependency", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      agentIndex: adcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 30_000,
+      }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.dependencies.length, 1);
+    assert.equal(result.dependencies[0].agentRowId, "agent-a");
+  });
+
+  it("an undeclared agent does not count as a redundant AD CS path", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a" }),
+      onlineAgentRow({ id: "agent-b" }),
+    ]);
+    const declaring = agentIndex.byRowId.get("agent-b");
+    declaring.declaredCapabilities = ["adcs-enroll-v1"];
+    declaring.capabilitiesUpdatedAt = new Date(NOW - 30_000).toISOString();
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "adcs" }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.deepEqual(
+      result.dependencies.map((dependency) => dependency.agentRowId),
+      ["agent-b"],
+    );
+  });
+
+  it("ACME renewal without any adcs-enroll-v1 declaration is unchanged (healthy)", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "acme" }),
+      agentIndex: adcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+
+  it("pinned AD CS renewal without declaration names the capability", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        discovery_agent_id: "agent-a",
+      }),
+      agentIndex: adcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("a second blocker on the pinned agent is reported instead of the missing declaration", () => {
+    const agentIndex = adcsIndex({ declaredCapabilities: [] });
+    agentIndex.byRowId.get("agent-a").supportedOperations = ["issue"];
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        discovery_agent_id: "agent-a",
+      }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+  });
+});
+
 describe("renewalPathHealth: resolveRenewalPathForCertificate (DB-facing)", () => {
   function fakeDb({ certRows, agentRows }) {
     return {

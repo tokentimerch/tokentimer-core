@@ -22,7 +22,10 @@ const {
 const {
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
-const { attachJobPendingReasons } = require("./jobPendingReason");
+const {
+  attachJobPendingReasons,
+  markAdcsJob,
+} = require("./jobPendingReason");
 const { attachUserDisplayNames } = require("./userDisplayNames");
 const { normalizeCertificateSearchQuery } = require("./certificateIdentity");
 
@@ -313,7 +316,8 @@ const SAFE_JOB_SELECT_FIELDS = `
   queued_at,
   started_at,
   completed_at,
-  canceled_at
+  canceled_at,
+  enrollment_id
 `;
 
 const SAFE_JOB_LOG_SELECT_FIELDS = `
@@ -1572,7 +1576,7 @@ async function preflightManualRenewalJob({
 
 function jobFromRow(row) {
   if (!row) return null;
-  return {
+  const job = {
     id: row.id,
     workspaceId: row.workspace_id,
     operation: row.operation,
@@ -1618,6 +1622,8 @@ function jobFromRow(row) {
     completedAt: dateToIso(row.completed_at),
     cancelledAt: dateToIso(row.canceled_at),
   };
+  if (row.enrollment_id) markAdcsJob(job);
+  return job;
 }
 
 function canonicalizeJson(value) {

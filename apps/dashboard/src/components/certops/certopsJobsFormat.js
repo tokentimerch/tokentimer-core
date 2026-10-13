@@ -137,6 +137,7 @@ const PENDING_REASON_LABELS = {
   agent_retired: 'Agent retired',
   compatibility_blocked: 'Agent incompatible',
   trust_anchor_deploy_capability_unavailable: 'No trust-anchor support',
+  adcs_enroll_capability_unavailable: 'No AD CS support',
   agent_offline: 'Agent offline',
   assigned_agent_missing: 'Assigned agent gone',
   awaiting_claim: 'Waiting for an agent',

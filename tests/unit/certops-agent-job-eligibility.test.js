@@ -8,6 +8,7 @@ const service = (name) =>
   path.resolve(__dirname, "../../apps/api/services/certops", name);
 const {
   evaluateAgentJobEligibility,
+  explainAgentJobEligibility,
   resolveAgentJobRoutingRequirements,
 } = require(service("agentJobEligibility.js"));
 const { computeAgentCompatibility } = require(service("agentRegistry.js"));
@@ -288,6 +289,30 @@ describe("shared agent-job eligibility", () => {
       });
       assert.equal(outcome.eligible, true, `${operation}: eligible`);
     }
+  });
+
+  it("explains an AD CS refusal as the gate only when the gate is the sole blocker", () => {
+    const job = { operation: "renew", executorKind: "agent", issuerKind: "adcs" };
+    const gateOnly = agent({ declaredCapabilities: [] });
+    const gateOutcome = explainAgentJobEligibility({
+      agent: gateOnly,
+      job,
+      compatibility: computeAgentCompatibility(gateOnly, {}),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(gateOutcome.reason, "adcs_enroll_capability_unavailable");
+
+    const masked = agent({ declaredCapabilities: [], targetSelectors: ["host/other"] });
+    const maskedOutcome = explainAgentJobEligibility({
+      agent: masked,
+      job: { ...job, requiredTargetSelector: "host/web" },
+      compatibility: computeAgentCompatibility(masked, {}),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(maskedOutcome.eligible, false);
+    assert.equal(maskedOutcome.reason, "target_selector_unsupported");
   });
 
   it("counts only truly eligible agents as redundant renewal paths", () => {

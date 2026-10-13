@@ -11,7 +11,10 @@
  */
 
 const { getAgentsByIds } = require("./agentRegistry");
-const { evaluateAgentJobEligibility } = require("./agentJobEligibility");
+const {
+  ADCS_ENROLL_CAPABILITY_REASON,
+  explainAgentJobEligibility,
+} = require("./agentJobEligibility");
 
 const AWAITING_EXECUTION_STATUSES = new Set(["pending", "claimed"]);
 const UUID_RE =
@@ -48,6 +51,13 @@ function messageForEligibility({ job, agent, reason }) {
       "observe-only (no execution block, or execution.enabled is not true, " +
       "in its config.json), though a brand-new agent that has not polled " +
       "for a job yet looks identical here."
+    );
+  }
+  if (reason === ADCS_ENROLL_CAPABILITY_REASON) {
+    return (
+      "This agent has not declared (or recently re-declared) support for " +
+      "AD CS enrollment. Confirm the agent is running a build that supports " +
+      "adcs-enroll-v1 and has heartbeated recently."
     );
   }
   if (reason === "trust_anchor_deploy_capability_unavailable") {
@@ -92,7 +102,7 @@ function pendingReasonForJob(job, agent) {
     };
   }
 
-  const evaluation = evaluateAgentJobEligibility({
+  const evaluation = explainAgentJobEligibility({
     agent,
     job: {
       operation: job.operation,
@@ -102,6 +112,7 @@ function pendingReasonForJob(job, agent) {
       requiredDnsProvider: job.requiredDnsProvider,
       requiredCommandProfile: job.requiredCommandProfile,
       payload: job.payload || {},
+      issuerKind: job.issuerKind || null,
     },
     compatibility: { compatibilityState: agent.compatibilityState },
   });
@@ -128,6 +139,14 @@ function pendingReasonForJob(job, agent) {
     code: "awaiting_claim",
     message: "Waiting for the assigned agent to poll and claim this job.",
   };
+}
+
+// Job objects carry no issuer kind and must not expose one. jobFromRow marks
+// AD CS rows (enrollment_id set) by object identity instead.
+const adcsJobs = new WeakSet();
+
+function markAdcsJob(job) {
+  adcsJobs.add(job);
 }
 
 function collectAgentIds(jobs) {
@@ -159,12 +178,17 @@ async function attachJobPendingReasons({ db, workspaceId, jobs, env }) {
   return jobs.map((job) => {
     const agentId = job.assignedAgentId || job.claimedByAgentId || null;
     const agent = agentId ? agentsById.get(String(agentId)) || null : null;
-    return { ...job, pendingReason: pendingReasonForJob(job, agent) };
+    const issuerKind = adcsJobs.has(job) ? "adcs" : null;
+    return {
+      ...job,
+      pendingReason: pendingReasonForJob({ ...job, issuerKind }, agent),
+    };
   });
 }
 
 module.exports = {
   AWAITING_EXECUTION_STATUSES,
   attachJobPendingReasons,
+  markAdcsJob,
   pendingReasonForJob,
 };

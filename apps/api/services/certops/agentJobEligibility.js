@@ -17,6 +17,7 @@ const TRUST_ANCHOR_DEPLOY_CAPABILITY = "trust-anchor-deploy-v1";
 // Gates AD CS enrollment and continuation jobs (issuerKind adcs). Stays
 // undeclared in released agents until qualified; the agent refuses them too.
 const ADCS_ENROLL_CAPABILITY = "adcs-enroll-v1";
+const ADCS_ENROLL_CAPABILITY_REASON = "adcs_enroll_capability_unavailable";
 // Duplicated locally rather than imported from jobs.js's
 // isTrustAnchorOperation: jobs.js requires this module, so importing back
 // would be circular. Kept in sync by hand.
@@ -183,7 +184,7 @@ function evaluateAgentJobEligibility({
       now,
     })
   ) {
-    return result(false, "adcs_enroll_capability_unavailable");
+    return result(false, ADCS_ENROLL_CAPABILITY_REASON);
   }
 
   if (
@@ -230,11 +231,28 @@ function evaluateAgentJobEligibility({
   return result(true, "eligible");
 }
 
+/**
+ * Same verdict as evaluateAgentJobEligibility, for explanation surfaces. When
+ * the only blocker is the AD CS gate, the reason names it; any other blocker
+ * is reported instead, so the explanation never hides a second problem.
+ */
+function explainAgentJobEligibility(args = {}) {
+  const evaluation = evaluateAgentJobEligibility(args);
+  if (evaluation.reason !== ADCS_ENROLL_CAPABILITY_REASON) return evaluation;
+  const withoutGate = evaluateAgentJobEligibility({
+    ...args,
+    job: { ...args.job, issuerKind: null },
+  });
+  return withoutGate.eligible ? evaluation : withoutGate;
+}
+
 module.exports = {
   ADCS_ENROLL_CAPABILITY,
+  ADCS_ENROLL_CAPABILITY_REASON,
   EVIDENCE_CLAIM_BINDING_CAPABILITY,
   TRUST_ANCHOR_DEPLOY_CAPABILITY,
   evaluateAgentJobEligibility,
+  explainAgentJobEligibility,
   hasFreshCapability,
   persistedTextArray,
   resolveAgentJobRoutingRequirements,

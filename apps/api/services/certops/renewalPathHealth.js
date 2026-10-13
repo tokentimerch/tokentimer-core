@@ -28,7 +28,8 @@ const {
 } = require("./renewalProfile");
 const { computeAgentCompatibility } = require("./agentRegistry");
 const {
-  evaluateAgentJobEligibility,
+  ADCS_ENROLL_CAPABILITY_REASON,
+  explainAgentJobEligibility,
   persistedTextArray,
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
@@ -66,6 +67,9 @@ const RENEWAL_PATH_REASONS = Object.freeze({
   // operator is told an agent IS pinned and why it can't claim the job, rather
   // than being told none is associated at all.
   ASSIGNED_AGENT_INELIGIBLE: "assigned_agent_ineligible",
+  // AD CS renewal with no fresh adcs-enroll-v1 declaration on any candidate
+  // agent. Dispatch refuses the job, so the path is blocked, not healthy.
+  ADCS_ENROLL_CAPABILITY_UNAVAILABLE: "adcs_enroll_capability_unavailable",
   // Not in the product spec's suggested list, but needed so a certificate
   // that is not currently expected to auto-renew never gets shown next to
   // "Renewal path unavailable" -- rule: "auto-renew disabled should not
@@ -274,11 +278,12 @@ function resolveRequiredExecutors({
   // the shared dispatch predicate below.
   let eligibilityIndeterminate = false;
   let liveEligibilityIndeterminate = false;
+  let adcsEnrollBlocked = false;
   let pinnedAgentIneligibleReason = null;
   let pinnedAgentDeclaredOperations = null;
   const matching = jobRequirements
     ? agentIndex.all.filter((agent) => {
-        const evaluation = evaluateAgentJobEligibility({
+        const evaluation = explainAgentJobEligibility({
           agent,
           job: {
             ...jobRequirements,
@@ -293,6 +298,8 @@ function resolveRequiredExecutors({
           if (isAgentOnline(agent, { offlineAfterMs, now })) {
             liveEligibilityIndeterminate = true;
           }
+        } else if (evaluation.reason === ADCS_ENROLL_CAPABILITY_REASON) {
+          adcsEnrollBlocked = true;
         } else if (
           assignedAgentId &&
           agent.id === assignedAgentId &&
@@ -321,6 +328,7 @@ function resolveRequiredExecutors({
     targetReference,
     eligibilityIndeterminate,
     liveEligibilityIndeterminate,
+    adcsEnrollBlocked,
     agents: matching.map((agent) =>
       agentDependencyView(agent, {
         required: Boolean(assignedAgentId) || matching.length === 1,
@@ -386,6 +394,7 @@ function classifyExecutors({
   pinnedButRetired = false,
   pinnedAgentIneligibleReason = null,
   pinnedAgentDeclaredOperations = null,
+  adcsEnrollBlocked = false,
 }) {
   if (pinnedButRetired) {
     return {
@@ -416,6 +425,14 @@ function classifyExecutors({
   const total = agents.length;
   const onlineCount = agents.filter((a) => a.online).length;
 
+  if (total === 0 && adcsEnrollBlocked) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+      renewalPathSummary:
+        "No agent that renews this AD CS certificate has declared adcs-enroll-v1 recently. Dispatch will not offer the renewal until an agent running a build that supports AD CS enrollment declares that capability and heartbeats.",
+    };
+  }
   if (total === 0) {
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
@@ -578,6 +595,7 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
         payload,
       }),
       subjectIsProvisioning: certificateRow.status === "provisioning",
+      issuerKind: certificateRow.profile_issuer_kind === "adcs" ? "adcs" : null,
     };
   } catch (_error) {
     return {
@@ -598,6 +616,7 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     pinnedAgentDeclaredOperations,
     eligibilityIndeterminate,
     liveEligibilityIndeterminate,
+    adcsEnrollBlocked,
   } = resolveRequiredExecutors({
     certificateRow,
     profileMetadata,
@@ -630,6 +649,7 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     pinnedButRetired,
     pinnedAgentIneligibleReason,
     pinnedAgentDeclaredOperations,
+    adcsEnrollBlocked,
   });
 
   return {
@@ -650,10 +670,13 @@ const CERTIFICATE_ROW_SELECT = `
          mc.public_metadata->'controllerObservation'->>'agentId' AS discovery_agent_id,
          mc.public_metadata AS certificate_public_metadata,
          cp.status AS profile_status,
-         cp.public_metadata AS profile_public_metadata
+         cp.public_metadata AS profile_public_metadata,
+         ci.kind AS profile_issuer_kind
     FROM managed_certificates mc
     LEFT JOIN certificate_profiles cp
       ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+    LEFT JOIN certificate_issuers ci
+      ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
 `;
 
 async function resolveRenewalPathForCertificate({
