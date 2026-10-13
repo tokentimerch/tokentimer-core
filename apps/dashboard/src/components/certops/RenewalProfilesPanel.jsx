@@ -87,69 +87,133 @@ function issuerLabel(value, issuers) {
   return match ? `AD CS · ${match.name}` : 'AD CS issuer';
 }
 
-function IssuerChoice({ profile, issuers, saving, onSave }) {
+/**
+ * Affected certificates come from the profile itself, so the operator sees what
+ * the change touches before the server accepts it.
+ */
+function issuerChangeSentence(profile) {
+  const count = Number(profile?.certificateCount || 0);
+  if (count === 0) return 'No certificates use this profile yet.';
+  const names = Array.isArray(profile?.certificates)
+    ? profile.certificates.map(item => item?.commonName).filter(Boolean)
+    : [];
+  if (names.length === 0) {
+    return count === 1
+      ? 'The certificate using this profile will renew through the new issuer.'
+      : `${count} certificates using this profile will renew through the new issuer.`;
+  }
+  const extra = count > names.length ? count - names.length : 0;
+  const listed = extra > 0 ? `${names.join(', ')}, and ${extra} more` : names.join(', ');
+  return `${listed} will renew through the new issuer from their next renewal.`;
+}
+
+function IssuerChangeModal({ isOpen, onClose, profile, issuers, target, saving, error, onConfirm }) {
+  const {
+    overlayProps,
+    headerProps,
+    bodyProps,
+    footerProps,
+    closeButtonProps,
+    outlineButtonProps,
+  } = useDashboardModalProps();
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} isCentered size='lg'>
+      <ModalOverlay {...overlayProps} />
+      <DashboardModalFrame>
+        <ModalHeader {...headerProps}>
+          <DashboardModalTitle>Change issuer for {profile.name}?</DashboardModalTitle>
+          <DashboardModalDescription>{issuerChangeSentence(profile)}</DashboardModalDescription>
+        </ModalHeader>
+        <ModalCloseButton {...closeButtonProps} />
+        <ModalBody {...bodyProps}>
+          <Text fontSize='sm' mb={3}>
+            From {issuerLabel(profile.issuerId, issuers)} to {issuerLabel(target, issuers)}.
+          </Text>
+          <Text fontSize='sm'>
+            {target
+              ? 'AD CS renewal needs a Windows/IIS deployment target. An ACME-based profile cannot be converted in place. If the change is refused, create an AD CS renewal profile for these certificates instead.'
+              : 'Renewal switches back to ACME, which uses this profile DNS and command settings.'}
+          </Text>
+          {error ? (
+            <Box mt={3}>
+              <DashboardErrorAlert>{error}</DashboardErrorAlert>
+            </Box>
+          ) : null}
+        </ModalBody>
+        <ModalFooter {...footerProps}>
+          <Button {...outlineButtonProps} onClick={onClose} mr={3}>
+            Cancel
+          </Button>
+          <Button colorScheme='blue' onClick={onConfirm} isLoading={Boolean(saving)}>
+            Change issuer
+          </Button>
+        </ModalFooter>
+      </DashboardModalFrame>
+    </Modal>
+  );
+}
+
+function IssuerChoice({ profile, issuers, saving, onSave, saveError }) {
   const [value, setValue] = useState(profile.issuerId || '');
   const [editing, setEditing] = useState(false);
-
+  // Null means no change is staged. An empty string stages ACME.
+  const [pending, setPending] = useState(null);
   useEffect(() => {
     setValue(profile.issuerId || '');
   }, [profile.issuerId]);
-
   const known = !value || issuers.some(issuer => issuer.id === value);
-
   if (!editing) {
     return (
       <HStack spacing={2} maxW='240px'>
-        <CertOpsTruncatedText
-          value={issuerLabel(value, issuers)}
-          fontSize='sm'
-        />
-        <Button
-          size='xs'
-          variant='outline'
-          flexShrink={0}
-          aria-label={`Change issuer for ${profile.name}`}
-          onClick={() => setEditing(true)}
-        >
+        <CertOpsTruncatedText value={issuerLabel(value, issuers)} fontSize='sm' />
+        <Button size='xs' variant='outline' aria-label={`Change issuer for ${profile.name}`} onClick={() => setEditing(true)}>
           Change
         </Button>
       </HStack>
     );
   }
-
   return (
-    <HStack spacing={2} maxW='240px'>
-      <Select
-        size='xs'
-        maxW='160px'
-        aria-label={`Issuer for ${profile.name}`}
-        aria-busy={saving ? 'true' : undefined}
-        title='ACME renews from a public CA. An AD CS issuer enrolls only when an agent enrollment rule names that CA and template.'
-        value={value}
-        isDisabled={saving}
-        autoFocus
-        onChange={async event => {
-          const next = event.target.value;
-          const previous = value;
-          setValue(next);
-          const saved = await onSave(next || null);
-          if (!saved) setValue(previous);
-          else setEditing(false);
+    <>
+      <HStack spacing={2}>
+        <Select
+          size='xs'
+          aria-label={`Issuer for ${profile.name}`}
+          value={value}
+          isDisabled={saving}
+          onChange={event => {
+            const next = event.target.value;
+            if (next === (profile.issuerId || '')) return;
+            setPending(next);
+          }}
+        >
+          <option value=''>ACME</option>
+          {known ? null : <option value={value}>AD CS issuer</option>}
+          {issuers.map(issuer => (
+            <option key={issuer.id} value={issuer.id}>{`AD CS · ${issuer.name}`}</option>
+          ))}
+        </Select>
+        <Button size='xs' variant='ghost' onClick={() => setEditing(false)}>
+          Done
+        </Button>
+      </HStack>
+      <IssuerChangeModal
+        isOpen={pending !== null}
+        onClose={() => setPending(null)}
+        profile={profile}
+        issuers={issuers}
+        target={pending}
+        saving={saving}
+        error={saveError}
+        onConfirm={async () => {
+          const saved = await onSave(pending || null);
+          if (saved) {
+            setPending(null);
+            setEditing(false);
+          }
         }}
-      >
-        <option value=''>ACME</option>
-        {known ? null : <option value={value}>AD CS issuer</option>}
-        {issuers.map(issuer => (
-          <option key={issuer.id} value={issuer.id}>
-            {`AD CS · ${issuer.name}`}
-          </option>
-        ))}
-      </Select>
-      {saving ? <Spinner size='xs' /> : null}
-      <Button size='xs' variant='ghost' onClick={() => setEditing(false)}>
-        Close
-      </Button>
-    </HStack>
+      />
+    </>
   );
 }
 
@@ -593,6 +657,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             profile={profile}
                             issuers={issuers}
                             saving={rowSaving}
+                            saveError={saveError}
                             onSave={next =>
                               applyChange(
                                 profile,

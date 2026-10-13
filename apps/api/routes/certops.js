@@ -51,6 +51,7 @@ const {
   retireCertificateIdentity,
   stopManagingSource,
   readdManagingSource,
+  replaceManagingSource,
 } = require("../services/certops/certificateIdentity");
 const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
 const {
@@ -3553,6 +3554,28 @@ router.post(
     } catch (err) {
       return handleCertOpsError(res, err) || res.status(500).json({
         error: "Failed to stop managing source", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// One request for "end the current period and attach this profile", so the
+// wizard never leaves a certificate unmanaged between two calls.
+router.post(
+  "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/replace-management",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      return res.status(201).json(await replaceManagingSource({
+        workspaceId: req.workspace.id,
+        managedCertificateId: req.params.managedCertificateId,
+        periodId: req.body?.periodId || null,
+        renewalProfileId: req.body?.renewalProfileId,
+        automationEnabled: req.body?.automationEnabled,
+        actorUserId: req.user?.id || null,
+      }));
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to replace management", code: "INTERNAL_ERROR" });
     }
   },
 );

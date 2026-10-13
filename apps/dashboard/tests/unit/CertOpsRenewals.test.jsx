@@ -24,6 +24,7 @@ const {
   listCertificatesMock,
   readdManagingSourceMock,
   stopManagingSourceMock,
+  replaceManagingSourceMock,
   showSuccessMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
@@ -36,6 +37,7 @@ const {
   listCertificatesMock: vi.fn(),
   readdManagingSourceMock: vi.fn(),
   stopManagingSourceMock: vi.fn(),
+  replaceManagingSourceMock: vi.fn(),
   showSuccessMock: vi.fn(),
 }));
 
@@ -107,6 +109,7 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
     listCertificates: listCertificatesMock,
     readdManagingSource: readdManagingSourceMock,
     stopManagingSource: stopManagingSourceMock,
+    replaceManagingSource: replaceManagingSourceMock,
   };
 });
 
@@ -214,6 +217,7 @@ beforeEach(() => {
   });
   readdManagingSourceMock.mockResolvedValue({ periodId: 'period-new' });
   stopManagingSourceMock.mockResolvedValue({});
+  replaceManagingSourceMock.mockResolvedValue({ periodId: 'period-new' });
 });
 
 describe('CertOpsRenewals page', () => {
@@ -703,16 +707,20 @@ describe('CertOpsRenewals page', () => {
     );
 
     await waitFor(() => {
-      expect(readdManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {
+      expect(replaceManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {
+        periodId: null,
         renewalProfileId: 'profile-new',
         automationEnabled: true,
       });
     });
+    expect(readdManagingSourceMock).not.toHaveBeenCalled();
     expect(stopManagingSourceMock).not.toHaveBeenCalled();
     expect(
       await screen.findByText(/Automatic renewal is on/)
     ).toBeInTheDocument();
-    expect(screen.getByText(/declares www.example.com is online/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/declares www.example.com has passed the CA check/)
+    ).toBeInTheDocument();
   });
 
   it('stops an open period before attaching the profile', async () => {
@@ -746,14 +754,13 @@ describe('CertOpsRenewals page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Attach and enable automation' }));
 
     await waitFor(() => {
-      expect(stopManagingSourceMock).toHaveBeenCalledWith('ws-1', 'period-open');
-      expect(readdManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {
+      expect(replaceManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {
+        periodId: 'period-open',
         renewalProfileId: 'profile-new',
         automationEnabled: true,
       });
     });
-    expect(stopManagingSourceMock.mock.invocationCallOrder[0]).toBeLessThan(
-      readdManagingSourceMock.mock.invocationCallOrder[0]
-    );
+    expect(stopManagingSourceMock).not.toHaveBeenCalled();
+    expect(readdManagingSourceMock).not.toHaveBeenCalled();
   });
 });

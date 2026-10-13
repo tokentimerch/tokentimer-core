@@ -428,7 +428,7 @@ export default function AdcsIssuerWizard({
                 New AD CS profile there. The last step attaches the profile to a
                 certificate already in inventory and turns automation on. The sweep
                 enrolls when that certificate is inside the profile lead time and an
-                agent that declares the DNS name is online.
+                agent that declares the DNS name has passed the CA check and is online.
               </Text>
             ) : null}
           </Stack>

@@ -29,8 +29,7 @@ import {
 import { listAgents } from './certopsAgentsApi';
 import {
   listCertificates,
-  readdManagingSource,
-  stopManagingSource,
+  replaceManagingSource,
 } from './certopsApi';
 import { createAdcsRenewalProfile } from './certopsRenewalApi';
 import { sourceLabel } from './certopsFormat.js';
@@ -99,7 +98,7 @@ function extraDnsNames(value, reference) {
 }
 
 function sweepSentence(dnsName, leadDays) {
-  return `The sweep enrolls when the certificate is inside the ${leadDays} day lead time and an agent that declares ${dnsName} is online.`;
+  return `The sweep enrolls when the certificate is inside the ${leadDays} day lead time and an agent that declares ${dnsName} has passed the CA check and is online.`;
 }
 
 /**
@@ -325,13 +324,9 @@ export default function AdcsProfileWizard({
     if (!selected || !created?.id) return;
     setBusy(true);
     setLocalError('');
-    let stoppedPeriod = false;
     try {
-      if (selected.open && selected.periodId) {
-        await stopManagingSource(workspaceId, selected.periodId);
-        stoppedPeriod = true;
-      }
-      await readdManagingSource(workspaceId, selected.managedCertificateId, {
+      await replaceManagingSource(workspaceId, selected.managedCertificateId, {
+        periodId: selected.open && selected.periodId ? selected.periodId : null,
         renewalProfileId: created.id,
         automationEnabled: true,
       });
@@ -343,12 +338,12 @@ export default function AdcsProfileWizard({
         setLocalError(
           'This certificate is already being managed. Open it in Certificates, stop managing, then start managing again and choose this profile. Automation turns on with the profile.'
         );
-      } else if (stoppedPeriod) {
-        setLocalError(
-          `${errorText(err, 'Could not attach the profile.')} Management was stopped. Open the certificate in Certificates and start managing again with this profile.`
-        );
       } else {
-        setLocalError(errorText(err, 'Could not attach the profile.'));
+        // The server runs stop and start in one transaction, so a refusal
+        // leaves the certificate exactly as it was.
+        setLocalError(
+          errorText(err, 'Could not attach the profile.') + ' Nothing changed; the certificate is still managed as before.'
+        );
       }
     } finally {
       setBusy(false);
@@ -577,8 +572,8 @@ export default function AdcsProfileWizard({
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
                       {declaringAgents.length === 1
-                        ? 'One active agent declares this name.'
-                        : `${declaringAgents.length} active agents declare this name. The most recently seen agent receives the renewal.`}
+                        ? 'One active agent declares this name. Renewal waits until it passes the CA check.'
+                        : `${declaringAgents.length} active agents declare this name. Renewal goes to the most recently seen agent that has passed the CA check.`}
                     </AlertDescription>
                   </Alert>
                 )}

@@ -808,6 +808,33 @@ async function retireCertificateIdentity({
   });
 }
 
+// Ends the open period (if any) and starts the replacement in one transaction,
+// so a failed start cannot leave the certificate unmanaged.
+async function replaceManagingSource({
+  workspaceId,
+  periodId = null,
+  managedCertificateId,
+  renewalProfileId,
+  automationEnabled,
+  actorUserId = null,
+  client = pool,
+}) {
+  return inTransaction(client, async (tx) => {
+    const stopped = periodId
+      ? await stopManagingSource({ workspaceId, periodId, actorUserId, client: tx })
+      : null;
+    const readded = await readdManagingSource({
+      workspaceId,
+      managedCertificateId,
+      renewalProfileId,
+      automationEnabled,
+      actorUserId,
+      client: tx,
+    });
+    return { stopped, readded };
+  });
+}
+
 async function stopManagingSource({
   workspaceId,
   periodId,
@@ -999,4 +1026,5 @@ module.exports = {
   retireCertificateIdentity,
   stopManagingSource,
   readdManagingSource,
+  replaceManagingSource,
 };

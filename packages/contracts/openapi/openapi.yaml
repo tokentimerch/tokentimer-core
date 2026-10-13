@@ -3717,6 +3717,41 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { description: Private key material rejected }
+  /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/replace-management:
+    post:
+      tags: [CertOps]
+      summary: End the open management period and start a new one in one step
+      operationId: replaceCertOpsManagementSource
+      description: >-
+        Atomic form of stop followed by readd, used when attaching a renewal profile
+        to a certificate that may already be managed. Requires manager permission.
+        The stop and the new period commit together or not at all, so a refusal
+        leaves the certificate as it was. Admission follows the readd rules.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: managedCertificateId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [automationEnabled, renewalProfileId]
+              properties:
+                periodId: { type: string, format: uuid, nullable: true }
+                automationEnabled: { type: boolean }
+                renewalProfileId: { type: string, format: uuid, nullable: true }
+      responses:
+        "201": { description: New management period }
+        "400": { description: Invalid or missing explicit renewal configuration }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Quota exceeded, source already managed, or source unavailable" }
+        "422": { description: Private key material rejected }
   /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/readd:
     post:
       tags: [CertOps]
