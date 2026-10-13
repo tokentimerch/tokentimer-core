@@ -47,8 +47,10 @@ const {
 const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   DEFAULT_RENEWAL_PER_CA_CAP,
+  IN_FLIGHT_BUCKET_SQL,
   RENEWAL_PER_CA_CAP_ENV,
   UNKNOWN_CA_BUCKET,
+  adcsCaBucket,
   caCapKey,
   normalizeCaBucket,
   resolveRenewalPerCaCap,
@@ -59,6 +61,8 @@ const { createEnrollment } = require("./certificateEnrollments");
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
 const RENEWAL_THRESHOLD_ENV = "CERTOPS_RENEWAL_THRESHOLD_DAYS";
+// An AD CS renewal waits here until an agent has a safe adcs-preflight for its CA.
+const CERTOPS_ADCS_AGENT_NOT_PREPARED = "CERTOPS_ADCS_AGENT_NOT_PREPARED";
 
 // Certificates without a resolvable caEndpoint share this bucket, so a flood
 // of endpoint-less renewals is still capped instead of being unbounded.
@@ -138,6 +142,9 @@ function isValidCaEndpointUrl(value) {
  * Normalized for bucketing.
  */
 function certificateCaBucket(certificate) {
+  if (certificate?.profile_issuer_kind === "adcs" && certificate.profile_issuer_id) {
+    return adcsCaBucket(certificate.profile_issuer_id);
+  }
   const candidates = [
     certificate?.certificate_ca_endpoint,
     certificate?.profile_ca_endpoint,
@@ -195,9 +202,11 @@ async function countInFlightRenewalJobsByCaEndpoint({
   }
   const result = await db.query(
     `SELECT cj.workspace_id,
-            NULLIF(BTRIM(cj.payload->>'caEndpoint'), '') AS ca_endpoint,
+            ${IN_FLIGHT_BUCKET_SQL} AS ca_bucket,
             COUNT(*)::int AS in_flight
        FROM certificate_jobs cj
+       LEFT JOIN certificate_enrollments e
+         ON e.workspace_id = cj.workspace_id AND e.current_job_id = cj.id
       WHERE cj.operation = 'renew'
         AND NOT (cj.status = ANY($1::text[]))${workspaceFilter}
       GROUP BY 1, 2`,
@@ -206,9 +215,9 @@ async function countInFlightRenewalJobsByCaEndpoint({
   const counts = new Map();
   for (const row of result.rows || []) {
     const bucket =
-      row.ca_endpoint == null
+      row.ca_bucket == null
         ? UNKNOWN_CA_BUCKET
-        : normalizeCaBucket(row.ca_endpoint);
+        : normalizeCaBucket(row.ca_bucket);
     const key = caCapKey(row.workspace_id, bucket);
     counts.set(key, (counts.get(key) || 0) + (Number(row.in_flight) || 0));
   }
@@ -264,10 +273,13 @@ async function findCertificatesDueForRenewal({
                 )
               ),
               ''
-            ) AS profile_ca_endpoint
+            ) AS profile_ca_endpoint,
+            ci.kind AS profile_issuer_kind
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+       LEFT JOIN certificate_issuers ci
+         ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.not_after IS NOT NULL
         AND EXISTS (SELECT 1 FROM certops_management_periods period
           WHERE period.workspace_id = mc.workspace_id
@@ -426,19 +438,57 @@ async function createAutomaticAdcsRenewal({
   if (issuer.rows[0]?.kind !== "adcs") return null;
 
   const fields = adcsFieldsFromProfile(certificate);
+  // Declaring the target is not enough: the agent must have run adcs-preflight
+  // against this CA with both checks safe, so a renewal never goes to an agent
+  // that cannot reach the CA.
   const agent = await dbPool.query(
-    `SELECT id
-       FROM certops_agents
-      WHERE workspace_id = $1
-        AND status = 'active'
-        AND declared_target_selectors @> jsonb_build_array($2::text)
-      ORDER BY last_seen_at DESC NULLS LAST
+    `SELECT a.id
+       FROM certops_agents a
+      WHERE a.workspace_id = $1
+        AND a.status = 'active'
+        AND a.declared_target_selectors @> jsonb_build_array($2::text)
+        AND EXISTS (
+          SELECT 1
+            FROM (
+              SELECT j.status, j.result_metadata
+                FROM certificate_jobs j
+               WHERE j.workspace_id = a.workspace_id
+                 AND j.operation = 'adcs-preflight'
+                 AND j.subject_id = $3
+                 AND j.assigned_agent_id = a.id
+               ORDER BY j.preflight_seq DESC NULLS LAST, j.created_at DESC, j.id DESC
+               LIMIT 1
+            ) latest
+           WHERE latest.status = 'succeeded'
+             AND latest.result_metadata->'preflightVerdict'->>'templateCheck' = 'safe'
+             AND latest.result_metadata->'preflightVerdict'->>'caCheck' = 'safe'
+        )
+      ORDER BY a.last_seen_at DESC NULLS LAST
       LIMIT 1`,
-    [certificate.workspace_id, fields.target.reference],
+    [
+      certificate.workspace_id,
+      fields.target.reference,
+      String(certificate.profile_issuer_id),
+    ],
   );
   if (!agent.rows[0]) {
-    const error = new Error("no active agent declares this AD CS renewal target");
-    error.code = CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
+    const declared = await dbPool.query(
+      `SELECT 1
+         FROM certops_agents
+        WHERE workspace_id = $1
+          AND status = 'active'
+          AND declared_target_selectors @> jsonb_build_array($2::text)
+        LIMIT 1`,
+      [certificate.workspace_id, fields.target.reference],
+    );
+    const error = new Error(
+      declared.rows[0]
+        ? "no agent has a safe adcs-preflight for this CA; run the CA check from the agent"
+        : "no active agent declares this AD CS renewal target",
+    );
+    error.code = declared.rows[0]
+      ? CERTOPS_ADCS_AGENT_NOT_PREPARED
+      : CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE;
     throw error;
   }
   const open = await dbPool.query(
@@ -654,7 +704,8 @@ async function createRenewalJobForCertificate({
  * One renewal-planning pass. Returns a summary:
  * { thresholdDays, perCaCap, lockAcquired, scanned, created, replayed,
  *   skippedPaused, skippedByCaCap, skippedIncompleteProfile,
- *   skippedNotAgentDeployable, skippedAutoRenewDisabled, errors }.
+ *   skippedNotAgentDeployable, skippedAdcsAgentNotPrepared,
+ *   skippedAutoRenewDisabled, errors }.
  *
  * Single-flight: the whole sweep runs under a session advisory lock
  * (pg_try_advisory_lock). A second worker starting a sweep while one is in
@@ -701,6 +752,7 @@ async function runRenewalSchedulerSweep({
     skippedByCaCap: 0,
     skippedIncompleteProfile: 0,
     skippedNotAgentDeployable: 0,
+    skippedAdcsAgentNotPrepared: 0,
     skippedAutoRenewDisabled: 0,
     errors: [],
   };
@@ -815,6 +867,11 @@ async function runRenewalSchedulerSweep({
           summary.skippedNotAgentDeployable += 1;
           continue;
         }
+        // Expected until an agent runs the CA check: retried on the next sweep.
+        if (error?.code === CERTOPS_ADCS_AGENT_NOT_PREPARED) {
+          summary.skippedAdcsAgentNotPrepared += 1;
+          continue;
+        }
         summary.errors.push({
           certificateId: String(certificate.id),
           error: error?.message || String(error),
@@ -899,11 +956,15 @@ async function loadCertificateRenewalRows({
                 )
               ),
               ''
-            ) AS profile_ca_endpoint`;
+            ) AS profile_ca_endpoint,
+            cp.issuer_id AS profile_issuer_id,
+            ci.kind AS profile_issuer_kind`;
   const fromClause = `
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+       LEFT JOIN certificate_issuers ci
+         ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.workspace_id = $1
         AND mc.id = ANY($2::uuid[])`;
   try {
@@ -932,6 +993,7 @@ async function loadCertificateRenewalRows({
 
 module.exports = {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
+  CERTOPS_ADCS_AGENT_NOT_PREPARED,
   DEFAULT_RENEWAL_PER_CA_CAP,
   DEFAULT_RENEWAL_THRESHOLD_DAYS,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
@@ -943,6 +1005,7 @@ module.exports = {
   caCapKey,
   certificateCaBucket,
   certificateCaEndpointRaw,
+  createAutomaticAdcsRenewal,
   countCertificatesWithAutoRenewDisabled,
   countInFlightRenewalJobsByCaEndpoint,
   loadCertificateRenewalRows,

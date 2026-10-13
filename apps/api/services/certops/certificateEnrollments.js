@@ -19,6 +19,7 @@ function assertSchema(validate, value, code) {
 }
 const { writeAudit } = require("../audit");
 const { createCertificateJob } = require("./jobs");
+const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 const {
   PREFLIGHT_PER_HOUR,
@@ -411,6 +412,7 @@ function createEnrollment({
       assignedAgentId: agentId,
       payload,
       enrollmentId,
+      capacityBucket: resolvedIssuerId ? adcsCaBucket(resolvedIssuerId) : null,
       returnOutcome: Boolean(idempotencyKey),
     });
     const job = idempotencyKey ? outcome.job : outcome;

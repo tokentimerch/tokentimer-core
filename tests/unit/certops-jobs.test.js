@@ -175,7 +175,7 @@ function createMemoryClient(options = {}) {
                 !terminal.has(row.status),
             )
             .map((row) => ({
-              ca_endpoint:
+              ca_bucket:
                 typeof row.payload?.caEndpoint === "string" &&
                 row.payload.caEndpoint.trim() !== ""
                   ? row.payload.caEndpoint.trim()

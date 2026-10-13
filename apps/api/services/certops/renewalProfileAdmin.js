@@ -1025,10 +1025,14 @@ async function listUpcomingRenewals({
                 )
               ),
               ''
-            ) AS profile_ca_endpoint
+            ) AS profile_ca_endpoint,
+            cp.issuer_id AS profile_issuer_id,
+            ci.kind AS profile_issuer_kind
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+       LEFT JOIN certificate_issuers ci
+         ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.workspace_id = $1
         AND mc.status NOT IN (${renewableStatusFilter})
       ORDER BY ${orderBy}

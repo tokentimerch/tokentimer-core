@@ -938,7 +938,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -960,7 +960,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 4,
           },
         ],
@@ -981,7 +981,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -1003,7 +1003,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -1033,7 +1033,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -1054,7 +1054,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -1085,7 +1085,7 @@ describe("CertOps upcoming renewals coverage", () => {
       },
       {
         inFlightRows: [
-          { workspace_id: "ws-1", ca_endpoint: null, in_flight: 5 },
+          { workspace_id: "ws-1", ca_bucket: null, in_flight: 5 },
         ],
       },
     );

@@ -13,6 +13,9 @@ const crypto = require("node:crypto");
 const DEFAULT_RENEWAL_PER_CA_CAP = 5;
 const RENEWAL_PER_CA_CAP_ENV = "CERTOPS_RENEWAL_PER_CA_CAP";
 const UNKNOWN_CA_BUCKET = "__unknown-ca__";
+// AD CS has no CA URL. Its bucket is the issuer row, which is stable across
+// CA certificate rotations and does not depend on metadata.
+const ADCS_CA_BUCKET_PREFIX = "adcs-issuer:";
 const CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED =
   "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED";
 // Operations that place a real ACME order and therefore consume the CA's rate
@@ -41,6 +44,8 @@ function normalizeCaBucket(value) {
   if (typeof value !== "string") return UNKNOWN_CA_BUCKET;
   const trimmed = value.trim();
   if (trimmed === "" || trimmed === UNKNOWN_CA_BUCKET) return UNKNOWN_CA_BUCKET;
+  // Already a canonical AD CS key. Parsing it as a URL would mangle the scheme.
+  if (trimmed.startsWith(ADCS_CA_BUCKET_PREFIX)) return adcsCaBucket(trimmed.slice(ADCS_CA_BUCKET_PREFIX.length));
   let parsed;
   try {
     parsed = new URL(trimmed);
@@ -63,6 +68,18 @@ function caBucketFromPayload(payload) {
   }
   return UNKNOWN_CA_BUCKET;
 }
+
+function adcsCaBucket(issuerId) {
+  return `${ADCS_CA_BUCKET_PREFIX}${String(issuerId).trim().toLowerCase()}`;
+}
+
+// Bucket of a job row for in-flight counting. AD CS enrollment jobs have no
+// caEndpoint, so they are attributed through the enrollment that owns them.
+const IN_FLIGHT_BUCKET_SQL = `COALESCE(
+  CASE WHEN e.issuer_id IS NOT NULL
+       THEN '${ADCS_CA_BUCKET_PREFIX}' || e.issuer_id::text END,
+  NULLIF(BTRIM(cj.payload->>'caEndpoint'), '')
+)`;
 
 /**
  * Stable signed bigint for pg_advisory_xact_lock, derived from the cap key.
@@ -89,32 +106,35 @@ async function assertRenewalPerCaCapacityAvailable({
   terminalStatuses,
   env = process.env,
   perCaCap = null,
+  capacityBucket = null,
 } = {}) {
   const cap =
     Number.isSafeInteger(perCaCap) && perCaCap > 0
       ? perCaCap
       : resolveRenewalPerCaCap(env);
-  const caBucket = caBucketFromPayload(payload);
+  const caBucket = capacityBucket || caBucketFromPayload(payload);
   const lockKey = advisoryLockKeyForCaCap(workspaceId, caBucket);
 
   await client.query("SELECT pg_advisory_xact_lock($1)", [lockKey]);
 
   const countResult = await client.query(
-    `SELECT NULLIF(BTRIM(payload->>'caEndpoint'), '') AS ca_endpoint
-       FROM certificate_jobs
-      WHERE workspace_id = $1
-        AND operation = ANY($3::text[])
-        AND NOT (status = ANY($2::text[]))
-      FOR UPDATE`,
+    `SELECT ${IN_FLIGHT_BUCKET_SQL} AS ca_bucket
+       FROM certificate_jobs cj
+       LEFT JOIN certificate_enrollments e
+         ON e.workspace_id = cj.workspace_id AND e.current_job_id = cj.id
+      WHERE cj.workspace_id = $1
+        AND cj.operation = ANY($3::text[])
+        AND NOT (cj.status = ANY($2::text[]))
+      FOR UPDATE OF cj`,
     [workspaceId, terminalStatuses, [...CA_CONSUMING_OPERATIONS]],
   );
 
   let inFlight = 0;
   for (const row of countResult.rows || []) {
     const bucket =
-      row.ca_endpoint == null
+      row.ca_bucket == null
         ? UNKNOWN_CA_BUCKET
-        : normalizeCaBucket(row.ca_endpoint);
+        : normalizeCaBucket(row.ca_bucket);
     if (bucket === caBucket) inFlight += 1;
   }
 
@@ -133,11 +153,14 @@ async function assertRenewalPerCaCapacityAvailable({
 }
 
 module.exports = {
+  ADCS_CA_BUCKET_PREFIX,
   CA_CONSUMING_OPERATIONS,
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   DEFAULT_RENEWAL_PER_CA_CAP,
+  IN_FLIGHT_BUCKET_SQL,
   RENEWAL_PER_CA_CAP_ENV,
   UNKNOWN_CA_BUCKET,
+  adcsCaBucket,
   advisoryLockKeyForCaCap,
   assertRenewalPerCaCapacityAvailable,
   caBucketFromPayload,

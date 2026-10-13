@@ -511,7 +511,7 @@ describe("CertOps certificate renewal-state projection", () => {
             rows: [
               {
                 workspace_id: "workspace-1",
-                ca_endpoint: "https://ca-a.example.com/acme",
+                ca_bucket: "https://ca-a.example.com/acme",
                 in_flight: 5,
               },
             ],

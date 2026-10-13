@@ -2445,6 +2445,14 @@ async function ingestResult({
         : {}),
       ...(body.keyRotated != null ? { keyRotated: body.keyRotated } : {}),
       ...(enrollmentResult ? { enrollmentResult } : {}),
+      ...(body?.preflightResult && job.operation === "adcs-preflight"
+        ? {
+            preflightVerdict: {
+              templateCheck: body.preflightResult.templateCheck?.verdict ?? null,
+              caCheck: body.preflightResult.caCheck?.verdict ?? null,
+            },
+          }
+        : {}),
       ...(trustResult
         ? {
             outcome: trustResult.outcome ?? null,

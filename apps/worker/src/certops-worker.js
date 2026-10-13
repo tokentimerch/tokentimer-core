@@ -1659,6 +1659,7 @@ export async function runCertOpsMaintenance({
       ["skipped_ca_cap", summary.skippedByCaCap],
       ["skipped_incomplete_profile", summary.skippedIncompleteProfile],
       ["skipped_not_agent_deployable", summary.skippedNotAgentDeployable],
+      ["skipped_adcs_agent_not_prepared", summary.skippedAdcsAgentNotPrepared],
       ["skipped_auto_renew_disabled", summary.skippedAutoRenewDisabled],
       ["errors", summary.errors?.length ?? 0],
     ]) {

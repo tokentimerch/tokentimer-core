@@ -648,13 +648,13 @@ describe("certops renewal scheduler", () => {
       inFlightRows: [
         {
           workspace_id: "ws-1",
-          ca_endpoint: "https://ca-a.example.com/acme",
+          ca_bucket: "https://ca-a.example.com/acme",
           in_flight: 3,
         },
-        { workspace_id: "ws-1", ca_endpoint: null, in_flight: 2 },
+        { workspace_id: "ws-1", ca_bucket: null, in_flight: 2 },
         {
           workspace_id: "ws-1",
-          ca_endpoint: "HTTPS://CA-A.example.com/acme/",
+          ca_bucket: "HTTPS://CA-A.example.com/acme/",
           in_flight: 1,
         },
       ],
@@ -690,7 +690,7 @@ describe("certops renewal scheduler", () => {
       inFlightRows: [
         {
           workspace_id: "ws-1",
-          ca_endpoint: "https://ca-a.example.com/acme",
+          ca_bucket: "https://ca-a.example.com/acme",
           in_flight: 4,
         },
       ],
@@ -746,7 +746,7 @@ describe("certops renewal scheduler", () => {
       inFlightRows: [
         {
           workspace_id: "ws-1",
-          ca_endpoint: "https://ca-a.example.com/acme",
+          ca_bucket: "https://ca-a.example.com/acme",
           in_flight: 5,
         },
       ],
@@ -781,7 +781,7 @@ describe("certops renewal scheduler", () => {
         }),
       ],
       inFlightRows: [
-        { workspace_id: "ws-1", ca_endpoint: null, in_flight: 5 },
+        { workspace_id: "ws-1", ca_bucket: null, in_flight: 5 },
       ],
     });
 

@@ -2008,6 +2008,7 @@ async function createCertificateJob(options) {
       terminalStatuses: [...TERMINAL_JOB_STATUSES],
       env: options.env || process.env,
       perCaCap: options.perCaCap,
+      capacityBucket: options.capacityBucket || null,
     });
   }
 
