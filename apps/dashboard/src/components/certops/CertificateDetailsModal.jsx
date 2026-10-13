@@ -747,7 +747,7 @@ export default function CertificateDetailsModal({
 
             {hasCertificateOperations ? (
               <Section
-                title='Certificate Management'
+                title='Certificate operations'
                 icon={Settings}
                 columns={2}
                 enclosed={compactTableSections}

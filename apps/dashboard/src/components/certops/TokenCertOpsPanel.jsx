@@ -136,7 +136,7 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
             fontWeight='bold'
             color={muted}
           >
-            Certificate Management
+            Certificate operations
           </Text>
           <CertificateLifecycleBadge certificate={certificate} />
           <RenewalBadge renewal={certificate.renewal} />

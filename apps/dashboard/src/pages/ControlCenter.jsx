@@ -1756,7 +1756,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                         ) : (
                           <InsightPanelBody>
                             <CompactEmptyState>
-                              Certificate Management is not enabled for this
+                              Certificate operations are not enabled for this
                               workspace yet.
                             </CompactEmptyState>
                           </InsightPanelBody>

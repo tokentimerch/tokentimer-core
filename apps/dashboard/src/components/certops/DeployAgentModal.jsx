@@ -569,7 +569,7 @@ export default function DeployAgentModal({
                 ) : null}
                 {certOpsPaused && !plaintextToken ? (
                   <Text fontSize='xs' color={muted}>
-                    Certificate Management is paused for this workspace, so new
+                    Certificate operations are paused for this workspace, so new
                     bootstrap tokens are refused.
                   </Text>
                 ) : null}

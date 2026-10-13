@@ -189,8 +189,8 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
               </>
             ) : (
               <DashboardState
-                title='Certificate Management is not enabled'
-                description='Certificate Management is not enabled for this workspace yet.'
+                title='Certificate operations are not enabled'
+                description='Certificate operations are not enabled for this workspace yet.'
               />
             )}
           </Box>

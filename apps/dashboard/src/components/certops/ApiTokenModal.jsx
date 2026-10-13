@@ -342,7 +342,7 @@ export default function ApiTokenModal({
 
               {certOpsPaused ? (
                 <Text fontSize='xs' color={muted}>
-                  Certificate Management is paused for this workspace, so new
+                  Certificate operations are paused for this workspace, so new
                   machine tokens are refused.
                 </Text>
               ) : null}

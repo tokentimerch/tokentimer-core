@@ -85,8 +85,8 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
             {pausing
-              ? 'Pause certificate management'
-              : 'Resume certificate management'}
+              ? 'Pause certificate operations'
+              : 'Resume certificate operations'}
           </DashboardModalTitle>
           <DashboardModalDescription>
             {pausing
@@ -188,8 +188,8 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
     await setPaused(next, reason);
     showSuccess(
       next
-        ? 'Certificate Management paused for this workspace'
-        : 'Certificate Management resumed for this workspace'
+        ? 'Certificate operations paused for this workspace'
+        : 'Certificate operations resumed for this workspace'
     );
     setConfirmOpen(false);
   };
@@ -207,12 +207,12 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
         flexShrink={0}
       >
         {certOpsPaused
-          ? 'Resume certificate management'
-          : 'Pause certificate management'}
+          ? 'Resume certificate operations'
+          : 'Pause certificate operations'}
       </Button>
     ) : (
       <Text fontSize='xs' color={muted} flexShrink={0}>
-        Only workspace admins can pause or resume certificate management.
+        Only workspace admins can pause or resume certificate operations.
       </Text>
     )
   ) : null;
@@ -257,7 +257,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
             <Box flex='1' minW={0}>
               <HStack spacing={2} align='center' flexWrap='wrap'>
                 <Text fontSize='sm' fontWeight='bold'>
-                  Certificate Management is paused for this workspace
+                  Certificate operations are paused for this workspace
                 </Text>
                 <CertOpsBadge colorScheme='red'>Paused</CertOpsBadge>
               </HStack>
@@ -294,7 +294,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
           ) : null}
           <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
             {resolved
-              ? 'Certificate Management is running for this workspace.'
+              ? 'Certificate operations are running for this workspace.'
               : 'Checking the certificate operations kill switch...'}
           </Text>
           {actionOrNote}

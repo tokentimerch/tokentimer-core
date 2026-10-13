@@ -206,7 +206,7 @@ describe('CertOpsRoutes kill-switch banner', () => {
 
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Pause certificate management' })
+      screen.getByRole('button', { name: 'Pause certificate operations' })
     ).toBeInTheDocument();
   });
 
@@ -218,10 +218,10 @@ describe('CertOpsRoutes kill-switch banner', () => {
     renderAt(path);
 
     expect(
-      screen.getByText('Certificate Management is paused for this workspace')
+      screen.getByText('Certificate operations are paused for this workspace')
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Resume certificate management' })
+      screen.getByRole('button', { name: 'Resume certificate operations' })
     ).toBeInTheDocument();
   });
 
@@ -269,7 +269,7 @@ describe('CertOpsRoutes availability gate', () => {
       screen.getByText('Could not load certificate operations status')
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('Certificate Management is not enabled')
+      screen.queryByText('Certificate operations are not enabled')
     ).not.toBeInTheDocument();
     expect(screen.queryByText('Machine executor jobs')).not.toBeInTheDocument();
   });
@@ -284,7 +284,7 @@ describe('CertOpsRoutes availability gate', () => {
     renderAt('/certops/settings');
 
     expect(
-      screen.getByText('Certificate Management is not enabled')
+      screen.getByText('Certificate operations are not enabled')
     ).toBeInTheDocument();
     expect(screen.queryByText('Machine API tokens')).not.toBeInTheDocument();
     expect(screen.queryByText('Active')).not.toBeInTheDocument();

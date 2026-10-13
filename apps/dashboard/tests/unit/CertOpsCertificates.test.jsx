@@ -699,7 +699,7 @@ describe('CertOpsCertificates retire action', () => {
       target: { value: 'Service removed' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /I understand Certificate Management/ })
+      screen.getByRole('checkbox', { name: /I understand TokenTimer/ })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 
@@ -1263,7 +1263,7 @@ describe('CertOpsCertificates retired count badge', () => {
       target: { value: 'Service removed' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /I understand Certificate Management/ })
+      screen.getByRole('checkbox', { name: /I understand TokenTimer/ })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 

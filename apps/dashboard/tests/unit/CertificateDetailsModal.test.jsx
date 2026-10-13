@@ -255,7 +255,7 @@ describe('CertificateDetailsModal', () => {
       screen.getByRole('heading', { name: 'Certificate details' })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { name: 'Certificate Management' })
+      screen.getByRole('heading', { name: 'Certificate operations' })
     ).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: 'Observed locations' })
@@ -320,7 +320,7 @@ describe('CertificateDetailsModal', () => {
     [
       'Basic information',
       'Certificate details',
-      'Certificate Management',
+      'Certificate operations',
     ].forEach(name => {
       const section = screen.getByRole('heading', { name }).closest('section');
       const detailsGrid = section.querySelector('[data-detail-columns="2"]');
@@ -578,7 +578,7 @@ describe('CertificateDetailsModal', () => {
       screen.queryByRole('heading', { name: 'Certificate details' })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('heading', { name: 'Certificate Management' })
+      screen.queryByRole('heading', { name: 'Certificate operations' })
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Observed locations' })
@@ -624,7 +624,7 @@ describe('CertificateDetailsModal', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
     expect(
-      screen.queryByRole('heading', { name: 'Certificate Management' })
+      screen.queryByRole('heading', { name: 'Certificate operations' })
     ).not.toBeInTheDocument();
   });
 });

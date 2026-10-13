@@ -384,7 +384,7 @@ describe('DeployAgentModal', () => {
     renderModal({ certOpsPaused: true });
 
     expect(
-      screen.getByText(/Certificate Management is paused for this workspace/)
+      screen.getByText(/Certificate operations are paused for this workspace/)
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Create bootstrap token' })
