@@ -221,8 +221,13 @@ function shortId(id) {
 
 function enrollmentMeta(enrollment) {
   const idLine = requestIdLine(enrollment);
-  if (!enrollment.caKeySha256) return idLine;
-  return `${idLine} · key prefix ${enrollment.caKeySha256.slice(0, 12)}`;
+  // Approval waits on a specific CA, so name it on the same line as the RequestId.
+  const line =
+    enrollment.state === 'pending_issuance' && enrollment.caConfig
+      ? `CA ${enrollment.caConfig} · ${idLine}`
+      : idLine;
+  if (!enrollment.caKeySha256) return line;
+  return `${line} · key prefix ${enrollment.caKeySha256.slice(0, 12)}`;
 }
 
 function preflightIsSafe(issuer) {
