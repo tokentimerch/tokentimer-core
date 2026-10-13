@@ -449,6 +449,27 @@ async function assertIssuerCompatibleWithProfile(client, { workspaceId, issuerId
   }
 }
 
+// Reverse of the check above. AD CS profiles never carry ca, acme, dns, or
+// deploymentTargets, and this API cannot add them (they are immutable here),
+// so clearing the issuer would leave a profile the scheduler refuses on its
+// next due renewal.
+function assertProfileRunsAcme(renewalProfile) {
+  const runnable =
+    typeof renewalProfile?.ca?.endpoint === "string" &&
+    typeof renewalProfile?.acme?.commandRef === "string" &&
+    typeof renewalProfile?.acme?.kind === "string" &&
+    typeof renewalProfile?.dns?.provider === "string" &&
+    typeof renewalProfile?.dns?.zone === "string" &&
+    Array.isArray(renewalProfile?.deploymentTargets) &&
+    renewalProfile.deploymentTargets.length > 0;
+  if (!runnable) {
+    throw profileError(
+      "This profile has no ACME CA, command, or DNS settings, so it cannot switch to ACME. Create an ACME renewal profile instead.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+}
+
 async function updateRenewalProfile({
   dbPool = pool,
   workspaceId,
@@ -572,6 +593,9 @@ async function updateRenewalProfile({
         issuerId: nextIssuerId,
         renewalProfile: nextMetadata.renewalProfile,
       });
+    }
+    if (nextIssuerId === null && changes.issuerId) {
+      assertProfileRunsAcme(nextMetadata.renewalProfile);
     }
 
     // The first successful edit takes ownership, which is what makes the edit

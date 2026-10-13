@@ -28,8 +28,17 @@ const CERTIFICATE = {
   },
 };
 
+const CA_CONFIG = '{"endpoint":"ca.example.com"}';
+const TEMPLATE = '{"name":"WebServer"}';
+const CA_KEY = "ab".repeat(32);
+
 // Answers each gate query by its SQL shape; anything else fails the test.
-function fakePool({ agentRows = [], declaredRows = [], openRows = [] }) {
+function fakePool({
+  agentRows = [],
+  declaredRows = [],
+  openRows = [],
+  versionRows = [{ ca_config: CA_CONFIG, template: TEMPLATE, ca_key_sha256: CA_KEY }],
+}) {
   const queries = [];
   return {
     queries,
@@ -38,6 +47,7 @@ function fakePool({ agentRows = [], declaredRows = [], openRows = [] }) {
       if (sql.includes("SELECT kind FROM certificate_issuers")) {
         return { rows: [{ kind: "adcs" }] };
       }
+      if (sql.includes("certificate_issuer_versions v")) return { rows: versionRows };
       if (sql.includes("SELECT a.id")) return { rows: agentRows };
       if (sql.includes("SELECT 1")) return { rows: declaredRows };
       if (sql.includes("FROM certificate_enrollments")) return { rows: openRows };
@@ -64,11 +74,24 @@ describe("AD CS automatic renewal agent readiness", () => {
     assert.match(select.sql, /'adcs-preflight'/);
     assert.match(select.sql, /preflightVerdict'->>'caCheck' = 'safe'/);
     assert.match(select.sql, /preflightVerdict'->>'templateCheck' = 'safe'/);
+    assert.match(select.sql, /preflightVerdict'->'caConfig' = \$4::jsonb/);
+    assert.match(select.sql, /preflightVerdict'->'template' = \$5::jsonb/);
+    assert.match(select.sql, /preflightVerdict'->'caKeySha256s'/);
     assert.deepEqual(select.params, [
       "ws-1",
       "www.example.com",
       "issuer-1",
+      CA_CONFIG,
+      TEMPLATE,
+      CA_KEY,
     ]);
+  });
+
+  it("does not qualify any agent when no version is confirmed", async () => {
+    const pool = fakePool({ declaredRows: [{ "?column?": 1 }], versionRows: [] });
+    await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+    const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
+    assert.deepEqual(select.params.slice(3), [null, null, null]);
   });
 
   it("keeps the not-deployable reason when no active agent declares the target", async () => {

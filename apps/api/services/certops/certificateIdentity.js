@@ -820,6 +820,28 @@ async function replaceManagingSource({
   client = pool,
 }) {
   return inTransaction(client, async (tx) => {
+    if (periodId) {
+      // Without this, a period id from another certificate would end that
+      // certificate's management while this request attaches a profile here.
+      if (!UUID_PATTERN.test(String(periodId)))
+        fail("CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND", "Management period not found");
+      await acquireManagedCertificateImportLock(tx, workspaceId);
+      const owner = await tx.query(
+        `SELECT managed_certificate_id FROM certops_management_periods
+          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+        [workspaceId, periodId],
+      );
+      if (!owner.rows[0])
+        fail("CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND", "Management period not found");
+      if (
+        String(owner.rows[0].managed_certificate_id).toLowerCase() !==
+        String(managedCertificateId).toLowerCase()
+      )
+        fail(
+          "CERTOPS_MANAGEMENT_PERIOD_MISMATCH",
+          "That management period belongs to a different certificate source",
+        );
+    }
     const stopped = periodId
       ? await stopManagingSource({ workspaceId, periodId, actorUserId, client: tx })
       : null;

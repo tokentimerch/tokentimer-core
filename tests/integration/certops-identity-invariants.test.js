@@ -14,6 +14,7 @@ const {
   retireCertificateIdentity,
   stopManagingSource,
   readdManagingSource,
+  replaceManagingSource,
 } = require("../../apps/api/services/certops/certificateIdentity");
 const {
   countActiveManagedCertificatesWithClient,
@@ -652,6 +653,46 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       );
     }
   });
+  it("replace-management refuses another certificate's period and leaves both sources managed", async () => {
+    const ws = await workspace(),
+      mcA = await source(ws, A),
+      mcB = await source(ws, B),
+      periodA = await period(mcA);
+    await assert.rejects(
+      replaceManagingSource({
+        workspaceId: ws,
+        periodId: periodA.id,
+        managedCertificateId: mcB.id,
+        renewalProfileId: null,
+        automationEnabled: false,
+        client: db,
+      }),
+      { code: "CERTOPS_MANAGEMENT_PERIOD_MISMATCH" },
+    );
+    assert.equal((await period(mcA)).id, periodA.id);
+    assert.equal((await period(mcA)).ended_at, null);
+    assert.equal((await period(mcB)).ended_at, null);
+  });
+
+  it("replace-management rolls back the stop when the re-attach is refused", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      open = await period(mc);
+    await assert.rejects(
+      replaceManagingSource({
+        workspaceId: ws,
+        periodId: open.id,
+        managedCertificateId: mc.id,
+        renewalProfileId: null,
+        automationEnabled: true,
+        client: db,
+      }),
+      { code: "CERTOPS_MANAGEMENT_CONFIG_REQUIRED" },
+    );
+    assert.equal((await period(mc)).id, open.id);
+    assert.equal((await period(mc)).ended_at, null);
+  });
+
   it("a re-added provisional source reports its actual new management start time", async () => {
     const ws = await workspace(1),
       mc = await source(ws, null);

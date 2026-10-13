@@ -2450,6 +2450,13 @@ async function ingestResult({
             preflightVerdict: {
               templateCheck: body.preflightResult.templateCheck?.verdict ?? null,
               caCheck: body.preflightResult.caCheck?.verdict ?? null,
+              // What the agent checked. Readiness compares it with the
+              // confirmed issuer version, so older evidence stops qualifying.
+              caConfig: body.preflightResult.caConfig ?? null,
+              template: body.preflightResult.template ?? null,
+              caKeySha256s: (body.preflightResult.caCertificates ?? []).map(
+                (ca) => ca.keySha256,
+              ),
             },
           }
         : {}),

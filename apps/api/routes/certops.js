@@ -446,7 +446,8 @@ function handleCertOpsError(res, err) {
   if (err?.code === "CERTOPS_VISIBILITY_ACK_REQUIRED") {
     return res.status(428).json({ error: err.message, code: err.code });
   }
-  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE") {
+  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE" ||
+      err?.code === "CERTOPS_MANAGEMENT_PERIOD_MISMATCH") {
     return res.status(409).json({ error: err.message, code: err.code });
   }
   if (err?.code === "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND") {
@@ -490,6 +491,13 @@ function handleCertOpsError(res, err) {
       error: err.message,
       code: CERTOPS_PROFILE_INVALID,
       fields: err.details?.fields || [],
+    });
+  }
+
+  if (err?.code === "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE") {
+    return res.status(422).json({
+      error: err.message,
+      code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE",
     });
   }
 

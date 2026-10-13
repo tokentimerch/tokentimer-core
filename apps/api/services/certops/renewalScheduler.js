@@ -438,6 +438,19 @@ async function createAutomaticAdcsRenewal({
   if (issuer.rows[0]?.kind !== "adcs") return null;
 
   const fields = adcsFieldsFromProfile(certificate);
+  // Evidence must describe the confirmed version: its config, template, and
+  // pinned CA key. A preflight from before a re-confirmation does not qualify.
+  const confirmed = await dbPool.query(
+    `SELECT v.ca_config, v.template, v.ca_key_sha256
+       FROM certificate_issuers i
+       JOIN certificate_issuer_versions v
+         ON v.workspace_id = i.workspace_id
+        AND v.issuer_id = i.id
+        AND v.version = i.current_version
+      WHERE i.workspace_id = $1 AND i.id = $2`,
+    [certificate.workspace_id, certificate.profile_issuer_id],
+  );
+  const version = confirmed.rows[0] || {};
   // Declaring the target is not enough: the agent must have run adcs-preflight
   // against this CA with both checks safe, so a renewal never goes to an agent
   // that cannot reach the CA.
@@ -462,6 +475,10 @@ async function createAutomaticAdcsRenewal({
            WHERE latest.status = 'succeeded'
              AND latest.result_metadata->'preflightVerdict'->>'templateCheck' = 'safe'
              AND latest.result_metadata->'preflightVerdict'->>'caCheck' = 'safe'
+             AND latest.result_metadata->'preflightVerdict'->'caConfig' = $4::jsonb
+             AND latest.result_metadata->'preflightVerdict'->'template' = $5::jsonb
+             AND latest.result_metadata->'preflightVerdict'->'caKeySha256s'
+                   @> jsonb_build_array($6::text)
         )
       ORDER BY a.last_seen_at DESC NULLS LAST
       LIMIT 1`,
@@ -469,6 +486,10 @@ async function createAutomaticAdcsRenewal({
       certificate.workspace_id,
       fields.target.reference,
       String(certificate.profile_issuer_id),
+      // ca_config and template are TEXT holding JSON; $4::jsonb parses them.
+      version.ca_config ?? null,
+      version.template ?? null,
+      version.ca_key_sha256 ?? null,
     ],
   );
   if (!agent.rows[0]) {

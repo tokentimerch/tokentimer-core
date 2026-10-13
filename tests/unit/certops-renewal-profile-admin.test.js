@@ -450,6 +450,46 @@ describe("CertOps renewal-profile update transaction", () => {
     assert.equal(cleared.params[6], null);
   });
 
+  it("refuses to clear the issuer of an AD CS profile that has no ACME settings", async () => {
+    const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const adcsProfile = {
+      target: {
+        type: "windows-iis",
+        reference: "app.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      sanPolicy: { sans: ["app.example.com"] },
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+    };
+    const pool = createUpdatePool({
+      row: profileRow({
+        issuer_id: issuerId,
+        public_metadata: { renewalProfile: adcsProfile },
+      }),
+      issuers: [issuerId],
+    });
+
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: "11111111-0000-4000-8000-000000000001",
+        issuerId: null,
+        auditWriter: pool.auditWriter,
+      }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE",
+    );
+    assert.equal(
+      pool.captured.queries.some((q) =>
+        q.sql.startsWith("UPDATE certificate_profiles"),
+      ),
+      false,
+    );
+    assert.equal(pool.captured.audits.length, 0);
+  });
+
   it("refuses an issuer that is not in the workspace", async () => {
     const pool = createUpdatePool({ row: profileRow(), issuers: [] });
     await assert.rejects(
