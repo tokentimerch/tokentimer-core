@@ -143,7 +143,9 @@ function pinnedCaCertPath(stateDir, caKeySha256) {
 
 // Cached CA pins and template OIDs come from a preflight. Older entries are
 // not reused, so the next renewal waits for a fresh adcs-preflight.
-const PREFLIGHT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const {
+  ADCS_PREFLIGHT_MAX_AGE_MS: PREFLIGHT_CACHE_TTL_MS,
+} = require("../../vendor/contracts/adcs-preflight-freshness.cjs");
 
 function isWithinPreflightTtl(timestampMs, nowMs = Date.now()) {
   if (!Number.isFinite(timestampMs)) return false;

@@ -57,6 +57,9 @@ const {
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
 const { createEnrollment } = require("./certificateEnrollments");
+const {
+  ADCS_PREFLIGHT_MAX_AGE_MS,
+} = require("../../../../packages/contracts/certops/adcs-preflight-freshness.cjs");
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
@@ -481,6 +484,7 @@ async function createAutomaticAdcsRenewal({
              AND latest.result_metadata->'preflightVerdict'->'caKeySha256s'
                    @> jsonb_build_array($6::text)
              AND latest.created_at >= $7::timestamptz
+             AND latest.created_at >= NOW() - ($8::bigint * INTERVAL '1 millisecond')
         )
       ORDER BY a.last_seen_at DESC NULLS LAST
       LIMIT 1`,
@@ -494,6 +498,8 @@ async function createAutomaticAdcsRenewal({
       version.ca_key_sha256 ?? null,
       // A null confirmation time matches nothing, so the gate fails closed.
       version.confirmed_at ?? null,
+      // Same lifetime the agent gives its cached CA pin and template OID.
+      ADCS_PREFLIGHT_MAX_AGE_MS,
     ],
   );
   if (!agent.rows[0]) {
@@ -508,7 +514,7 @@ async function createAutomaticAdcsRenewal({
     );
     const error = new Error(
       declared.rows[0]
-        ? "no agent has a safe adcs-preflight for this CA; run the CA check from the agent"
+        ? "no agent has a safe adcs-preflight for this CA within the preflight freshness window; run the CA check from the agent"
         : "no active agent declares this AD CS renewal target",
     );
     error.code = declared.rows[0]

@@ -5,6 +5,9 @@ const {
   CERTOPS_ADCS_AGENT_NOT_PREPARED,
   createAutomaticAdcsRenewal,
 } = require("../../apps/api/services/certops/renewalScheduler");
+const {
+  ADCS_PREFLIGHT_MAX_AGE_MS,
+} = require("../../packages/contracts/certops/adcs-preflight-freshness.cjs");
 
 const CERTIFICATE = {
   id: "cert-1",
@@ -90,14 +93,27 @@ describe("AD CS automatic renewal agent readiness", () => {
       TEMPLATE,
       CA_KEY,
       CONFIRMED_AT,
+      ADCS_PREFLIGHT_MAX_AGE_MS,
     ]);
+  });
+
+  it("bounds preflight age by the shared 24-hour freshness constant", async () => {
+    const pool = fakePool({ declaredRows: [{ "?column?": 1 }] });
+    await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+    const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
+    assert.match(
+      select.sql,
+      /latest\.created_at >= NOW\(\) - \(\$8::bigint \* INTERVAL '1 millisecond'\)/,
+    );
+    assert.equal(ADCS_PREFLIGHT_MAX_AGE_MS, 24 * 60 * 60 * 1000);
+    assert.equal(select.params[7], ADCS_PREFLIGHT_MAX_AGE_MS);
   });
 
   it("does not qualify any agent when no version is confirmed", async () => {
     const pool = fakePool({ declaredRows: [{ "?column?": 1 }], versionRows: [] });
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
     const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
-    assert.deepEqual(select.params.slice(3), [null, null, null, null]);
+    assert.deepEqual(select.params.slice(3), [null, null, null, null, ADCS_PREFLIGHT_MAX_AGE_MS]);
   });
 
   it("keeps the not-deployable reason when no active agent declares the target", async () => {

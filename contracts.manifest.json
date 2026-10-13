@@ -266,6 +266,12 @@
           "status": "existing"
         },
         {
+          "id": "certops-adcs-preflight-freshness-module",
+          "kind": "module",
+          "path": "packages/contracts/certops/adcs-preflight-freshness.cjs",
+          "status": "existing"
+        },
+        {
           "id": "certops-enrollment-snapshot-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/enrollment-snapshot.schema.json",

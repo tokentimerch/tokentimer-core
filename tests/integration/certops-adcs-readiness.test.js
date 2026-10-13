@@ -91,20 +91,33 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     return { issuerId, agentId: agent.rows[0].id };
   }
 
-  async function addPreflight({ issuerId, agentId, verdict }) {
+  async function addPreflight({ issuerId, agentId, verdict, hoursAgo = 0 }) {
     await TestUtils.execQuery(
       `INSERT INTO certificate_jobs (
          workspace_id, operation, status, executor_kind, mode, subject_type,
-         subject_id, payload, requested_by_user_id, assigned_agent_id, result_metadata
+         subject_id, payload, requested_by_user_id, assigned_agent_id, result_metadata,
+         created_at
        ) VALUES ($1, 'adcs-preflight', 'succeeded', 'agent', 'real', 'external',
-         $2, '{}'::jsonb, $3, $4, $5::jsonb)`,
+         $2, '{}'::jsonb, $3, $4, $5::jsonb,
+         NOW() - make_interval(hours => $6::int))`,
       [
         workspaceId,
         issuerId,
         ownerId,
         agentId,
         JSON.stringify({ preflightVerdict: verdict }),
+        hoursAgo,
       ],
+    );
+  }
+
+  // Moves confirmation back so an older preflight can still be after it.
+  async function backdateConfirmation(issuerId, hoursAgo) {
+    await TestUtils.execQuery(
+      `UPDATE certificate_issuer_versions
+          SET confirmed_at = NOW() - make_interval(hours => $3::int)
+        WHERE workspace_id = $1 AND issuer_id = $2 AND version = 1`,
+      [workspaceId, issuerId, hoursAgo],
     );
   }
 
@@ -163,6 +176,24 @@ describe("AD CS automatic renewal readiness (real database)", function () {
   it("qualifies an agent whose safe preflight matches the confirmed CA, template, and key", async () => {
     const { issuerId, agentId } = await scenario();
     await addPreflight({ issuerId, agentId, verdict: verdict() });
+    const { gateRows, error } = await runGate(issuerId);
+    expect(gateRows.map((row) => row.id)).to.deep.equal([agentId]);
+    expect(error?.code).to.not.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+  });
+
+  it("does not qualify a preflight older than the 24-hour freshness bound", async () => {
+    const { issuerId, agentId } = await scenario();
+    await backdateConfirmation(issuerId, 48);
+    await addPreflight({ issuerId, agentId, verdict: verdict(), hoursAgo: 25 });
+    const { gateRows, error } = await runGate(issuerId);
+    expect(gateRows).to.have.length(0);
+    expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
+  });
+
+  it("qualifies a preflight 23 hours old, inside the freshness bound", async () => {
+    const { issuerId, agentId } = await scenario();
+    await backdateConfirmation(issuerId, 48);
+    await addPreflight({ issuerId, agentId, verdict: verdict(), hoursAgo: 23 });
     const { gateRows, error } = await runGate(issuerId);
     expect(gateRows.map((row) => row.id)).to.deep.equal([agentId]);
     expect(error?.code).to.not.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);

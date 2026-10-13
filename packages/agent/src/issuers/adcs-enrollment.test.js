@@ -23,6 +23,9 @@ const {
   writeEnrollmentRequestJournal,
   readEnrollmentRequestJournal,
 } = require("./adcs-enrollment");
+const {
+  ADCS_PREFLIGHT_MAX_AGE_MS,
+} = require("../../vendor/contracts/adcs-preflight-freshness.cjs");
 
 const CA_CONFIG = "ca01.corp.example.com\\Corp Issuing CA 01";
 const TEMPLATE = "TokenTimerWebServer";
@@ -184,6 +187,11 @@ describe("pinned CA cert cache and RequestId journal", () => {
 
     writeUpdatedAt("not-a-date");
     assert.equal(resolveTemplateOid(args).ok, false);
+  });
+
+  it("uses the shared 24-hour preflight lifetime for the agent cache", () => {
+    assert.equal(PREFLIGHT_CACHE_TTL_MS, ADCS_PREFLIGHT_MAX_AGE_MS);
+    assert.equal(ADCS_PREFLIGHT_MAX_AGE_MS, 24 * 60 * 60 * 1000);
   });
 
   it("reuses a pinned CA cert only within the preflight TTL", async () => {
