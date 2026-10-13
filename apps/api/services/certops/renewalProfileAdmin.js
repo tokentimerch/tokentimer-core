@@ -150,6 +150,26 @@ function parseMetadata(value) {
   return {};
 }
 
+function certificateSummaries(value) {
+  let rows = value;
+  if (typeof value === "string") {
+    try {
+      rows = JSON.parse(value);
+    } catch {
+      rows = [];
+    }
+  }
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if (!row || typeof row.id !== "string" || row.id.length === 0) return [];
+    const commonName =
+      typeof row.commonName === "string" && row.commonName.trim()
+        ? row.commonName.trim()
+        : row.id;
+    return [{ id: row.id, commonName }];
+  });
+}
+
 /**
  * Public projection of a profile row.
  *
@@ -189,6 +209,7 @@ function profileRecord(row) {
     derived: Boolean(derivedFrom),
     derivedFrom,
     certificateCount: Number(row.certificate_count || 0),
+    certificates: certificateSummaries(row.certificate_names),
     editableFields: [...EDITABLE_PROFILE_FIELDS],
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -212,7 +233,22 @@ const PROFILE_SELECT = `
              FROM managed_certificates mc
             WHERE mc.workspace_id = cp.workspace_id
               AND mc.profile_id = cp.id
-         ) AS certificate_count
+         ) AS certificate_count,
+         (
+           SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                    'id', named.id,
+                    'commonName', named.common_name
+                  ) ORDER BY named.common_name), '[]'::jsonb)
+             FROM (
+               SELECT mc.id::text AS id,
+                      COALESCE(NULLIF(TRIM(mc.common_name), ''), mc.id::text) AS common_name
+                 FROM managed_certificates mc
+                WHERE mc.workspace_id = cp.workspace_id
+                  AND mc.profile_id = cp.id
+                ORDER BY 2
+                LIMIT 8
+             ) named
+         ) AS certificate_names
     FROM certificate_profiles cp
 `;
 

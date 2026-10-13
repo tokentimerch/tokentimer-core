@@ -54,7 +54,10 @@ import {
   useUpdateRenewalProfile,
 } from './useCertOpsRenewals.js';
 import AdcsProfileWizard from './AdcsProfileWizard.jsx';
-import RenewalProfileDetailsModal from './RenewalProfileDetailsModal.jsx';
+import RenewalProfileDetailsModal, {
+  namesForProfile,
+  useBoundCertificates,
+} from './RenewalProfileDetailsModal.jsx';
 import {
   CertOpsMobileFieldLabel,
   CertOpsSortableHeader,
@@ -175,6 +178,21 @@ const PROFILE_COLUMNS = [
  * which is a silent, delayed outage. Turning it back on needs no confirmation:
  * the safe direction should not be friction.
  */
+function stopRenewalSentence(profile) {
+  const count = Number(profile?.certificateCount || 0);
+  const names = Array.isArray(profile?.certificates)
+    ? profile.certificates.map(item => item?.commonName).filter(Boolean)
+    : [];
+  if (names.length === 0) {
+    return count === 1
+      ? 'The certificate using this profile will stop renewing automatically.'
+      : `${count} certificates using this profile will stop renewing automatically.`;
+  }
+  const extra = count > names.length ? count - names.length : 0;
+  const listed = extra > 0 ? `${names.join(', ')}, and ${extra} more` : names.join(', ');
+  return `${listed} will stop renewing automatically.`;
+}
+
 function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
   const {
     overlayProps,
@@ -186,8 +204,6 @@ function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
     dangerButtonProps,
   } = useDashboardModalProps();
 
-  const certificateCount = Number(profile?.certificateCount || 0);
-
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered size='lg'>
       <ModalOverlay {...overlayProps} />
@@ -197,9 +213,7 @@ function DisableRenewalModal({ isOpen, onClose, profile, onConfirm, saving }) {
             Switch automatic renewal off?
           </DashboardModalTitle>
           <DashboardModalDescription>
-            {certificateCount === 1
-              ? 'The certificate using this profile will stop renewing automatically.'
-              : `${certificateCount} certificates using this profile will stop renewing automatically.`}
+            {stopRenewalSentence(profile)}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
@@ -314,6 +328,10 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
+  const {
+    certificates: boundCertificates,
+    loading: boundCertificatesLoading,
+  } = useBoundCertificates(workspaceId);
   const [issuers, setIssuers] = useState([]);
   const [profileWizardOpen, setProfileWizardOpen] = useState(false);
   // Both lists on this tab page independently, so each scopes its own search
@@ -481,8 +499,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                 No renewal profiles yet.
               </Text>
               <Text fontSize='sm' color={muted} mt={1}>
-                Create an AD CS profile here, or issue a certificate and
-                TokenTimer derives an ACME profile from that run.
+                Issue a certificate and TokenTimer derives an ACME profile from
+                that run. For a private CA, confirm an issuer below, then
+                choose New AD CS profile.
               </Text>
             </>
           )}
@@ -517,6 +536,15 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               <Tbody {...tableStyles.tbodyProps}>
                 {profiles.map(profile => {
                   const badge = statusBadge(profile);
+                  const scannedNames = namesForProfile(boundCertificates, profile.id);
+                  const boundNames =
+                    scannedNames.length > 0
+                      ? scannedNames
+                      : (Array.isArray(profile.certificates)
+                          ? profile.certificates
+                              .map(item => item?.commonName)
+                              .filter(Boolean)
+                          : []);
                   const renewal = profile.renewalProfile || {};
                   const rowSaving = savingIds.has(profile.id);
                   const archived = profile.status === 'archived';
@@ -541,7 +569,13 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                               </CertOpsBadge>
                             </Tooltip>
                           ) : null}
-                          {renewal.dns?.provider ? (
+                          {boundNames.length > 0 ? (
+                            <CertOpsTruncatedText
+                              value={boundNames.join(', ')}
+                              fontSize='xs'
+                              color={muted}
+                            />
+                          ) : renewal.dns?.provider ? (
                             <CertOpsTruncatedText
                               value={renewal.dns.provider}
                               fontSize='xs'
@@ -698,6 +732,8 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         isOpen={Boolean(detailsTarget)}
         onClose={() => setDetailsTarget(null)}
         profile={detailsTarget}
+        boundCertificates={boundCertificates}
+        boundCertificatesLoading={boundCertificatesLoading}
       />
     </Box>
   );
