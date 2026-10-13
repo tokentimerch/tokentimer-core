@@ -213,6 +213,23 @@ describe("pinned CA cert cache and RequestId journal", () => {
     assert.equal(stale.errorCode, "ADCS_CA_KEY_UNPINNED");
   });
 
+  it("reuses a just-written CA cert whose mtime reads a few ms ahead, but not a far-future one", async () => {
+    const certBytes = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "ca.crt.pem"));
+    const caKeySha256 = computeSpkiSha256Hex(certBytes);
+    const dest = await cachePinnedCaCert({ stateDir, caKeySha256, certBytes });
+    const datedAheadBy = (ms) => {
+      const when = new Date(Date.now() + ms);
+      fs.utimesSync(dest, when, when);
+    };
+    const resolve = () => resolvePinnedCaCertPath({ stateDir, caKeySha256 });
+
+    datedAheadBy(3);
+    assert.equal(resolve().ok, true);
+
+    datedAheadBy(60 * 60 * 1000);
+    assert.equal(resolve().ok, false);
+  });
+
   it("round-trips the RequestId journal", async () => {
     const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const containerName = `tokentimer-enr-${enrollmentId}`;

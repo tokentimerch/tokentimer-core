@@ -147,10 +147,15 @@ const {
   ADCS_PREFLIGHT_MAX_AGE_MS: PREFLIGHT_CACHE_TTL_MS,
 } = require("../../vendor/contracts/adcs-preflight-freshness.cjs");
 
+// File mtimes keep sub-millisecond precision while Date.now() is floored, so a
+// file written moments ago can read a few ms in the future. Tolerate that;
+// anything further ahead is treated as a clock anomaly and not reused.
+const FUTURE_SKEW_TOLERANCE_MS = 5_000;
+
 function isWithinPreflightTtl(timestampMs, nowMs = Date.now()) {
   if (!Number.isFinite(timestampMs)) return false;
   const ageMs = nowMs - timestampMs;
-  return ageMs >= 0 && ageMs <= PREFLIGHT_CACHE_TTL_MS;
+  return ageMs >= -FUTURE_SKEW_TOLERANCE_MS && ageMs <= PREFLIGHT_CACHE_TTL_MS;
 }
 
 function isFreshPinnedCaCert(file) {
