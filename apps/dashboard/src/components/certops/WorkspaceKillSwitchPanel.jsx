@@ -85,8 +85,8 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
             {pausing
-              ? 'Pause certificate operations'
-              : 'Resume certificate operations'}
+              ? 'Pause certificate management'
+              : 'Resume certificate management'}
           </DashboardModalTitle>
           <DashboardModalDescription>
             {pausing
@@ -207,12 +207,12 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
         flexShrink={0}
       >
         {certOpsPaused
-          ? 'Resume certificate operations'
-          : 'Pause certificate operations'}
+          ? 'Resume certificate management'
+          : 'Pause certificate management'}
       </Button>
     ) : (
       <Text fontSize='xs' color={muted} flexShrink={0}>
-        Only workspace admins can pause or resume certificate operations.
+        Only workspace admins can pause or resume certificate management.
       </Text>
     )
   ) : null;

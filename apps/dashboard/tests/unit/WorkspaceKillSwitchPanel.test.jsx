@@ -51,7 +51,7 @@ describe('WorkspaceKillSwitchPanel', () => {
 
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Pause certificate operations' })
+      screen.getByRole('button', { name: 'Pause certificate management' })
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/Require approval before every new job/)
@@ -68,7 +68,7 @@ describe('WorkspaceKillSwitchPanel', () => {
 
     expect(screen.getByText('Paused')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Resume certificate operations' })
+      screen.getByRole('button', { name: 'Resume certificate management' })
     ).toBeInTheDocument();
   });
 
@@ -96,7 +96,7 @@ describe('WorkspaceKillSwitchPanel', () => {
     renderWithProviders(<WorkspaceKillSwitchPanel />);
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Pause certificate operations' })
+      screen.getByRole('button', { name: 'Pause certificate management' })
     );
     expect(
       await screen.findByText(/New provisioning intent and command delivery/)
@@ -126,7 +126,7 @@ describe('WorkspaceKillSwitchPanel', () => {
     renderWithProviders(<WorkspaceKillSwitchPanel />);
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Resume certificate operations' })
+      screen.getByRole('button', { name: 'Resume certificate management' })
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));
 

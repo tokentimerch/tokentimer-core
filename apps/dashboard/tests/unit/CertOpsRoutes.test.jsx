@@ -206,7 +206,7 @@ describe('CertOpsRoutes kill-switch banner', () => {
 
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Pause certificate operations' })
+      screen.getByRole('button', { name: 'Pause certificate management' })
     ).toBeInTheDocument();
   });
 
@@ -221,7 +221,7 @@ describe('CertOpsRoutes kill-switch banner', () => {
       screen.getByText('Certificate Management is paused for this workspace')
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Resume certificate operations' })
+      screen.getByRole('button', { name: 'Resume certificate management' })
     ).toBeInTheDocument();
   });
 

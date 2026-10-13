@@ -46,6 +46,7 @@ vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: useCertOpsCanManageMock,
+  useCertOpsEnabled: () => true,
 }));
 
 vi.mock('../../src/components/certops/useCertOpsCertificates.js', () => ({
@@ -698,7 +699,7 @@ describe('CertOpsCertificates retire action', () => {
       target: { value: 'Service removed' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /I understand CertOps/ })
+      screen.getByRole('checkbox', { name: /I understand Certificate Management/ })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 
@@ -1262,7 +1263,7 @@ describe('CertOpsCertificates retired count badge', () => {
       target: { value: 'Service removed' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /I understand CertOps/ })
+      screen.getByRole('checkbox', { name: /I understand Certificate Management/ })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 
