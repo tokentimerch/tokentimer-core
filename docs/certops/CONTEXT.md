@@ -405,6 +405,13 @@ created before the fingerprint migration retain a null hash and use only the
 historic immutable-subset comparison; they are never backfilled from mutable
 lifecycle state.
 
+Manual and bulk renewal replays reuse the first job's public renewal-profile
+and expiry snapshot. A completed renewal changing the certificate's expiry or
+an operator editing its profile does not change the original request. A new
+idempotency key resolves the current profile; changing caller reason, actor,
+mode, effective approval intent or an explicitly different agent still conflicts. Current authorization,
+workspace pause and approval-policy gates remain enforced on replay.
+
 Core is dark-launched and env-gated: `CERTOPS_ENABLED` is the authoritative
 Core rollout control today. The optional
 `system_settings.certops_settings.enabled` read path is forward-compatible only;

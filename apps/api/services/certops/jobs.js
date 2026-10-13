@@ -13,6 +13,7 @@ const {
   CERTOPS_RENEWAL_PROFILE_INVALID,
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   buildManualRenewalJobPayload,
+  validateRenewalManualOverrides,
   validateRenewalProfile,
 } = require("./renewalProfile");
 const {
@@ -1539,21 +1540,41 @@ function manualRenewalJobCreator({
 } = {}) {
   return async function manualRenewalJobCreator(options) {
     const { client, workspaceId } = options;
-    const payload = await materializeManualRenewalPayload({
-      db: client,
-      workspaceId,
-      certificateId,
-      overrides: options.payload,
-      loadCertificate,
-    });
+    const overrides = validateRenewalManualOverrides(options.payload);
+    const idempotencyKey = normalizeOptionalShortText(options.idempotencyKey, "idempotencyKey");
+    let existing = null;
+    if (idempotencyKey) {
+      // Serialize lookup/materialization with same-key manual renewals. The
+      // workspace side-effect gate already owns this transaction's client.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        JSON.stringify(["manual-renew", workspaceId, idempotencyKey]),
+      ]);
+      existing = await getJobByIdempotencyKey(client, workspaceId, idempotencyKey);
+    }
+    const assignedAgentId = normalizeOptionalShortText(options.assignedAgentId, "assignedAgentId");
+    if (existing && (existing.operation !== "renew" ||
+      existing.subjectType !== "managed_certificate" || existing.subjectId !== certificateId ||
+      assignedAgentId && assignedAgentId !== existing.assignedAgentId)) {
+      throw serviceError("Idempotency key was already used with a different CertOps job request",
+        CERTOPS_JOB_IDEMPOTENCY_CONFLICT);
+    }
+    // Expiry, profile and derived routing can change after execution. Reuse
+    // the original public execution snapshot for replay, but reapply caller
+    // input so createJob still compares reason, actor, mode and approval to
+    // the immutable creation hash. It also retains all current safety gates.
+    const payload = existing
+      ? { ...existing.payload, reason: overrides.reason || MANUAL_RENEWAL_DEFAULT_REASON }
+      : await materializeManualRenewalPayload({
+          db: client, workspaceId, certificateId, overrides, loadCertificate,
+        });
 
     // Distinct manual requests need distinct immutable versions even if the
     // source expiry has not changed (e.g. rejection followed by correction).
     // A replay of the same idempotency key must still produce the same intent.
-    if (payload.publication) {
+    if (payload.publication && !existing) {
       const bytes = require("node:crypto").createHash("sha256")
         .update(JSON.stringify(["manual-renew-material", workspaceId, certificateId,
-          options.idempotencyKey || require("node:crypto").randomUUID()]))
+          idempotencyKey || require("node:crypto").randomUUID()]))
         .digest().subarray(0, 16);
       bytes[6] = (bytes[6] & 15) | 0x50;
       bytes[8] = (bytes[8] & 63) | 0x80;
@@ -1563,6 +1584,7 @@ function manualRenewalJobCreator({
 
     return createJob({
       ...options,
+      ...(existing ? { assignedAgentId: existing.assignedAgentId } : {}),
       operation: "renew",
       subjectType: "managed_certificate",
       subjectId: certificateId,

@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { createRequire } = require("node:module");
 // Dedicated synthetic database only; never load the workstation's .env.
 assert.equal(process.env.DB_HOST, "127.0.0.1");
-assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : "59470");
+assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : process.env.DB_NAME === "pr329_review_readiness_test" ? "61432" : "59470");
 assert.match(process.env.DB_NAME || "", /^pr329_review/);
 process.env.NODE_ENV = "test";
 process.env.CERTOPS_ENABLED = "true";
@@ -28,6 +28,62 @@ test.before(async () => {
   worker = await import("../../apps/worker/src/certops-worker.js");
 });
 test.after(() => pool.end());
+
+test("manual renewal serializes same-key snapshot lookup with PostgreSQL transaction locks", async () => {
+  const { manualRenewalJobCreator } = apiRequire("./services/certops/jobs");
+  const first = await pool.connect(), second = await pool.connect();
+  const workspaceId = uuid(), certificateId = uuid(), idempotencyKey = uuid();
+  let stored = null, loads = 0;
+  const certificate = { id: certificateId, workspace_id: workspaceId, common_name: "app.example.test",
+    subject_alt_names: ["app.example.test"], not_after: new Date("2027-01-01T00:00:00Z"), key_mode: "agent-local",
+    profile_id: uuid(), profile_name: "readiness", profile_key_mode: "agent-local",
+    profile_public_metadata: { renewalProfile: { schemaVersion: 1, sanPolicy: {mode:"exact",sans:["app.example.test"],allowWildcards:false},
+      keyAlgorithm:"rsa",keySize:2048,keyRotationPolicy:{rotateOnRenew:true},ca:{endpoint:"https://acme.example.test/directory"},
+      acme:{kind:"certbot",commandRef:"certbot"},dns:{provider:"cloudflare",zone:"example.test"},
+      target:{type:"endpoint",reference:"app.example.test",certPath:"/etc/ssl/app.pem"},
+      deploymentTargets:[{type:"endpoint",reference:"app.example.test",certPath:"/etc/ssl/app.pem",reloadService:"nginx"}],
+      verification:{host:"app.example.test",port:443,requireMatch:true} } } };
+  // Only the advisory lock touches PostgreSQL. Public snapshots live in memory;
+  // no product rows, receipts, ACME requests or database-injected fixtures.
+  function transactionClient(client) {
+    return { query(sql, params) {
+      if (sql.includes("pg_advisory_xact_lock")) return client.query(sql, params);
+      assert.ok(sql.includes("FROM certificate_jobs") && sql.includes("idempotency_key = $2"));
+      return Promise.resolve({ rows: stored ? [stored] : [] });
+    } };
+  }
+  const create = manualRenewalJobCreator({ certificateId,
+    loadCertificate: async () => { loads++; return certificate; },
+    createJob: async options => {
+      if (!stored) stored = { id: uuid(), workspace_id: workspaceId, operation: "renew", source:"api", mode:"real",
+        subject_type:"managed_certificate", subject_id:certificateId, payload:structuredClone(options.payload), status:"succeeded" };
+      assert.deepEqual(options.payload, stored.payload);
+      return stored.id;
+    } });
+  try {
+    await first.query("BEGIN"); await second.query("BEGIN");
+    const original = await create({ client: transactionClient(first), workspaceId, idempotencyKey });
+    let finished = false;
+    const replay = create({ client: transactionClient(second), workspaceId, idempotencyKey });
+    replay.then(() => { finished = true; }, () => { finished = true; });
+    const deadline = Date.now() + 5000;
+    let waiting = false;
+    while (Date.now() < deadline) {
+      waiting = (await pool.query("SELECT wait_event='advisory' AS waiting FROM pg_stat_activity WHERE pid=$1", [second.processID])).rows[0]?.waiting;
+      if (waiting) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(waiting, true, "The second transaction must wait before reading the snapshot");
+    assert.equal(finished, false);
+    certificate.not_after = new Date("2027-04-01T00:00:00Z");
+    await first.query("COMMIT");
+    assert.equal(await replay, original);
+    assert.equal(loads, 1, "A concurrent replay must not re-materialize changed server state");
+  } finally {
+    await first.query("ROLLBACK"); await second.query("ROLLBACK");
+    first.release(); second.release();
+  }
+});
 
 async function fixture({ expired = false, validFor = "1 day", required = true } = {}) {
   const workspaceId = uuid();
