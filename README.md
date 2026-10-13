@@ -195,4 +195,4 @@ This project is licensed under the [GNU Affero General Public License v3.0 (AGPL
 
 A commercial license without AGPL's source-disclosure obligations is available for organizations that want to embed or redistribute TokenTimer Core without those terms. Contact [support@tokentimer.ch](mailto:support@tokentimer.ch).
 
-"TokenTimer" is a trademark of Tokentimer S�rl, Switzerland.
+"TokenTimer" is a trademark of Tokentimer Sàrl, Switzerland.
