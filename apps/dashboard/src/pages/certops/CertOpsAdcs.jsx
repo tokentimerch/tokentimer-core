@@ -855,7 +855,8 @@ export default function CertOpsAdcs() {
   const [loadingMore, setLoadingMore] = useState('');
   const [pendingAbandonId, setPendingAbandonId] = useState(null);
   const [showFinished, setShowFinished] = useState(false);
-  const [showParked, setShowParked] = useState(false);
+  // Not started and install-failed enrollments need an operator, so they start visible.
+  const [showParked, setShowParked] = useState(true);
   const [showRejectedIssuers, setShowRejectedIssuers] = useState(false);
   const [openIssuerId, setOpenIssuerId] = useState(null);
   const pollRef = useRef(null);
@@ -1162,7 +1163,7 @@ export default function CertOpsAdcs() {
               </DashboardActionButton>
               <DashboardActionButton
                 variant='outline'
-                {...actionProps(busyKey, 'refresh', paused)}
+                {...actionProps(busyKey, 'refresh', false)}
                 onClick={() =>
                   reload().catch(err =>
                     showError(errorText(err, 'Could not refresh AD CS issuers.'))
