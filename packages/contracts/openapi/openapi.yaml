@@ -12687,7 +12687,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: Extended dispatch-nonce expiry after this renew (B7).
+          description: Extended dispatch-nonce expiry after this renew.
     CertOpsAgentLogLine:
       type: object
       additionalProperties: false
