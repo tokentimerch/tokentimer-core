@@ -330,7 +330,7 @@ function createJobErrorMessage(err) {
     return 'This provisioning request is invalid. Check the cluster, namespace, certificate/secret names, issuer reference, and DNS names.';
   }
   if (code === 'CERTOPS_WORKSPACE_PAUSED') {
-    return 'CertOps is paused for this workspace, so no new job can be created.';
+    return 'Certificate operations are paused for this workspace, so no new job can be created.';
   }
   return err?.response?.data?.error || err?.message || 'Could not create job.';
 }
@@ -932,7 +932,7 @@ export default function CreateManualJobModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
             {createdJobId
-              ? 'Job dispatched'
+              ? 'Job created'
               : isTrustOp
                 ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
                   // trust"), so appending the full "trust anchor" would stutter.
@@ -941,14 +941,14 @@ export default function CreateManualJobModal({
           </DashboardModalTitle>
           <DashboardModalDescription>
             {createdJobId
-              ? 'Live agent execution. The console below streams agent output as it arrives.'
+              ? 'Agent output appears here when an agent executes this job. Jobs requiring approval must be approved first.'
               : isTrustOp
                 ? `${trustOp.anchorName || 'Trust anchor'}${
                     trustOp.anchorFingerprint
                       ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
                       : ''
                   }. The job is recorded with source "api".`
-                : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
+                : 'Create a certificate job manually when you need an action outside the automatic renewal schedule.'}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />

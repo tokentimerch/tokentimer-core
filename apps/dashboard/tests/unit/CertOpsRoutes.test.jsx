@@ -182,7 +182,7 @@ describe('CertOpsRoutes tabs', () => {
     renderAt('/certops/renewals');
 
     const nav = screen.getByRole('navigation', {
-      name: 'Certificate operations sections',
+      name: 'Certificate Management sections',
     });
     const links = screen.getAllByRole('link');
     expect(links.map(link => link.textContent)).toEqual([
@@ -272,7 +272,7 @@ describe('CertOpsRoutes availability gate', () => {
       screen.getByText('Could not load certificate operations status')
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('Certificate operations is not enabled')
+      screen.queryByText('Certificate operations are not enabled')
     ).not.toBeInTheDocument();
     expect(screen.queryByText('Machine executor jobs')).not.toBeInTheDocument();
   });
@@ -287,7 +287,7 @@ describe('CertOpsRoutes availability gate', () => {
     renderAt('/certops/settings');
 
     expect(
-      screen.getByText('Certificate operations is not enabled')
+      screen.getByText('Certificate operations are not enabled')
     ).toBeInTheDocument();
     expect(screen.queryByText('Machine API tokens')).not.toBeInTheDocument();
     expect(screen.queryByText('Active')).not.toBeInTheDocument();

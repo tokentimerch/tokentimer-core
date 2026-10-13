@@ -36,7 +36,7 @@ const RETIRE_OPTIONS = [
   {
     value: 'revoked',
     label: 'Mark revoked',
-    hint: 'Record revocation in CertOps. This does not contact the certificate authority.',
+    hint: 'Record revocation in TokenTimer. This does not contact the certificate authority.',
   },
 ];
 
@@ -193,7 +193,7 @@ export default function RetireCertificateModal({
                   setAcknowledgeUncertainty(event.target.checked)
                 }
               >
-                I understand CertOps may not see every location where this
+                I understand TokenTimer may not see every location where this
                 certificate is in use.
               </Checkbox>
             ) : null}

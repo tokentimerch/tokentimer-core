@@ -582,7 +582,7 @@ describe('ExecutorJobsPanel list states', () => {
 
     expect(screen.getByText('Loading executor jobs...')).toBeInTheDocument();
     expect(
-      screen.queryByText('No executor-reported certificate jobs yet')
+      screen.queryByText('No certificate jobs yet')
     ).not.toBeInTheDocument();
   });
 
@@ -590,7 +590,7 @@ describe('ExecutorJobsPanel list states', () => {
     renderPanel();
 
     expect(
-      screen.getByText('No executor-reported certificate jobs yet')
+      screen.getByText('No certificate jobs yet')
     ).toBeInTheDocument();
   });
 
@@ -605,7 +605,7 @@ describe('ExecutorJobsPanel list states', () => {
       screen.getByText('Could not load certificate operations jobs.')
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('No executor-reported certificate jobs yet')
+      screen.queryByText('No certificate jobs yet')
     ).not.toBeInTheDocument();
   });
 
@@ -783,7 +783,7 @@ describe('ExecutorJobsPanel list states', () => {
       screen.getByText('No jobs match these filters')
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('No executor-reported certificate jobs yet')
+      screen.queryByText('No certificate jobs yet')
     ).not.toBeInTheDocument();
   });
 
@@ -801,7 +801,7 @@ describe('ExecutorJobsPanel list states', () => {
       screen.getByText('This page is past the end of the list')
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('No executor-reported certificate jobs yet')
+      screen.queryByText('No certificate jobs yet')
     ).not.toBeInTheDocument();
 
     fireEvent.click(

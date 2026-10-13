@@ -937,7 +937,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Agent logs</DashboardModalTitle>
           <DashboardModalDescription>
-            Recent CertOps job output for {agentLabel}, across attempts.
+            Recent certificate job output for {agentLabel}, across attempts.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
@@ -960,7 +960,7 @@ function AgentJobLogsModal({ isOpen, onClose, agent, workspaceId }) {
                 No job logs for this agent yet.
               </Text>
               <Text fontSize='sm' color={muted} mt={1}>
-                Logs appear after the agent claims and reports CertOps jobs.
+                Logs appear after the agent claims and reports certificate jobs.
               </Text>
             </Box>
           ) : null}

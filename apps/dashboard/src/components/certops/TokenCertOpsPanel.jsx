@@ -103,7 +103,7 @@ function CertOpsPanelBody({ tokenId, workspaceId }) {
           to={`/certops/certificates${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`}
           color='blue.400'
         >
-          Choose a certificate in CertOps
+          Choose a certificate in Certificate Management
         </Link>
       </GridItem>
     );

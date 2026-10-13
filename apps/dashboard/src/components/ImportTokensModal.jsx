@@ -2621,7 +2621,7 @@ export default function ImportTokensModal({
                           : certOpsAvailabilityError
                             ? certOpsAvailabilityError
                             : certOpsEnabled === false
-                              ? 'Certificate operations is not enabled for this workspace'
+                              ? 'Certificate operations are not enabled for this workspace'
                               : ''
                       : isIntegration
                         ? isViewer
@@ -3080,7 +3080,7 @@ export default function ImportTokensModal({
                     <Alert status='info' borderRadius='md'>
                       <AlertIcon />
                       <Text fontSize='sm'>
-                        Certificate operations is not enabled for this workspace
+                        Certificate operations are not enabled for this workspace
                         yet.
                       </Text>
                     </Alert>

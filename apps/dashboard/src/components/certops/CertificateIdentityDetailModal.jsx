@@ -575,7 +575,7 @@ export default function CertificateIdentityDetailModal({
       </DashboardDetailsSection>
       <DashboardDetailsSection
         title='Certificate management'
-        description='Registrations through which CertOps tracks this certificate and can automate renewal. Stopping management ends that registration’s automation; it does not remove the certificate or stop location observations.'
+        description='Registrations that track this certificate and can automate renewal. Stopping management ends that registration’s automation; it does not remove the certificate or stop location observations.'
         icon={Settings}
         enclosed
         mb={0}

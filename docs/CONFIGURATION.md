@@ -475,7 +475,7 @@ bypass it.
 | ------- | ----------- | ------- | ----- |
 | `certOpsRequireApprovalAlways` | When on, every new certificate job starts `pending_approval`, including dashboard, machine API tokens, bulk renew, scheduled renewal, and trust-anchor distribute/revoke. The per-job approval checkbox cannot override it. | `false` | Workspace |
 
-Toggle it from **CertOps Settings** under **Job approval** (badges
+Toggle it from **Certificate Management → Settings** under **Job approval** (badges
 **Always required** / **Not required**; switch text **Require approval
 before every new job can run, regardless of the per-job setting.**), or via
 `GET`/`PUT /api/v1/workspaces/:id/certops/settings` (admin-only for the

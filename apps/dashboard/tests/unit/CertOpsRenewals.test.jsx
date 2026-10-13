@@ -536,7 +536,7 @@ describe('CertOpsRenewals page', () => {
     renderPage();
 
     expect(
-      await screen.findByText('Certificate operations is not enabled')
+      await screen.findByText('Certificate operations are not enabled')
     ).toBeInTheDocument();
     expect(screen.queryByText('Renewal profiles')).not.toBeInTheDocument();
   });

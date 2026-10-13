@@ -41,7 +41,7 @@ function CertOpsSubNav() {
     <Box position='relative' mb={3}>
       <HStack
         as='nav'
-        aria-label='Certificate operations sections'
+        aria-label='Certificate Management sections'
         spacing={0}
         flexWrap='nowrap'
         overflowX='auto'
@@ -136,13 +136,13 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
     session,
     onLogout,
     onAccountClick,
-    pageTitle: 'Certificate operations',
+    pageTitle: 'Certificate Management',
   });
 
   return (
     <>
       <SEO
-        title='Certificate operations'
+        title='Certificate Management'
         description='Certificate jobs, inventory, renewals, agents, and scoped API tokens'
         noindex
       />
@@ -189,8 +189,8 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
               </>
             ) : (
               <DashboardState
-                title='Certificate operations is not enabled'
-                description='Certificate operations is not enabled for this workspace yet.'
+                title='Certificate operations are not enabled'
+                description='Certificate operations are not enabled for this workspace yet.'
               />
             )}
           </Box>
