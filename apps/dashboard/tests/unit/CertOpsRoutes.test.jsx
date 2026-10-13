@@ -68,7 +68,7 @@ vi.mock('../../src/components/certops/ApiTokenModal.jsx', () => ({
     ) : null,
 }));
 vi.mock('../../src/components/certops/RenewalProfilesPanel.jsx', () => ({
-  default: () => <div>Renewal profiles</div>,
+  default: () => <div>Renewal profile list</div>,
 }));
 vi.mock('../../src/pages/certops/CertOpsAdcs.jsx', () => ({
   default: () => <div>AD CS issuers</div>,
@@ -109,7 +109,7 @@ function killSwitchState(overrides = {}) {
 const TAB_PANELS = {
   '/certops/jobs': 'Machine executor jobs',
   '/certops/certificates': 'Certificates tab',
-  '/certops/renewals': 'Renewal profiles',
+  '/certops/renewals': 'Renewal profile list',
   '/certops/agents': 'Agent fleet',
   '/certops/settings': 'Machine API tokens',
 };
@@ -151,7 +151,7 @@ describe('CertOpsRoutes redirects', () => {
     renderAt('/certops/adcs');
 
     expect(screen.getByText('Machine executor jobs')).toBeInTheDocument();
-    expect(screen.queryByText('Renewal profiles')).not.toBeInTheDocument();
+    expect(screen.queryByText('Renewal profile list')).not.toBeInTheDocument();
   });
 });
 
