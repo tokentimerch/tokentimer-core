@@ -147,6 +147,37 @@ describe("AD CS enrollment lifecycle", () => {
     );
   });
 
+  it("does not dispatch a blind resubmit for submission_uncertain without a RequestId", () => {
+    const now = new Date("2026-10-11T12:00:00.000Z");
+    const snapshot = { pollInterval: 900, pendingTimeout: 3600 };
+    assert.equal(
+      decideContinuation(
+        {
+          state: "submission_uncertain",
+          operatorRequestId: null,
+          nextPollAt: now,
+          activeJob: false,
+        },
+        snapshot,
+        now,
+      ),
+      null,
+    );
+    assert.deepEqual(
+      decideContinuation(
+        {
+          state: "submission_uncertain",
+          operatorRequestId: 77,
+          nextPollAt: now,
+          activeJob: false,
+        },
+        snapshot,
+        now,
+      ),
+      { dispatch: true, reason: "reconcile" },
+    );
+  });
+
   it("confirms only a key from a safe preflight", () => {
     const key = "cd".repeat(32);
     const safe = {

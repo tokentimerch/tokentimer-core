@@ -130,6 +130,34 @@ describe("AD CS automatic renewal agent readiness", () => {
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
   });
 
+  it("accepts a 23h-old preflight from the same agent for the same CA/template/pin", async () => {
+    const pool = fakePool({
+      agentRows: [preflightEvidence({ createdAgoMs: 23 * HOUR_MS })],
+      openRows: [{ id: "enrollment-open" }],
+    });
+    assert.deepEqual(await run(pool), {
+      job: { id: null, operation: "renew" },
+      created: false,
+    });
+  });
+
+  it("waits when the only declaring agent has no preflight of its own", async () => {
+    // Gate SQL returns one row per declaring agent. Agent B declares the
+    // target but holds no preflight; another agent's evidence is not on this row.
+    const pool = fakePool({
+      agentRows: [
+        {
+          id: "agent-b",
+          last_seen_at: new Date(),
+          status: null,
+          created_at: null,
+          result_metadata: null,
+        },
+      ],
+    });
+    await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+  });
+
   it("uses the shared freshness constant as the boundary", async () => {
     assert.equal(ADCS_PREFLIGHT_MAX_AGE_MS, 24 * HOUR_MS);
 

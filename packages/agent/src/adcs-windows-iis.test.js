@@ -84,6 +84,8 @@ describe("AD CS renew evidence ordering", () => {
     assert.match(tier2Src, /validation_deferred/);
     assert.match(tier2Src, /reconcileSearchFrom:\s*reconciled\.nextSearchFrom/);
     assert.doesNotMatch(tier2Src, /requestId \+ 1/);
+    // submission_uncertain may only reconcile / retrieve; never call submit again.
+    assert.doesNotMatch(tier2Src, /issuer\.submit/);
     const candidateValidation = tier2Src.indexOf("const candidateValidation");
     assert.ok(candidateValidation >= 0);
     const attachAfterValidate = tier2Src.indexOf(

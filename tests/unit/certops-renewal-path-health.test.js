@@ -1219,6 +1219,12 @@ describe("renewalPathHealth: AD CS preflight freshness", () => {
     );
     assert.match(result.renewalPathSummary, /last 24 hours/);
   });
+
+  it("reports healthy when the same agent holds a 23h-old qualifying preflight", async () => {
+    const result = await healthWithEvidence([preflightRow(23 * 60 * 60 * 1000)]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
 });
 
 describe("renewalPathHealth: listCertificatesDependentOnAgent", () => {
