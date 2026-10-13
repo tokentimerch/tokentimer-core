@@ -94,9 +94,9 @@ In **Renewals**, open **AD CS issuers**, then **New issuer**.
 
 1. **Name.** A name you will recognize later. This is not the CA name.
 2. **Check the CA.** Choose the Windows agent that will enroll the certificate. Enter the CA config and the template common name, then **Run check**. The check reads the template and the CA certificates, and it stores the CA certificate and the template OID on that agent. It does not issue a certificate. A different agent cannot enroll until it has run the same check.
-3. **Choose a certificate.** When both checks are safe, choose the newest CA certificate with **Use this certificate**. Enrollment accepts only the certificate you pin. Closing the wizard before you pin discards the draft issuer.
+3. **Choose a certificate.** When both checks are safe, choose the newest CA certificate with **Use this certificate**. Enrollment accepts only the certificate you pin. Closing the wizard before the check finishes, or closing a safe check without pinning, discards the draft.
 
-The issuer is ready when it shows a chosen certificate. A later CA renewal that keeps the same key needs no action.
+The issuer is ready when it shows a chosen certificate. A later CA renewal that keeps the same key needs no action. A check that comes back unsafe is not pinned. That issuer stays hidden until **Show N unsafe issuers** is checked.
 
 ## Renewal profile
 

@@ -212,6 +212,20 @@ function preflightIsSafe(issuer) {
   );
 }
 
+function isConfiguredIssuer(issuer) {
+  return issuer.kind !== 'adcs' || Number(issuer.currentVersion) > 0;
+}
+
+function isUnsafeRejectedIssuer(issuer) {
+  if (issuer.kind !== 'adcs' || Number(issuer.currentVersion) > 0) return false;
+  const preflight = issuer.lastPreflight;
+  if (!preflight) return false;
+  return (
+    preflight.templateCheck?.verdict === 'unsafe' ||
+    preflight.caCheck?.verdict === 'unsafe'
+  );
+}
+
 function keyStatus(issuer) {
   if (issuer.revalidationRequired) return 'New certificate';
   if (issuer.currentVersion > 0 && issuer.confirmedKeySha256) {
@@ -820,6 +834,7 @@ export default function CertOpsAdcs() {
   const [enrollmentTotal, setEnrollmentTotal] = useState(0);
   const [pendingAbandonId, setPendingAbandonId] = useState(null);
   const [showFinished, setShowFinished] = useState(false);
+  const [showRejectedIssuers, setShowRejectedIssuers] = useState(false);
   const [openIssuerId, setOpenIssuerId] = useState(null);
   const pollRef = useRef(null);
   const issuerListReady = useRef(false);
@@ -837,7 +852,7 @@ export default function CertOpsAdcs() {
   const reload = useCallback(async () => {
     if (!workspaceId || !isAdmin) return;
     const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
-      listIssuers(workspaceId, { limit: PAGE_LIMIT }),
+      listIssuers(workspaceId, { limit: PAGE_LIMIT, includeUnconfigured: true }),
       listEnrollments(workspaceId, { limit: PAGE_LIMIT }),
       listAgents(workspaceId),
     ]);
@@ -1119,44 +1134,65 @@ export default function CertOpsAdcs() {
           paused={paused}
           onChanged={reload}
         />
-        {loading ? (
-          <DashboardState
-            type='loading'
-            title='Loading issuers and enrollments...'
-            py={6}
-          />
-        ) : issuers.filter(
-            item => item.kind !== 'adcs' || Number(item.currentVersion) > 0
-          ).length === 0 ? (
-          <Text fontSize='sm' color={muted}>
-            No issuers yet.
-          </Text>
-        ) : (
-          <VStack align='stretch' spacing={1}>
-            {issuers
-              .filter(item => item.kind !== 'adcs' || Number(item.currentVersion) > 0)
-              .map(issuer => (
-              <IssuerRow
-                key={issuer.id}
-                issuer={issuer}
-                isOpen={openIssuerId === issuer.id}
-                onToggle={() =>
-                  setOpenIssuerId(current =>
-                    current === issuer.id ? null : issuer.id
-                  )
-                }
-                agents={agents}
-                busyKey={busyKey}
-                paused={paused}
-                muted={muted}
-                rowHoverBg={rowHoverBg}
-                expandedBg={expandedBg}
-                onPreflight={handlePreflight}
-                onConfirm={handleConfirm}
+        {(() => {
+          const rejectedIssuers = issuers.filter(isUnsafeRejectedIssuer);
+          const visibleIssuers = issuers.filter(
+            item =>
+              isConfiguredIssuer(item) ||
+              (showRejectedIssuers && isUnsafeRejectedIssuer(item))
+          );
+          if (loading) {
+            return (
+              <DashboardState
+                type='loading'
+                title='Loading issuers and enrollments...'
+                py={6}
               />
-            ))}
-          </VStack>
-        )}
+            );
+          }
+          return (
+            <>
+              {rejectedIssuers.length > 0 ? (
+                <Checkbox
+                  size='sm'
+                  mb={3}
+                  isChecked={showRejectedIssuers}
+                  onChange={event => setShowRejectedIssuers(event.target.checked)}
+                >
+                  {`Show ${rejectedIssuers.length} unsafe ${rejectedIssuers.length === 1 ? 'issuer' : 'issuers'}`}
+                </Checkbox>
+              ) : null}
+              {visibleIssuers.length === 0 ? (
+                <Text fontSize='sm' color={muted}>
+                  No issuers yet.
+                </Text>
+              ) : (
+                <VStack align='stretch' spacing={1}>
+                  {visibleIssuers.map(issuer => (
+                    <IssuerRow
+                      key={issuer.id}
+                      issuer={issuer}
+                      isOpen={openIssuerId === issuer.id}
+                      onToggle={() =>
+                        setOpenIssuerId(current =>
+                          current === issuer.id ? null : issuer.id
+                        )
+                      }
+                      agents={agents}
+                      busyKey={busyKey}
+                      paused={paused}
+                      muted={muted}
+                      rowHoverBg={rowHoverBg}
+                      expandedBg={expandedBg}
+                      onPreflight={handlePreflight}
+                      onConfirm={handleConfirm}
+                    />
+                  ))}
+                </VStack>
+              )}
+            </>
+          );
+        })()}
         {issuerTotal > issuers.length ? (
           <Text fontSize='sm' color={muted} mt={3}>
             Showing {issuers.length} of {issuerTotal} issuers.

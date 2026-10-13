@@ -118,6 +118,15 @@ function adviceFor(issuer, agents) {
   };
 }
 
+function preflightCameBackUnsafe(issuer) {
+  const preflight = issuer?.lastPreflight;
+  if (!preflight) return false;
+  return (
+    preflight.templateCheck?.verdict === 'unsafe' ||
+    preflight.caCheck?.verdict === 'unsafe'
+  );
+}
+
 export default function AdcsIssuerWizard({
   isOpen,
   onClose,
@@ -196,15 +205,17 @@ export default function AdcsIssuerWizard({
   async function handleDismiss() {
     const draftId = draftIdRef.current;
     const finished = finishedRef.current;
+    const keepUnsafe = preflightCameBackUnsafe(issuer);
     draftIdRef.current = null;
-    if (draftId && !finished) {
+    if (draftId && !finished && !keepUnsafe) {
       try {
         await discardIssuer(workspaceId, draftId);
       } catch {
-        // An unfinished issuer stays out of the list until a certificate is chosen.
+        // A draft that could not be discarded stays out of the list until a certificate is chosen.
       }
     }
     onClose();
+    if (keepUnsafe && onChanged) await onChanged();
   }
 
   async function handlePreflight() {
