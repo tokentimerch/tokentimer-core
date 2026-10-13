@@ -1433,6 +1433,7 @@ async function resolveManagedCertificateJobDefaults({
 }
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
+const CERTOPS_ADCS_RENEWAL_NOT_MANUAL = "CERTOPS_ADCS_RENEWAL_NOT_MANUAL";
 
 // buildRenewalJobPayload requires a reason; "manual" distinguishes this
 // path in the job log/audit trail from the scheduler's "expiry-threshold".
@@ -1456,6 +1457,7 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
             mc.profile_id,
             cp.name AS profile_name,
             cp.key_mode AS profile_key_mode,
+            cp.issuer_id AS profile_issuer_id,
             cp.public_metadata AS profile_public_metadata
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
@@ -1488,6 +1490,14 @@ async function materializeManualRenewalPayload({
   });
   if (!certificate) {
     throw serviceError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
+  }
+  if (certificate.profile_issuer_id) {
+    throw serviceError(
+      "This certificate uses an AD CS renewal profile. Create manual job " +
+        "cannot renew it. Open Renewals. The renewal sweep creates the " +
+        "enrollment from that profile.",
+      CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
+    );
   }
   return buildManualRenewalJobPayload({
     certificate,
@@ -2635,6 +2645,7 @@ module.exports = {
   CERTOPS_JOB_INVALID,
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   CERTOPS_CERTIFICATE_NOT_FOUND,
+  CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
   CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,

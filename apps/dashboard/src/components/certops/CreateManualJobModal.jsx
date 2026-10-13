@@ -37,10 +37,12 @@ import {
 } from './certopsJobsApi.js';
 import {
   createControllerProvisionIntent,
+  getCertificate,
   listCertificates,
   listCertificateTargets,
   listWorkspaceCertificateInstances,
 } from './certopsApi.js';
+import { getRenewalProfile } from './certopsRenewalApi.js';
 import {
   jobOperationLabel,
   subjectTypeLabel,
@@ -126,6 +128,12 @@ const MANUAL_FORM_OPERATIONS = [
 const MANUAL_FORM_SUBJECT_TYPES = MANUAL_JOB_SUBJECT_TYPES.filter(
   type => type !== 'trust_anchor'
 );
+
+const MANAGED_CERTIFICATE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ADCS_RENEW_REFUSAL =
+  'This certificate uses an AD CS renewal profile. Create job cannot renew it. Open Renewals. The renewal sweep creates the enrollment from that profile.';
 
 // Per-subject-type hint for the free-text Subject ID input; shown for every
 // subject type, whether or not a live suggestion list is available below.
@@ -364,6 +372,7 @@ export default function CreateManualJobModal({
   const [executor, setExecutor] = useState('agent');
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
+  const [adcsRenewalState, setAdcsRenewalState] = useState('idle');
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [assignedAgentId, setAssignedAgentId] = useState('');
   const [payloadMode, setPayloadMode] = useState('fields');
@@ -651,6 +660,41 @@ export default function CreateManualJobModal({
     };
   }, [isOpen, subjectType, workspaceId]);
 
+  useEffect(() => {
+    const certificateId = subjectId.trim();
+    const shouldCheck =
+      isOpen &&
+      isRenew &&
+      subjectType === 'managed_certificate' &&
+      MANAGED_CERTIFICATE_ID_PATTERN.test(certificateId);
+    if (!shouldCheck) {
+      setAdcsRenewalState('idle');
+      return undefined;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    setAdcsRenewalState('checking');
+    getCertificate(workspaceId, certificateId, { signal: controller.signal })
+      .then(async data => {
+        const profileId = data?.certificate?.profileId;
+        if (!profileId) return false;
+        const profile = await getRenewalProfile(workspaceId, profileId, {
+          signal: controller.signal,
+        });
+        return Boolean(profile?.issuerId);
+      })
+      .then(blocked => {
+        if (!cancelled) setAdcsRenewalState(blocked ? 'blocked' : 'allowed');
+      })
+      .catch(() => {
+        if (!cancelled) setAdcsRenewalState('allowed');
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [isOpen, isRenew, subjectType, subjectId, workspaceId]);
+
   const subjectPairComplete =
     (!subjectType || Boolean(subjectId.trim())) &&
     (!subjectId.trim() || Boolean(subjectType)) &&
@@ -697,6 +741,8 @@ export default function CreateManualJobModal({
     : Boolean(operation) &&
       Boolean(workspaceId) &&
       !submitting &&
+      adcsRenewalState !== 'checking' &&
+      adcsRenewalState !== 'blocked' &&
       fieldsRequiredForIssueMet &&
       controllerFieldsMet &&
       (isIssue
@@ -1353,6 +1399,14 @@ export default function CreateManualJobModal({
                         ? 'Required for this operation, together with subject type.'
                         : 'Required together with subject type, or leave both empty.'}
                     </FormHelperText>
+                    {adcsRenewalState === 'blocked' ? (
+                      <Alert status='warning' mt={2} borderRadius='md'>
+                        <AlertIcon />
+                        <AlertDescription fontSize='sm'>
+                          {ADCS_RENEW_REFUSAL}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
                     {subjectSuggestions.length ? (
                       <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
                         {subjectSuggestions.map(item => (

@@ -128,6 +128,7 @@ const {
   isTrustAnchorOperation,
   listCertificateJobLog,
   listCertificateJobs,
+  CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
   manualRenewalJobCreator,
   preflightManualRenewalJob,
 } = require("../services/certops/jobs");
@@ -774,6 +775,13 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: err.message || "Trust job result does not match the job",
       code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_ADCS_RENEWAL_NOT_MANUAL) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
     });
   }
 

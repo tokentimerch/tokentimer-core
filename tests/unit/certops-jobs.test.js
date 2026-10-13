@@ -2217,6 +2217,36 @@ describe("CertOps jobs service", () => {
     );
   });
 
+  it("refuses a manual renew when the certificate profile has an AD CS issuer", async () => {
+    const {
+      CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
+      manualRenewalJobCreator,
+    } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const create = manualRenewalJobCreator({
+      certificateId: "af0a812e-3557-4694-b294-63e6e83f24c8",
+      loadCertificate: async () => ({
+        id: "af0a812e-3557-4694-b294-63e6e83f24c8",
+        profile_issuer_id: "485d46c4-4aac-4896-bc93-f8677a176c41",
+      }),
+      createJob: async () => {
+        throw new Error("manual renew must not create an ACME job");
+      },
+    });
+    await assert.rejects(
+      () =>
+        create({
+          client: {},
+          workspaceId: WORKSPACE_A,
+          payload: { reason: "test" },
+        }),
+      (error) =>
+        error?.code === CERTOPS_ADCS_RENEWAL_NOT_MANUAL &&
+        /Open Renewals/.test(error.message),
+    );
+  });
+
   it("enforces per-CA renew capacity across sequential creators for the same CA", async () => {
     const {
       CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
