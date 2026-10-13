@@ -762,6 +762,98 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
   });
 });
 
+// A profile as the AD CS create path stores it: no ACME schemaVersion, a
+// Windows/IIS target, and DNS names only.
+function nativeAdcsProfile(overrides = {}) {
+  return {
+    target: {
+      type: "windows-iis",
+      reference: "app.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+    },
+    sanPolicy: { sans: ["app.example.com"] },
+    keyAlgorithm: "rsa",
+    keySize: 2048,
+    ...overrides,
+  };
+}
+
+function nativeAdcsIndex({ declaredCapabilities = [], updatedAtMs = NOW } = {}) {
+  const agentIndex = buildAgentIndex([
+    onlineAgentRow({ id: "agent-a", targetSelectors: ["app.example.com"] }),
+  ]);
+  const candidate = agentIndex.byRowId.get("agent-a");
+  candidate.declaredCapabilities = declaredCapabilities;
+  candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
+  return agentIndex;
+}
+
+describe("renewalPathHealth: native AD CS profiles", () => {
+  const nativeRow = (overrides = {}) =>
+    certRow({
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: { renewalProfile: nativeAdcsProfile() },
+      ...overrides,
+    });
+
+  it("valid native profile with a fresh adcs-enroll-v1 declaration reports its normal state, not unknown", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: nativeRow(),
+      agentIndex: nativeAdcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 30_000,
+      }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+
+  it("valid native profile without adcs-enroll-v1 reports unavailable naming the capability", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: nativeRow(),
+      agentIndex: nativeAdcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("native profile missing its IIS binding is unknown, judged by AD CS rules rather than ACME fields", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        profile_public_metadata: {
+          renewalProfile: nativeAdcsProfile({
+            target: { type: "windows-iis", reference: "app.example.com", store: "My" },
+          }),
+        },
+      }),
+      agentIndex: nativeAdcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 30_000,
+      }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNKNOWN);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN);
+  });
+
+  it("ACME profile with no adcs-enroll-v1 declaration is unchanged (healthy)", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "acme" }),
+      agentIndex: buildAgentIndex([onlineAgentRow({ id: "agent-a" })]),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+});
+
 describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
   function adcsIndex({ id = "agent-a", declaredCapabilities = [], updatedAtMs = NOW } = {}) {
     const agentIndex = buildAgentIndex([onlineAgentRow({ id })]);

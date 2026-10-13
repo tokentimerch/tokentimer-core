@@ -27,6 +27,7 @@ const {
   validateRenewalProfile,
 } = require("./renewalProfile");
 const { computeAgentCompatibility } = require("./agentRegistry");
+const { validateAdcsRenewalProfile } = require("./renewalProfileAdmin");
 const {
   ADCS_ENROLL_CAPABILITY_REASON,
   explainAgentJobEligibility,
@@ -527,6 +528,37 @@ function resolvePinProblemWithoutProfile({
   };
 }
 
+// Routes the job the scheduler would create. Throws on an incomplete profile,
+// which the caller reports as Unknown.
+function adcsRenewalRequirements(renewalProfile, certificateRow) {
+  const profile = validateAdcsRenewalProfile(renewalProfile);
+  return {
+    operation: "renew",
+    ...resolveAgentJobRoutingRequirements({
+      executorKind: "agent",
+      payload: {
+        target: { type: profile.target.type, reference: profile.target.reference },
+      },
+    }),
+    subjectIsProvisioning: certificateRow.status === "provisioning",
+    issuerKind: "adcs",
+  };
+}
+
+function acmeRenewalRequirements(renewalProfile, certificateRow, issuerKind) {
+  const profile = validateRenewalProfile(renewalProfile);
+  const payload = executionFieldsFromRenewalProfile(profile);
+  return {
+    operation: "renew",
+    ...resolveAgentJobRoutingRequirements({
+      executorKind: "agent",
+      payload,
+    }),
+    subjectIsProvisioning: certificateRow.status === "provisioning",
+    issuerKind,
+  };
+}
+
 /**
  * Full renewal-path projection for one certificate row (as returned by the
  * SELECT in loadCertificateRowsForRenewalPath).
@@ -584,19 +616,16 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
   }
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
+  const renewalProfile = profileMetadata.renewalProfile;
+  const issuerKind = certificateRow.profile_issuer_kind === "adcs" ? "adcs" : null;
   let jobRequirements;
   try {
-    const profile = validateRenewalProfile(profileMetadata.renewalProfile);
-    const payload = executionFieldsFromRenewalProfile(profile);
-    jobRequirements = {
-      operation: "renew",
-      ...resolveAgentJobRoutingRequirements({
-        executorKind: "agent",
-        payload,
-      }),
-      subjectIsProvisioning: certificateRow.status === "provisioning",
-      issuerKind: certificateRow.profile_issuer_kind === "adcs" ? "adcs" : null,
-    };
+    // The issuer decides the rules, as it does for the scheduler. A native AD CS
+    // profile has no ACME schemaVersion and must not be judged by ACME fields.
+    jobRequirements =
+      issuerKind === "adcs" && renewalProfile?.schemaVersion === undefined
+        ? adcsRenewalRequirements(renewalProfile, certificateRow)
+        : acmeRenewalRequirements(renewalProfile, certificateRow, issuerKind);
   } catch (_error) {
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNKNOWN,

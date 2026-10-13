@@ -451,6 +451,32 @@ function applyRenewalProfilePatch(storedProfile, patch, { issuerKind } = {}) {
 // renewal on for a profile the scheduler will refuse.
 const CERTOPS_PROFILE_ISSUER_INCOMPATIBLE = "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE";
 
+function adcsTargetComplete(target) {
+  return Boolean(
+    target &&
+      target.type === "windows-iis" &&
+      typeof target.reference === "string" &&
+      typeof target.store === "string" &&
+      typeof target.binding?.site === "string" &&
+      Number.isInteger(target.binding?.port),
+  );
+}
+
+/**
+ * Full AD CS rule set for a stored profile: the Windows/IIS target the AD CS
+ * renewal path reads, then the create/edit policy. Read paths use this so a
+ * native AD CS profile is judged by the rules its writes were held to.
+ */
+function validateAdcsRenewalProfile(profile) {
+  if (!adcsTargetComplete(profile?.target)) {
+    throw profileError(
+      "This profile has no complete Windows/IIS deployment target, so AD CS cannot renew it.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+  return validateAdcsRenewalPolicy(profile);
+}
+
 async function assertIssuerCompatibleWithProfile(client, { workspaceId, issuerId, renewalProfile }) {
   const result = await client.query(
     `SELECT i.kind, i.revalidation_required, v.ca_key_sha256
@@ -465,15 +491,7 @@ async function assertIssuerCompatibleWithProfile(client, { workspaceId, issuerId
   );
   const issuer = result.rows[0];
   if (!issuer || issuer.kind !== "adcs") return;
-  const target = renewalProfile?.target;
-  if (
-    !target ||
-    target.type !== "windows-iis" ||
-    typeof target.reference !== "string" ||
-    typeof target.store !== "string" ||
-    typeof target.binding?.site !== "string" ||
-    !Number.isInteger(target.binding?.port)
-  ) {
+  if (!adcsTargetComplete(renewalProfile?.target)) {
     throw profileError(
       "This profile has no complete Windows/IIS deployment target, so AD CS cannot renew it. Create an AD CS renewal profile instead.",
       CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
@@ -1243,4 +1261,5 @@ module.exports = {
   listUpcomingRenewals,
   normalizeRenewBeforeDays,
   updateRenewalProfile,
+  validateAdcsRenewalProfile,
 };
