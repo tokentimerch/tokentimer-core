@@ -9,12 +9,14 @@ const {
   RENEWAL_PATH_REASONS,
   resolveRenewalPathForCertificate,
   resolveRenewalPathsForWorkspace,
+  resolveRenewalPathsForCertificateIds,
   listCertificatesDependentOnAgent,
   _test: {
     resolveRenewalPathForRow,
     resolveRequiredExecutors,
     classifyExecutors,
     targetReferenceFromProfile,
+    adcsPreflightKey,
     NO_CAPABILITY_DECLARED_SUMMARY,
   },
 } = require(
@@ -150,6 +152,7 @@ function certRow(overrides = {}) {
     deployed_agent_id: null,
     discovery_agent_id: null,
     profile_status: "active",
+    profile_issuer_id: "issuer-1",
     profile_public_metadata: {
       renewalProfile: executableRenewalProfile(),
     },
@@ -789,6 +792,14 @@ function nativeAdcsIndex({ declaredCapabilities = [], updatedAtMs = NOW } = {}) 
   return agentIndex;
 }
 
+// The index loadAdcsPreflightIndex builds: agents holding a fresh, safe
+// adcs-preflight for issuer-1 against the native profile's target.
+function freshPreflightIndex(agentRowIds = ["agent-a"]) {
+  return new Map([
+    [adcsPreflightKey("issuer-1", "app.example.com"), new Set(agentRowIds)],
+  ]);
+}
+
 describe("renewalPathHealth: native AD CS profiles", () => {
   const nativeRow = (overrides = {}) =>
     certRow({
@@ -805,6 +816,7 @@ describe("renewalPathHealth: native AD CS profiles", () => {
         updatedAtMs: NOW - 30_000,
       }),
       now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(),
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
     assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
@@ -931,6 +943,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
         updatedAtMs: NOW - 30_000,
       }),
       now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(),
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
     assert.equal(result.dependencies.length, 1);
@@ -949,6 +962,7 @@ describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
       certificateRow: switchedRow(),
       agentIndex,
       now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(["agent-b"]),
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
     assert.deepEqual(
@@ -1041,6 +1055,7 @@ describe("renewalPathHealth: switched profiles follow the AD CS rules", () => {
       }),
       agentIndex: indexWith(["adcs-enroll-v1"], NOW - 30_000),
       now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(),
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
     assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
@@ -1105,6 +1120,104 @@ describe("renewalPathHealth: resolveRenewalPathForCertificate (DB-facing)", () =
       certificateId: "cert-1",
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+  });
+});
+
+describe("renewalPathHealth: AD CS preflight freshness", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const CA = "ca01.corp.example.com\\Corp Issuing CA 01";
+  const KEY = "a".repeat(64);
+  const TEMPLATE = "TokenTimerWebServer";
+
+  const issuerVersion = () => ({
+    ca_config: CA,
+    template: TEMPLATE,
+    ca_key_sha256: KEY,
+    confirmed_at: new Date(Date.now() - 7 * DAY_MS),
+  });
+
+  // The latest adcs-preflight an agent holds, as the gate loads it.
+  const preflightRow = (createdAgoMs) => ({
+    id: "agent-a",
+    last_seen_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    status: "succeeded",
+    result_metadata: {
+      preflightVerdict: {
+        templateCheck: "safe",
+        caCheck: "safe",
+        caConfig: CA,
+        template: TEMPLATE,
+        caKeySha256s: [KEY],
+      },
+    },
+    created_at: new Date(Date.now() - createdAgoMs),
+  });
+
+  // Answers only the SQL the batch loads. The freshness decision runs on the
+  // evidence rows, through the same gate the scheduler uses.
+  function dbWithEvidence(evidenceRows) {
+    const agent = {
+      ...onlineAgentRow({
+        id: "agent-a",
+        targetSelectors: ["app.example.com"],
+        lastSeenAt: new Date(Date.now() - 60 * 1000).toISOString(),
+      }),
+      declared_capabilities: ["adcs-enroll-v1"],
+      capabilities_updated_at: new Date(Date.now() - 30 * 1000).toISOString(),
+    };
+    const certificate = certRow({
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: { renewalProfile: nativeAdcsProfile() },
+    });
+    return {
+      async query(sql) {
+        const normalized = String(sql).replace(/\s+/g, " ").trim();
+        if (normalized.startsWith("SELECT mc.id")) return { rows: [certificate] };
+        if (normalized.startsWith("SELECT id, agent_id, name, hostname")) {
+          return { rows: [agent] };
+        }
+        if (normalized.includes("FROM certificate_issuers i")) {
+          return { rows: [issuerVersion()] };
+        }
+        if (normalized.includes("LEFT JOIN LATERAL")) return { rows: evidenceRows };
+        return { rows: [] };
+      },
+    };
+  }
+
+  async function healthWithEvidence(evidenceRows) {
+    const result = await resolveRenewalPathsForCertificateIds({
+      db: dbWithEvidence(evidenceRows),
+      workspaceId: "ws-1",
+      certificateIds: ["cert-1"],
+    });
+    return result.get("cert-1");
+  }
+
+  it("waits when no agent has run adcs-preflight for the CA", async () => {
+    const result = await healthWithEvidence([]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
+    );
+    assert.match(result.renewalPathSummary, /fresh CA check/);
+  });
+
+  it("reports the normal state once an agent holds a fresh, safe preflight", async () => {
+    const result = await healthWithEvidence([preflightRow(60 * 60 * 1000)]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+
+  it("waits when the only preflight is older than the freshness bound", async () => {
+    const result = await healthWithEvidence([preflightRow(25 * 60 * 60 * 1000)]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
+    );
+    assert.match(result.renewalPathSummary, /last 24 hours/);
   });
 });
 

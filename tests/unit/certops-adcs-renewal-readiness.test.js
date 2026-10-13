@@ -9,6 +9,9 @@ const {
   ADCS_PREFLIGHT_MAX_AGE_MS,
 } = require("../../packages/contracts/certops/adcs-preflight-freshness.cjs");
 
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+
 const CERTIFICATE = {
   id: "cert-1",
   workspace_id: "ws-1",
@@ -35,17 +38,45 @@ const CERTIFICATE = {
 const CA_CONFIG = "ca.example.com\\Issuing CA";
 const TEMPLATE = "WebServer";
 const CA_KEY = "ab".repeat(32);
-const CONFIRMED_AT = new Date("2026-10-01T00:00:00Z");
+const CONFIRMED_AT = new Date(Date.now() - 7 * 24 * HOUR_MS);
+
+function confirmedVersion() {
+  return {
+    ca_config: CA_CONFIG,
+    template: TEMPLATE,
+    ca_key_sha256: CA_KEY,
+    confirmed_at: CONFIRMED_AT,
+  };
+}
+
+// The latest adcs-preflight an agent holds, as the gate loads it: a safe
+// verdict for the confirmed CA, template, and key, created `createdAgoMs` ago.
+function preflightEvidence({ id = "agent-1", createdAgoMs = HOUR_MS, verdict = {} } = {}) {
+  return {
+    id,
+    last_seen_at: new Date(),
+    status: "succeeded",
+    created_at: new Date(Date.now() - createdAgoMs),
+    result_metadata: {
+      preflightVerdict: {
+        templateCheck: "safe",
+        caCheck: "safe",
+        caConfig: CA_CONFIG,
+        template: TEMPLATE,
+        caKeySha256s: [CA_KEY],
+        ...verdict,
+      },
+    },
+  };
+}
 
 // Answers each gate query by its SQL shape; anything else fails the test.
 function fakePool({
   agentRows = [],
-  declaredRows = [],
+  declaredRows = [{ "?column?": 1 }],
   openRows = [],
-  versionRows = [
-    { ca_config: CA_CONFIG, template: TEMPLATE, ca_key_sha256: CA_KEY, confirmed_at: CONFIRMED_AT },
-  ],
-}) {
+  versionRows = [confirmedVersion()],
+} = {}) {
   const queries = [];
   return {
     queries,
@@ -74,46 +105,70 @@ function run(pool) {
 }
 
 describe("AD CS automatic renewal agent readiness", () => {
-  it("waits when a declaring agent has not run a safe adcs-preflight for this CA", async () => {
+  it("waits when a declaring agent has no qualifying adcs-preflight for this CA", async () => {
     const pool = fakePool({ declaredRows: [{ "?column?": 1 }] });
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
     const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
     assert.match(select.sql, /'adcs-preflight'/);
-    assert.match(select.sql, /preflightVerdict'->>'caCheck' = 'safe'/);
-    assert.match(select.sql, /preflightVerdict'->>'templateCheck' = 'safe'/);
-    assert.match(select.sql, /preflightVerdict'->>'caConfig' = \$4::text/);
-    assert.match(select.sql, /preflightVerdict'->>'template' = \$5::text/);
-    assert.match(select.sql, /preflightVerdict'->'caKeySha256s'/);
-    assert.match(select.sql, /latest\.created_at >= \$7::timestamptz/);
-    assert.deepEqual(select.params, [
-      "ws-1",
-      "www.example.com",
-      "issuer-1",
-      CA_CONFIG,
-      TEMPLATE,
-      CA_KEY,
-      CONFIRMED_AT,
-      ADCS_PREFLIGHT_MAX_AGE_MS,
-    ]);
+    assert.match(select.sql, /declared_target_selectors @>/);
+    assert.deepEqual(select.params, ["ws-1", "www.example.com", "issuer-1"]);
   });
 
-  it("bounds preflight age by the shared 24-hour freshness constant", async () => {
-    const pool = fakePool({ declaredRows: [{ "?column?": 1 }] });
+  it("accepts a safe preflight taken an hour ago, after confirmation", async () => {
+    const pool = fakePool({
+      agentRows: [preflightEvidence({ createdAgoMs: HOUR_MS })],
+      openRows: [{ id: "enrollment-open" }],
+    });
+    const result = await run(pool);
+    assert.deepEqual(result, { job: { id: null, operation: "renew" }, created: false });
+  });
+
+  it("waits when the only preflight is older than the 24-hour freshness bound", async () => {
+    const pool = fakePool({
+      agentRows: [preflightEvidence({ createdAgoMs: 25 * HOUR_MS })],
+    });
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
-    const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
-    assert.match(
-      select.sql,
-      /latest\.created_at >= NOW\(\) - \(\$8::bigint \* INTERVAL '1 millisecond'\)/,
-    );
-    assert.equal(ADCS_PREFLIGHT_MAX_AGE_MS, 24 * 60 * 60 * 1000);
-    assert.equal(select.params[7], ADCS_PREFLIGHT_MAX_AGE_MS);
+  });
+
+  it("uses the shared freshness constant as the boundary", async () => {
+    assert.equal(ADCS_PREFLIGHT_MAX_AGE_MS, 24 * HOUR_MS);
+
+    const justInside = fakePool({
+      agentRows: [preflightEvidence({ createdAgoMs: ADCS_PREFLIGHT_MAX_AGE_MS - MINUTE_MS })],
+      openRows: [{ id: "enrollment-open" }],
+    });
+    assert.deepEqual(await run(justInside), {
+      job: { id: null, operation: "renew" },
+      created: false,
+    });
+
+    const justOutside = fakePool({
+      agentRows: [preflightEvidence({ createdAgoMs: ADCS_PREFLIGHT_MAX_AGE_MS + MINUTE_MS })],
+    });
+    await assert.rejects(run(justOutside), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+  });
+
+  it("does not qualify a preflight taken before the CA was re-confirmed", async () => {
+    const pool = fakePool({
+      agentRows: [preflightEvidence({ createdAgoMs: HOUR_MS })],
+      versionRows: [{ ...confirmedVersion(), confirmed_at: new Date(Date.now() - 30 * MINUTE_MS) }],
+    });
+    await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
+  });
+
+  it("does not qualify a preflight that checked a different template", async () => {
+    const pool = fakePool({
+      agentRows: [preflightEvidence({ verdict: { template: "OtherTemplate" } })],
+    });
+    await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
   });
 
   it("does not qualify any agent when no version is confirmed", async () => {
-    const pool = fakePool({ declaredRows: [{ "?column?": 1 }], versionRows: [] });
+    const pool = fakePool({
+      agentRows: [preflightEvidence()],
+      versionRows: [],
+    });
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
-    const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
-    assert.deepEqual(select.params.slice(3), [null, null, null, null, ADCS_PREFLIGHT_MAX_AGE_MS]);
   });
 
   it("keeps the not-deployable reason when no active agent declares the target", async () => {
@@ -122,14 +177,5 @@ describe("AD CS automatic renewal agent readiness", () => {
       assert.notEqual(error.code, CERTOPS_ADCS_AGENT_NOT_PREPARED);
       return error.code === "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE";
     });
-  });
-
-  it("proceeds past the gate once a prepared agent exists", async () => {
-    const pool = fakePool({
-      agentRows: [{ id: "agent-1" }],
-      openRows: [{ id: "enrollment-open" }],
-    });
-    const result = await run(pool);
-    assert.deepEqual(result, { job: { id: null, operation: "renew" }, created: false });
   });
 });

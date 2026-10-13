@@ -132,16 +132,8 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     };
   }
 
-  // Runs the real gate query and records the agent rows it returned.
+  // Runs the real gate against the database and reports the scheduler outcome.
   async function runGate(issuerId) {
-    const gateRows = [];
-    const recording = {
-      query: async (sql, params) => {
-        const result = await pool.query(sql, params);
-        if (sql.includes("FROM certops_agents a")) gateRows.push(...result.rows);
-        return result;
-      },
-    };
     const certificate = {
       id: crypto.randomUUID(),
       workspace_id: workspaceId,
@@ -164,20 +156,19 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       },
     };
     const error = await createAutomaticAdcsRenewal({
-      dbPool: recording,
+      dbPool: pool,
       certificate,
       mode: "real",
       env: {},
       auditWriter: async () => {},
     }).catch((caught) => caught);
-    return { gateRows, error };
+    return { error };
   }
 
   it("qualifies an agent whose safe preflight matches the confirmed CA, template, and key", async () => {
     const { issuerId, agentId } = await scenario();
     await addPreflight({ issuerId, agentId, verdict: verdict() });
-    const { gateRows, error } = await runGate(issuerId);
-    expect(gateRows.map((row) => row.id)).to.deep.equal([agentId]);
+    const { error } = await runGate(issuerId);
     expect(error?.code).to.not.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
@@ -185,8 +176,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     const { issuerId, agentId } = await scenario();
     await backdateConfirmation(issuerId, 48);
     await addPreflight({ issuerId, agentId, verdict: verdict(), hoursAgo: 25 });
-    const { gateRows, error } = await runGate(issuerId);
-    expect(gateRows).to.have.length(0);
+    const { error } = await runGate(issuerId);
     expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
@@ -194,8 +184,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
     const { issuerId, agentId } = await scenario();
     await backdateConfirmation(issuerId, 48);
     await addPreflight({ issuerId, agentId, verdict: verdict(), hoursAgo: 23 });
-    const { gateRows, error } = await runGate(issuerId);
-    expect(gateRows.map((row) => row.id)).to.deep.equal([agentId]);
+    const { error } = await runGate(issuerId);
     expect(error?.code).to.not.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
@@ -206,8 +195,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       agentId,
       verdict: verdict({ template: OTHER_TEMPLATE }),
     });
-    const { gateRows, error } = await runGate(issuerId);
-    expect(gateRows).to.have.length(0);
+    const { error } = await runGate(issuerId);
     expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
@@ -218,8 +206,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       agentId,
       verdict: verdict({ keySha256: OTHER_KEY }),
     });
-    const { gateRows, error } = await runGate(issuerId);
-    expect(gateRows).to.have.length(0);
+    const { error } = await runGate(issuerId);
     expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
@@ -236,8 +223,7 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       "UPDATE certificate_issuers SET current_version = 2 WHERE id = $1",
       [issuerId],
     );
-    const { gateRows, error } = await runGate(issuerId);
-    expect(gateRows).to.have.length(0);
+    const { error } = await runGate(issuerId);
     expect(error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 
@@ -255,11 +241,10 @@ describe("AD CS automatic renewal readiness (real database)", function () {
       [issuerId],
     );
     const before = await runGate(issuerId);
-    expect(before.gateRows).to.have.length(0);
     expect(before.error?.code).to.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
 
     await addPreflight({ issuerId, agentId, verdict: verdict() });
     const after = await runGate(issuerId);
-    expect(after.gateRows.map((row) => row.id)).to.deep.equal([agentId]);
+    expect(after.error?.code).to.not.equal(CERTOPS_ADCS_AGENT_NOT_PREPARED);
   });
 });

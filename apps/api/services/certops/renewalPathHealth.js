@@ -29,6 +29,14 @@ const {
 const { computeAgentCompatibility } = require("./agentRegistry");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
+  ADCS_PREFLIGHT_MAX_AGE_MS,
+  ADCS_PREFLIGHT_WAITING_REASON,
+  loadCurrentAdcsIssuerVersion,
+  loadQualifyingAdcsAgents,
+} = require("./adcsPreflightGate");
+
+const ADCS_PREFLIGHT_WINDOW_HOURS = Math.round(ADCS_PREFLIGHT_MAX_AGE_MS / 3_600_000);
+const {
   ADCS_ENROLL_CAPABILITY_REASON,
   explainAgentJobEligibility,
   persistedTextArray,
@@ -71,6 +79,9 @@ const RENEWAL_PATH_REASONS = Object.freeze({
   // AD CS renewal with no fresh adcs-enroll-v1 declaration on any candidate
   // agent. Dispatch refuses the job, so the path is blocked, not healthy.
   ADCS_ENROLL_CAPABILITY_UNAVAILABLE: "adcs_enroll_capability_unavailable",
+  // AD CS renewal waits until an agent runs adcs-preflight for its CA. The
+  // scheduler starts nothing before then, so the path is not healthy yet.
+  WAITING_FOR_FRESH_PREFLIGHT: ADCS_PREFLIGHT_WAITING_REASON,
   // Not in the product spec's suggested list, but needed so a certificate
   // that is not currently expected to auto-renew never gets shown next to
   // "Renewal path unavailable" -- rule: "auto-renew disabled should not
@@ -396,6 +407,7 @@ function classifyExecutors({
   pinnedAgentIneligibleReason = null,
   pinnedAgentDeclaredOperations = null,
   adcsEnrollBlocked = false,
+  awaitingFreshPreflight = false,
 }) {
   if (pinnedButRetired) {
     return {
@@ -441,6 +453,13 @@ function classifyExecutors({
       renewalPathSummary: targetReference
         ? `No registered agent currently declares support for deployment target "${targetReference}".`
         : "No agent is currently associated with this certificate's renewal.",
+    };
+  }
+  if (awaitingFreshPreflight) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
+      renewalPathSummary: `The AD CS renewal for this certificate is waiting for a fresh CA check. No agent that renews it has run adcs-preflight against its CA in the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours, so the renewal starts once an agent passes the check.`,
     };
   }
   if (onlineCount === total) {
@@ -562,7 +581,13 @@ function acmeRenewalRequirements(renewalProfile, certificateRow) {
  * Full renewal-path projection for one certificate row (as returned by the
  * SELECT in loadCertificateRowsForRenewalPath).
  */
-function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.env, now = Date.now() }) {
+function resolveRenewalPathForRow({
+  certificateRow,
+  agentIndex,
+  env = process.env,
+  now = Date.now(),
+  adcsPreflightIndex = null,
+}) {
   const offlineAfterMs = resolveAgentOfflineAfterMs(env);
 
   if (
@@ -669,6 +694,19 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
   const hasResolvableTopology =
     agents.length > 0 || Boolean(targetReference) || pinned || pinnedButRetired;
 
+  // A fresh, safe preflight on a declaring agent is what lets the scheduler
+  // start an AD CS renewal at all. Without one, the path is waiting.
+  const freshAgentIds =
+    adcsPreflightIndex?.get(
+      adcsPreflightKey(
+        certificateRow.profile_issuer_id,
+        adcsReferenceFromProfile(profileMetadata),
+      ),
+    ) ?? new Set();
+  const awaitingFreshPreflight =
+    jobRequirements.issuerKind === "adcs" &&
+    !agents.some((agent) => freshAgentIds.has(agent.agentRowId));
+
   const classification = classifyExecutors({
     agents,
     targetReference,
@@ -677,6 +715,7 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     pinnedAgentIneligibleReason,
     pinnedAgentDeclaredOperations,
     adcsEnrollBlocked,
+    awaitingFreshPreflight,
   });
 
   return {
@@ -697,6 +736,7 @@ const CERTIFICATE_ROW_SELECT = `
          mc.public_metadata->'controllerObservation'->>'agentId' AS discovery_agent_id,
          mc.public_metadata AS certificate_public_metadata,
          cp.status AS profile_status,
+         cp.issuer_id AS profile_issuer_id,
          cp.public_metadata AS profile_public_metadata,
          ci.kind AS profile_issuer_kind
     FROM managed_certificates mc
@@ -705,6 +745,54 @@ const CERTIFICATE_ROW_SELECT = `
     LEFT JOIN certificate_issuers ci
       ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
 `;
+
+function adcsReferenceFromProfile(profileMetadata) {
+  const reference = profileMetadata?.renewalProfile?.target?.reference;
+  return typeof reference === "string" ? reference : null;
+}
+
+function adcsPreflightKey(issuerId, reference) {
+  return `${issuerId}\u0000${reference}`;
+}
+
+// Loads qualifying agents once per issuer and target in the batch, using the
+// same gate the scheduler calls, so health and scheduling read one answer.
+async function loadAdcsPreflightIndex({ db, workspaceId, certificateRows, nowMs }) {
+  const wanted = new Map();
+  for (const row of certificateRows) {
+    if (row.profile_issuer_kind !== "adcs" || !row.profile_issuer_id) continue;
+    const reference = adcsReferenceFromProfile(parseMetadata(row.profile_public_metadata));
+    if (reference == null) continue;
+    wanted.set(adcsPreflightKey(row.profile_issuer_id, reference), {
+      issuerId: String(row.profile_issuer_id),
+      reference,
+    });
+  }
+  const issuerIds = [...new Set([...wanted.values()].map((entry) => entry.issuerId))];
+  const versions = new Map(
+    await Promise.all(
+      issuerIds.map(async (issuerId) => [
+        issuerId,
+        await loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId }),
+      ]),
+    ),
+  );
+  const index = new Map();
+  await Promise.all(
+    [...wanted].map(async ([key, { issuerId, reference }]) => {
+      const agents = await loadQualifyingAdcsAgents({
+        db,
+        workspaceId,
+        issuerId,
+        reference,
+        version: versions.get(issuerId),
+        nowMs,
+      });
+      index.set(key, new Set(agents.map((agent) => String(agent.id))));
+    }),
+  );
+  return index;
+}
 
 async function resolveRenewalPathForCertificate({
   db = pool,
@@ -721,7 +809,14 @@ async function resolveRenewalPathForCertificate({
   ]);
   const certificateRow = certResult.rows[0];
   if (!certificateRow) return null;
-  return resolveRenewalPathForRow({ certificateRow, agentIndex, env });
+  const now = Date.now();
+  const adcsPreflightIndex = await loadAdcsPreflightIndex({
+    db,
+    workspaceId,
+    certificateRows: [certificateRow],
+    nowMs: now,
+  });
+  return resolveRenewalPathForRow({ certificateRow, agentIndex, env, now, adcsPreflightIndex });
 }
 
 /**
@@ -746,10 +841,16 @@ async function resolveRenewalPathsForWorkspace({
     loadWorkspaceAgentIndex({ db, workspaceId }),
   ]);
   const now = Date.now();
+  const adcsPreflightIndex = await loadAdcsPreflightIndex({
+    db,
+    workspaceId,
+    certificateRows: certResult.rows,
+    nowMs: now,
+  });
   return certResult.rows.map((certificateRow) => ({
     certificateId: String(certificateRow.id),
     commonName: certificateRow.common_name || null,
-    ...resolveRenewalPathForRow({ certificateRow, agentIndex, env, now }),
+    ...resolveRenewalPathForRow({ certificateRow, agentIndex, env, now, adcsPreflightIndex }),
   }));
 }
 
@@ -782,11 +883,17 @@ async function resolveRenewalPathsForCertificateIds({
     loadWorkspaceAgentIndex({ db, workspaceId }),
   ]);
   const now = Date.now();
+  const adcsPreflightIndex = await loadAdcsPreflightIndex({
+    db,
+    workspaceId,
+    certificateRows: certResult.rows,
+    nowMs: now,
+  });
   const result = new Map();
   for (const certificateRow of certResult.rows) {
     result.set(
       String(certificateRow.id),
-      resolveRenewalPathForRow({ certificateRow, agentIndex, env, now }),
+      resolveRenewalPathForRow({ certificateRow, agentIndex, env, now, adcsPreflightIndex }),
     );
   }
   return result;
@@ -856,6 +963,8 @@ module.exports = {
     classifyExecutors,
     targetReferenceFromProfile,
     loadWorkspaceAgentIndex,
+    loadAdcsPreflightIndex,
+    adcsPreflightKey,
     NO_CAPABILITY_DECLARED_SUMMARY,
   },
 };

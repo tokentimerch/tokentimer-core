@@ -59,8 +59,9 @@ const { writeAudit } = require("../audit");
 const { createEnrollment } = require("./certificateEnrollments");
 const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
-  ADCS_PREFLIGHT_MAX_AGE_MS,
-} = require("../../../../packages/contracts/certops/adcs-preflight-freshness.cjs");
+  loadCurrentAdcsIssuerVersion,
+  loadQualifyingAdcsAgents,
+} = require("./adcsPreflightGate");
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 const DEFAULT_BATCH_SIZE = 200;
@@ -424,65 +425,22 @@ async function createAutomaticAdcsRenewal({
   // Evidence must describe the confirmed version (config, template, pinned key)
   // and come from a preflight job created after confirmation. Template ACLs can
   // change in AD without the name changing, so an older check does not qualify.
-  const confirmed = await dbPool.query(
-    `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at
-       FROM certificate_issuers i
-       JOIN certificate_issuer_versions v
-         ON v.workspace_id = i.workspace_id
-        AND v.issuer_id = i.id
-        AND v.version = i.current_version
-      WHERE i.workspace_id = $1 AND i.id = $2`,
-    [certificate.workspace_id, certificate.profile_issuer_id],
-  );
-  const version = confirmed.rows[0] || {};
-  // Declaring the target is not enough: the agent must have run adcs-preflight
-  // against this CA with both checks safe, so a renewal never goes to an agent
-  // that cannot reach the CA.
-  const agent = await dbPool.query(
-    `SELECT a.id
-       FROM certops_agents a
-      WHERE a.workspace_id = $1
-        AND a.status = 'active'
-        AND a.declared_target_selectors @> jsonb_build_array($2::text)
-        AND EXISTS (
-          SELECT 1
-            FROM (
-              SELECT j.status, j.result_metadata, j.created_at
-                FROM certificate_jobs j
-               WHERE j.workspace_id = a.workspace_id
-                 AND j.operation = 'adcs-preflight'
-                 AND j.subject_id = $3
-                 AND j.assigned_agent_id = a.id
-               ORDER BY j.preflight_seq DESC NULLS LAST, j.created_at DESC, j.id DESC
-               LIMIT 1
-            ) latest
-           WHERE latest.status = 'succeeded'
-             AND latest.result_metadata->'preflightVerdict'->>'templateCheck' = 'safe'
-             AND latest.result_metadata->'preflightVerdict'->>'caCheck' = 'safe'
-             AND latest.result_metadata->'preflightVerdict'->>'caConfig' = $4::text
-             AND latest.result_metadata->'preflightVerdict'->>'template' = $5::text
-             AND latest.result_metadata->'preflightVerdict'->'caKeySha256s'
-                   @> jsonb_build_array($6::text)
-             AND latest.created_at >= $7::timestamptz
-             AND latest.created_at >= NOW() - ($8::bigint * INTERVAL '1 millisecond')
-        )
-      ORDER BY a.last_seen_at DESC NULLS LAST
-      LIMIT 1`,
-    [
-      certificate.workspace_id,
-      fields.target.reference,
-      String(certificate.profile_issuer_id),
-      // Plain strings on both sides; compared as text, not JSON.
-      version.ca_config ?? null,
-      version.template ?? null,
-      version.ca_key_sha256 ?? null,
-      // A null confirmation time matches nothing, so the gate fails closed.
-      version.confirmed_at ?? null,
-      // Same lifetime the agent gives its cached CA pin and template OID.
-      ADCS_PREFLIGHT_MAX_AGE_MS,
-    ],
-  );
-  if (!agent.rows[0]) {
+  const version = await loadCurrentAdcsIssuerVersion({
+    db: dbPool,
+    workspaceId: certificate.workspace_id,
+    issuerId: certificate.profile_issuer_id,
+  });
+  // Declaring the target is not enough: the agent must hold a fresh, safe
+  // adcs-preflight against this CA, so a renewal never goes to an agent that
+  // cannot reach the CA. Renewal health applies the same check.
+  const [agent] = await loadQualifyingAdcsAgents({
+    db: dbPool,
+    workspaceId: certificate.workspace_id,
+    issuerId: certificate.profile_issuer_id,
+    reference: fields.target.reference,
+    version,
+  });
+  if (!agent) {
     const declared = await dbPool.query(
       `SELECT 1
          FROM certops_agents
@@ -536,7 +494,7 @@ async function createAutomaticAdcsRenewal({
       workspaceId: certificate.workspace_id,
       profileId: certificate.profile_id,
       certificateId: certificate.id,
-      agentId: agent.rows[0].id,
+      agentId: agent.id,
       source: "automation",
       mode,
       env,

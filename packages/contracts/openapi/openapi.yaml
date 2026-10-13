@@ -8848,6 +8848,7 @@ components:
             - assigned_agent_retired
             - assigned_agent_ineligible
             - adcs_enroll_capability_unavailable
+            - waiting_for_fresh_preflight
             - null
           description: Machine-readable reason code for `renewalPathState`.
         renewalPathSummary:
