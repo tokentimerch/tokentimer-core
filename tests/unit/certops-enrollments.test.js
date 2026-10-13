@@ -29,9 +29,19 @@ const {
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
+const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const Ajv = require("ajv");
+const addFormats = require("ajv-formats");
+const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
+const signedDispatchPayloadSchema = require("../../packages/contracts/certops/signed-dispatch-payload.schema.json");
+const signedDispatchWireV1Schema = require("../../packages/contracts/certops/signed-dispatch-wire-v1.schema.json");
+const signedDispatchWireV2Schema = require("../../packages/contracts/certops/signed-dispatch-wire-v2.schema.json");
+const enrollmentSnapshotSchema = require("../../packages/contracts/certops/enrollment-snapshot.schema.json");
 
 const ISSUER = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const ENROLLMENT = "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69";
+const JOB_ID = "6a1f0d2e-7c3b-4e8a-9f1d-2b3c4d5e6f70";
+const CLAIM_ID = "0b7c2f7e-1d2a-4c3b-8e4f-5a6b7c8d9e0f";
 
 function snapshotInput() {
   return {
@@ -498,6 +508,143 @@ describe("enrollment rows", () => {
     assert.equal(jobs[0].target.store, "WebHosting");
     assert.equal(jobs[0].target.binding.site, "Shop");
     assert.equal(jobs[0].issuerKind, undefined);
+  });
+
+  it("dispatches a scheduled AD CS continuation with issuer fields attached and a schema-valid payload", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "pending_issuance", {
+      attempt: 1,
+      pending_since: new Date("2026-10-11T11:00:00.000Z"),
+      next_poll_at: new Date("2026-10-11T12:00:00.000Z"),
+    }));
+    const scheduled = [];
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now: new Date("2026-10-11T12:05:00.000Z"),
+      createJob: async (args) => {
+        scheduled.push(args);
+        return { id: JOB_ID };
+      },
+    });
+    assert.equal(created.length, 1);
+    const [request] = scheduled;
+    assert.equal(request.operation, "continue-enrollment");
+    assert.equal(request.payload.issuerKind, undefined, "stored payload must not carry issuerKind");
+    assert.equal(request.payload.enrollment, undefined, "stored payload must not carry enrollment");
+
+    const stored = db.enrollments.get(ENROLLMENT);
+    const agent = {
+      id: "agent-row-1",
+      workspaceId: WORKSPACE,
+      agentId: "agent-01",
+      name: "Windows agent",
+      status: "active",
+      protocolVersion: "1.0.0",
+      agentVersion: "0.1.0",
+      pinnedSigningKeyId: null,
+      lastSeenAt: null,
+      retiredAt: null,
+    };
+    const claimRow = {
+      id: JOB_ID,
+      workspace_id: WORKSPACE,
+      status: "claimed",
+      claim_id: CLAIM_ID,
+      lease_expires_at: new Date(Date.now() + 15 * 60 * 1000),
+      attempt_count: 1,
+      operation: "continue-enrollment",
+      subject_type: "managed_certificate",
+      subject_id: request.subjectId,
+      payload: request.payload,
+      mode: "real",
+      executor_kind: "agent",
+      assigned_agent_id: agent.id,
+      enrollment_id: ENROLLMENT,
+      subject_is_provisioning: false,
+      created_at: new Date("2026-10-11T12:05:00.000Z"),
+    };
+    const claimDb = {
+      async connect() {
+        return this;
+      },
+      release() {},
+      async query(text, params = []) {
+        const sql = text.replace(/\s+/g, " ").trim();
+        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+        if (sql.includes("SAVEPOINT") || sql.includes("RELEASE SAVEPOINT")) return { rows: [] };
+        if (sql.includes("FROM certificate_enrollments e")) return db.query(text, params);
+        if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+        if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+        if (sql.includes("SELECT declared_target_selectors")) {
+          return {
+            rows: [{
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+              declared_capabilities: ["adcs-enroll-v1"],
+              capabilities_updated_at: new Date().toISOString(),
+            }],
+          };
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [claimRow] };
+        if (sql.includes("SET status = 'claimed'")) return { rows: [claimRow] };
+        throw new Error(`unexpected claim query: ${sql}`);
+      },
+    };
+    const result = await claimJobs({
+      dbPool: claimDb,
+      agent,
+      body: { maxJobs: 1, supportedActions: ["continue-enrollment"] },
+      envelope: {},
+      env: {},
+      deps: {
+        lockWorkspaceForCertOpsSideEffect: async () => ({ locked: true }),
+        enforceAgentSequence: async () => {},
+        invalidateApprovalForClaim: async () => {},
+        signJobForDispatch: async ({ job }) => ({
+          ...job,
+          nonce: require("node:crypto").randomBytes(24).toString("base64url"),
+          issuedAt: "2026-10-11T12:05:00.000Z",
+          expiresAt: "2026-10-11T12:10:00.000Z",
+          signingKeyId: "key-1",
+          signature: require("node:crypto").randomBytes(64).toString("base64"),
+        }),
+      },
+    });
+
+    assert.equal(result.jobs.length, 1);
+    const job = result.jobs[0];
+    assert.equal(job.action, "continue-enrollment");
+    assert.equal(job.issuerKind, "adcs");
+    assert.equal(job.enrollment.enrollmentId, ENROLLMENT);
+    assert.equal(job.enrollment.attempt, 2);
+    assert.equal(job.enrollment.snapshotSha256, stored.snapshot_sha256);
+    assert.equal(
+      require("node:crypto").createHash("sha256")
+        .update(Buffer.from(job.enrollment.snapshotB64, "base64"))
+        .digest("hex"),
+      stored.snapshot_sha256,
+    );
+    for (const key of [
+      "commandRef", "caEndpoint", "acmeKind", "eabRef", "accountRef", "preferredChain",
+      "dnsZone", "dnsProvider", "keyRotation", "keyAlgorithm", "keySize", "sans",
+      "certificatePem", "certificatePemSha256", "renewalProfile", "deploymentTargets",
+    ]) {
+      assert.equal(job[key], undefined, `ACME-only field ${key} must be absent`);
+    }
+
+    const ajv = new Ajv({ allErrors: true, strict: false });
+    addFormats(ajv);
+    for (const schema of [
+      signedDispatchPayloadSchema,
+      signedDispatchWireV1Schema,
+      signedDispatchWireV2Schema,
+      enrollmentSnapshotSchema,
+    ]) {
+      ajv.addSchema(schema);
+    }
+    const validate = ajv.compile(jobPayloadSchema);
+    assert.equal(validate(job), true, JSON.stringify(validate.errors));
   });
 
   it("dispatches a continuation after an uncertain RequestId is proposed", async () => {
