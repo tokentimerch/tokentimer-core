@@ -733,3 +733,36 @@ describe('CreateManualJobModal trustOp mode', () => {
     });
   });
 });
+
+describe('CreateManualJobModal operation and subject pairing', () => {
+  it('offers only jobs an operator can create, and never a trust-anchor subject', () => {
+    renderModal();
+    const operation = screen.getByLabelText(/^Operation/);
+    const values = Array.from(operation.querySelectorAll('option')).map(
+      option => option.value
+    );
+    expect(values).toEqual([
+      '',
+      'issue',
+      'renew',
+      'deploy',
+      'reload',
+      'revoke',
+      'noop',
+    ]);
+    selectOperation('renew');
+    const subject = screen.getByLabelText(/^Subject type/);
+    const subjectValues = Array.from(subject.querySelectorAll('option')).map(
+      option => option.value
+    );
+    expect(subjectValues).not.toContain('trust_anchor');
+    expect(subjectValues).not.toContain('token');
+    expect(
+      screen.getByText(/An AD CS profile does not renew through this form/)
+    ).toBeInTheDocument();
+    selectOperation('issue');
+    expect(
+      screen.getByText(/Active Directory Certificate Services is not/)
+    ).toBeInTheDocument();
+  });
+});

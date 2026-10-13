@@ -108,6 +108,25 @@ const MANUAL_JOB_SUBJECT_TYPES = CERTOPS_SUBJECT_TYPES.filter(
   type => type !== 'token'
 );
 
+// Operations a person can create from this form. The others exist, but
+// another service creates them and this form cannot supply their payload:
+// continue-enrollment and adcs-preflight (enrollment scheduler and issuer
+// check), protocol_smoke (diagnostic bootstrap), distribute-trust and
+// revoke-trust (the trust-anchor panel, which pins subject type trust_anchor).
+const MANUAL_FORM_OPERATIONS = [
+  'issue',
+  'renew',
+  'deploy',
+  'reload',
+  'revoke',
+  'noop',
+];
+
+// trust_anchor is valid only for distribute-trust and revoke-trust.
+const MANUAL_FORM_SUBJECT_TYPES = MANUAL_JOB_SUBJECT_TYPES.filter(
+  type => type !== 'trust_anchor'
+);
+
 // Per-subject-type hint for the free-text Subject ID input; shown for every
 // subject type, whether or not a live suggestion list is available below.
 const SUBJECT_ID_PLACEHOLDERS = {
@@ -440,6 +459,13 @@ export default function CreateManualJobModal({
   useEffect(() => {
     if (hidesAgentField) setAssignedAgentId('');
   }, [hidesAgentField]);
+
+  useEffect(() => {
+    if (subjectType && !MANUAL_FORM_SUBJECT_TYPES.includes(subjectType)) {
+      setSubjectType('');
+      setSubjectId('');
+    }
+  }, [subjectType]);
 
   // Distinct owner strings across every installation the panel handed in
   // for this anchor (any agent/store), for the "existing owner" picker on
@@ -1108,9 +1134,7 @@ export default function CreateManualJobModal({
                   value={operation}
                   onChange={handleOperationChange}
                 >
-                  {CERTOPS_JOB_OPERATIONS.filter(
-                    op => op !== 'adcs-preflight'
-                  ).map(op => (
+                  {MANUAL_FORM_OPERATIONS.map(op => (
                     <option key={op} value={op}>
                       {jobOperationLabel(op)}
                     </option>
@@ -1118,9 +1142,12 @@ export default function CreateManualJobModal({
                 </Select>
                 {isIssue ? (
                   <FormHelperText>
-                    Issue creates a new managed certificate; TokenTimer assigns
-                    its ID once the request is accepted, so subject fields below
-                    are hidden.
+                    Issue creates a new managed certificate through ACME, or
+                    through a cert-manager controller. TokenTimer assigns its
+                    ID once the request is accepted, so subject fields below
+                    are hidden. Active Directory Certificate Services is not
+                    created here: on Renewals, confirm an issuer, then New AD
+                    CS profile. That profile creates the enrollment.
                   </FormHelperText>
                 ) : null}
               </FormControl>
@@ -1287,7 +1314,7 @@ export default function CreateManualJobModal({
                         setSubjectId('');
                       }}
                     >
-                      {MANUAL_JOB_SUBJECT_TYPES.map(type => (
+                      {MANUAL_FORM_SUBJECT_TYPES.map(type => (
                         <option key={type} value={type}>
                           {subjectTypeLabel(type)}
                         </option>
@@ -1442,7 +1469,9 @@ export default function CreateManualJobModal({
                           target, SANs, ACME command, CA, DNS-01 zone/provider,
                           and deploy path always come from the
                           certificate&apos;s stored renewal profile and cannot
-                          be set here.
+                          be set here. An AD CS profile does not renew through
+                          this form. The renewal sweep creates that enrollment
+                          from the profile on Renewals.
                         </FormHelperText>
                       </VStack>
                     ) : (
