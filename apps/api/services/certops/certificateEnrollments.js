@@ -445,7 +445,7 @@ function createEnrollment({
 async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = {}) {
   const lockClause = lock === "skip" ? "FOR UPDATE OF e SKIP LOCKED" : lock ? "FOR UPDATE OF e" : "";
   const result = await db.query(
-    `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
+    `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
             e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
             e.deploy_target, j.status AS job_status
