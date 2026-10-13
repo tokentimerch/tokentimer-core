@@ -103,11 +103,21 @@ function issuerChangeSentence(profile) {
       : `${count} certificates using this profile will renew through the new issuer.`;
   }
   const extra = count > names.length ? count - names.length : 0;
-  const listed = extra > 0 ? `${names.join(', ')}, and ${extra} more` : names.join(', ');
+  const listed =
+    extra > 0 ? `${names.join(', ')}, and ${extra} more` : names.join(', ');
   return `${listed} will renew through the new issuer from their next renewal.`;
 }
 
-function IssuerChangeModal({ isOpen, onClose, profile, issuers, target, saving, error, onConfirm }) {
+function IssuerChangeModal({
+  isOpen,
+  onClose,
+  profile,
+  issuers,
+  target,
+  saving,
+  error,
+  onConfirm,
+}) {
   const {
     overlayProps,
     headerProps,
@@ -122,13 +132,18 @@ function IssuerChangeModal({ isOpen, onClose, profile, issuers, target, saving, 
       <ModalOverlay {...overlayProps} />
       <DashboardModalFrame>
         <ModalHeader {...headerProps}>
-          <DashboardModalTitle>Change issuer for {profile.name}?</DashboardModalTitle>
-          <DashboardModalDescription>{issuerChangeSentence(profile)}</DashboardModalDescription>
+          <DashboardModalTitle>
+            Change issuer for {profile.name}?
+          </DashboardModalTitle>
+          <DashboardModalDescription>
+            {issuerChangeSentence(profile)}
+          </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
         <ModalBody {...bodyProps}>
           <Text fontSize='sm' mb={3}>
-            From {issuerLabel(profile.issuerId, issuers)} to {issuerLabel(target, issuers)}.
+            From {issuerLabel(profile.issuerId, issuers)} to{' '}
+            {issuerLabel(target, issuers)}.
           </Text>
           <Text fontSize='sm'>
             {target
@@ -145,7 +160,11 @@ function IssuerChangeModal({ isOpen, onClose, profile, issuers, target, saving, 
           <Button {...outlineButtonProps} onClick={onClose} mr={3}>
             Cancel
           </Button>
-          <Button colorScheme='blue' onClick={onConfirm} isLoading={Boolean(saving)}>
+          <Button
+            colorScheme='blue'
+            onClick={onConfirm}
+            isLoading={Boolean(saving)}
+          >
             Change issuer
           </Button>
         </ModalFooter>
@@ -166,8 +185,16 @@ function IssuerChoice({ profile, issuers, saving, onSave, saveError }) {
   if (!editing) {
     return (
       <HStack spacing={2} maxW='240px'>
-        <CertOpsTruncatedText value={issuerLabel(value, issuers)} fontSize='sm' />
-        <Button size='xs' variant='outline' aria-label={`Change issuer for ${profile.name}`} onClick={() => setEditing(true)}>
+        <CertOpsTruncatedText
+          value={issuerLabel(value, issuers)}
+          fontSize='sm'
+        />
+        <Button
+          size='xs'
+          variant='outline'
+          aria-label={`Change issuer for ${profile.name}`}
+          onClick={() => setEditing(true)}
+        >
           Change
         </Button>
       </HStack>
@@ -190,7 +217,10 @@ function IssuerChoice({ profile, issuers, saving, onSave, saveError }) {
           <option value=''>ACME</option>
           {known ? null : <option value={value}>AD CS issuer</option>}
           {issuers.map(issuer => (
-            <option key={issuer.id} value={issuer.id}>{`AD CS · ${issuer.name}`}</option>
+            <option
+              key={issuer.id}
+              value={issuer.id}
+            >{`AD CS · ${issuer.name}`}</option>
           ))}
         </Select>
         <Button size='xs' variant='ghost' onClick={() => setEditing(false)}>
@@ -253,7 +283,8 @@ function stopRenewalSentence(profile) {
       : `${count} certificates using this profile will stop renewing automatically.`;
   }
   const extra = count > names.length ? count - names.length : 0;
-  const listed = extra > 0 ? `${names.join(', ')}, and ${extra} more` : names.join(', ');
+  const listed =
+    extra > 0 ? `${names.join(', ')}, and ${extra} more` : names.join(', ');
   return `${listed} will stop renewing automatically.`;
 }
 
@@ -392,10 +423,8 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
-  const {
-    certificates: boundCertificates,
-    loading: boundCertificatesLoading,
-  } = useBoundCertificates(workspaceId);
+  const { certificates: boundCertificates, loading: boundCertificatesLoading } =
+    useBoundCertificates(workspaceId);
   const [issuers, setIssuers] = useState([]);
   const [profileWizardOpen, setProfileWizardOpen] = useState(false);
   // Both lists on this tab page independently, so each scopes its own search
@@ -518,7 +547,11 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
       {isAdmin || (!loading && profiles.length > 0 && pagination) ? (
         <Flex align='center' justify='flex-end' gap={3} mb={4} wrap='wrap'>
           {isAdmin ? (
-            <Button size='sm' colorScheme='blue' onClick={() => setProfileWizardOpen(true)}>
+            <Button
+              size='sm'
+              colorScheme='blue'
+              onClick={() => setProfileWizardOpen(true)}
+            >
               New AD CS profile
             </Button>
           ) : null}
@@ -564,8 +597,8 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               </Text>
               <Text fontSize='sm' color={muted} mt={1}>
                 Issue a certificate and TokenTimer derives an ACME profile from
-                that run. For a private CA, confirm an issuer below, then
-                choose New AD CS profile.
+                that run. For a private CA, confirm an issuer below, then choose
+                New AD CS profile.
               </Text>
             </>
           )}
@@ -600,15 +633,18 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
               <Tbody {...tableStyles.tbodyProps}>
                 {profiles.map(profile => {
                   const badge = statusBadge(profile);
-                  const scannedNames = namesForProfile(boundCertificates, profile.id);
+                  const scannedNames = namesForProfile(
+                    boundCertificates,
+                    profile.id
+                  );
                   const boundNames =
                     scannedNames.length > 0
                       ? scannedNames
-                      : (Array.isArray(profile.certificates)
-                          ? profile.certificates
-                              .map(item => item?.commonName)
-                              .filter(Boolean)
-                          : []);
+                      : Array.isArray(profile.certificates)
+                        ? profile.certificates
+                            .map(item => item?.commonName)
+                            .filter(Boolean)
+                        : [];
                   const renewal = profile.renewalProfile || {};
                   const rowSaving = savingIds.has(profile.id);
                   const archived = profile.status === 'archived';

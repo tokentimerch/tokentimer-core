@@ -64,7 +64,11 @@ export async function getRenewalProfile(
  *   description, renewalProfile (partial patch of editable fields).
  * @returns {Promise<object>} The updated profile.
  */
-export async function createAdcsRenewalProfile(workspaceId, body, { signal } = {}) {
+export async function createAdcsRenewalProfile(
+  workspaceId,
+  body,
+  { signal } = {}
+) {
   const res = await apiClient.post(
     `${workspaceBase(workspaceId)}/profiles`,
     body,

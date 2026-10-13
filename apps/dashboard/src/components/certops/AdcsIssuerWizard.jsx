@@ -67,13 +67,17 @@ function groupCaCertificates(certs) {
     group.certificates.push(cert);
   });
   for (const group of groups) {
-    group.certificates.sort((a, b) => certTime(b.notBefore) - certTime(a.notBefore));
-    group.thumbprintSha1 = group.certificates.find(cert => cert.thumbprintSha1)?.thumbprintSha1;
+    group.certificates.sort(
+      (a, b) => certTime(b.notBefore) - certTime(a.notBefore)
+    );
+    group.thumbprintSha1 = group.certificates.find(
+      cert => cert.thumbprintSha1
+    )?.thumbprintSha1;
   }
   groups.sort(
     (a, b) =>
-      certTime(b.certificates[0]?.notBefore) - certTime(a.certificates[0]?.notBefore) ||
-      a.firstIndex - b.firstIndex
+      certTime(b.certificates[0]?.notBefore) -
+        certTime(a.certificates[0]?.notBefore) || a.firstIndex - b.firstIndex
   );
   return groups;
 }
@@ -189,7 +193,9 @@ export default function AdcsIssuerWizard({
       } catch (err) {
         if (!cancelled) {
           setWaiting(false);
-          setLocalError(errorText(err, 'Could not refresh the preflight verdict.'));
+          setLocalError(
+            errorText(err, 'Could not refresh the preflight verdict.')
+          );
         }
       }
     }, 3000);
@@ -239,7 +245,9 @@ export default function AdcsIssuerWizard({
         template: template.trim(),
       });
       setWaiting(true);
-      showSuccess('Preflight dispatched. This wizard updates when the agent reports.');
+      showSuccess(
+        'Preflight dispatched. This wizard updates when the agent reports.'
+      );
     } catch (err) {
       setLocalError(errorText(err, 'Could not dispatch preflight.'));
     } finally {
@@ -288,7 +296,12 @@ export default function AdcsIssuerWizard({
           <Stack spacing={4}>
             <HStack spacing={3} fontSize='xs'>
               {STEPS.map((label, index) => (
-                <Text key={label} fontWeight={index === Math.min(step, 2) ? 'semibold' : 'normal'}>
+                <Text
+                  key={label}
+                  fontWeight={
+                    index === Math.min(step, 2) ? 'semibold' : 'normal'
+                  }
+                >
                   {index + 1}. {label}
                 </Text>
               ))}
@@ -306,7 +319,9 @@ export default function AdcsIssuerWizard({
               </Alert>
             ) : null}
             {waiting ? (
-              <Text fontSize='sm'>Waiting for the agent to report the preflight verdict.</Text>
+              <Text fontSize='sm'>
+                Waiting for the agent to report the preflight verdict.
+              </Text>
             ) : null}
             {step === 0 ? (
               <FormControl isRequired>
@@ -326,7 +341,9 @@ export default function AdcsIssuerWizard({
             {step === 1 ? (
               <Stack spacing={3}>
                 <FormControl isRequired>
-                  <FormLabel {...modal.labelProps}>Agent that reads the CA</FormLabel>
+                  <FormLabel {...modal.labelProps}>
+                    Agent that reads the CA
+                  </FormLabel>
                   <Select
                     {...modal.fieldProps}
                     aria-label='Preflight agent'
@@ -358,9 +375,9 @@ export default function AdcsIssuerWizard({
                     onChange={event => setCaConfig(event.target.value)}
                   />
                   <FormHelperText>
-                    DNS host, a backslash, then the CA name from the Certification
-                    Authority console. Use the same string as this agent's enrollment
-                    rule.
+                    DNS host, a backslash, then the CA name from the
+                    Certification Authority console. Use the same string as this
+                    agent's enrollment rule.
                   </FormHelperText>
                   <AdcsDocsLink href={ADCS_DOCS.caConfig}>
                     Where the CA name comes from
@@ -377,9 +394,10 @@ export default function AdcsIssuerWizard({
                   />
                   <FormHelperText>
                     The template common name already published on that CA. In
-                    Certificate Templates this is the Template name, not the display
-                    name. TokenTimer does not create it, and the same name must be in
-                    the agent's enrollment rule or the check never contacts the CA.
+                    Certificate Templates this is the Template name, not the
+                    display name. TokenTimer does not create it, and the same
+                    name must be in the agent's enrollment rule or the check
+                    never contacts the CA.
                   </FormHelperText>
                   <AdcsDocsLink href={ADCS_DOCS.template}>
                     Where the template name comes from
@@ -393,7 +411,11 @@ export default function AdcsIssuerWizard({
             {step === 2 ? (
               <Stack spacing={3}>
                 {groups.map((group, index) => (
-                  <HStack key={group.keySha256} justify='space-between' align='flex-start'>
+                  <HStack
+                    key={group.keySha256}
+                    justify='space-between'
+                    align='flex-start'
+                  >
                     <Stack spacing={0}>
                       <Text fontSize='sm' fontWeight='semibold'>
                         {groups.length === 1
@@ -426,9 +448,10 @@ export default function AdcsIssuerWizard({
               <Text fontSize='sm'>
                 Issuer saved. Renewal profiles is the shared list, above. Choose
                 New AD CS profile there. The last step attaches the profile to a
-                certificate already in inventory and turns automation on. The sweep
-                enrolls when that certificate is inside the profile lead time and an
-                agent that declares the DNS name has passed the CA check and is online.
+                certificate already in inventory and turns automation on. The
+                sweep enrolls when that certificate is inside the profile lead
+                time and an agent that declares the DNS name has passed the CA
+                check and is online.
               </Text>
             ) : null}
           </Stack>
@@ -450,7 +473,9 @@ export default function AdcsIssuerWizard({
             <Button
               {...modal.primaryButtonProps}
               isLoading={busy || waiting}
-              isDisabled={paused || !agentId || !caConfig.trim() || !template.trim()}
+              isDisabled={
+                paused || !agentId || !caConfig.trim() || !template.trim()
+              }
               onClick={handlePreflight}
             >
               Run check

@@ -77,11 +77,7 @@ export default function CertOpsAgents() {
         />
       </DashboardPanel>
 
-      <Modal
-        isOpen={tokensOpen}
-        onClose={() => setTokensOpen(false)}
-        size='xl'
-      >
+      <Modal isOpen={tokensOpen} onClose={() => setTokensOpen(false)} size='xl'>
         <ModalOverlay {...modal.overlayProps} />
         <DashboardModalFrame>
           <ModalHeader {...modal.headerProps}>

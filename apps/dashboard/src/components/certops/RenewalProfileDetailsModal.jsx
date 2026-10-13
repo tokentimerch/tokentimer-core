@@ -139,7 +139,9 @@ export default function RenewalProfileDetailsModal({
 
   const { workspaceId } = useWorkspace();
   const provided = Array.isArray(boundCertificates);
-  const ownLoad = useBoundCertificates(provided || !isOpen ? null : workspaceId);
+  const ownLoad = useBoundCertificates(
+    provided || !isOpen ? null : workspaceId
+  );
   const scanned = (provided ? boundCertificates : ownLoad.certificates).filter(
     item => item?.profileId === profile?.id
   );
@@ -269,7 +271,11 @@ export default function RenewalProfileDetailsModal({
               {!certificatesLoading &&
               certificateRows.length > 0 &&
               Number(profile.certificateCount) > certificateRows.length ? (
-                <Text fontSize='xs' color={tokens.subtleText} gridColumn='1 / -1'>
+                <Text
+                  fontSize='xs'
+                  color={tokens.subtleText}
+                  gridColumn='1 / -1'
+                >
                   {`${Number(profile.certificateCount) - certificateRows.length} more certificates use this profile than this list shows.`}
                 </Text>
               ) : null}
@@ -291,7 +297,8 @@ export default function RenewalProfileDetailsModal({
                     <Text fontSize='sm' color={tokens.subtleText}>
                       {[
                         certificate.status,
-                        formatDate(certificate.notAfter) || 'No expiry recorded',
+                        formatDate(certificate.notAfter) ||
+                          'No expiry recorded',
                       ]
                         .filter(Boolean)
                         .join(' · ')}

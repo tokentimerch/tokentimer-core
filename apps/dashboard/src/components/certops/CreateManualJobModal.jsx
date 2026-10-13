@@ -30,10 +30,7 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
-import {
-  CERTOPS_SUBJECT_TYPES,
-  createJob,
-} from './certopsJobsApi.js';
+import { CERTOPS_SUBJECT_TYPES, createJob } from './certopsJobsApi.js';
 import {
   createControllerProvisionIntent,
   getCertificate,
@@ -1192,11 +1189,11 @@ export default function CreateManualJobModal({
                 {isIssue ? (
                   <FormHelperText>
                     Issue creates a new managed certificate through ACME, or
-                    through a cert-manager controller. TokenTimer assigns its
-                    ID once the request is accepted, so subject fields below
-                    are hidden. Active Directory Certificate Services is not
-                    created here: on Renewals, confirm an issuer, then New AD
-                    CS profile. That profile creates the enrollment.
+                    through a cert-manager controller. TokenTimer assigns its ID
+                    once the request is accepted, so subject fields below are
+                    hidden. Active Directory Certificate Services is not created
+                    here: on Renewals, confirm an issuer, then New AD CS
+                    profile. That profile creates the enrollment.
                   </FormHelperText>
                 ) : null}
               </FormControl>

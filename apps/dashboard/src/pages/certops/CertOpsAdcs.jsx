@@ -445,7 +445,8 @@ function IssuerWork({
       <IssuerNotices issuer={issuer} />
       <Stack spacing={1}>
         <Text fontSize='sm' overflowWrap='anywhere'>
-          {pinned.caConfig || 'CA not recorded'} / {pinned.template || 'template not recorded'}
+          {pinned.caConfig || 'CA not recorded'} /{' '}
+          {pinned.template || 'template not recorded'}
         </Text>
         <Text fontSize='xs' color={muted}>
           The CA and template stay with this issuer. A different pair is a new
@@ -454,8 +455,9 @@ function IssuerWork({
       </Stack>
       {issuer.lastPreflight ? (
         <Text fontSize='sm' color={muted} overflowWrap='anywhere'>
-          Last check: template {checkSummary(issuer.lastPreflight.templateCheck)},
-          CA {checkSummary(issuer.lastPreflight.caCheck)}.
+          Last check: template{' '}
+          {checkSummary(issuer.lastPreflight.templateCheck)}, CA{' '}
+          {checkSummary(issuer.lastPreflight.caCheck)}.
         </Text>
       ) : null}
       {checking ? (
@@ -469,7 +471,9 @@ function IssuerWork({
           <input type='hidden' name='template' value={pinned.template} />
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
             <FormControl isRequired>
-              <FormLabel {...fieldLabelProps}>Agent that reads the CA</FormLabel>
+              <FormLabel {...fieldLabelProps}>
+                Agent that reads the CA
+              </FormLabel>
               <Select
                 name='agentId'
                 size='sm'
@@ -483,13 +487,13 @@ function IssuerWork({
                     {agent.name || agent.agentId}
                   </option>
                 ))}
-                </Select>
-                <Text mt={1} fontSize='xs' color={muted}>
-                  Pick a Windows agent that can reach this CA and already allows
-                  this template. The choice is only for this read. It is not
-                  saved, and it does not decide who renews later.
-                </Text>
-              </FormControl>
+              </Select>
+              <Text mt={1} fontSize='xs' color={muted}>
+                Pick a Windows agent that can reach this CA and already allows
+                this template. The choice is only for this read. It is not
+                saved, and it does not decide who renews later.
+              </Text>
+            </FormControl>
             <Flex align='flex-end'>
               <DashboardActionButton
                 type='submit'
@@ -880,12 +884,17 @@ export default function CertOpsAdcs() {
   const reload = useCallback(async () => {
     if (!workspaceId || !isAdmin) return;
     const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
-      listIssuers(workspaceId, { limit: PAGE_LIMIT, includeUnconfigured: true }),
+      listIssuers(workspaceId, {
+        limit: PAGE_LIMIT,
+        includeUnconfigured: true,
+      }),
       listEnrollments(workspaceId, { limit: PAGE_LIMIT }),
       listAgents(workspaceId),
     ]);
     setIssuers(previous => refreshPage(issuerPage.items || [], previous));
-    setEnrollments(previous => refreshPage(enrollmentPage.items || [], previous));
+    setEnrollments(previous =>
+      refreshPage(enrollmentPage.items || [], previous)
+    );
     setAgents(agentPage.items || []);
     setIssuerTotal(Number(issuerPage.pagination?.total || 0));
     setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
@@ -1171,7 +1180,9 @@ export default function CertOpsAdcs() {
                 {...actionProps(busyKey, 'refresh', false)}
                 onClick={() =>
                   reload().catch(err =>
-                    showError(errorText(err, 'Could not refresh AD CS issuers.'))
+                    showError(
+                      errorText(err, 'Could not refresh AD CS issuers.')
+                    )
                   )
                 }
               >
@@ -1221,7 +1232,9 @@ export default function CertOpsAdcs() {
                   size='sm'
                   mb={3}
                   isChecked={showRejectedIssuers}
-                  onChange={event => setShowRejectedIssuers(event.target.checked)}
+                  onChange={event =>
+                    setShowRejectedIssuers(event.target.checked)
+                  }
                 >
                   {`Show ${rejectedIssuers.length} unsafe ${rejectedIssuers.length === 1 ? 'issuer' : 'issuers'}`}
                 </Checkbox>

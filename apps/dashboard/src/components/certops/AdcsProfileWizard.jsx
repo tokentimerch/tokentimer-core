@@ -27,10 +27,7 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { listAgents } from './certopsAgentsApi';
-import {
-  listCertificates,
-  replaceManagingSource,
-} from './certopsApi';
+import { listCertificates, replaceManagingSource } from './certopsApi';
 import { createAdcsRenewalProfile } from './certopsRenewalApi';
 import { sourceLabel } from './certopsFormat.js';
 import AdcsDocsLink from './AdcsDocsLink.jsx';
@@ -44,7 +41,14 @@ function errorText(err, fallback) {
 }
 
 function sameDns(left, right) {
-  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+  return (
+    String(left || '')
+      .trim()
+      .toLowerCase() ===
+    String(right || '')
+      .trim()
+      .toLowerCase()
+  );
 }
 
 function confirmedIssuers(issuers) {
@@ -63,11 +67,19 @@ function namesOf(value) {
 }
 
 function certificateUsesName(certificate, dnsName) {
-  if (sameDns(certificate?.commonName, dnsName) || sameDns(certificate?.name, dnsName)) {
+  if (
+    sameDns(certificate?.commonName, dnsName) ||
+    sameDns(certificate?.name, dnsName)
+  ) {
     return true;
   }
-  if (namesOf(certificate?.subjectAltNames).some(name => sameDns(name, dnsName))) return true;
-  const sources = Array.isArray(certificate?.sources) ? certificate.sources : [];
+  if (
+    namesOf(certificate?.subjectAltNames).some(name => sameDns(name, dnsName))
+  )
+    return true;
+  const sources = Array.isArray(certificate?.sources)
+    ? certificate.sources
+    : [];
   return sources.some(
     source =>
       sameDns(source?.commonName, dnsName) ||
@@ -91,7 +103,12 @@ function extraDnsNames(value, reference) {
   const names = [];
   for (const part of String(value || '').split(/[\s,]+/)) {
     const host = part.trim();
-    if (!host || sameDns(host, reference) || names.some(name => sameDns(name, host))) continue;
+    if (
+      !host ||
+      sameDns(host, reference) ||
+      names.some(name => sameDns(name, host))
+    )
+      continue;
     names.push(host);
   }
   return names;
@@ -112,10 +129,17 @@ function targetsForCertificate(certificate) {
     const latest = new Map();
     const openIds = new Set();
     for (const source of sources) {
-      if (!source?.managedCertificateId || !sourceIsThisCertificate(certificate, source)) continue;
+      if (
+        !source?.managedCertificateId ||
+        !sourceIsThisCertificate(certificate, source)
+      )
+        continue;
       if (!source.periodEndedAt) openIds.add(source.managedCertificateId);
       const previous = latest.get(source.managedCertificateId);
-      if (!previous || new Date(source.startedAt) > new Date(previous.startedAt)) {
+      if (
+        !previous ||
+        new Date(source.startedAt) > new Date(previous.startedAt)
+      ) {
         latest.set(source.managedCertificateId, source);
       }
     }
@@ -259,7 +283,9 @@ export default function AdcsProfileWizard({
         if (cancelled) return;
         const next = targetsForName(page.items || [], reference.trim());
         setTargets(next);
-        setSelectedId(next.find(target => target.canAttach)?.managedCertificateId || '');
+        setSelectedId(
+          next.find(target => target.canAttach)?.managedCertificateId || ''
+        );
       })
       .catch(() => {
         if (cancelled) return;
@@ -282,7 +308,9 @@ export default function AdcsProfileWizard({
   );
   const attachable = targets.filter(target => target.canAttach);
   const blocked = targets.filter(target => !target.canAttach);
-  const selected = attachable.find(target => target.managedCertificateId === selectedId) || null;
+  const selected =
+    attachable.find(target => target.managedCertificateId === selectedId) ||
+    null;
   const dnsName = reference.trim();
 
   async function handleCreate() {
@@ -342,7 +370,8 @@ export default function AdcsProfileWizard({
         // The server runs stop and start in one transaction, so a refusal
         // leaves the certificate exactly as it was.
         setLocalError(
-          errorText(err, 'Could not attach the profile.') + ' Nothing changed; the certificate is still managed as before.'
+          errorText(err, 'Could not attach the profile.') +
+            ' Nothing changed; the certificate is still managed as before.'
         );
       }
     } finally {
@@ -377,7 +406,11 @@ export default function AdcsProfileWizard({
               {STEPS.map((label, index) => (
                 <Text
                   key={label}
-                  fontWeight={index === Math.min(step, STEPS.length - 1) ? 'semibold' : 'normal'}
+                  fontWeight={
+                    index === Math.min(step, STEPS.length - 1)
+                      ? 'semibold'
+                      : 'normal'
+                  }
                 >
                   {index + 1}. {label}
                 </Text>
@@ -393,8 +426,9 @@ export default function AdcsProfileWizard({
               <Alert status='warning' borderRadius='md'>
                 <AlertIcon />
                 <AlertDescription fontSize='sm'>
-                  No AD CS issuer has a chosen CA certificate yet. Open AD CS issuers,
-                  use New issuer, and finish the check before creating a profile.
+                  No AD CS issuer has a chosen CA certificate yet. Open AD CS
+                  issuers, use New issuer, and finish the check before creating
+                  a profile.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -427,8 +461,8 @@ export default function AdcsProfileWizard({
                   </Select>
                   <FormHelperText>
                     Only issuers with a pinned CA certificate are listed. The
-                    template stays on that issuer. This profile does not choose a
-                    new one.
+                    template stays on that issuer. This profile does not choose
+                    a new one.
                   </FormHelperText>
                   <AdcsDocsLink href={ADCS_DOCS.renewalProfile}>
                     What a renewal profile records
@@ -448,9 +482,10 @@ export default function AdcsProfileWizard({
                     onChange={event => setReference(event.target.value)}
                   />
                   <FormHelperText>
-                    This becomes the certificate common name. An active agent must
-                    already declare this DNS name as a target selector, or the
-                    renewal sweep skips it and does not create an enrollment.
+                    This becomes the certificate common name. An active agent
+                    must already declare this DNS name as a target selector, or
+                    the renewal sweep skips it and does not create an
+                    enrollment.
                   </FormHelperText>
                   <AdcsDocsLink href={ADCS_DOCS.renewalProfile}>
                     Renewal profile
@@ -495,7 +530,9 @@ export default function AdcsProfileWizard({
                     />
                   </FormControl>
                   <FormControl isRequired>
-                    <FormLabel {...modal.labelProps}>Certificate store</FormLabel>
+                    <FormLabel {...modal.labelProps}>
+                      Certificate store
+                    </FormLabel>
                     <Input
                       {...modal.fieldProps}
                       aria-label='Certificate store'
@@ -529,17 +566,20 @@ export default function AdcsProfileWizard({
                       value={keySize}
                       onChange={event => setKeySize(event.target.value)}
                     >
-                      {(keyAlgorithm === 'rsa' ? ['2048', '3072', '4096'] : ['256', '384']).map(
-                        size => (
-                          <option key={size} value={size}>
-                            {size}
-                          </option>
-                        )
-                      )}
+                      {(keyAlgorithm === 'rsa'
+                        ? ['2048', '3072', '4096']
+                        : ['256', '384']
+                      ).map(size => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
                     </Select>
                   </FormControl>
                   <FormControl isRequired>
-                    <FormLabel {...modal.labelProps}>Lead time (days)</FormLabel>
+                    <FormLabel {...modal.labelProps}>
+                      Lead time (days)
+                    </FormLabel>
                     <Input
                       {...modal.fieldProps}
                       aria-label='Lead time'
@@ -553,18 +593,19 @@ export default function AdcsProfileWizard({
             {step === 2 ? (
               <Stack spacing={3}>
                 <Text fontSize='sm'>
-                  {name.trim()} enrolls {dnsName} from the selected issuer into {site.trim()} on
-                  port {port}, store {store.trim()}. The next step attaches this profile to a
-                  certificate already in inventory and turns automation on.
+                  {name.trim()} enrolls {dnsName} from the selected issuer into{' '}
+                  {site.trim()} on port {port}, store {store.trim()}. The next
+                  step attaches this profile to a certificate already in
+                  inventory and turns automation on.
                 </Text>
                 {declaringAgents.length === 0 ? (
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      No active agent declares {dnsName || 'this name'} as a target.
-                      Add it to that agent's declared target selectors and restart
-                      the agent. The next heartbeat publishes the name. Until then
-                      the renewal sweep skips this certificate.
+                      No active agent declares {dnsName || 'this name'} as a
+                      target. Add it to that agent's declared target selectors
+                      and restart the agent. The next heartbeat publishes the
+                      name. Until then the renewal sweep skips this certificate.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -581,7 +622,10 @@ export default function AdcsProfileWizard({
             ) : null}
             {step === 3 ? (
               <Stack spacing={3}>
-                <Alert status={created?.agentDeclaresName ? 'success' : 'warning'} borderRadius='md'>
+                <Alert
+                  status={created?.agentDeclaresName ? 'success' : 'warning'}
+                  borderRadius='md'
+                >
                   <AlertIcon />
                   <AlertDescription fontSize='sm'>
                     {created?.agentDeclaresName
@@ -590,14 +634,17 @@ export default function AdcsProfileWizard({
                   </AlertDescription>
                 </Alert>
                 {matchesLoading ? (
-                  <Text fontSize='sm'>Looking for {dnsName} in Certificates.</Text>
+                  <Text fontSize='sm'>
+                    Looking for {dnsName} in Certificates.
+                  </Text>
                 ) : null}
                 {!matchesLoading && lookupFailed ? (
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      Could not check Certificates for {dnsName}. Open Certificates later,
-                      open that certificate, and start managing it again with this profile.
+                      Could not check Certificates for {dnsName}. Open
+                      Certificates later, open that certificate, and start
+                      managing it again with this profile.
                       {` ${sweepSentence(dnsName, leadTime)}`}
                     </AlertDescription>
                   </Alert>
@@ -606,10 +653,12 @@ export default function AdcsProfileWizard({
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      No certificate in inventory uses {dnsName}. This wizard does not create
-                      one. Open Certificates later, open that certificate, and start managing
-                      it again with this profile. Do not attach a different certificate.
-                      That leaves the other name in inventory. {sweepSentence(dnsName, leadTime)}
+                      No certificate in inventory uses {dnsName}. This wizard
+                      does not create one. Open Certificates later, open that
+                      certificate, and start managing it again with this
+                      profile. Do not attach a different certificate. That
+                      leaves the other name in inventory.{' '}
+                      {sweepSentence(dnsName, leadTime)}
                     </AlertDescription>
                   </Alert>
                 ) : null}
@@ -617,9 +666,10 @@ export default function AdcsProfileWizard({
                   <Alert status='warning' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      {blocked[0].label} is already managed, and this screen cannot change
-                      that registration. Open it in Certificates, stop managing, then start
-                      managing again and choose this profile. {sweepSentence(dnsName, leadTime)}
+                      {blocked[0].label} is already managed, and this screen
+                      cannot change that registration. Open it in Certificates,
+                      stop managing, then start managing again and choose this
+                      profile. {sweepSentence(dnsName, leadTime)}
                     </AlertDescription>
                   </Alert>
                 ) : null}
@@ -635,7 +685,10 @@ export default function AdcsProfileWizard({
                           onChange={event => setSelectedId(event.target.value)}
                         >
                           {attachable.map(target => (
-                            <option key={target.managedCertificateId} value={target.managedCertificateId}>
+                            <option
+                              key={target.managedCertificateId}
+                              value={target.managedCertificateId}
+                            >
                               {target.label}
                             </option>
                           ))}
@@ -650,19 +703,22 @@ export default function AdcsProfileWizard({
                     )}
                     {attachable.length > 1 && selected?.open ? (
                       <Text fontSize='sm'>
-                        This certificate is already managed. Attaching stops that period and
-                        starts a new one with this profile and automation on. Earlier periods
-                        stay in history.
+                        This certificate is already managed. Attaching stops
+                        that period and starts a new one with this profile and
+                        automation on. Earlier periods stay in history.
                       </Text>
                     ) : null}
-                    <Text fontSize='sm'>{sweepSentence(dnsName, leadTime)}</Text>
+                    <Text fontSize='sm'>
+                      {sweepSentence(dnsName, leadTime)}
+                    </Text>
                   </Stack>
                 ) : null}
                 {attached ? (
                   <Alert status='success' borderRadius='md'>
                     <AlertIcon />
                     <AlertDescription fontSize='sm'>
-                      Automatic renewal is on for {attached.label}. {sweepSentence(dnsName, leadTime)}
+                      Automatic renewal is on for {attached.label}.{' '}
+                      {sweepSentence(dnsName, leadTime)}
                     </AlertDescription>
                   </Alert>
                 ) : null}
@@ -696,7 +752,11 @@ export default function AdcsProfileWizard({
             </Button>
           ) : null}
           {step === 2 ? (
-            <Button {...modal.primaryButtonProps} isLoading={busy} onClick={handleCreate}>
+            <Button
+              {...modal.primaryButtonProps}
+              isLoading={busy}
+              onClick={handleCreate}
+            >
               Create profile
             </Button>
           ) : null}
