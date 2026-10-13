@@ -3,8 +3,7 @@
 Last reviewed: 2026-10-13. Dropped the optional already-expired-import
 notification ask ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
 quiet historical imports stay the default without a toggle. The AD CS
-issuer is implemented on the Windows agent but disabled in released builds
-until its capability is qualified.
+issuer and enrollment surface target **0.18.0**.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -80,10 +79,10 @@ called stable while it is open.
   ([#343](https://github.com/tokentimerch/tokentimer-core/pull/343)) and
   control-plane enrollment records, continuation scheduling, and issuer
   preflight ([#345](https://github.com/tokentimerch/tokentimer-core/pull/345))
-  are on `main`. `adcs` stays disabled in released agent builds until the
-  `adcs-enroll-v1` capability is qualified on real Windows hosts. Where it
-  is enabled, the agent contacts a CA only when a local enrollment rule
-  names that CA and template.
+  are on `main`. Operator UI and enrollment completion target **0.18.0**
+  (`feat/adcs-dashboard`). The agent contacts a CA only when a local
+  enrollment rule names that CA and template, and only when it has
+  declared `adcs-enroll-v1`.
 
 ---
 

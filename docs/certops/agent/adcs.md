@@ -2,9 +2,9 @@
 
 The Windows agent can enroll and renew IIS certificates from an enterprise Active Directory Certificate Services CA. The service runs as `LocalSystem` and authenticates as the computer account. The private key stays on the host. TokenTimer does not store CA credentials.
 
-A job with issuer kind `adcs` enrolls only when a local enrollment rule names that exact CA and template. Creating an issuer, or selecting it on a profile, does not issue a certificate by itself. See [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md).
+A job with issuer kind `adcs` enrolls only when a local enrollment rule names that exact CA and template, a confirmed pin and fresh preflight exist on the enrolling agent, and that agent has declared `adcs-enroll-v1`. Creating an issuer, or selecting it on a profile, does not issue a certificate by itself. See [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md).
 
-Cloud Pro and Team, and the Enterprise dashboard, include this issuer. Enrollment runs when the Windows agent accepts issuer kind `adcs`. The CA stays on the customer network. Neither product stores CA credentials.
+Cloud Pro and Team, and the Enterprise dashboard, include this issuer under **Renewals**. The CA stays on the customer network. Neither product stores CA credentials.
 
 Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DCOM. Put AD CS enrollment on a domain-joined Windows agent, or keep an [ACME gateway in front of AD CS](dns-and-acme.md#acme-gateway-in-front-of-ad-cs).
 
@@ -115,6 +115,24 @@ An active agent must already declare the certificate name as a target selector. 
 
 The renewal sweep enrolls when that certificate is inside the lead time, automation is on, and an agent that declares the name is active. Creating the profile does not enroll immediately. If certificate operations are paused for the workspace, the sweep creates no renewal.
 
+## Operator states
+
+| State | Meaning | Operator action |
+|---|---|---|
+| Issuer configuration | An AD CS issuer exists with CA config and template under **Renewals → AD CS issuers**. | Complete CA/template preflight and pin a CA certificate before **New AD CS profile** can select it. This alone does not enroll. |
+| CA/template preflight | The chosen agent ran **Run check** for that CA config and template. Verdicts and CA certificates are stored for that agent. | Fix unsafe template or CA flags, or add the matching enrollment rule, then run the check again on the agent that will enroll. |
+| Confirmed CA public-key pin | You chose **Use this certificate** on a safe check. Enrollment accepts only that pin. | After a CA key change, run the check again and pin the new certificate. Same-key CA renewals need no action. |
+| Agent readiness | A domain-joined Windows agent is online, has the enrollment rule, declares the certificate DNS name, and can reach the CA. | Join the domain, install the agent, grant Enroll, add the rule and target selector, restart `TokenTimerAgent`. |
+| Preflight freshness (24h) | A safe preflight older than 24 hours is not usable for renewal start or cached pin reuse. | Run **Run check** again on the enrolling agent. Dashboard may show **Waiting for CA check**. |
+| Enrollment eligibility | Renewal can create an enrollment when the profile is attached, automation is on, lead time applies, preflight is fresh and pinned, and an agent declares a fresh `adcs-enroll-v1`. | Confirm the agent is online, heartbeating, and declares `adcs-enroll-v1`. Issuer or profile setup alone does not start enrollment. |
+| Pending CA approval | Dashboard **Awaiting CA approval**: the CA accepted the request and holds it. Polled about every 15 minutes; not resubmitted. | Approve or deny on the CA. The 14-day limit starts when the CA accepts the request. |
+| Submission uncertainty | Dashboard **Submission uncertain** (`ADCS_DISPOSITION_UNKNOWN`): submit started without a trustworthy result. | Reconcile with the CA RequestId, or **Abandon** then **Free the key**. Do not resubmit. |
+| Validation deferral | Dashboard **Validation deferred**: certificate issued but CRL/OCSP was unreachable to the agent service account. Nothing installed yet. | Restore revocation reachability for the computer account. After 24 hours the enrollment expires and the key is removed. |
+| Capacity deferral | Certificate row shows **At CA capacity**: this CA already has as many renewals in flight as it allows. | Wait; it continues when an earlier renewal for that CA finishes. A job waiting on approval may still need attention. |
+| Deployment completion | Enrollment reached **Installed**: certificate validated, accepted into the store, IIS binding updated, and verify passed. | Confirm the site serves the new certificate. No further enrollment action unless a later renewal is due. |
+| **Waiting for CA check** | Renewal-path badge: path is unavailable because a fresh CA check is required (`waiting_for_fresh_preflight`). | Open the issuer under **Renewals → AD CS issuers**, pick the enrolling agent, **Run check**, and pin if needed. |
+| **No AD CS support** | Pending-job label: no candidate agent has a fresh `adcs-enroll-v1` declaration (`adcs_enroll_capability_unavailable`). | Upgrade to a Windows agent build that declares `adcs-enroll-v1`, keep it online, and confirm a recent heartbeat. |
+
 ## Pending approval
 
 A request the CA accepts and holds shows **Awaiting CA approval**, with the RequestId. The enrollment is checked again about every 15 minutes. Nothing is resubmitted while it is pending. Approve or deny it on the CA.
@@ -172,4 +190,4 @@ Any other result after submit has started is uncertain. Do not resubmit it.
 
 ## Related
 
-[Install on Windows](install-windows.md) · [DNS and ACME](dns-and-acme.md) · [Windows runtime](windows-runtime.md) · [Certificate details](../certificate-details.md) · [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md)
+[Current state index](../CURRENT_STATE.md) · [Install on Windows](install-windows.md) · [DNS and ACME](dns-and-acme.md) · [Windows runtime](windows-runtime.md) · [Certificate details](../certificate-details.md) · [ADR-0014](../../adr/0014-certops-adcs-issuer-and-async-enrollment.md)
