@@ -27,7 +27,7 @@ const {
   validateRenewalProfile,
 } = require("./renewalProfile");
 const { computeAgentCompatibility } = require("./agentRegistry");
-const { validateAdcsRenewalProfile } = require("./renewalProfileAdmin");
+const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   ADCS_ENROLL_CAPABILITY_REASON,
   explainAgentJobEligibility,

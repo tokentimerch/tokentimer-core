@@ -57,6 +57,7 @@ const {
 } = require("./renewalCapacity");
 const { writeAudit } = require("../audit");
 const { createEnrollment } = require("./certificateEnrollments");
+const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
   ADCS_PREFLIGHT_MAX_AGE_MS,
 } = require("../../../../packages/contracts/certops/adcs-preflight-freshness.cjs");
@@ -377,38 +378,17 @@ function incompleteRenewalProfile(message) {
   return error;
 }
 
+// Same rules the profile write path and renewal health apply.
 function adcsFieldsFromProfile(certificate) {
-  const profile = certificate.profile_public_metadata?.renewalProfile;
-  const target = profile?.target;
-  const binding = target?.binding;
-  if (
-    !target ||
-    target.type !== "windows-iis" ||
-    typeof target.reference !== "string" ||
-    typeof target.store !== "string" ||
-    !binding ||
-    typeof binding.site !== "string" ||
-    !Number.isInteger(binding.port)
-  ) {
-    throw incompleteRenewalProfile(
-      "AD CS renewal profile needs a windows-iis target with store and binding",
-    );
-  }
-  const sans = profile.sanPolicy?.sans;
-  if (!Array.isArray(sans) || sans.length === 0 || !sans.includes(target.reference)) {
-    throw incompleteRenewalProfile(
-      "AD CS renewal profile names must include the certificate name",
-    );
-  }
-  if (profile.keyAlgorithm !== "rsa" && profile.keyAlgorithm !== "ecdsa") {
-    throw incompleteRenewalProfile("AD CS renewal profile key algorithm is missing");
-  }
-  if (!Number.isInteger(profile.keySize)) {
-    throw incompleteRenewalProfile("AD CS renewal profile key size is missing");
+  let profile;
+  try {
+    profile = validateAdcsRenewalProfile(certificate.profile_public_metadata?.renewalProfile);
+  } catch (error) {
+    throw incompleteRenewalProfile(error.message);
   }
   return {
-    target,
-    authorizedDnsNames: sans,
+    target: profile.target,
+    authorizedDnsNames: profile.sanPolicy.sans,
     keyAlgorithm: profile.keyAlgorithm,
     keySize: profile.keySize,
   };
