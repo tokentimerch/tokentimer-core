@@ -439,7 +439,9 @@ function createEnrollment({
   });
 }
 
-async function loadEnrollment(db, workspaceId, enrollmentId) {
+// lock: false | true (wait for the row) | "skip" (return null if another tx holds it).
+async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = {}) {
+  const lockClause = lock === "skip" ? "FOR UPDATE OF e SKIP LOCKED" : lock ? "FOR UPDATE OF e" : "";
   const result = await db.query(
     `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
@@ -448,7 +450,8 @@ async function loadEnrollment(db, workspaceId, enrollmentId) {
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
          ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
-      WHERE e.workspace_id = $1 AND e.id = $2`,
+      WHERE e.workspace_id = $1 AND e.id = $2
+      ${lockClause}`,
     [workspaceId, enrollmentId],
   );
   return result.rows[0] || null;
@@ -511,7 +514,13 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
   if (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR) {
     nextAt = nextPollAt(new Date(), pollSeconds);
   }
-  if (enrollmentResult.state === "submission_uncertain") nextAt = null;
+  // A poll date left over from an earlier pending attempt must not survive a
+  // terminal result, or every maintenance sweep keeps selecting the row.
+  const keepsPolling =
+    enrollmentResult.state === "pending_issuance" ||
+    enrollmentResult.state === "validation_deferred" ||
+    (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR);
+  if (!keepsPolling) nextAt = null;
   await db.query(
     `UPDATE certificate_enrollments
         SET state = $3,
@@ -678,39 +687,52 @@ async function cancelEnrollment({
   audit = writeAudit,
 }) {
   const db = dbOf(client);
-  const row = await loadEnrollment(db, workspaceId, enrollmentId);
-  if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
-  if (RUNNING_JOB.has(row.job_status)) {
-    throw serviceError(
-      "an attempt is still running on the agent",
-      "CERTOPS_ENROLLMENT_JOB_ACTIVE",
+  // Lock the enrollment, then its current job, so a concurrent claim or
+  // scheduler tick either finishes first (and cancel sees its job) or waits.
+  await withTransaction(db, async (tx) => {
+    const row = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+    if (row.current_job_id) {
+      const job = await tx.query(
+        `SELECT status FROM certificate_jobs
+          WHERE workspace_id = $1 AND id = $2
+          FOR UPDATE`,
+        [workspaceId, row.current_job_id],
+      );
+      row.job_status = job.rows[0]?.status ?? row.job_status;
+    }
+    if (RUNNING_JOB.has(row.job_status)) {
+      throw serviceError(
+        "an attempt is still running on the agent",
+        "CERTOPS_ENROLLMENT_JOB_ACTIVE",
+      );
+    }
+    assertDirectTransition(row.state, "cancelled");
+    const beforeCa = row.state === "requested" || row.state === "prepared";
+    await tx.query(
+      `UPDATE certificate_enrollments
+          SET state = 'cancelled', next_poll_at = $3, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, enrollmentId, beforeCa ? null : new Date()],
     );
-  }
-  assertDirectTransition(row.state, "cancelled");
-  const beforeCa = row.state === "requested" || row.state === "prepared";
-  await db.query(
-    `UPDATE certificate_enrollments
-        SET state = 'cancelled', next_poll_at = $3, updated_at = NOW()
-      WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, enrollmentId, beforeCa ? null : new Date()],
-  );
-  if (row.current_job_id && UNSTARTED_JOB.has(row.job_status)) {
-    await db.query(
-      `UPDATE certificate_jobs
-          SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
-        WHERE workspace_id = $1 AND id = $2
-          AND status IN ('pending', 'pending_approval', 'approved')`,
-      [workspaceId, row.current_job_id],
-    );
-  }
-  await audit({
-    client: db,
-    actorUserId: actorUserId || null,
-    subjectUserId: actorUserId || null,
-    action: "certops.enrollment.cancelled",
-    targetType: "certificate_enrollment",
-    workspaceId,
-    metadata: { enrollmentId },
+    if (row.current_job_id && UNSTARTED_JOB.has(row.job_status)) {
+      await tx.query(
+        `UPDATE certificate_jobs
+            SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2
+            AND status IN ('pending', 'pending_approval', 'approved')`,
+        [workspaceId, row.current_job_id],
+      );
+    }
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "certops.enrollment.cancelled",
+      targetType: "certificate_enrollment",
+      workspaceId,
+      metadata: { enrollmentId },
+    });
   });
 }
 
@@ -783,36 +805,37 @@ async function claimDueEnrollment(db, workspaceId, enrollmentId, now) {
 async function scheduleDueEnrollments({ client, now = new Date(), createJob = createCertificateJob }) {
   const db = dbOf(client);
   const due = await db.query(
-    `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
-            e.operator_request_id, e.pending_since, e.next_poll_at, e.last_error_code,
-            e.certificate_id, e.agent_id, e.current_job_id, e.deploy_target,
-            j.status AS job_status
+    `SELECT e.workspace_id, e.id
        FROM certificate_enrollments e
-       LEFT JOIN certificate_jobs j
-         ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
-      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1
-      FOR UPDATE OF e SKIP LOCKED`,
+      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1`,
     [now],
   );
   const created = [];
-  for (const row of due.rows) {
-    const view = enrollmentView(row);
-    const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
-    const decision = decideContinuation(view, snapshot, now);
-    if (!decision) continue;
-    if (!decision.dispatch && decision.state !== "expired") continue;
-    const target = row.deploy_target;
-    if (!target || target.type !== "windows-iis") {
-      throw serviceError(
-        "enrollment is missing its IIS deployment target",
-        "CERTOPS_SNAPSHOT_INVALID",
-      );
-    }
-    const dispatched = await inTransaction(db, async () => {
-      const claimed = await claimDueEnrollment(db, row.workspace_id, row.id, now);
+  // The candidate list is only a hint. Each row is locked and re-decided
+  // inside its own transaction, so a cancel or claim that committed after the
+  // list was read wins.
+  for (const candidate of due.rows) {
+    const dispatched = await withTransaction(db, async (tx) => {
+      const row = await loadEnrollment(tx, candidate.workspace_id, candidate.id, {
+        lock: "skip",
+      });
+      if (!row) return null;
+      const view = enrollmentView(row);
+      const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
+      const decision = decideContinuation(view, snapshot, now);
+      if (!decision) return null;
+      if (!decision.dispatch && decision.state !== "expired") return null;
+      const target = row.deploy_target;
+      if (!target || target.type !== "windows-iis") {
+        throw serviceError(
+          "enrollment is missing its IIS deployment target",
+          "CERTOPS_SNAPSHOT_INVALID",
+        );
+      }
+      const claimed = await claimDueEnrollment(tx, row.workspace_id, row.id, now);
       if (!claimed) return null;
       if (decision.state === "expired") {
-        await db.query(
+        await tx.query(
           `UPDATE certificate_enrollments
               SET state = 'expired', updated_at = NOW()
             WHERE workspace_id = $1 AND id = $2`,
@@ -831,7 +854,7 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         metadata: reconcileMetadata,
       });
       const job = await createJob({
-        client: db,
+        client: tx,
         workspaceId: row.workspace_id,
         operation: "continue-enrollment",
         allowEnrollmentContinuation: true,
@@ -841,7 +864,7 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         payload,
         enrollmentId: row.id,
       });
-      await db.query(
+      await tx.query(
         `UPDATE certificate_enrollments
             SET attempt = $3, current_job_id = $4, updated_at = NOW()
           WHERE workspace_id = $1 AND id = $2`,

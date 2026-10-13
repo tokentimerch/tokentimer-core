@@ -301,6 +301,7 @@ function createUpdatePool({
   auditFails = false,
   captured = {},
   issuers = [],
+  issuerRow = null,
 } = {}) {
   captured.queries = [];
   captured.audits = [];
@@ -318,6 +319,9 @@ function createUpdatePool({
       }
       if (normalized.startsWith("SELECT id FROM certificate_issuers")) {
         return { rows: issuers.includes(params[1]) ? [{ id: params[1] }] : [] };
+      }
+      if (normalized.startsWith("SELECT i.kind")) {
+        return { rows: issuerRow ? [issuerRow] : [] };
       }
       return { rows: [] };
     },
@@ -1087,5 +1091,81 @@ describe("CertOps upcoming renewals coverage", () => {
     );
 
     assert.equal(item.deferredReason, "ca_capacity");
+  });
+});
+
+describe("CertOps renewal-profile AD CS issuer compatibility", () => {
+  const ISSUER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const PROFILE_ID = "11111111-0000-4000-8000-000000000001";
+  const adcsIssuer = { kind: "adcs", revalidation_required: false, ca_key_sha256: "ab".repeat(32) };
+  const adcsTarget = {
+    type: "windows-iis",
+    reference: "iis-01/webhosting",
+    store: "WebHosting",
+    binding: { site: "Shop", port: 443 },
+  };
+
+  it("refuses to move an ACME-shaped profile onto an AD CS issuer", async () => {
+    const pool = createUpdatePool({
+      row: profileRow(),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        issuerId: ISSUER_ID,
+        actorUserId: 7,
+        auditWriter: pool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE" },
+    );
+    assert.equal(
+      pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")),
+      false,
+      "a refused issuer change must not reach the write",
+    );
+  });
+
+  it("accepts an AD CS issuer when the profile carries a Windows/IIS target", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: { renewalProfile: storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] }) },
+      }),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await updateRenewalProfile({
+      dbPool: pool,
+      workspaceId: "ws-1",
+      profileId: PROFILE_ID,
+      issuerId: ISSUER_ID,
+      actorUserId: 7,
+      auditWriter: pool.auditWriter,
+    });
+    assert.ok(pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")));
+  });
+
+  it("refuses an AD CS issuer that still needs revalidation", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: { renewalProfile: storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] }) },
+      }),
+      issuers: [ISSUER_ID],
+      issuerRow: { ...adcsIssuer, revalidation_required: true },
+    });
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        issuerId: ISSUER_ID,
+        actorUserId: 7,
+        auditWriter: pool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE" },
+    );
   });
 });

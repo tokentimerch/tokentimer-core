@@ -10,6 +10,7 @@ const { runMigrations } = requireMigrateModule();
 const { pool } = require("../../apps/api/db/database");
 const {
   abandonEnrollment,
+  cancelEnrollment,
   confirmIssuerKey,
   createEnrollment,
   dispatchPreflight,
@@ -247,6 +248,57 @@ describe("CertOps AD CS enrollments (real database)", function () {
     const created = [...first, ...second].filter((row) => row.enrollmentId === id);
     expect(created).to.have.length(1);
     expect(calls).to.equal(1);
+  });
+
+  it("leaves a due enrollment alone while another transaction holds its row lock", async () => {
+    await assertNoForeignDueRows();
+    const id = await insertEnrollment("pending_issuance", {
+      nextPollAt: new Date(Date.now() - 1000),
+    });
+    const holder = await pool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query(
+        "SELECT id FROM certificate_enrollments WHERE workspace_id = $1 AND id = $2 FOR UPDATE",
+        [workspaceId, id],
+      );
+      const created = await scheduleDueEnrollments({ client: pool, now: new Date() });
+      expect(created.filter((c) => c.enrollmentId === id)).to.have.length(0);
+      await holder.query("ROLLBACK");
+    } finally {
+      holder.release();
+    }
+    const after = await TestUtils.execQuery(
+      "SELECT state, current_job_id FROM certificate_enrollments WHERE id = $1",
+      [id],
+    );
+    expect(after.rows[0].state).to.equal("pending_issuance");
+    expect(after.rows[0].current_job_id).to.equal(null);
+    await TestUtils.execQuery("UPDATE certificate_enrollments SET next_poll_at = NULL WHERE id = $1", [id]);
+  });
+
+  it("cancels the continuation job the scheduler created for a cancelled enrollment", async () => {
+    await assertNoForeignDueRows();
+    const id = await insertEnrollment("pending_issuance", {
+      nextPollAt: new Date(Date.now() - 1000),
+    });
+    const created = await scheduleDueEnrollments({ client: pool, now: new Date() });
+    const dispatched = created.find((c) => c.enrollmentId === id);
+    expect(dispatched).to.exist;
+
+    await cancelEnrollment({ client: pool, workspaceId, enrollmentId: id, actorUserId: ownerId });
+
+    const enrollment = await TestUtils.execQuery(
+      "SELECT state FROM certificate_enrollments WHERE id = $1",
+      [id],
+    );
+    const job = await TestUtils.execQuery(
+      "SELECT status FROM certificate_jobs WHERE id = $1",
+      [dispatched.jobId],
+    );
+    expect(enrollment.rows[0].state).to.equal("cancelled");
+    expect(job.rows[0].status).to.equal("cancelled");
+    await TestUtils.execQuery("UPDATE certificate_enrollments SET next_poll_at = NULL WHERE id = $1", [id]);
   });
 
   it("rolls back an issuer version when confirmation does not finish", async () => {

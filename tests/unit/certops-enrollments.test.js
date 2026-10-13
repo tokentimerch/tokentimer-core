@@ -263,12 +263,16 @@ function rowDb() {
       if (text.includes("operation = 'adcs-preflight'") && text.includes("count")) {
         return { rows: [{ n: preflightCount }] };
       }
-      if (text.includes("FROM certificate_enrollments e") && text.includes("FOR UPDATE OF e SKIP LOCKED")) {
+      if (text.includes("SELECT e.workspace_id, e.id") && text.includes("e.next_poll_at <= $1")) {
         const now = params[0];
-        const rows = [...enrollments.values()].filter(
-          (row) => row.next_poll_at && row.next_poll_at.getTime() <= now.getTime(),
-        );
+        const rows = [...enrollments.values()]
+          .filter((row) => row.next_poll_at && row.next_poll_at.getTime() <= now.getTime())
+          .map((row) => ({ workspace_id: row.workspace_id, id: row.id }));
         return { rows };
+      }
+      if (text.startsWith("SELECT status FROM certificate_jobs")) {
+        const row = [...enrollments.values()].find((r) => r.current_job_id === params[1]);
+        return { rows: row ? [{ status: row.job_status }] : [] };
       }
       if (text.includes("FROM certificate_enrollments e")) {
         const row = enrollments.get(params[1]);
@@ -449,6 +453,27 @@ describe("enrollment rows", () => {
     assert.equal(db.enrollments.get(uncertainId).next_poll_at, null);
     assert.equal(db.enrollments.get(installedId).state, "installed");
     assert.ok(db.enrollments.get(deferredId).next_poll_at instanceof Date);
+  });
+
+  it("clears a leftover poll date when a pending attempt ends in a terminal result", async () => {
+    const db = rowDb();
+    const id = ENROLLMENT;
+    const row = storedEnrollment(id, "pending_issuance");
+    row.next_poll_at = new Date(Date.now() + 60_000);
+    db.putEnrollment(row);
+    await recordEnrollmentResult(db, {
+      workspaceId: WORKSPACE,
+      job: { enrollment_id: id },
+      enrollmentResult: {
+        enrollmentId: id,
+        attempt: 1,
+        state: "denied",
+        requestId: 42,
+        caHresult: "0x80094012",
+      },
+    });
+    assert.equal(db.enrollments.get(id).state, "denied");
+    assert.equal(db.enrollments.get(id).next_poll_at, null);
   });
 
   it("keeps the original IIS target on the first continuation", async () => {

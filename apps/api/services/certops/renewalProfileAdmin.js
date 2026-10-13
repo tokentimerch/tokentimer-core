@@ -408,6 +408,47 @@ function applyRenewalProfilePatch(storedProfile, patch) {
  * setWorkspaceCertOpsPauseState: a profile change that alters what runs on a
  * host must not be able to commit without its audit record.
  */
+// An AD CS issuer can only renew a profile that carries a complete Windows/IIS
+// target and a confirmed CA. Checked on edit so Save never leaves automatic
+// renewal on for a profile the scheduler will refuse.
+const CERTOPS_PROFILE_ISSUER_INCOMPATIBLE = "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE";
+
+async function assertIssuerCompatibleWithProfile(client, { workspaceId, issuerId, renewalProfile }) {
+  const result = await client.query(
+    `SELECT i.kind, i.revalidation_required, v.ca_key_sha256
+       FROM certificate_issuers i
+       LEFT JOIN certificate_issuer_versions v
+         ON v.workspace_id = i.workspace_id
+        AND v.issuer_id = i.id
+        AND v.version = i.current_version
+      WHERE i.workspace_id = $1 AND i.id = $2::uuid
+      FOR SHARE OF i`,
+    [workspaceId, issuerId],
+  );
+  const issuer = result.rows[0];
+  if (!issuer || issuer.kind !== "adcs") return;
+  const target = renewalProfile?.target;
+  if (
+    !target ||
+    target.type !== "windows-iis" ||
+    typeof target.reference !== "string" ||
+    typeof target.store !== "string" ||
+    typeof target.binding?.site !== "string" ||
+    !Number.isInteger(target.binding?.port)
+  ) {
+    throw profileError(
+      "This profile has no complete Windows/IIS deployment target, so AD CS cannot renew it. Create an AD CS renewal profile instead.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+  if (issuer.revalidation_required === true || !issuer.ca_key_sha256) {
+    throw profileError(
+      "Confirm a CA certificate on this AD CS issuer before automatic renewal can use it.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+}
+
 async function updateRenewalProfile({
   dbPool = pool,
   workspaceId,
@@ -523,6 +564,14 @@ async function updateRenewalProfile({
         "No supported changes were requested",
         CERTOPS_PROFILE_NO_CHANGES,
       );
+    }
+
+    if (nextIssuerId && (changes.issuerId || changes.renewalProfileFields)) {
+      await assertIssuerCompatibleWithProfile(client, {
+        workspaceId,
+        issuerId: nextIssuerId,
+        renewalProfile: nextMetadata.renewalProfile,
+      });
     }
 
     // The first successful edit takes ownership, which is what makes the edit
