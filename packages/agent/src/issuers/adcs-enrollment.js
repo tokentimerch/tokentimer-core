@@ -359,7 +359,7 @@ function readEnrollmentRequestJournal(stateDir, enrollmentId) {
   }
   const journal = read.journal;
   if (!Number.isInteger(journal.requestId) || journal.requestId < 1) {
-    // prepared/submitting without RequestId yet — not a RequestId journal.
+    // prepared/submitting without RequestId yet: not a RequestId journal.
     return null;
   }
   return journal;

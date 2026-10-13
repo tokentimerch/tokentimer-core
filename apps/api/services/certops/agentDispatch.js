@@ -163,7 +163,7 @@ const RESULT_STATUS_TO_JOB_STATUS = Object.freeze({
  * Takes the *whole* job payload, not payload.target directly, and
  * normalizes it the same defensive way the claim path already does
  * (job.payload is jsonb and normally arrives pre-parsed, but is read here
- * defensively in case it ever arrives as a raw JSON string) — calling
+ * defensively in case it ever arrives as a raw JSON string); calling
  * safeParseJson on an already-parsed object would silently discard it, since
  * safeParseJson only ever parses strings. Returns `{ targetType: null }` for
  * a missing or malformed target rather than throwing, since every call site
@@ -2427,7 +2427,7 @@ async function ingestResult({
           ).slice(0, 1024)
         : null;
 
-    // Only ever SET needs_operator_reconciliation to true here — never clear
+    // Only ever SET needs_operator_reconciliation to true here, never clear
     // an existing true from fencing (clearing is an explicit operator action).
     let setNeedsReconciliation = false;
     let reconciliationReason = null;
