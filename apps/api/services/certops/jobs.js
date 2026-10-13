@@ -234,7 +234,7 @@ const JOB_SOURCES = Object.freeze([
 const JOB_SOURCE_SET = new Set(JOB_SOURCES);
 
 // Immutable at insert: agent claim path only sees 'agent'; controller
-// provisioning delivery only sees 'controller' (B2).
+// provisioning delivery only sees 'controller'.
 const JOB_EXECUTOR_KINDS = Object.freeze(["agent", "controller"]);
 const JOB_EXECUTOR_KIND_SET = new Set(JOB_EXECUTOR_KINDS);
 const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
@@ -1164,7 +1164,7 @@ function normalizeSubject(options, operation) {
 }
 
 /**
- * Resolve the immutable executor lane and the optional B5 routing selectors
+ * Resolve the immutable executor lane and the optional routing selectors
  * for a new job. Controller provisioning source always forces the controller
  * lane; any other source defaults to agent unless the caller overrides.
  */

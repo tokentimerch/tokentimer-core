@@ -11,7 +11,7 @@
  * timestamp, and certificates that already have a non-terminal renew job for
  * the same subject are skipped before any insert is attempted.
  *
- * B1/H6: Before creating a job the scheduler resolves a complete, validated
+ * Before creating a job the scheduler resolves a complete, validated
  * renewal-profile snapshot (target, cert path, SANs, ACME command/profile,
  * DNS provider+zone, key/CA/verification settings) from
  * certificate_profiles.public_metadata.renewalProfile. Certificates lacking
