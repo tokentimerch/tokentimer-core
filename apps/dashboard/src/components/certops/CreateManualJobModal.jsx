@@ -31,7 +31,6 @@ import {
 } from '../DashboardModalFrame.jsx';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import {
-  CERTOPS_JOB_OPERATIONS,
   CERTOPS_SUBJECT_TYPES,
   createJob,
 } from './certopsJobsApi.js';
