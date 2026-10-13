@@ -3080,8 +3080,8 @@ export default function ImportTokensModal({
                     <Alert status='info' borderRadius='md'>
                       <AlertIcon />
                       <Text fontSize='sm'>
-                        Certificate operations are not enabled for this workspace
-                        yet.
+                        Certificate operations are not enabled for this
+                        workspace yet.
                       </Text>
                     </Alert>
                   ) : !certOpsCanManage ? (
