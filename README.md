@@ -4,6 +4,8 @@
 
 <h3 align="center">Know what expires. Control what happens next.</h3>
 
+<p align="center">Open-source visibility and expiration monitoring for machine credentials, certificates, secrets, tokens, licenses, and other expiring assets, with supported certificate lifecycle automation.</p>
+
 <p align="center">
   <a href="https://github.com/tokentimerch?tab=packages&repo_name=tokentimer-core"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftokentimerch%2Ftokentimer-core%2Fbadges%2Fdownloads.json&style=for-the-badge" alt="Package downloads (GHCR images and Helm chart)" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/Open%20Source-AGPL--3.0-16A34A?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="Open Source, AGPL-3.0" /></a>
@@ -51,7 +53,7 @@ TokenTimer is an open-source platform providing unified visibility, expiration m
 
 Three complementary pillars organize the platform:
 
-- **NHI Visibility & Governance:** inventory machine credentials and service accounts, track expiration and review dates, assign owners, and alert responsible teams. Credential rotation remains with your providers and tooling.
+- **NHI Credential Visibility & Ownership:** inventory machine credentials and service accounts, track expiration and review dates, assign owners, and alert responsible teams. Credential rotation remains with your providers and tooling.
 - **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, and coordinate cert-manager or external executors with approvals and audit evidence.
 - **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 

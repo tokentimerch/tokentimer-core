@@ -181,7 +181,7 @@ describe('ExecutorJobsPanel manual job creation', () => {
       screen.getByRole('button', { name: 'Create manual job' })
     ).toBeDisabled();
     expect(
-      screen.getByText(/Certificate operations are paused for this workspace/)
+      screen.getByText(/Certificate Management is paused for this workspace/)
     ).toBeInTheDocument();
   });
 

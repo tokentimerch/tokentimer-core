@@ -68,7 +68,7 @@ const JOB_SOURCE_OPTIONS = [
 ];
 
 const PAUSED_CREATE_REASON =
-  'Certificate operations are paused for this workspace, so new jobs are refused. Resume from the Settings tab first.';
+  'Certificate Management is paused for this workspace, so new jobs are refused. Resume from the Settings tab first.';
 
 // Statuses whose jobs are waiting on an agent claim: while the workspace is
 // paused the control plane stops handing them out, so they sit in place
@@ -350,7 +350,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
             description={
               hasActiveFilters
                 ? 'Clear the filters above to see every job this workspace has recorded.'
-                : 'Jobs appear here once an external executor reports lifecycle events through the Certificate Management executor API.'
+                : 'Jobs appear here once an external executor reports lifecycle events through the certificate executor API.'
             }
             py={6}
           />

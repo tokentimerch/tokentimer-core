@@ -1,6 +1,8 @@
 <a id="certops-machine-apis-executor-and-cert-manager-controller"></a>
 
-# CLM machine APIs (executor and cert-manager controller)
+# Certificate Lifecycle Management (CLM) machine APIs (executor and cert-manager controller)
+
+Certificate Lifecycle Management (CLM) uses the existing CertOps machine API. In code and API references, `certops` paths, `certops:*` token scopes, and `CERTOPS_*` configuration names refer to this same certificate lifecycle capability; use those technical identifiers as documented.
 
 Reference for external systems that report certificate lifecycle events and
 for the customer-side cert-manager controller. These machine transports are separate from the native

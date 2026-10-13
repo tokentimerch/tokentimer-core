@@ -188,8 +188,8 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
     await setPaused(next, reason);
     showSuccess(
       next
-        ? 'Certificate operations paused for this workspace'
-        : 'Certificate operations resumed for this workspace'
+        ? 'Certificate Management paused for this workspace'
+        : 'Certificate Management resumed for this workspace'
     );
     setConfirmOpen(false);
   };
@@ -257,7 +257,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
             <Box flex='1' minW={0}>
               <HStack spacing={2} align='center' flexWrap='wrap'>
                 <Text fontSize='sm' fontWeight='bold'>
-                  Certificate operations are paused for this workspace
+                  Certificate Management is paused for this workspace
                 </Text>
                 <CertOpsBadge colorScheme='red'>Paused</CertOpsBadge>
               </HStack>
@@ -294,7 +294,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
           ) : null}
           <Text fontSize='xs' color={muted} flex='1' noOfLines={1}>
             {resolved
-              ? 'Certificate operations are running for this workspace.'
+              ? 'Certificate Management is running for this workspace.'
               : 'Checking the certificate operations kill switch...'}
           </Text>
           {actionOrNote}

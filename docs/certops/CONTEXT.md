@@ -1,6 +1,6 @@
 # Certificate Lifecycle Management (CLM) domain context
 
-Domain language for Certificate Lifecycle Management (CLM), implemented in the existing `certops` technical namespace. This file lives
+Domain language for Certificate Lifecycle Management (CLM), implemented by the existing CertOps architecture and `certops` technical namespace. Public CLM features therefore use the same API paths, configuration, and agent protocols described in the CertOps technical references. This file lives
 under `docs/certops/` so the whole CertOps doc bundle can be removed or folded
 into core-wide docs when the program graduates. Decisions that shape the code
 live in `docs/adr/`. When a term here and the code disagree, that is a bug in

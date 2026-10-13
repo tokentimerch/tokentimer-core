@@ -209,7 +209,7 @@ export default function ApiTokenModal({
     if (monitorExpiry && createdTokenInfo?.expiresAt && workspaceId) {
       try {
         await tokenAPI.createToken({
-          name: `${createdTokenInfo.name || 'Machine token'} (Certificate Management)`,
+          name: `${createdTokenInfo.name || 'Machine token'} (CertOps)`,
           type: 'api_key',
           category: 'key_secret',
           expiresAt: createdTokenInfo.expiresAt,
@@ -342,7 +342,7 @@ export default function ApiTokenModal({
 
               {certOpsPaused ? (
                 <Text fontSize='xs' color={muted}>
-                  Certificate operations are paused for this workspace, so new
+                  Certificate Management is paused for this workspace, so new
                   machine tokens are refused.
                 </Text>
               ) : null}

@@ -33,7 +33,7 @@ export default function CertOpsRenewals() {
         <Alert status='warning' variant='subtle' borderRadius='md'>
           <AlertIcon boxSize={4} />
           <AlertDescription fontSize='sm'>
-            Certificate operations are paused for this workspace, so no renewal
+            Certificate Management is paused for this workspace, so no renewal
             job is being created regardless of what a profile below says. The
             schedule still shows when each certificate would renew.
           </AlertDescription>
