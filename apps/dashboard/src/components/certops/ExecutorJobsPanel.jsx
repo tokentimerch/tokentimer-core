@@ -350,7 +350,7 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
             description={
               hasActiveFilters
                 ? 'Clear the filters above to see every job this workspace has recorded.'
-                : 'Jobs appear here once an external executor reports lifecycle events through the CertOps executor API.'
+                : 'Jobs appear here once an external executor reports lifecycle events through the Certificate Management executor API.'
             }
             py={6}
           />

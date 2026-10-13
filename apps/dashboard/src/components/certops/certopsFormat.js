@@ -223,7 +223,7 @@ export function renewalDescriptor(renewal) {
         state,
         label: 'Auto-renew on (workspace paused)',
         scheme: 'yellow',
-        help: 'Automatic renewal is configured for this certificate, but CertOps is paused for this workspace, so no renewal will run until it is resumed.',
+        help: 'Automatic renewal is configured for this certificate, but Certificate Management is paused for this workspace, so no renewal will run until it is resumed.',
         isWarning: true,
       };
     }
@@ -539,7 +539,7 @@ export function pickPrimaryCertificate(certificates) {
 }
 
 export const AMBIGUOUS_CERTIFICATE_LINK_MESSAGE =
-  'This asset is linked to multiple certificate identities. Choose a certificate in CertOps to view its details or change its lifecycle.';
+  'This asset is linked to multiple certificate identities. Choose a certificate in Certificate Management to view its details or change its lifecycle.';
 
 /** A token link alone cannot identify a certificate across rotation or imports. */
 export function resolveTokenCertificate(certificates) {

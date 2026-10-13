@@ -301,7 +301,7 @@ function createJobErrorMessage(err) {
     return 'This provisioning request is invalid. Check the cluster, namespace, certificate/secret names, issuer reference, and DNS names.';
   }
   if (code === 'CERTOPS_WORKSPACE_PAUSED') {
-    return 'CertOps is paused for this workspace, so no new job can be created.';
+    return 'Certificate Management is paused for this workspace, so no new job can be created.';
   }
   return err?.response?.data?.error || err?.message || 'Could not create job.';
 }

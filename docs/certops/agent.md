@@ -4,7 +4,7 @@ The agent runs on the host that holds certificate keys. TokenTimer plans and aud
 
 ## Start here
 
-1. Enable CertOps on the control plane and prepare a workspace bootstrap token.
+1. Enable CLM on the control plane and prepare a workspace bootstrap token.
 2. Follow [Install on Linux](agent/install-linux.md) or [Install on Windows](agent/install-windows.md).
 3. Prepare [local policy and configuration](agent/configuration.md), verify a signed dry-run, then opt into real execution.
 

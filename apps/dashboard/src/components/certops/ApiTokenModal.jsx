@@ -209,7 +209,7 @@ export default function ApiTokenModal({
     if (monitorExpiry && createdTokenInfo?.expiresAt && workspaceId) {
       try {
         await tokenAPI.createToken({
-          name: `${createdTokenInfo.name || 'Machine token'} (CertOps)`,
+          name: `${createdTokenInfo.name || 'Machine token'} (Certificate Management)`,
           type: 'api_key',
           category: 'key_secret',
           expiresAt: createdTokenInfo.expiresAt,

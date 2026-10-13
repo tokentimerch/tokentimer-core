@@ -69,7 +69,7 @@ const BLOCKED_REASONS = {
   not_agent_deployable: {
     label: 'No key access',
     tooltip:
-      "No agent holds this certificate's private key, so no agent can renew it. This is typical of a certificate that was only observed from the outside, such as by an endpoint or domain monitor. Renewing it automatically requires issuing it through CertOps.",
+      "No agent holds this certificate's private key, so no agent can renew it. This is typical of a certificate that was only observed from the outside, such as by an endpoint or domain monitor. Renewing it automatically requires issuing it through Certificate Management.",
   },
   unknown_expiry: {
     label: 'No expiry',

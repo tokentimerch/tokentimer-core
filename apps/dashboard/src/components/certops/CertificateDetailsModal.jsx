@@ -488,7 +488,7 @@ export default function CertificateDetailsModal({
                 fontSize='sm'
                 color='blue.400'
               >
-                Choose a certificate in CertOps
+                Choose a certificate in Certificate Management
               </Link>
             </Box>
           ) : certificateCount > 1 ? (
