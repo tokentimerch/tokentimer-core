@@ -99,6 +99,24 @@ const EDITABLE_PROFILE_FIELDS = Object.freeze([
   "preferredChain",
 ]);
 
+// The AD CS scheduler reads only these from a profile; the ACME-only fields
+// would be saved and then ignored.
+const ADCS_EDITABLE_PROFILE_FIELDS = Object.freeze([
+  "sanPolicy",
+  "keyAlgorithm",
+  "keySize",
+]);
+
+// AD CS profiles have no schemaVersion, so the ACME validator would refuse them.
+function isAdcsRenewalProfile(renewalProfile) {
+  return (
+    !!renewalProfile &&
+    typeof renewalProfile === "object" &&
+    renewalProfile.schemaVersion === undefined &&
+    renewalProfile.target?.type === "windows-iis"
+  );
+}
+
 /**
  * Immutable paths, listed only so a request that tries to set one gets a
  * specific 422 naming the field instead of a silent no-op. Silence would be
@@ -210,7 +228,11 @@ function profileRecord(row) {
     derivedFrom,
     certificateCount: Number(row.certificate_count || 0),
     certificates: certificateSummaries(row.certificate_names),
-    editableFields: [...EDITABLE_PROFILE_FIELDS],
+    editableFields: [
+      ...(isAdcsRenewalProfile(renewalProfile)
+        ? ADCS_EDITABLE_PROFILE_FIELDS
+        : EDITABLE_PROFILE_FIELDS),
+    ],
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
@@ -379,9 +401,9 @@ function applyRenewalProfilePatch(storedProfile, patch) {
     );
   }
 
-  const unknown = Object.keys(patch).filter(
-    (key) => !EDITABLE_PROFILE_FIELDS.includes(key),
-  );
+  const adcs = isAdcsRenewalProfile(storedProfile);
+  const editable = adcs ? ADCS_EDITABLE_PROFILE_FIELDS : EDITABLE_PROFILE_FIELDS;
+  const unknown = Object.keys(patch).filter((key) => !editable.includes(key));
   if (unknown.length > 0) {
     throw profileError(
       `Unknown renewal-profile fields: ${unknown.join(", ")}`,
@@ -391,14 +413,14 @@ function applyRenewalProfilePatch(storedProfile, patch) {
   }
 
   const merged = { ...storedProfile };
-  for (const field of EDITABLE_PROFILE_FIELDS) {
+  for (const field of editable) {
     if (Object.prototype.hasOwnProperty.call(patch, field)) {
       merged[field] = patch[field];
     }
   }
 
   // Whole-object validation through the scheduler's own gate.
-  return validateRenewalProfile(merged);
+  return adcs ? validateAdcsRenewalPolicy(merged) : validateRenewalProfile(merged);
 }
 
 /**
@@ -675,6 +697,32 @@ function adcsHost(value, field) {
     throw profileError(`${field} must be a DNS name`);
   }
   return value.trim();
+}
+
+// Same rules as create. The certificate name must stay in the SAN list, or the
+// scheduler refuses the profile on its next renewal.
+function validateAdcsRenewalPolicy(profile) {
+  const hosts = [];
+  for (const entry of Array.isArray(profile.sanPolicy?.sans) ? profile.sanPolicy.sans : []) {
+    const host = adcsHost(entry, "DNS name");
+    if (!hosts.includes(host)) hosts.push(host);
+  }
+  if (hosts.length === 0 || hosts.length > 16) {
+    throw profileError("a renewal profile accepts 1 to 16 DNS names");
+  }
+  if (!hosts.includes(profile.target?.reference)) {
+    throw profileError("DNS names must include the certificate name");
+  }
+  const { keyAlgorithm } = profile;
+  if (keyAlgorithm !== "rsa" && keyAlgorithm !== "ecdsa") {
+    throw profileError("keyAlgorithm must be rsa or ecdsa");
+  }
+  const keySize = Number(profile.keySize);
+  const allowed = keyAlgorithm === "rsa" ? ADCS_RSA_SIZES : ADCS_ECDSA_SIZES;
+  if (!allowed.has(keySize)) {
+    throw profileError(`keySize is invalid for ${keyAlgorithm}`);
+  }
+  return { ...profile, sanPolicy: { sans: hosts }, keySize };
 }
 
 function normalizeAdcsProfileInput(body) {
