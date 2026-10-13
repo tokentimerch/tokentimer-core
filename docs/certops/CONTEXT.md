@@ -478,7 +478,7 @@ flows use this path when `certops.enabled` is on.
 
 ## Where things live
 
-- Current-state index (behavior vs accepted architecture vs not-yet-released):
+- Current-state index (behavior, architecture, enrollment prerequisites):
   [CURRENT_STATE.md](CURRENT_STATE.md).
 - Program docs: `docs/certops/` (this file; purgeable when CertOps graduates).
 - ADRs: `docs/adr/` (CertOps ADRs 0001-0014 today; see `docs/adr/README.md` for
