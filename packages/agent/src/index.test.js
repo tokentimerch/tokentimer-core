@@ -3994,6 +3994,18 @@ describe("renew chain deployment", () => {
       assert.deepEqual(stagingLeftovers(), []);
     }
   });
+
+  it("refuses an adcs renew job while adcs-enroll-v1 is not qualified in the release manifest", async () => {
+    seedLiveKey();
+    const acmeExecFileImpl = makeCertbotStub();
+    const job = makeJob({ issuerKind: "adcs" });
+    const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
+
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.errorMessage, /has not qualified adcs-enroll-v1/);
+    assert.equal(acmeExecFileImpl.calls.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
+  });
 });
 
 /**

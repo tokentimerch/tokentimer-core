@@ -400,6 +400,8 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
  */
 const AGENT_TRUST_STORE_PREREQUISITES = resolveTrustStorePrerequisites();
 
+const ADCS_ENROLL_CAPABILITY = "adcs-enroll-v1";
+
 const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
   isWindows()
     ? [
@@ -408,6 +410,7 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
         "windows-cert-store-v1",
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
+        ADCS_ENROLL_CAPABILITY,
       ]
     : AGENT_TRUST_STORE_PREREQUISITES.candidate
       ? ["evidence-claim-binding-v1", "job-log-stream-v1", "trust-anchor-deploy-v1"]
@@ -2443,6 +2446,17 @@ async function executeJob({
     resolvedIssuerKind = resolveJobIssuerKind(job);
     if (resolvedIssuerKind.error) {
       return { status: "blocked", errorMessage: boundErrorMessage(resolvedIssuerKind.error) };
+    }
+    // Refused here, not only by the claim filter: a job that reaches the
+    // agent anyway must not run AD CS on a build that has not qualified it.
+    if (
+      resolvedIssuerKind.kind === "adcs" &&
+      !AGENT_DECLARED_CAPABILITIES.includes(ADCS_ENROLL_CAPABILITY)
+    ) {
+      return {
+        status: "blocked",
+        errorMessage: `this build has not qualified ${ADCS_ENROLL_CAPABILITY}; AD CS jobs are refused`,
+      };
     }
   }
 

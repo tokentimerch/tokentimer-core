@@ -16,11 +16,21 @@ const {
 } = require("./index.js");
 
 describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
-  it("names exactly the three real-host-evidence-gated capability strings", () => {
+  it("names exactly the real-host-evidence-gated capability strings", () => {
     assert.deepEqual(
       [...GATED_CAPABILITIES],
-      ["windows-cert-store-v1", "iis-binding-v1", "trust-anchor-deploy-v1"],
+      [
+        "windows-cert-store-v1",
+        "iis-binding-v1",
+        "trust-anchor-deploy-v1",
+        "adcs-enroll-v1",
+      ],
     );
+  });
+
+  it("does not qualify adcs-enroll-v1 in the shipped manifest", () => {
+    const manifest = loadQualifiedCapabilitiesManifest();
+    assert.equal(manifest.qualified.includes("adcs-enroll-v1"), false);
   });
 
   it("ships with all three gated capabilities qualified after real-host verification (Windows, Debian/Ubuntu, RHEL/AlmaLinux)", () => {

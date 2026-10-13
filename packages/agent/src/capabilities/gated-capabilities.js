@@ -29,10 +29,13 @@
  * produces (./qualified-capabilities.generated.js) exists, so it cannot
  * depend on anything that itself requires that generated file.
  */
+// adcs-enroll-v1 stays out of qualified-capabilities.json until the AD CS
+// real-host qualification matrix passes for the release build.
 const GATED_CAPABILITIES = Object.freeze([
   "windows-cert-store-v1",
   "iis-binding-v1",
   "trust-anchor-deploy-v1",
+  "adcs-enroll-v1",
 ]);
 
 module.exports = { GATED_CAPABILITIES };

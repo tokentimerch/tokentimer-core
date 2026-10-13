@@ -44,8 +44,9 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "rejected_invalid",
 ]);
 
-// AD CS runs only after resolveJobIssuerKind accepts the kind. The agent
-// still refuses a CA that no local enrollment rule names.
+// Registered here, but dispatch refuses adcs jobs unless adcs-enroll-v1 is
+// qualified in the build manifest (see index.js). A CA that no local
+// enrollment rule names is still refused.
 const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
