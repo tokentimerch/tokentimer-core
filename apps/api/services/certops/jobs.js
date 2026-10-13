@@ -56,7 +56,7 @@ const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 // Job execution mode. Persisted on certificate_jobs.mode and included in the
 // signed dispatch payload. Required at creation; immutable afterwards.
-// "dry_run" must NEVER terminate as "succeeded" — use "dry_run_complete".
+// "dry_run" must NEVER terminate as "succeeded"; use "dry_run_complete".
 // See COORDINATION-B4.md at the worktree root.
 const JOB_MODES = Object.freeze(["real", "dry_run"]);
 const JOB_MODE_SET = new Set(JOB_MODES);
