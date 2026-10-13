@@ -25,6 +25,7 @@ const {
   getCertificateMock,
   listCertOpsRenewalProfilesMock,
   showErrorMock,
+  listAgentJobLogMock,
 } = vi.hoisted(() => ({
   useCertOpsCertificatesMock: vi.fn(),
   useCertOpsCanManageMock: vi.fn(),
@@ -38,6 +39,7 @@ const {
   getCertificateMock: vi.fn(),
   listCertOpsRenewalProfilesMock: vi.fn(),
   showErrorMock: vi.fn(),
+  listAgentJobLogMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -83,6 +85,16 @@ vi.mock('../../src/utils/toast.js', () => ({
   showError: showErrorMock,
   showSuccess: vi.fn(),
 }));
+
+vi.mock('../../src/components/certops/certopsJobsApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsJobsApi.js'
+  );
+  return {
+    ...actual,
+    listAgentJobLog: listAgentJobLogMock,
+  };
+});
 
 vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
   const actual = await vi.importActual(
@@ -150,6 +162,16 @@ beforeEach(() => {
   getCertificateMock.mockReset();
   listCertOpsRenewalProfilesMock.mockReset();
   showErrorMock.mockReset();
+  listAgentJobLogMock.mockReset();
+  listAgentJobLogMock.mockResolvedValue({
+    items: [],
+    nextCursor: null,
+    hasMore: false,
+    logsComplete: true,
+    streams: [],
+    storageEnabled: true,
+    linesVisible: true,
+  });
   useCertOpsCanManageMock.mockReturnValue(true);
   useCertOpsCertificatesMock.mockReturnValue(certState());
   // Default: the retired-count probe (two limit:1 list calls) sees no
@@ -855,6 +877,18 @@ describe('CertOpsCertificates renewal setup and detach', () => {
       );
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+    expect(
+      screen.getByRole('dialog', { name: /Renewal job dispatched/ })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('agent-shell-console')).toBeInTheDocument();
+    expect(listAgentJobLogMock).toHaveBeenCalledWith(
+      'ws-1',
+      'job-1',
+      expect.objectContaining({ limit: 200 })
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Renew and set up' })
+    ).not.toBeInTheDocument();
   });
 
   it('defaults to an existing profile as a preset and submits its values', async () => {
@@ -913,6 +947,7 @@ describe('CertOpsCertificates renewal setup and detach', () => {
       );
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+    expect(screen.getByTestId('agent-shell-console')).toBeInTheDocument();
   });
 
   it('switches an existing-profile default to manual entry', async () => {

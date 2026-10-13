@@ -1121,7 +1121,6 @@ export default function CertOpsCertificates() {
             'Renewing now',
             'Automatic renewal will be configured once this renewal job succeeds.'
           );
-          setSetupTarget(null);
           refresh();
         }}
       />
