@@ -135,6 +135,9 @@ const MANAGED_CERTIFICATE_ID_PATTERN =
 const ADCS_RENEW_REFUSAL =
   'This certificate uses an AD CS renewal profile. Create job cannot renew it. Open Renewals. The renewal sweep creates the enrollment from that profile.';
 
+const ADCS_RENEW_LOOKUP_REFUSAL =
+  'This form could not confirm the renewal profile, so it will not submit a renew. Retry, or open Renewals if this certificate uses AD CS.';
+
 // Per-subject-type hint for the free-text Subject ID input; shown for every
 // subject type, whether or not a live suggestion list is available below.
 const SUBJECT_ID_PLACEHOLDERS = {
@@ -687,7 +690,7 @@ export default function CreateManualJobModal({
         if (!cancelled) setAdcsRenewalState(blocked ? 'blocked' : 'allowed');
       })
       .catch(() => {
-        if (!cancelled) setAdcsRenewalState('allowed');
+        if (!cancelled) setAdcsRenewalState('unavailable');
       });
     return () => {
       cancelled = true;
@@ -743,6 +746,7 @@ export default function CreateManualJobModal({
       !submitting &&
       adcsRenewalState !== 'checking' &&
       adcsRenewalState !== 'blocked' &&
+      adcsRenewalState !== 'unavailable' &&
       fieldsRequiredForIssueMet &&
       controllerFieldsMet &&
       (isIssue
@@ -1399,11 +1403,14 @@ export default function CreateManualJobModal({
                         ? 'Required for this operation, together with subject type.'
                         : 'Required together with subject type, or leave both empty.'}
                     </FormHelperText>
-                    {adcsRenewalState === 'blocked' ? (
+                    {adcsRenewalState === 'blocked' ||
+                    adcsRenewalState === 'unavailable' ? (
                       <Alert status='warning' mt={2} borderRadius='md'>
                         <AlertIcon />
                         <AlertDescription fontSize='sm'>
-                          {ADCS_RENEW_REFUSAL}
+                          {adcsRenewalState === 'blocked'
+                            ? ADCS_RENEW_REFUSAL
+                            : ADCS_RENEW_LOOKUP_REFUSAL}
                         </AlertDescription>
                       </Alert>
                     ) : null}
