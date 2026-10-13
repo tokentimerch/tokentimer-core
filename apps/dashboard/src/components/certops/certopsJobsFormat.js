@@ -141,6 +141,7 @@ const PENDING_REASON_LABELS = {
   assigned_agent_missing: 'Assigned agent gone',
   awaiting_claim: 'Waiting for an agent',
   awaiting_progress: 'Waiting for progress',
+  target_selector_unsupported: 'Agent does not declare this name',
 };
 
 const STALE_REASON_LABELS = {

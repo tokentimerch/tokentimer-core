@@ -276,6 +276,46 @@ function emitInfo(message, details) {
   mirrorToJobConsole("info", message, details);
 }
 
+/**
+ * One console line for the end of a claim. The shell shows the message
+ * only, so status, enrollment state, and the error have to live in the text.
+ */
+function formatExecutionFinishLine(jobId, outcome) {
+  const status =
+    outcome && typeof outcome.status === "string" && outcome.status.length > 0
+      ? outcome.status
+      : "unknown";
+  const parts = [`job ${jobId}: execution finished with status ${status}`];
+  if (typeof outcome?.rejectionReason === "string" && outcome.rejectionReason.length > 0) {
+    parts.push(`reason=${outcome.rejectionReason}`);
+  }
+  const enrollment = outcome?.enrollmentResult;
+  if (enrollment && typeof enrollment.state === "string" && enrollment.state.length > 0) {
+    parts.push(`enrollment=${enrollment.state}`);
+  }
+  if (enrollment && Number.isInteger(enrollment.requestId)) {
+    parts.push(`requestId=${enrollment.requestId}`);
+  }
+  if (enrollment && typeof enrollment.caHresult === "string" && enrollment.caHresult.length > 0) {
+    parts.push(`hresult=${enrollment.caHresult}`);
+  }
+  const preflight = outcome?.preflightResult;
+  if (preflight?.templateCheck && typeof preflight.templateCheck.verdict === "string") {
+    parts.push(`template=${preflight.templateCheck.verdict}`);
+  }
+  if (preflight?.caCheck && typeof preflight.caCheck.verdict === "string") {
+    parts.push(`ca=${preflight.caCheck.verdict}`);
+  }
+  let line = parts.join(" ");
+  const quiet = status === "succeeded" || status === "dry_run_complete";
+  const detail =
+    !quiet && typeof outcome?.errorMessage === "string"
+      ? outcome.errorMessage.replace(/\s+/g, " ").trim()
+      : "";
+  if (detail) line = `${line}: ${detail}`;
+  return line.length > 900 ? `${line.slice(0, 897)}...` : line;
+}
+
 function localAttemptId(jobId) {
   return `local-${jobId}-${Date.now()}`;
 }
@@ -2082,7 +2122,7 @@ async function handleSignedJob({
           }
         : undefined;
     withJobConsole(jobLogSession, () => emitInfo(
-      `job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`,
+      formatExecutionFinishLine(jobId, outcome),
       finishDetails,
     ));
 
@@ -2325,9 +2365,12 @@ async function executeJob({
   if (action === "adcs-preflight") {
     return executeAdcsPreflight({
       job,
+      jobId,
       rules: executionContext.adcsEnrollmentRules,
       probe: executionContext.adcsPreflightImpl,
       execFileImpl: executionContext.windowsExecFileImpl,
+      info: emitInfo,
+      stateDir,
     });
   }
 
@@ -6790,6 +6833,12 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // never returns an empty set, only the base set or the base set plus
         // agent-id-binding-v1.
         declaredCapabilities: resolveDeclaredCapabilities(config.requireSignedAgentId),
+        // Publishes DNS names added to config.json. An empty list is omitted
+        // so a restart cannot wipe the stored selectors.
+        ...(Array.isArray(config.declaredTargetSelectors) &&
+        config.declaredTargetSelectors.length > 0
+          ? { declaredTargetSelectors: config.declaredTargetSelectors }
+          : {}),
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and
         // key-rotation lag. in observe-only bootstrap mode these stay null.
@@ -6978,6 +7027,7 @@ module.exports = {
   handleClaimedJob,
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   executeJob,
+  formatExecutionFinishLine,
   executeDeployJob,
   executeRenewJob,
   executeWindowsIisRenewJob,

@@ -217,11 +217,11 @@ token that failed — verify credentials against the provider directly.
 
 ## ACME gateway in front of AD CS
 
-The native AD CS path is for a domain-joined Windows agent that can reach the CA over DCOM. It does not cover Linux hosts, or a Windows host with no RPC path to the CA.
+Linux hosts, and Windows hosts that are not domain-joined, do not enroll from AD CS over DCOM. The native path is a domain-joined Windows agent that can reach the CA. Put AD CS enrollment on that agent, or keep an ACME gateway in front of AD CS for the other hosts.
 
-For those hosts, put an ACME gateway that your CA already trusts in front of AD CS, and point the agent at that gateway with the DNS-01 path above. TokenTimer still does not store CA credentials. The gateway is yours. This product does not ship one, and it does not enable AD CS enrollment by configuring the gateway.
+For the gateway path, use a gateway your CA already trusts and point the agent at it with the DNS-01 path above. TokenTimer still does not store CA credentials. The gateway is yours. This product does not ship one, and configuring the gateway does not enable AD CS enrollment.
 
-See [Microsoft AD CS](adcs.md) for the native Windows path. The agent contacts a CA only when a local enrollment rule names it.
+See [Microsoft AD CS](adcs.md) for the native Windows path. The agent contacts a CA only when a local enrollment rule names that CA and template.
 
 ## Related
 

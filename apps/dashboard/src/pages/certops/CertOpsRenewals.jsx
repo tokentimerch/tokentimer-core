@@ -18,7 +18,7 @@ function ProfilesDisclosure() {
   return (
     <SettingsIntegrationCard
       title='Renewal profiles'
-      description='The renewal contract for the certificates that use it. A profile is created from a successful issuance, and its deployment details stay fixed to what already worked.'
+      description='Profiles decide how a certificate renews. ACME profiles appear after issuance. New AD CS profile uses a confirmed issuer, then attaches to a certificate already in inventory.'
       icon={<Icon as={FiRefreshCw} boxSize={6} color='blue.500' />}
       hideStatus
       isOpen={open}
@@ -36,7 +36,7 @@ function AdcsDisclosure() {
   return (
     <SettingsIntegrationCard
       title='AD CS issuers'
-      description='For profiles that renew from Active Directory. Enrollment runs only when an agent enrollment rule names that CA and template.'
+      description='Confirm a private CA here before New AD CS profile can select it. New issuer checks the CA, then you pin a CA certificate. Enrollment still runs only when an agent enrollment rule names that CA and template.'
       icon={<Icon as={FiServer} boxSize={6} color='blue.500' />}
       hideStatus
       isOpen={open}
@@ -52,9 +52,9 @@ function AdcsDisclosure() {
 /**
  * Renewals tab.
  *
- * Profiles control whether agent-issued certificates renew. AD CS issuers and
- * enrollments sit below them. When each certificate renews is on that
- * certificate in the inventory.
+ * Renewal profiles are the shared list. ACME profiles appear after issuance.
+ * AD CS issuers, below, only prepares a private CA that New AD CS profile can
+ * select. When each certificate renews is still on that certificate.
  */
 export default function CertOpsRenewals() {
   const { certOpsPaused } = useOutletContext() || {};

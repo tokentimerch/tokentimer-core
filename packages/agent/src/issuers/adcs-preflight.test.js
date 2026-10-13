@@ -70,6 +70,84 @@ describe("adcs-preflight enrollment rule gate", () => {
     assert.equal(outcome.preflightResult, preflightResult);
   });
 
+  it("writes template, CA, and certificate details to the job console", async () => {
+    const lines = [];
+    const outcome = await executeAdcsPreflight({
+      job: preflightJob(),
+      jobId: "job-preflight-log",
+      rules: [{ caConfig: CA, template: TEMPLATE, operatorAttested: true }],
+      info: (message) => lines.push(message),
+      probe() {
+        return {
+          preflightResult: {
+            caConfig: CA,
+            template: TEMPLATE,
+            templateCheck: {
+              verdict: "unsafe",
+              reasons: ["eku_not_server_auth_only"],
+              schemaVersion: 3,
+              minimalKeySize: 2048,
+              asymmetricAlgorithm: "RSA",
+              enrolleeSuppliesSubject: true,
+            },
+            caCheck: {
+              verdict: "safe",
+              reasons: [],
+              operatorAttested: false,
+            },
+            caCertificates: [
+              { thumbprintSha1: "95854BD29D68DFB63476FECB668D4654DF07A127" },
+            ],
+          },
+        };
+      },
+    });
+    assert.equal(outcome.status, "succeeded");
+    const text = lines.join("\n");
+    assert.match(text, /job job-preflight-log: AD CS preflight starting for template TokenTimerWebServer/);
+    assert.match(text, /verdict=unsafe schema=3 minKey=2048 algorithm=RSA subjectFromRequest=yes reasons=eku_not_server_auth_only/);
+    assert.match(text, /AD CS preflight CA verdict=safe operatorAttested=false/);
+    assert.match(text, /CA certificates=1 thumbprints=95854BD29D68DFB63476FECB668D4654DF07A127/);
+  });
+
+  it("writes the template OID and each CA certificate into the agent cache", async () => {
+    const lines = [];
+    const calls = [];
+    const outcome = await executeAdcsPreflight({
+      job: preflightJob(),
+      jobId: "job-preflight-cache",
+      stateDir: "C:/agent-state",
+      rules: [{ caConfig: CA, template: TEMPLATE }],
+      info: (message) => lines.push(message),
+      cacheOid: async (args) => {
+        calls.push(["oid", args.templateOid, args.template]);
+      },
+      cacheCa: async (args) => {
+        calls.push(["ca", args.caKeySha256, args.certBytes.toString("utf8")]);
+      },
+      probe() {
+        return {
+          preflightResult: {
+            template: TEMPLATE,
+            templateCheck: { templateOid: "1.3.6.1.4.1.311.21.8.9", verdict: "safe", reasons: [] },
+            caCheck: { verdict: "safe", reasons: [] },
+            caCertificates: [
+              { certificateB64: Buffer.from("ca-one").toString("base64"), keySha256: "ab".repeat(32) },
+              { certificateB64: Buffer.from("ca-two").toString("base64"), keySha256: "cd".repeat(32) },
+            ],
+          },
+        };
+      },
+    });
+    assert.equal(outcome.status, "succeeded");
+    assert.deepEqual(calls, [
+      ["oid", "1.3.6.1.4.1.311.21.8.9", TEMPLATE],
+      ["ca", "ab".repeat(32), "ca-one"],
+      ["ca", "cd".repeat(32), "ca-two"],
+    ]);
+    assert.match(lines.join("\n"), /cached CA pins=2 templateOid=1\.3\.6\.1\.4\.1\.311\.21\.8\.9/);
+  });
+
   it("executeJob no longer blocks adcs-preflight before the rule gate", async () => {
     let calls = 0;
     const outcome = await executeJob({

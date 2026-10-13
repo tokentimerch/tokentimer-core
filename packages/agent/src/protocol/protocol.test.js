@@ -451,6 +451,8 @@ test("heartbeat: accepts and forwards declaredCapabilities, omits when absent", 
   const calls = stubFetch([
     { status: 200, json: { ok: true } },
     { status: 200, json: { ok: true } },
+    { status: 200, json: { ok: true } },
+    { status: 200, json: { ok: true } },
   ]);
 
   const client = createProtocolClient({
@@ -471,6 +473,18 @@ test("heartbeat: accepts and forwards declaredCapabilities, omits when absent", 
 
   await client.heartbeat({ agentVersion: "0.1.0" });
   assert.equal("declaredCapabilities" in calls[1].parsedBody.body, false);
+
+  await client.heartbeat({
+    agentVersion: "0.1.0",
+    declaredTargetSelectors: ["www.example.com"],
+  });
+  assert.deepEqual(calls[2].parsedBody.body.declaredTargetSelectors, ["www.example.com"]);
+
+  await client.heartbeat({
+    agentVersion: "0.1.0",
+    declaredTargetSelectors: [],
+  });
+  assert.equal("declaredTargetSelectors" in calls[3].parsedBody.body, false);
 });
 
 test("reportResult: sends correct envelope shape (messageType + resultBody fields)", async () => {

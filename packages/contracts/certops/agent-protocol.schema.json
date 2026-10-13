@@ -225,6 +225,16 @@
             "maxLength": 64,
             "pattern": "^[a-z0-9][a-z0-9-]*$"
           }
+        },
+        "declaredTargetSelectors": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "Target names this agent accepts, re-advertised on heartbeat so a DNS name added in config.json reaches the control plane after a restart. Registration remains the first declaration. Omitting the field, or sending an empty array, leaves the stored list unchanged. A non-empty array replaces it. An empty list therefore cannot clear the last name. Rollout order matches declaredCapabilities: heartbeatBody has additionalProperties false, so the server must accept this field before any agent build sends it.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
         }
       }
     },

@@ -593,6 +593,29 @@ function createAdcsWindowsIisExecutors(deps) {
     isValidCertificateId,
   } = deps;
 
+  function logAdcs(jobId, message) {
+    if (typeof emitInfo !== "function") return;
+    const text = String(message || "").replace(/\s+/g, " ").trim();
+    if (!text) return;
+    emitInfo(`job ${jobId}: ${text}`);
+  }
+
+  function logValidation(jobId, validation) {
+    if (!validation || typeof validation !== "object") return;
+    const parts = [
+      `AD CS certificate validation ${validation.ok === true ? "passed" : "failed"}`,
+    ];
+    if (typeof validation.state === "string" && validation.state) parts.push(`state=${validation.state}`);
+    if (typeof validation.errorCode === "string" && validation.errorCode) {
+      parts.push(`code=${validation.errorCode}`);
+    }
+    if (validation.revocationBestEffort === true) parts.push("revocation=best-effort");
+    if (typeof validation.detail === "string" && validation.detail.trim()) {
+      parts.push(validation.detail.replace(/\s+/g, " ").trim().slice(0, 180));
+    }
+    logAdcs(jobId, parts.join(" "));
+  }
+
   function reconcileSearchFromForSubmit(stateDir, caConfig, journal) {
     if (Number.isInteger(journal?.reconcileSearchFrom) && journal.reconcileSearchFrom >= 1) {
       return journal.reconcileSearchFrom;
@@ -848,6 +871,13 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
     const csrCommonName = commonName;
+    logAdcs(
+      jobId,
+      `AD CS renew enrollment ${decoded.enrollmentId} attempt ${decoded.attempt} CN ${commonName} ` +
+        `template ${snapshot.template} CA ${snapshot.caConfig} key ${keyMapped.algorithm} ` +
+        `site ${windowsTarget.binding.site}:${windowsTarget.binding.port} store ${windowsTarget.store} ` +
+        `names=${domains.length}`,
+    );
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
@@ -1006,6 +1036,10 @@ function createAdcsWindowsIisExecutors(deps) {
           template: snapshot.template,
         });
         preparedJournalCommitted = true;
+        logAdcs(
+          jobId,
+          `AD CS CSR stored for enrollment ${decoded.enrollmentId} templateOid ${templateOid}`,
+        );
       } catch (err) {
         return {
           status: "failed",
@@ -1104,6 +1138,10 @@ function createAdcsWindowsIisExecutors(deps) {
         );
       } catch (err) {
         issuanceOutcome = "uncertain";
+        logAdcs(
+          jobId,
+          `AD CS submit interrupted for enrollment ${decoded.enrollmentId}: ${String(err && err.message ? err.message : err).slice(0, 180)}`,
+        );
         try {
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "submission_uncertain",
@@ -1263,6 +1301,7 @@ function createAdcsWindowsIisExecutors(deps) {
         templateOid,
         windowsTarget,
       });
+      logValidation(jobId, validation);
       if (!validation.ok) {
         if (validation.retryable === true) {
           return {
@@ -1336,6 +1375,11 @@ function createAdcsWindowsIisExecutors(deps) {
       // rewind the journal to accept, or the next resume looks like certreq
       // -accept never ran.
       let currentInstallStep = "accept";
+      logAdcs(
+        jobId,
+        `AD CS install starting for enrollment ${decoded.enrollmentId} store ${windowsTarget.store} ` +
+          `site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+      );
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -1588,6 +1632,11 @@ function createAdcsWindowsIisExecutors(deps) {
       });
       continueOutcomeRef.value = "issued";
 
+      logAdcs(
+        jobId,
+        `AD CS install resuming for enrollment ${decoded.enrollmentId} step ${currentInstallStep} ` +
+          `store ${windowsTarget.store} site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+      );
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -1675,6 +1724,7 @@ function createAdcsWindowsIisExecutors(deps) {
       templateOid: journal.templateOid,
       windowsTarget,
     });
+    logValidation(jobId, validation);
     if (!validation.ok) {
       if (validation.retryable === true) {
         return {
@@ -1717,6 +1767,11 @@ function createAdcsWindowsIisExecutors(deps) {
     });
 
     let currentInstallStep = "accept";
+    logAdcs(
+      jobId,
+      `AD CS install starting for enrollment ${decoded.enrollmentId} store ${windowsTarget.store} ` +
+        `site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+    );
     const deployResult = await runWindowsIisDeployTail({
       jobId,
       client,
@@ -1862,6 +1917,12 @@ function createAdcsWindowsIisExecutors(deps) {
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
       enrollmentLock.assertHeld();
+      logAdcs(
+        jobId,
+        `AD CS continue enrollment ${decoded.enrollmentId} journal=${journal.state}` +
+          (Number.isInteger(journal.requestId) ? ` requestId=${journal.requestId}` : "") +
+          ` template ${snapshot.template} CA ${snapshot.caConfig}`,
+      );
 
       // Terminal receipts: return recorded outcome without repeating CA contact.
       if (journal.state === "installed") {
@@ -1981,6 +2042,10 @@ function createAdcsWindowsIisExecutors(deps) {
           templateOid: templateOidResolved.templateOid,
         };
         artifacts = { ...artifacts, csrPem: csrResult.csrPem };
+        logAdcs(
+          jobId,
+          `AD CS CSR stored on keygen resume for enrollment ${decoded.enrollmentId} templateOid ${templateOidResolved.templateOid}`,
+        );
         try {
           recordIssuedContainer({
             stateDir,
@@ -2337,6 +2402,7 @@ function createAdcsWindowsIisExecutors(deps) {
             templateOid: journal.templateOid,
             windowsTarget,
           });
+          logValidation(jobId, retryValidation);
           if (retryValidation.ok) {
             return attachIssuedCandidate(
               artifacts.leafPem,
@@ -2484,6 +2550,7 @@ function createAdcsWindowsIisExecutors(deps) {
           templateOid: journal.templateOid,
           windowsTarget,
         });
+        logValidation(jobId, candidateValidation);
         if (!candidateValidation.ok) {
           if (candidateValidation.retryable === true) {
             return {

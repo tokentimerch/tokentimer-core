@@ -669,6 +669,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     clockOffsetMs = null,
     supportedDnsProviders = undefined,
     declaredCapabilities = undefined,
+    declaredTargetSelectors = undefined,
   } = {}) {
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
@@ -688,6 +689,11 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
             : {}),
           ...(Array.isArray(declaredCapabilities)
             ? { declaredCapabilities }
+            : {}),
+          // A non-empty list replaces the stored selectors. Omitting an
+          // empty list leaves them unchanged, matching the server rule.
+          ...(Array.isArray(declaredTargetSelectors) && declaredTargetSelectors.length > 0
+            ? { declaredTargetSelectors }
             : {}),
         },
       })),

@@ -235,7 +235,9 @@ describe("createAdcsIssuer", () => {
   });
 
   it("submit pending via CMC requestId", async () => {
+    const lines = [];
     const issuer = makeIssuer({
+      info: (message) => lines.push(message),
       execFileImpl: async (_bin, argv) => {
         assert.ok(argv.includes("-submit"));
         assert.ok(argv.includes(`CertificateTemplate:TTWebServer`));
@@ -252,6 +254,11 @@ describe("createAdcsIssuer", () => {
     assertIssuanceOutcome(outcome);
     assert.equal(outcome.outcome, "pending");
     assert.equal(outcome.requestId, 42);
+    assert.ok(lines.some((line) => line.includes("certreq -submit template=TTWebServer")));
+    assert.ok(
+      lines.some((line) => line.includes("certreq -submit result outcome=pending requestId=42")),
+    );
+    assert.equal(lines.some((line) => line.includes("BEGIN CERTIFICATE")), false);
   });
 
   it("submit issued returns PEM from CMC der", async () => {

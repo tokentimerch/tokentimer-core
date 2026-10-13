@@ -18,12 +18,24 @@ const {
   useCertOpsIsWorkspaceAdminMock,
   listRenewalProfilesMock,
   updateRenewalProfileMock,
+  createAdcsRenewalProfileMock,
+  listIssuersMock,
+  listAgentsMock,
+  listCertificatesMock,
+  readdManagingSourceMock,
+  stopManagingSourceMock,
   showSuccessMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
   useCertOpsIsWorkspaceAdminMock: vi.fn(),
   listRenewalProfilesMock: vi.fn(),
   updateRenewalProfileMock: vi.fn(),
+  createAdcsRenewalProfileMock: vi.fn(),
+  listIssuersMock: vi.fn(),
+  listAgentsMock: vi.fn(),
+  listCertificatesMock: vi.fn(),
+  readdManagingSourceMock: vi.fn(),
+  stopManagingSourceMock: vi.fn(),
   showSuccessMock: vi.fn(),
 }));
 
@@ -75,8 +87,28 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 }));
 
 vi.mock('../../src/components/certops/certopsEnrollmentsApi.js', () => ({
-  listIssuers: vi.fn().mockResolvedValue({ items: [] }),
+  listIssuers: listIssuersMock,
 }));
+
+vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsAgentsApi.js'
+  );
+  return {
+    ...actual,
+    listAgents: listAgentsMock,
+  };
+});
+
+vi.mock('../../src/components/certops/certopsApi.js', async () => {
+  const actual = await vi.importActual('../../src/components/certops/certopsApi.js');
+  return {
+    ...actual,
+    listCertificates: listCertificatesMock,
+    readdManagingSource: readdManagingSourceMock,
+    stopManagingSource: stopManagingSourceMock,
+  };
+});
 
 vi.mock('../../src/pages/certops/CertOpsAdcs.jsx', () => ({
   default: () => <div>AD CS issuers</div>,
@@ -90,6 +122,7 @@ vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
     ...actual,
     listRenewalProfiles: listRenewalProfilesMock,
     updateRenewalProfile: updateRenewalProfileMock,
+    createAdcsRenewalProfile: createAdcsRenewalProfileMock,
   };
 });
 
@@ -172,17 +205,38 @@ beforeEach(() => {
     limit: 50,
     offset: 0,
   });
+  listIssuersMock.mockResolvedValue({ items: [] });
+  listAgentsMock.mockResolvedValue({ items: [] });
+  listCertificatesMock.mockResolvedValue({ items: [] });
+  createAdcsRenewalProfileMock.mockResolvedValue({
+    id: 'profile-new',
+    agentDeclaresName: true,
+  });
+  readdManagingSourceMock.mockResolvedValue({ periodId: 'period-new' });
+  stopManagingSourceMock.mockResolvedValue({});
 });
 
 describe('CertOpsRenewals page', () => {
+  it('starts with renewal profiles closed', async () => {
+    renderPage();
+    const header = await screen.findByRole('button', { name: /Renewal profiles/ });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('shows the renewal profiles', async () => {
     renderPage();
     await openRenewalProfiles();
 
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
     expect(screen.queryByText('Upcoming renewals')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Step 2/)).not.toBeInTheDocument();
+    expect(screen.getByText(/ACME profiles appear after issuance/)).toBeInTheDocument();
     expect(screen.getByText('Derived: app.example.com')).toBeInTheDocument();
-    expect(screen.getByText('AD CS issuers')).toBeInTheDocument();
+    const profiles = screen.getByRole('button', { name: /Renewal profiles/ });
+    const issuers = screen.getByText('AD CS issuers');
+    expect(
+      profiles.compareDocumentPosition(issuers) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it('sorts renewal profiles on the server and resets the page', async () => {
@@ -543,5 +597,163 @@ describe('CertOpsRenewals page', () => {
     expect(
       screen.queryByText('No renewal profiles yet.')
     ).not.toBeInTheDocument();
+  });
+
+  it('lists certificate names from the profile when inventory does not', async () => {
+    listRenewalProfilesMock.mockResolvedValue({
+      items: [
+        profile({
+          certificateCount: 2,
+          certificates: [
+            {
+              id: '11111111-1111-4111-8111-111111111111',
+              commonName: 'one.example.com',
+            },
+            {
+              id: '22222222-2222-4222-8222-222222222222',
+              commonName: 'two.example.com',
+            },
+          ],
+        }),
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+    renderPage();
+    await openRenewalProfiles();
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }));
+    expect(await screen.findByRole('link', { name: 'one.example.com' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'two.example.com' })).toBeInTheDocument();
+  });
+
+  async function walkToAttach(dnsName = 'www.example.com') {
+    listIssuersMock.mockResolvedValue({
+      items: [
+        {
+          id: 'issuer-1',
+          kind: 'adcs',
+          name: 'TTLab Issuing CA',
+          currentVersion: 1,
+          revalidationRequired: false,
+        },
+      ],
+    });
+    renderPage();
+    await openRenewalProfiles();
+    fireEvent.click(await screen.findByRole('button', { name: 'New AD CS profile' }));
+    expect(await screen.findByRole('option', { name: 'TTLab Issuing CA' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Profile name'), {
+      target: { value: 'Web profile' },
+    });
+    fireEvent.change(screen.getByLabelText('AD CS issuer'), {
+      target: { value: 'issuer-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Certificate name'), {
+      target: { value: dnsName },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+    expect(await screen.findByText('4. Attach')).toBeInTheDocument();
+  }
+
+  it('says where to attach later when no certificate uses the DNS name', async () => {
+    listCertificatesMock.mockResolvedValue({
+      items: [{ id: 'other', commonName: 'mail.example.com', name: 'mail.example.com' }],
+    });
+
+    await walkToAttach();
+
+    expect(
+      await screen.findByText(/No certificate in inventory uses www.example.com/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Open Certificates later/)).toBeInTheDocument();
+    expect(screen.getByText(/inside the 30 day lead time/)).toBeInTheDocument();
+    expect(readdManagingSourceMock).not.toHaveBeenCalled();
+    expect(stopManagingSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('attaches a stopped certificate with automation enabled', async () => {
+    listCertificatesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'identity-1',
+          identityId: 'identity-1',
+          commonName: 'www.example.com',
+          name: 'www.example.com',
+          managed: false,
+          sources: [
+            {
+              periodId: 'period-1',
+              managedCertificateId: 'mc-1',
+              source: 'agent_windows',
+              startedAt: '2026-01-01T00:00:00Z',
+              periodEndedAt: '2026-02-01T00:00:00Z',
+              endedReason: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    await walkToAttach();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Attach and enable automation' })
+    );
+
+    await waitFor(() => {
+      expect(readdManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {
+        renewalProfileId: 'profile-new',
+        automationEnabled: true,
+      });
+    });
+    expect(stopManagingSourceMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(/Automatic renewal is on/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/declares www.example.com is online/)).toBeInTheDocument();
+  });
+
+  it('stops an open period before attaching the profile', async () => {
+    listCertificatesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'mc-1',
+          identityId: 'identity-1',
+          commonName: 'www.example.com',
+          name: 'www.example.com',
+          managed: true,
+          managedCertificateId: 'mc-1',
+          sources: [
+            {
+              periodId: 'period-open',
+              managedCertificateId: 'mc-1',
+              source: 'agent_windows',
+              startedAt: '2026-01-01T00:00:00Z',
+              periodEndedAt: null,
+              endedReason: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    await walkToAttach();
+    expect(
+      await screen.findByText(/stops that period and starts a new one/)
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Attach and enable automation' }));
+
+    await waitFor(() => {
+      expect(stopManagingSourceMock).toHaveBeenCalledWith('ws-1', 'period-open');
+      expect(readdManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {
+        renewalProfileId: 'profile-new',
+        automationEnabled: true,
+      });
+    });
+    expect(stopManagingSourceMock.mock.invocationCallOrder[0]).toBeLessThan(
+      readdManagingSourceMock.mock.invocationCallOrder[0]
+    );
   });
 });

@@ -63,6 +63,12 @@ describe('pendingReasonLabel / jobListAdvisory', () => {
       })
     ).toBe('Agent cannot run this job');
     expect(
+      pendingReasonLabel({
+        code: 'target_selector_unsupported',
+        message: 'The assigned agent cannot currently claim this job.',
+      })
+    ).toBe('Agent does not declare this name');
+    expect(
       staleReasonLabel({
         code: 'reconciliation_stale_job_pending',
         message:

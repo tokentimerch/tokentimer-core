@@ -91,7 +91,7 @@ Top level:
 | `protocolVersion` | string | `"1.0.0"` | Semver `x.y.z`. |
 | `heartbeatIntervalMs` | positive int | 30000 | Env override: `TOKENTIMER_AGENT_HEARTBEAT_MS`. |
 | `pollIntervalMs` | positive int | 15000 | Claim loop interval. Env override: `TOKENTIMER_AGENT_POLL_MS`. |
-| `declaredTargetSelectors` | string[] | `[]` | Target scope this agent declares; exact match at policy time. |
+| `declaredTargetSelectors` | string[] | `[]` | Target names this agent accepts. A non-empty list is sent again on every heartbeat, so adding a DNS name and restarting the agent publishes it. An empty list does not clear the stored names. |
 | `declaredCommandProfileNames` | string[] | `[]` | Reported at registration. |
 | `policy` | object or null | null | Agent-local allowlists (below). Null means every allowlist is empty: default deny. |
 | `discovery` | object or null | null | Null disables discovery entirely. |

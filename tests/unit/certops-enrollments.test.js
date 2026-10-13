@@ -21,6 +21,7 @@ const {
   proposeReconcileRequestId,
   recordEnrollmentResult,
   recordPreflightResult,
+  discardUnconfiguredIssuer,
   listEnrollments,
   listIssuers,
   scheduleDueEnrollments,
@@ -1068,5 +1069,62 @@ describe("enrollment rows", () => {
     };
     const page = await listIssuers({ client: db, workspaceId: WORKSPACE, limit: -5 });
     assert.equal(page.pagination.limit, 1);
+  });
+
+  it("hides unconfigured AD CS issuers unless the caller asks for drafts", async () => {
+    const seen = [];
+    const db = {
+      async query(sql) {
+        seen.push(sql);
+        if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+    await listIssuers({ client: db, workspaceId: WORKSPACE });
+    assert.ok(
+      seen.some((sql) => sql.includes("i.kind <> 'adcs' OR i.current_version > 0")),
+    );
+    seen.length = 0;
+    await listIssuers({
+      client: db,
+      workspaceId: WORKSPACE,
+      includeUnconfigured: true,
+    });
+    assert.equal(
+      seen.some((sql) => sql.includes("current_version > 0")),
+      false,
+    );
+  });
+
+  it("discards only a version-0 issuer that has no enrollments", async () => {
+    const db = {
+      async query(sql) {
+        assert.match(sql, /current_version = 0/);
+        assert.match(sql, /NOT EXISTS/);
+        assert.match(sql, /certificate_enrollments/);
+        return { rows: [{ id: ISSUER }] };
+      },
+    };
+    const discarded = await discardUnconfiguredIssuer({
+      client: db,
+      workspaceId: WORKSPACE,
+      issuerId: ISSUER,
+    });
+    assert.equal(discarded.issuerId, ISSUER);
+
+    const missing = {
+      async query() {
+        return { rows: [] };
+      },
+    };
+    await assert.rejects(
+      () =>
+        discardUnconfiguredIssuer({
+          client: missing,
+          workspaceId: WORKSPACE,
+          issuerId: ISSUER,
+        }),
+      (error) => error?.code === "CERTOPS_ISSUER_NOT_FOUND",
+    );
   });
 });

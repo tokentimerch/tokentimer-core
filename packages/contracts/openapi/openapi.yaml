@@ -4446,6 +4446,94 @@ paths:
                 code: NOT_FOUND
         "500":
           $ref: "#/components/responses/InternalError"
+    post:
+      tags: [CertOps]
+      summary: Create an AD CS renewal profile
+      operationId: createCertOpsAdcsRenewalProfile
+      description: >-
+        Creates a renewal profile bound to a confirmed AD CS issuer. The
+        certificate template stays on the issuer and is not accepted here.
+        The certificate name is a DNS name. agentDeclaresName reports whether
+        an active agent already declares that name; creation still succeeds
+        when none does. The renewal sweep then skips that certificate and does
+        not create an enrollment until an agent declares the name.
+        Requires certops.renewal_profile.manage and a human session.
+        This route does not create an ACME profile.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, issuerId, target, keyAlgorithm, keySize]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 128 }
+                description: { type: string, maxLength: 500 }
+                issuerId: { type: string, format: uuid }
+                renewBeforeDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  default: 30
+                dnsNames:
+                  type: array
+                  maxItems: 15
+                  description: Extra DNS names. Together with the certificate name, at most 16 names.
+                  items: { type: string }
+                keyAlgorithm: { type: string, enum: [rsa, ecdsa] }
+                keySize:
+                  type: integer
+                  description: RSA 2048, 3072, or 4096. ECDSA 256 or 384.
+                target:
+                  type: object
+                  additionalProperties: false
+                  required: [type, reference, store, binding]
+                  properties:
+                    type: { type: string, enum: [windows-iis] }
+                    reference: { type: string }
+                    store: { type: string }
+                    binding:
+                      type: object
+                      additionalProperties: false
+                      required: [site, port]
+                      properties:
+                        site: { type: string }
+                        port: { type: integer, minimum: 1, maximum: 65535 }
+                        sniHost: { type: string }
+      responses:
+        "201":
+          description: AD CS renewal profile created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, name, agentDeclaresName]
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  agentDeclaresName: { type: boolean }
+                additionalProperties: true
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Issuer was not found, or it is not an AD CS issuer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422":
+          description: >-
+            CERTOPS_PROFILE_INVALID. The body is well formed but the profile
+            cannot be stored. This includes a key size the algorithm does not
+            allow, more than 16 DNS names, a duplicate profile name, and an
+            AD CS issuer that has no pinned CA certificate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/renewals/upcoming:
     get:
       tags: [CertOps]
@@ -5084,6 +5172,15 @@ paths:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/certOpsReadLimitParam"
         - $ref: "#/components/parameters/certOpsReadOffsetParam"
+        - name: includeUnconfigured
+          in: query
+          required: false
+          description: >-
+            When true, include AD CS issuers that have not had a CA certificate
+            confirmed yet (current version 0). The default list hides those drafts.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Issuer page
@@ -5151,6 +5248,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/issuers/{issuerId}:
+    delete:
+      tags: [CertOps]
+      summary: Discard an unconfigured AD CS issuer
+      operationId: discardCertOpsIssuer
+      description: >-
+        Deletes an issuer only when its current version is still 0 and it has
+        no enrollments. A confirmed issuer, or one that already has an
+        enrollment, is returned as 404 CERTOPS_ISSUER_NOT_FOUND. Requires
+        certops.issuer.manage.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: issuerId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Draft issuer discarded
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Issuer is missing, already confirmed, or has an enrollment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "500": { $ref: "#/components/responses/InternalError" }
   /api/v1/workspaces/{id}/certops/issuers/{issuerId}/preflight:
     post:
@@ -5298,18 +5422,28 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [issuerId, certificateId, agentId, target, authorizedDnsNames, keyAlgorithm, keySize]
+              required: [certificateId, agentId, target, authorizedDnsNames, keyAlgorithm, keySize]
               properties:
-                issuerId: { type: string, format: uuid }
+                issuerId:
+                  type: string
+                  format: uuid
+                  description: Required unless profileId is set. When both are set they must name the same issuer.
                 certificateId: { type: string, format: uuid }
                 agentId: { type: string, format: uuid }
-                target: { type: object, additionalProperties: true }
+                target:
+                  type: object
+                  required: [type, binding]
+                  properties:
+                    type: { type: string, enum: [windows-iis] }
+                    binding: { type: object }
                 authorizedDnsNames:
                   type: array
                   minItems: 1
                   items: { type: string }
                 keyAlgorithm: { type: string, enum: [rsa, ecdsa] }
-                keySize: { type: integer }
+                keySize:
+                  type: integer
+                  description: RSA 2048, 3072, or 4096. ECDSA 256 or 384.
                 profileId: { type: string, format: uuid }
       responses:
         "201":
@@ -5379,6 +5513,34 @@ paths:
                 requestId: { type: integer, minimum: 1, maximum: 4294967295 }
       responses:
         "204": { description: RequestId recorded and reconciliation scheduled }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/cancel:
+    post:
+      tags: [CertOps]
+      summary: Cancel an enrollment that has not reached the CA
+      operationId: cancelCertOpsEnrollment
+      description: >-
+        Cancels an enrollment. From requested or prepared, the CA was not
+        contacted. From submitting, submission uncertain, or pending issuance,
+        a continuation is scheduled and the CA may already have been contacted.
+        The enrollment list still returns cancelled rows. Refused with
+        CERTOPS_ENROLLMENT_JOB_ACTIVE while the agent is still running the
+        attempt. Requires certops.issuer.manage.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: >-
+            Enrollment cancelled. The CA was not contacted when the enrollment
+            was still requested or prepared.
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -8246,6 +8408,19 @@ components:
         certificateCount:
           type: integer
           description: Number of managed certificates currently linked to this profile.
+        certificates:
+          type: array
+          description: |
+            Up to eight managed certificates linked to this profile, ordered by
+            common name. certificateCount can be higher than this list.
+          items:
+            type: object
+            required: [id, commonName]
+            properties:
+              id:
+                type: string
+              commonName:
+                type: string
         editableFields:
           type: array
           description: |
@@ -12315,6 +12490,17 @@ components:
                   maxLength: 128
                   pattern: "^[A-Za-z0-9_.:-]+$"
                   nullable: true
+                declaredTargetSelectors:
+                  type: array
+                  maxItems: 64
+                  description: >
+                    Target names this agent accepts. A non-empty array replaces
+                    the stored list. Omitting the field, or sending an empty
+                    array, leaves the stored list unchanged.
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
     CertOpsAgentHeartbeatResponse:
       type: object
       description: Heartbeat acknowledgment with the active job-signing key announcement so agents can detect rotation overlap.

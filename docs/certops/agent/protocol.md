@@ -69,9 +69,13 @@ Flow:
   `ntpSynced`, `uptimeSeconds`, `pinnedSigningKeyId`, `declaredCapabilities`
   (this build's fixed capability set, re-sent every heartbeat so
   an in-place binary upgrade can advertise a new one without re-enrollment;
-  see `AGENT_DECLARED_CAPABILITIES`), and (on the envelope) `clockOffsetMs`.
-  **Rollout order: the server must accept `declaredCapabilities` on
-  `heartbeatBody` before any agent build that sends it is deployed.**
+  see `AGENT_DECLARED_CAPABILITIES`), `declaredTargetSelectors` when that
+  list is non-empty (so a DNS name added in config.json is published after
+  a restart; an empty list is omitted and does not clear the stored names),
+  and (on the envelope) `clockOffsetMs`.
+  **Rollout order: the server must accept `declaredCapabilities` and
+  `declaredTargetSelectors` on `heartbeatBody` before any agent build that
+  sends them is deployed.**
   `heartbeatBody` has `additionalProperties: false`, so an older server
   rejects a heartbeat carrying an unrecognized field with a 400 instead of
   ignoring it; upgrading agents ahead of the server turns every heartbeat

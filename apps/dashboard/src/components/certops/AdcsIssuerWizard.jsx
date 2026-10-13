@@ -89,7 +89,7 @@ function adviceFor(issuer, agents) {
   if (!preflight) {
     return {
       status: 'info',
-      text: 'The check runs on the agent. It does not issue a certificate. If this stays waiting, confirm the agent is online and that its enrollment rule names this CA and template.',
+      text: 'The check runs on the agent you select. It stores the CA certificate and the template OID on that agent, and it does not issue a certificate. Run it on the agent that will enroll. If this stays waiting, confirm that agent is online, that its enrollment rule names this CA and template, and that its build advertises AD CS preflight.',
     };
   }
   const notes = [];
@@ -190,7 +190,7 @@ export default function AdcsIssuerWizard({
     };
   }, [isOpen, waiting, issuer?.id, workspaceId]);
 
-  const advice = step === 0 ? null : adviceFor(issuer, agents);
+  const advice = step === 0 || step >= 3 ? null : adviceFor(issuer, agents);
   const groups = groupCaCertificates(issuer?.lastPreflight?.caCertificates);
 
   async function handleDismiss() {
@@ -331,9 +331,10 @@ export default function AdcsIssuerWizard({
                   </Select>
                   <FormHelperText>
                     TokenTimer does not contact the CA. This Windows agent reads
-                    the template and the CA certificate. It must already allow
-                    that pair. The choice is not saved, and a later renewal goes
-                    to the agent that declares the certificate name.
+                    the template and stores the CA certificate and template OID
+                    for later enrollment. Run the check on the agent that will
+                    enroll the certificate. A different agent cannot enroll
+                    until it has run the same check.
                   </FormHelperText>
                 </FormControl>
                 <FormControl isRequired>
@@ -412,9 +413,11 @@ export default function AdcsIssuerWizard({
             ) : null}
             {step === 3 ? (
               <Text fontSize='sm'>
-                Next, open Renewal profiles and create a profile that uses this issuer.
-                Attach that profile to the certificate, with automation enabled. Renewal
-                starts when the certificate is inside the profile lead time.
+                Issuer saved. Renewal profiles is the shared list, above. Choose
+                New AD CS profile there. The last step attaches the profile to a
+                certificate already in inventory and turns automation on. The sweep
+                enrolls when that certificate is inside the profile lead time and an
+                agent that declares the DNS name is online.
               </Text>
             ) : null}
           </Stack>

@@ -225,7 +225,9 @@ async function runCertutilPreflight({
   operatorAttested = false,
   execFileImpl,
   budgetMs = JOB_BUDGET_MS,
+  info,
 }) {
+  const note = typeof info === "function" ? info : () => {};
   const started = Date.now();
   function call(argv) {
     const remaining = budgetMs - (Date.now() - started);
@@ -251,11 +253,17 @@ async function runCertutilPreflight({
   let countText = "";
   try {
     // -dsTemplate rejects -config. The template lives in AD, so this call does not select a CA.
+    note(`AD CS preflight reading template ${template}`);
     templateText = textOf(await call(["-dstemplate", template]));
+    note(`AD CS preflight reading CA EditFlags on ${caConfig}`);
     editText = textOf(await call(["-config", caConfig, "-getreg", "policy\\EditFlags"]));
+    note(`AD CS preflight reading CA InterfaceFlags on ${caConfig}`);
     interfaceText = textOf(await call(["-config", caConfig, "-getreg", "CA\\InterfaceFlags"]));
+    note("AD CS preflight reading CA certificate count");
     countText = textOf(await call(["-config", caConfig, "-cainfo", "certcount"]));
-  } catch (_error) {
+  } catch (error) {
+    const code = error && error.code != null ? ` code=${error.code}` : "";
+    note(`AD CS preflight stopped reading the CA${code}`);
     return {
       preflightResult: {
         caConfig,
@@ -273,8 +281,11 @@ async function runCertutilPreflight({
 
   const count = parseCertCount(countText);
   const caCertificates = [];
-  if (count != null) {
+  if (count == null) {
+    note("AD CS preflight could not parse the CA certificate count");
+  } else {
     const limit = Math.min(count, MAX_CA_CERTS);
+    note(`AD CS preflight exporting ${limit} CA certificates`);
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "tt-adcs-preflight-"));
     try {
       for (let index = 0; index < limit; index += 1) {
@@ -292,6 +303,7 @@ async function runCertutilPreflight({
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+    note(`AD CS preflight exported ${caCertificates.length} of ${limit} CA certificates`);
   }
 
   return {
@@ -305,10 +317,109 @@ async function runCertutilPreflight({
   };
 }
 
-async function executeAdcsPreflight({ job, rules, probe, execFileImpl } = {}) {
+function subjectFromRequestLabel(value) {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "unknown";
+}
+
+const OID_PATTERN = /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/;
+
+/**
+ * A successful preflight is what later enrollment trusts for the CA pin and
+ * the template OID. Write both caches here so a renew does not depend on a
+ * hand-copied file.
+ */
+async function cachePreflightLocally({
+  stateDir,
+  caConfig,
+  template,
+  preflightResult,
+  cacheCa,
+  cacheOid,
+} = {}) {
+  const cached = { pinned: 0, templateOid: null, errors: [] };
+  if (typeof stateDir !== "string" || stateDir.length === 0 || !preflightResult) return cached;
+  const { cachePinnedCaCert, cacheTemplateOid } = require("./adcs-enrollment");
+  const writeCa = cacheCa || cachePinnedCaCert;
+  const writeOid = cacheOid || cacheTemplateOid;
+  const oid = preflightResult.templateCheck && preflightResult.templateCheck.templateOid;
+  if (typeof oid === "string" && OID_PATTERN.test(oid)) {
+    try {
+      await writeOid({ stateDir, caConfig, template, templateOid: oid });
+      cached.templateOid = oid;
+    } catch (err) {
+      cached.errors.push(err && err.message ? err.message : "template OID cache failed");
+    }
+  }
+  const certs = Array.isArray(preflightResult.caCertificates) ? preflightResult.caCertificates : [];
+  for (const cert of certs) {
+    if (!cert || typeof cert.certificateB64 !== "string" || typeof cert.keySha256 !== "string") continue;
+    try {
+      await writeCa({
+        stateDir,
+        caKeySha256: cert.keySha256,
+        certBytes: Buffer.from(cert.certificateB64, "base64"),
+      });
+      cached.pinned += 1;
+    } catch (err) {
+      cached.errors.push(err && err.message ? err.message : "CA pin cache failed");
+    }
+  }
+  return cached;
+}
+
+function logPreflightSummary(note, result) {
+  const templateCheck = result.templateCheck || {};
+  const caCheck = result.caCheck || {};
+  const certs = Array.isArray(result.caCertificates) ? result.caCertificates : [];
+  const reasonText = (list) =>
+    Array.isArray(list) && list.length > 0 ? ` reasons=${list.slice(0, 4).join(",")}` : "";
+  note(
+    `AD CS preflight template ${result.template || ""} verdict=${templateCheck.verdict || "unknown"}` +
+      ` schema=${templateCheck.schemaVersion == null ? "unknown" : templateCheck.schemaVersion}` +
+      ` minKey=${templateCheck.minimalKeySize == null ? "unknown" : templateCheck.minimalKeySize}` +
+      ` algorithm=${templateCheck.asymmetricAlgorithm || "unknown"}` +
+      ` subjectFromRequest=${subjectFromRequestLabel(templateCheck.enrolleeSuppliesSubject)}` +
+      reasonText(templateCheck.reasons),
+  );
+  note(
+    `AD CS preflight CA verdict=${caCheck.verdict || "unknown"}` +
+      reasonText(caCheck.reasons) +
+      ` operatorAttested=${caCheck.operatorAttested === true}`,
+  );
+  const thumbs = certs
+    .map((cert) => cert && cert.thumbprintSha1)
+    .filter((value) => typeof value === "string" && /^[A-F0-9]{40}$/.test(value))
+    .slice(0, 8);
+  note(
+    `AD CS preflight CA certificates=${certs.length}` +
+      (thumbs.length > 0 ? ` thumbprints=${thumbs.join(",")}` : ""),
+  );
+}
+
+async function executeAdcsPreflight({
+  job,
+  rules,
+  probe,
+  execFileImpl,
+  info,
+  jobId,
+  stateDir,
+  cacheCa,
+  cacheOid,
+} = {}) {
+  function note(message) {
+    if (typeof info !== "function") return;
+    const text = String(message || "").replace(/\s+/g, " ").trim();
+    if (!text) return;
+    info(typeof jobId === "string" && jobId.length > 0 ? `job ${jobId}: ${text}` : text);
+  }
+
   const caConfig = job && job.caConfig;
   const template = job && job.template;
   if (job && job.mode === "dry_run") {
+    note("AD CS preflight refused: adcs-preflight has no dry-run mode");
     return {
       status: "blocked",
       errorMessage: "adcs-preflight has no dry-run mode",
@@ -322,16 +433,21 @@ async function executeAdcsPreflight({ job, rules, probe, execFileImpl } = {}) {
     typeof template !== "string" ||
     !TEMPLATE_PATTERN.test(template)
   ) {
-    return notAllowlisted(
-      "adcs-preflight was refused before any CA contact because caConfig, template, or transport is not acceptable",
-    );
+    const message =
+      "adcs-preflight was refused before any CA contact because caConfig, template, or transport is not acceptable";
+    note(`AD CS preflight refused: ${message}`);
+    return notAllowlisted(message);
   }
   const rule = matchEnrollmentRule(rules, caConfig, template);
   if (!rule) {
-    return notAllowlisted(
-      "adcs-preflight was refused before any CA contact because no local enrollment rule names this caConfig and template",
-    );
+    const message =
+      "adcs-preflight was refused before any CA contact because no local enrollment rule names this caConfig and template";
+    note(`AD CS preflight refused: ${message}`);
+    return notAllowlisted(message);
   }
+  note(
+    `AD CS preflight starting for template ${template} on ${caConfig} operatorAttested=${rule.operatorAttested === true}`,
+  );
   const run = probe || runCertutilPreflight;
   let probed;
   try {
@@ -340,18 +456,38 @@ async function executeAdcsPreflight({ job, rules, probe, execFileImpl } = {}) {
       template,
       operatorAttested: rule.operatorAttested === true,
       execFileImpl,
+      ...(probe ? {} : { info: note }),
     });
   } catch (_error) {
+    note("AD CS preflight could not read the CA");
     return {
       status: "failed",
       errorMessage: "adcs-preflight could not read the CA",
     };
   }
   if (!probed || !probed.preflightResult) {
+    note("AD CS preflight could not read the CA");
     return {
       status: "failed",
       errorMessage: "adcs-preflight could not read the CA",
     };
+  }
+  logPreflightSummary(note, probed.preflightResult);
+  if (typeof stateDir === "string" && stateDir.length > 0) {
+    const cached = await cachePreflightLocally({
+      stateDir,
+      caConfig,
+      template,
+      preflightResult: probed.preflightResult,
+      cacheCa,
+      cacheOid,
+    });
+    note(
+      `AD CS preflight cached CA pins=${cached.pinned} templateOid=${cached.templateOid || "none"}`,
+    );
+    if (cached.errors.length > 0) {
+      note(`AD CS preflight cache warning: ${cached.errors[0]}`);
+    }
   }
   return {
     status: "succeeded",
@@ -363,6 +499,7 @@ module.exports = {
   EDITF_ATTRIBUTESUBJECTALTNAME2,
   IF_ENFORCEENCRYPTICERTREQUEST,
   executeAdcsPreflight,
+  cachePreflightLocally,
   matchEnrollmentRule,
   parseCaCheck,
   parseTemplateDump,
