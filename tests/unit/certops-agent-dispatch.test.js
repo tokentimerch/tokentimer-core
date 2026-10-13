@@ -1663,6 +1663,121 @@ describe("agentDispatch.claimJobs", () => {
     );
   });
 
+  // An AD CS continuation row as the claim SELECT returns it (enrollment_id set).
+  function adcsContinuationClaimPool(capabilityRow, seen) {
+    return createMockPool((sql, params) => {
+      if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+      if (sql.includes("SELECT declared_target_selectors")) return { rows: [capabilityRow] };
+      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+        seen.prefilter = params[10];
+        return {
+          rows: [
+            {
+              id: 77,
+              workspace_id: WORKSPACE_A,
+              operation: "continue-enrollment",
+              subject_type: "managed_certificate",
+              subject_id: "cert-adcs-1",
+              payload: { certificateId: "cert-adcs-1" },
+              executor_kind: "agent",
+              enrollment_id: "enrollment-1",
+              subject_is_provisioning: false,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SET status = 'claimed'")) {
+        seen.claimed = true;
+        return {
+          rows: [
+            {
+              id: 77,
+              status: "claimed",
+              claim_id: "claim-adcs-1",
+              lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
+              attempt_count: 1,
+              operation: "continue-enrollment",
+              subject_type: "managed_certificate",
+              subject_id: "cert-adcs-1",
+              payload: { certificateId: "cert-adcs-1" },
+              enrollment_id: "enrollment-1",
+            },
+          ],
+        };
+      }
+      if (sql.includes("certificate_enrollments")) {
+        seen.enrollmentLookup = true;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+  }
+
+  const adcsCapabilityRow = (declaredCapabilities, updatedAt) => ({
+    declared_target_selectors: [],
+    declared_command_profile_names: [],
+    supported_dns_providers: [],
+    declared_capabilities: declaredCapabilities,
+    capabilities_updated_at: updatedAt,
+  });
+
+  it("does not offer or claim an AD CS continuation job without an adcs-enroll-v1 declaration", async () => {
+    const seen = {};
+    const result = await claimJobs({
+      dbPool: adcsContinuationClaimPool(adcsCapabilityRow([], new Date().toISOString()), seen),
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["continue-enrollment"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    assert.deepEqual(result.jobs, []);
+    assert.equal(seen.prefilter, false, "prefilter must exclude enrollment jobs");
+    assert.equal(seen.claimed, undefined, "no claim UPDATE may run");
+  });
+
+  it("does not claim an AD CS continuation job when the adcs-enroll-v1 declaration is past the capability epoch", async () => {
+    const seen = {};
+    const result = await claimJobs({
+      dbPool: adcsContinuationClaimPool(
+        adcsCapabilityRow(["adcs-enroll-v1"], new Date(Date.now() - 60 * 60 * 1000).toISOString()),
+        seen,
+      ),
+      agent: agentFixture(),
+      body: { maxJobs: 1, supportedActions: ["continue-enrollment"] },
+      env: {},
+      deps: CLAIM_DEPS_BASE,
+    });
+
+    assert.deepEqual(result.jobs, []);
+    assert.equal(seen.prefilter, false);
+    assert.equal(seen.claimed, undefined, "no claim UPDATE may run");
+  });
+
+  it("offers an AD CS continuation job under a fresh adcs-enroll-v1 declaration", async () => {
+    const seen = {};
+    // The claim proceeds to load the bound enrollment. The fixture has none,
+    // so dispatch stops there; reaching that lookup proves the gate passed.
+    await assert.rejects(
+      claimJobs({
+        dbPool: adcsContinuationClaimPool(
+          adcsCapabilityRow(["adcs-enroll-v1"], new Date().toISOString()),
+          seen,
+        ),
+        agent: agentFixture(),
+        body: { maxJobs: 1, supportedActions: ["continue-enrollment"] },
+        env: {},
+        deps: CLAIM_DEPS_BASE,
+      }),
+      { code: "CERTOPS_AGENT_JOB_NOT_FOUND" },
+    );
+
+    assert.equal(seen.prefilter, true);
+    assert.equal(seen.claimed, true);
+    assert.equal(seen.enrollmentLookup, true);
+  });
+
   it("excludes controller-lane jobs from agent claims", async () => {
     let claimSql = null;
     const dbPool = createMockPool((sql) => {

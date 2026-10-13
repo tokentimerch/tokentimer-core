@@ -75,6 +75,7 @@ const {
   computeAgentCompatibility,
 } = require("./agentRegistry");
 const {
+  ADCS_ENROLL_CAPABILITY,
   EVIDENCE_CLAIM_BINDING_CAPABILITY,
   TRUST_ANCHOR_DEPLOY_CAPABILITY,
   evaluateAgentJobEligibility,
@@ -1101,6 +1102,12 @@ async function claimJobs({
       capability: TRUST_ANCHOR_DEPLOY_CAPABILITY,
       env,
     });
+    const canEnrollAdcs = hasFreshCapability({
+      declaredCapabilities: caps.declared_capabilities,
+      capabilitiesUpdatedAt: caps.capabilities_updated_at,
+      capability: ADCS_ENROLL_CAPABILITY,
+      env,
+    });
     const useV2Envelope = hasFreshCapability({
       declaredCapabilities: caps.declared_capabilities,
       capabilitiesUpdatedAt: caps.capabilities_updated_at,
@@ -1139,7 +1146,7 @@ async function claimJobs({
               approved_payload_hash, approved_canonical_intent_hash,
               mode, executor_kind,
               assigned_agent_id, required_target_selector,
-              required_dns_provider, required_command_profile,
+              required_dns_provider, required_command_profile, enrollment_id,
               EXISTS (
                 SELECT 1
                   FROM managed_certificates mc
@@ -1233,6 +1240,9 @@ async function claimJobs({
             operation NOT IN ('distribute-trust', 'revoke-trust')
             OR $10::boolean
           )
+          -- AD CS enrollment and continuation jobs (enrollment_id set) need a
+          -- fresh adcs-enroll-v1 declaration; prefilter only, as above.
+          AND (enrollment_id IS NULL OR $11::boolean)
         ORDER BY created_at
         LIMIT $7
         FOR UPDATE SKIP LOCKED`,
@@ -1247,6 +1257,7 @@ async function claimJobs({
         canBindEvidenceToClaim,
         agentKind,
         canBindTrustAnchorDeploy,
+        canEnrollAdcs,
       ],
     );
 
@@ -1285,6 +1296,7 @@ async function claimJobs({
           requiredDnsProvider: row.required_dns_provider,
           requiredCommandProfile: row.required_command_profile,
           subjectIsProvisioning: row.subject_is_provisioning === true,
+          issuerKind: row.enrollment_id ? "adcs" : null,
         },
         compatibility,
         env,
@@ -2882,6 +2894,7 @@ module.exports = {
     safeParseJson,
     serviceError,
     wireActionForOperation,
+    ADCS_ENROLL_CAPABILITY,
     EVIDENCE_CLAIM_BINDING_CAPABILITY,
     TRUST_ANCHOR_DEPLOY_CAPABILITY,
     SIGNED_PAYLOAD_B64_CAPABILITY,

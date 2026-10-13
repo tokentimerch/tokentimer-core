@@ -237,6 +237,59 @@ describe("shared agent-job eligibility", () => {
     assert.equal(outcome.reason, "claim_bound_evidence_unavailable");
   });
 
+  it("refuses AD CS enrollment and continuation jobs without a declared adcs-enroll-v1", () => {
+    for (const operation of ["renew", "continue-enrollment"]) {
+      const candidate = agent({
+        supportedOperations: [operation],
+        declaredCapabilities: [],
+      });
+      const outcome = evaluateAgentJobEligibility({
+        agent: candidate,
+        job: { operation, executorKind: "agent", issuerKind: "adcs" },
+        compatibility: computeAgentCompatibility(candidate, {}),
+        env: {},
+        now: NOW,
+      });
+      assert.equal(outcome.eligible, false, `${operation}: eligible`);
+      assert.equal(outcome.reason, "adcs_enroll_capability_unavailable");
+    }
+  });
+
+  it("refuses AD CS jobs when the adcs-enroll-v1 declaration is past the capability epoch", () => {
+    const candidate = agent({
+      supportedOperations: ["continue-enrollment"],
+      declaredCapabilities: ["adcs-enroll-v1"],
+      capabilitiesUpdatedAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
+    });
+    const outcome = evaluateAgentJobEligibility({
+      agent: candidate,
+      job: { operation: "continue-enrollment", executorKind: "agent", issuerKind: "adcs" },
+      compatibility: computeAgentCompatibility(candidate, {}),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(outcome.eligible, false);
+    assert.equal(outcome.reason, "adcs_enroll_capability_unavailable");
+  });
+
+  it("offers AD CS enrollment and continuation jobs under a fresh adcs-enroll-v1 declaration", () => {
+    for (const operation of ["renew", "continue-enrollment"]) {
+      const candidate = agent({
+        supportedOperations: [operation],
+        declaredCapabilities: ["adcs-enroll-v1"],
+        capabilitiesUpdatedAt: new Date(NOW - 30_000).toISOString(),
+      });
+      const outcome = evaluateAgentJobEligibility({
+        agent: candidate,
+        job: { operation, executorKind: "agent", issuerKind: "adcs" },
+        compatibility: computeAgentCompatibility(candidate, {}),
+        env: {},
+        now: NOW,
+      });
+      assert.equal(outcome.eligible, true, `${operation}: eligible`);
+    }
+  });
+
   it("counts only truly eligible agents as redundant renewal paths", () => {
     const eligible = agent({ id: "agent-1", agentId: "eligible" });
     const selectorOnly = agent({

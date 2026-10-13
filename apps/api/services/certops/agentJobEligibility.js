@@ -14,6 +14,9 @@ const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
 // higher-stakes surface than an ordinary certificate deploy, so it requires
 // the same "declared AND fresh" proof evidence-claim-binding requires.
 const TRUST_ANCHOR_DEPLOY_CAPABILITY = "trust-anchor-deploy-v1";
+// Gates AD CS enrollment and continuation jobs (issuerKind adcs). Stays
+// undeclared in released agents until qualified; the agent refuses them too.
+const ADCS_ENROLL_CAPABILITY = "adcs-enroll-v1";
 // Duplicated locally rather than imported from jobs.js's
 // isTrustAnchorOperation: jobs.js requires this module, so importing back
 // would be circular. Kept in sync by hand.
@@ -168,6 +171,21 @@ function evaluateAgentJobEligibility({
     return result(false, "trust_anchor_deploy_capability_unavailable");
   }
 
+  // Same declared-and-fresh proof as the trust-anchor gate, applied to both
+  // initial enrollment and continue-enrollment.
+  if (
+    job.issuerKind === "adcs" &&
+    !hasFreshCapability({
+      declaredCapabilities: agent.declaredCapabilities,
+      capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt,
+      capability: ADCS_ENROLL_CAPABILITY,
+      env,
+      now,
+    })
+  ) {
+    return result(false, "adcs_enroll_capability_unavailable");
+  }
+
   if (
     routing.requiredTargetSelector
   ) {
@@ -213,6 +231,7 @@ function evaluateAgentJobEligibility({
 }
 
 module.exports = {
+  ADCS_ENROLL_CAPABILITY,
   EVIDENCE_CLAIM_BINDING_CAPABILITY,
   TRUST_ANCHOR_DEPLOY_CAPABILITY,
   evaluateAgentJobEligibility,
