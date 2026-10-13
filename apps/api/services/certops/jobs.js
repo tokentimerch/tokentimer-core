@@ -783,6 +783,9 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   ]),
   reload: new Set(["reloadService", "verifyHost", "verifyPort"]),
   revoke: new Set(),
+  // AD CS continuation carries the same Windows key custody marker as the
+  // original renew. The scheduler copies that payload forward.
+  "continue-enrollment": new Set(["keyMode"]),
   noop: new Set(),
   // Adds nothing certificate-shaped (packages/contracts/certops/
   // protocol-smoke-payload.schema.json): a smoke job can never be mistaken
