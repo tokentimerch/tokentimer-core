@@ -438,10 +438,11 @@ async function createAutomaticAdcsRenewal({
   if (issuer.rows[0]?.kind !== "adcs") return null;
 
   const fields = adcsFieldsFromProfile(certificate);
-  // Evidence must describe the confirmed version: its config, template, and
-  // pinned CA key. A preflight from before a re-confirmation does not qualify.
+  // Evidence must describe the confirmed version (config, template, pinned key)
+  // and be dispatched after its confirmation. Template ACLs can change in AD
+  // without the name changing, so a pre-confirmation check does not qualify.
   const confirmed = await dbPool.query(
-    `SELECT v.ca_config, v.template, v.ca_key_sha256
+    `SELECT v.ca_config, v.template, v.ca_key_sha256, v.confirmed_at
        FROM certificate_issuers i
        JOIN certificate_issuer_versions v
          ON v.workspace_id = i.workspace_id
@@ -463,7 +464,7 @@ async function createAutomaticAdcsRenewal({
         AND EXISTS (
           SELECT 1
             FROM (
-              SELECT j.status, j.result_metadata
+              SELECT j.status, j.result_metadata, j.created_at
                 FROM certificate_jobs j
                WHERE j.workspace_id = a.workspace_id
                  AND j.operation = 'adcs-preflight'
@@ -475,10 +476,11 @@ async function createAutomaticAdcsRenewal({
            WHERE latest.status = 'succeeded'
              AND latest.result_metadata->'preflightVerdict'->>'templateCheck' = 'safe'
              AND latest.result_metadata->'preflightVerdict'->>'caCheck' = 'safe'
-             AND latest.result_metadata->'preflightVerdict'->'caConfig' = $4::jsonb
-             AND latest.result_metadata->'preflightVerdict'->'template' = $5::jsonb
+             AND latest.result_metadata->'preflightVerdict'->>'caConfig' = $4::text
+             AND latest.result_metadata->'preflightVerdict'->>'template' = $5::text
              AND latest.result_metadata->'preflightVerdict'->'caKeySha256s'
                    @> jsonb_build_array($6::text)
+             AND latest.created_at >= $7::timestamptz
         )
       ORDER BY a.last_seen_at DESC NULLS LAST
       LIMIT 1`,
@@ -486,10 +488,12 @@ async function createAutomaticAdcsRenewal({
       certificate.workspace_id,
       fields.target.reference,
       String(certificate.profile_issuer_id),
-      // ca_config and template are TEXT holding JSON; $4::jsonb parses them.
+      // Plain strings on both sides; compared as text, not JSON.
       version.ca_config ?? null,
       version.template ?? null,
       version.ca_key_sha256 ?? null,
+      // A null confirmation time matches nothing, so the gate fails closed.
+      version.confirmed_at ?? null,
     ],
   );
   if (!agent.rows[0]) {

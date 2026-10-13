@@ -28,16 +28,20 @@ const CERTIFICATE = {
   },
 };
 
-const CA_CONFIG = '{"endpoint":"ca.example.com"}';
-const TEMPLATE = '{"name":"WebServer"}';
+// Plain strings, as the enrollment snapshot contract defines them.
+const CA_CONFIG = "ca.example.com\\Issuing CA";
+const TEMPLATE = "WebServer";
 const CA_KEY = "ab".repeat(32);
+const CONFIRMED_AT = new Date("2026-10-01T00:00:00Z");
 
 // Answers each gate query by its SQL shape; anything else fails the test.
 function fakePool({
   agentRows = [],
   declaredRows = [],
   openRows = [],
-  versionRows = [{ ca_config: CA_CONFIG, template: TEMPLATE, ca_key_sha256: CA_KEY }],
+  versionRows = [
+    { ca_config: CA_CONFIG, template: TEMPLATE, ca_key_sha256: CA_KEY, confirmed_at: CONFIRMED_AT },
+  ],
 }) {
   const queries = [];
   return {
@@ -74,9 +78,10 @@ describe("AD CS automatic renewal agent readiness", () => {
     assert.match(select.sql, /'adcs-preflight'/);
     assert.match(select.sql, /preflightVerdict'->>'caCheck' = 'safe'/);
     assert.match(select.sql, /preflightVerdict'->>'templateCheck' = 'safe'/);
-    assert.match(select.sql, /preflightVerdict'->'caConfig' = \$4::jsonb/);
-    assert.match(select.sql, /preflightVerdict'->'template' = \$5::jsonb/);
+    assert.match(select.sql, /preflightVerdict'->>'caConfig' = \$4::text/);
+    assert.match(select.sql, /preflightVerdict'->>'template' = \$5::text/);
     assert.match(select.sql, /preflightVerdict'->'caKeySha256s'/);
+    assert.match(select.sql, /latest\.created_at >= \$7::timestamptz/);
     assert.deepEqual(select.params, [
       "ws-1",
       "www.example.com",
@@ -84,6 +89,7 @@ describe("AD CS automatic renewal agent readiness", () => {
       CA_CONFIG,
       TEMPLATE,
       CA_KEY,
+      CONFIRMED_AT,
     ]);
   });
 
@@ -91,7 +97,7 @@ describe("AD CS automatic renewal agent readiness", () => {
     const pool = fakePool({ declaredRows: [{ "?column?": 1 }], versionRows: [] });
     await assert.rejects(run(pool), { code: CERTOPS_ADCS_AGENT_NOT_PREPARED });
     const select = pool.queries.find((q) => q.sql.includes("SELECT a.id"));
-    assert.deepEqual(select.params.slice(3), [null, null, null]);
+    assert.deepEqual(select.params.slice(3), [null, null, null, null]);
   });
 
   it("keeps the not-deployable reason when no active agent declares the target", async () => {
