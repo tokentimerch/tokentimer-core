@@ -137,6 +137,7 @@ const {
   NON_RENEWABLE_CERTIFICATE_STATUSES,
   RENEWAL_JOB_TERMINAL_STATUSES,
   countInFlightRenewalJobsByCaEndpoint,
+  loadCertificateRenewalRows,
   resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
 const { resolveRenewalPerCaCap } = require("../services/certops/renewalCapacity");
@@ -3268,97 +3269,6 @@ function deriveCertificateRenewalState(
     renewsFrom,
     detail: `Renewal is attempted automatically from ${renewBeforeDays} days before expiry.`,
   };
-}
-
-/**
- * Renewal inputs for the listed certificates, joined to their profile exactly
- * the way findCertificatesDueForRenewal joins it. Read here rather than in the
- * inventory projection so the public-only inventory record keeps its shape and
- * profile metadata never leaks into it verbatim.
- */
-async function loadCertificateRenewalRows({
-  db = pool,
-  workspaceId,
-  certificateIds,
-  env = process.env,
-}) {
-  const profileColumns = `SELECT mc.id,
-            mc.status,
-            mc.key_mode,
-            mc.not_after,
-            mc.common_name,
-            mc.subject_alt_names,
-            mc.profile_id,
-            cp.name AS profile_name,
-            cp.status AS profile_status,
-            cp.key_mode AS profile_key_mode,
-            cp.public_metadata AS profile_public_metadata,
-            cp.renew_before_days AS profile_renew_before_days`;
-  // Same schedule columns listUpcomingRenewals selects. Profile metadata stays
-  // on the server row so the client never receives deployment topology.
-  const scheduleColumns = `,
-            mc.not_after
-              - (COALESCE(cp.renew_before_days, $3) || ' days')::interval
-              AS renews_from,
-            (
-              SELECT cj.status
-                FROM certificate_jobs cj
-               WHERE cj.workspace_id = mc.workspace_id
-                 AND cj.operation = 'renew'
-                 AND cj.subject_type = 'managed_certificate'
-                 AND cj.subject_id = mc.id::text
-               ORDER BY cj.created_at DESC
-               LIMIT 1
-            ) AS last_renew_job_status,
-            EXISTS (
-              SELECT 1
-                FROM certificate_jobs cj
-               WHERE cj.workspace_id = mc.workspace_id
-                 AND cj.operation = 'renew'
-                 AND cj.subject_type = 'managed_certificate'
-                 AND cj.subject_id = mc.id::text
-                 AND NOT (cj.status = ANY($4::text[]))
-            ) AS has_active_renew_job,
-            NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
-              AS certificate_ca_endpoint,
-            NULLIF(
-              BTRIM(
-                COALESCE(
-                  cp.public_metadata->'renewalProfile'->'ca'->>'endpoint',
-                  cp.public_metadata->>'caEndpoint'
-                )
-              ),
-              ''
-            ) AS profile_ca_endpoint`;
-  const fromClause = `
-       FROM managed_certificates mc
-       LEFT JOIN certificate_profiles cp
-         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
-      WHERE mc.workspace_id = $1
-        AND mc.id = ANY($2::uuid[])`;
-  try {
-    const result = await db.query(
-      `${profileColumns}${scheduleColumns}${fromClause}`,
-      [
-        workspaceId,
-        certificateIds,
-        String(resolveRenewalThresholdDays(env)),
-        RENEWAL_JOB_TERMINAL_STATUSES,
-      ],
-    );
-    return { rows: result.rows, scheduleFacts: true };
-  } catch (err) {
-    // Schedule facts are enrichment. A failure here must not 500 the list.
-    logger.warn("CertOps renewal schedule enrichment failed", {
-      error: err.message,
-      workspaceId,
-    });
-    const result = await db.query(`${profileColumns}${fromClause}`, [
-      workspaceId,
-      certificateIds,
-    ]);
-    return { rows: result.rows, scheduleFacts: false };
-  }
 }
 
 /**

@@ -265,6 +265,7 @@ function createAdcsIssuer({
     return {
       outcome: mapped.outcome,
       detail: mapped.detail,
+      ...(typeof mapped.errorCode === "string" ? { errorCode: mapped.errorCode } : {}),
       ...(caHresult ? { caHresult } : {}),
     };
   }

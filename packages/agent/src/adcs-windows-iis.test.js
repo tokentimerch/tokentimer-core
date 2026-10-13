@@ -188,6 +188,22 @@ describe("resultForAdcsOutcome", () => {
     assert.equal(result.enrollmentResult.state, "submission_uncertain");
   });
 
+  it("maps a new CA key to rejected_invalid", () => {
+    const result = resultForAdcsOutcome(
+      {
+        outcome: "rejected_invalid",
+        errorCode: "ADCS_CA_KEY_CHANGED",
+        detail: "CMS signer key does not match caKeySha256",
+      },
+      ENROLLMENT,
+      { knownRequestId: 4242 },
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.enrollmentResult.state, "rejected_invalid");
+    assert.equal(result.enrollmentResult.errorCode, "ADCS_CA_KEY_CHANGED");
+    assert.equal(result.enrollmentResult.requestId, 4242);
+  });
+
   it("maps submit uncertain to submission_uncertain", () => {
     const result = resultForAdcsOutcome(
       { outcome: "uncertain", detail: "maybe" },

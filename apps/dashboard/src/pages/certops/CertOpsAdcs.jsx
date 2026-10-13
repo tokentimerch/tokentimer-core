@@ -175,8 +175,14 @@ const FINISHED_ENROLLMENT_STATES = new Set([
   'installed',
 ]);
 
+const PARKED_ENROLLMENT_STATES = new Set(['requested', 'install_failed']);
+
 function enrollmentIsFinished(enrollment) {
   return FINISHED_ENROLLMENT_STATES.has(enrollment?.state);
+}
+
+function enrollmentIsParked(enrollment) {
+  return PARKED_ENROLLMENT_STATES.has(enrollment?.state);
 }
 
 function actionProps(busyKey, key, blocked) {
@@ -834,6 +840,7 @@ export default function CertOpsAdcs() {
   const [enrollmentTotal, setEnrollmentTotal] = useState(0);
   const [pendingAbandonId, setPendingAbandonId] = useState(null);
   const [showFinished, setShowFinished] = useState(false);
+  const [showParked, setShowParked] = useState(false);
   const [showRejectedIssuers, setShowRejectedIssuers] = useState(false);
   const [openIssuerId, setOpenIssuerId] = useState(null);
   const pollRef = useRef(null);
@@ -1084,9 +1091,12 @@ export default function CertOpsAdcs() {
 
   const finishedEnrollmentCount =
     enrollments.filter(enrollmentIsFinished).length;
-  const visibleEnrollments = showFinished
-    ? enrollments
-    : enrollments.filter(enrollment => !enrollmentIsFinished(enrollment));
+  const parkedEnrollmentCount = enrollments.filter(enrollmentIsParked).length;
+  const visibleEnrollments = enrollments.filter(enrollment => {
+    if (enrollmentIsParked(enrollment)) return showParked;
+    if (enrollmentIsFinished(enrollment)) return showFinished;
+    return true;
+  });
 
   return (
     <Stack spacing={4}>
@@ -1206,14 +1216,27 @@ export default function CertOpsAdcs() {
             title='Enrollments'
             description='Pending approval waits for the CA. An uncertain submission needs the RequestId before it can be reconciled.'
             action={
-              finishedEnrollmentCount > 0 ? (
-                <Checkbox
-                  isChecked={showFinished}
-                  onChange={event => setShowFinished(event.target.checked)}
-                  size='sm'
-                >
-                  Show finished ({finishedEnrollmentCount})
-                </Checkbox>
+              finishedEnrollmentCount > 0 || parkedEnrollmentCount > 0 ? (
+                <HStack spacing={4}>
+                  {parkedEnrollmentCount > 0 ? (
+                    <Checkbox
+                      isChecked={showParked}
+                      onChange={event => setShowParked(event.target.checked)}
+                      size='sm'
+                    >
+                      {`Show not started or install failed (${parkedEnrollmentCount})`}
+                    </Checkbox>
+                  ) : null}
+                  {finishedEnrollmentCount > 0 ? (
+                    <Checkbox
+                      isChecked={showFinished}
+                      onChange={event => setShowFinished(event.target.checked)}
+                      size='sm'
+                    >
+                      Show finished ({finishedEnrollmentCount})
+                    </Checkbox>
+                  ) : null}
+                </HStack>
               ) : null
             }
           />
@@ -1235,7 +1258,11 @@ export default function CertOpsAdcs() {
               description={
                 enrollments.length === 0
                   ? 'A renew job creates an enrollment when an agent rule names the CA and template.'
-                  : 'Finished enrollments are hidden. Show finished to see cancelled, failed, and completed requests.'
+                  : parkedEnrollmentCount > 0 && finishedEnrollmentCount > 0
+                    ? 'Finished enrollments, and ones that never started or failed to install, are hidden.'
+                    : parkedEnrollmentCount > 0
+                      ? 'Enrollments that never started or failed to install are hidden.'
+                      : 'Finished enrollments are hidden. Show finished to see cancelled, failed, and completed requests.'
               }
             />
           ) : (

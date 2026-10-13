@@ -451,6 +451,8 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   rejected_invalid: new Set([
     "prepared",
     "submitting",
+    "pending",
+    "pending_issuance",
     "issued",
     "validation_deferred",
     "rejected_invalid",

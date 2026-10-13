@@ -24,6 +24,7 @@
  */
 
 const { pool } = require("../../db/database");
+const { logger } = require("../../utils/logger");
 const {
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   createCertificateJob,
@@ -842,6 +843,93 @@ async function runRenewalSchedulerSweep({
   }
 }
 
+/**
+ * Renewal inputs for the listed certificates, joined to their profile the
+ * same way the scheduler joins it. Kept out of the inventory route module so
+ * that file does not query the job table.
+ */
+async function loadCertificateRenewalRows({
+  db = pool,
+  workspaceId,
+  certificateIds,
+  env = process.env,
+}) {
+  const profileColumns = `SELECT mc.id,
+            mc.status,
+            mc.key_mode,
+            mc.not_after,
+            mc.common_name,
+            mc.subject_alt_names,
+            mc.profile_id,
+            cp.name AS profile_name,
+            cp.status AS profile_status,
+            cp.key_mode AS profile_key_mode,
+            cp.public_metadata AS profile_public_metadata,
+            cp.renew_before_days AS profile_renew_before_days`;
+  const scheduleColumns = `,
+            mc.not_after
+              - (COALESCE(cp.renew_before_days, $3) || ' days')::interval
+              AS renews_from,
+            (
+              SELECT cj.status
+                FROM certificate_jobs cj
+               WHERE cj.workspace_id = mc.workspace_id
+                 AND cj.operation = 'renew'
+                 AND cj.subject_type = 'managed_certificate'
+                 AND cj.subject_id = mc.id::text
+               ORDER BY cj.created_at DESC
+               LIMIT 1
+            ) AS last_renew_job_status,
+            EXISTS (
+              SELECT 1
+                FROM certificate_jobs cj
+               WHERE cj.workspace_id = mc.workspace_id
+                 AND cj.operation = 'renew'
+                 AND cj.subject_type = 'managed_certificate'
+                 AND cj.subject_id = mc.id::text
+                 AND NOT (cj.status = ANY($4::text[]))
+            ) AS has_active_renew_job,
+            NULLIF(BTRIM(mc.public_metadata->>'caEndpoint'), '')
+              AS certificate_ca_endpoint,
+            NULLIF(
+              BTRIM(
+                COALESCE(
+                  cp.public_metadata->'renewalProfile'->'ca'->>'endpoint',
+                  cp.public_metadata->>'caEndpoint'
+                )
+              ),
+              ''
+            ) AS profile_ca_endpoint`;
+  const fromClause = `
+       FROM managed_certificates mc
+       LEFT JOIN certificate_profiles cp
+         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+      WHERE mc.workspace_id = $1
+        AND mc.id = ANY($2::uuid[])`;
+  try {
+    const result = await db.query(
+      `${profileColumns}${scheduleColumns}${fromClause}`,
+      [
+        workspaceId,
+        certificateIds,
+        String(resolveRenewalThresholdDays(env)),
+        RENEWAL_JOB_TERMINAL_STATUSES,
+      ],
+    );
+    return { rows: result.rows, scheduleFacts: true };
+  } catch (err) {
+    logger.warn("CertOps renewal schedule enrichment failed", {
+      error: err.message,
+      workspaceId,
+    });
+    const result = await db.query(`${profileColumns}${fromClause}`, [
+      workspaceId,
+      certificateIds,
+    ]);
+    return { rows: result.rows, scheduleFacts: false };
+  }
+}
+
 module.exports = {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   DEFAULT_RENEWAL_PER_CA_CAP,
@@ -857,6 +945,8 @@ module.exports = {
   certificateCaEndpointRaw,
   countCertificatesWithAutoRenewDisabled,
   countInFlightRenewalJobsByCaEndpoint,
+  loadCertificateRenewalRows,
+  resolveRenewalThresholdDays,
   findCertificatesDueForRenewal,
   isValidCaEndpointUrl,
   normalizeCaBucket,

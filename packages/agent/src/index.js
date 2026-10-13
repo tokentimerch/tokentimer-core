@@ -5994,6 +5994,14 @@ async function executeDeployJob({
     const custodyChoice = resolveAgentCustodyKey(keysDir, job.certificateId, fs, {
       certificatePem: job.certificatePem,
     });
+    if (custodyChoice.quarantined && !custodyChoice.path) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          "PRIVATE_KEY_MISMATCH: the agent custody key does not match this certificate",
+        ),
+      };
+    }
     if (custodyChoice.path) {
       keyPath = custodyChoice.path;
     }

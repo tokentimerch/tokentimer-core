@@ -27,6 +27,7 @@ const {
   updateCertificateJobStatus,
   validateJobPayloadForOperation,
   validateRenewalProfileOnPayload,
+  _test: { validateExecutionFields },
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
@@ -2453,6 +2454,18 @@ describe("CertOps trust-anchor operation and subject-type wiring (ADR-0012 decis
     assert.deepEqual(
       [...TRUST_ANCHOR_OPERATIONS].sort(),
       ["distribute-trust", "revoke-trust"],
+    );
+  });
+
+  it("accepts keyMode on a continue-enrollment payload and nothing else", () => {
+    assert.doesNotThrow(() =>
+      validateExecutionFields({ keyMode: "os-store-managed" }, "continue-enrollment"),
+    );
+    assert.throws(
+      () => validateExecutionFields({ caEndpoint: "https://ca.example.test" }, "continue-enrollment"),
+      (error) =>
+        error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID &&
+        /caEndpoint is not valid for the continue-enrollment operation/.test(error.message),
     );
   });
 

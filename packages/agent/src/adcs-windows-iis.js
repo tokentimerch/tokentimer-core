@@ -175,6 +175,19 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
       }),
     };
   }
+  if (issuance.outcome === "rejected_invalid") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(issuance.detail || "CMS signer key does not match caKeySha256"),
+      enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "rejected_invalid", {
+        errorCode: "ADCS_CA_KEY_CHANGED",
+        ...(Number.isInteger(options.knownRequestId) && options.knownRequestId >= 1
+          ? { requestId: options.knownRequestId }
+          : {}),
+      }),
+    };
+  }
   if (issuance.outcome === "uncertain") {
     // A known pending RequestId stays pending_issuance (retry/retrieve), not
     // submission_uncertain (which is only for unclassified submit side effects).
@@ -1243,6 +1256,17 @@ function createAdcsWindowsIisExecutors(deps) {
         await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
+      if (issuance.outcome === "rejected_invalid") {
+        issuanceOutcome = "rejected_invalid";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "rejected_invalid",
+          ...journalTrustFields,
+          errorCode: "ADCS_CA_KEY_CHANGED",
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
       if (issuance.outcome === "uncertain") {
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "submission_uncertain",
@@ -2202,6 +2226,25 @@ function createAdcsWindowsIisExecutors(deps) {
           await reportIssuanceEvidence(client, jobId, issuance);
           return resultForAdcsOutcome(issuance, decoded);
         }
+        if (issuance.outcome === "rejected_invalid") {
+          continueOutcomeRef.value = "rejected_invalid";
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "rejected_invalid",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256: journal.csrSha256,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            errorCode: "ADCS_CA_KEY_CHANGED",
+          });
+          if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+          await reportIssuanceEvidence(client, jobId, issuance);
+          return resultForAdcsOutcome(issuance, decoded);
+        }
         if (issuance.outcome === "denied" || issuance.outcome === "refused" || issuance.outcome === "uncertain") {
           const caHresult =
             issuance.outcome === "denied" &&
@@ -2667,6 +2710,26 @@ function createAdcsWindowsIisExecutors(deps) {
       await reportIssuanceEvidence(client, jobId, issuance);
 
       if (issuance.outcome === "pending") {
+        return resultForAdcsOutcome(issuance, decoded, {
+          knownRequestId: journal.requestId,
+        });
+      }
+      if (issuance.outcome === "rejected_invalid") {
+        continueOutcomeRef.value = "rejected_invalid";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "rejected_invalid",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          requestId: journal.requestId,
+          errorCode: "ADCS_CA_KEY_CHANGED",
+        });
         return resultForAdcsOutcome(issuance, decoded, {
           knownRequestId: journal.requestId,
         });

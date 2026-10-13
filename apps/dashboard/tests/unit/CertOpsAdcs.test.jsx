@@ -196,6 +196,16 @@ describe('CertOpsAdcs', () => {
       screen.queryByRole('button', { name: /Use this certificate/ })
     ).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Abandon/ })).toHaveLength(1);
+    expect(screen.queryByText(/14-day limit has not started/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Cancel enrollment/ })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/helper binary is not installed/)).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /Show not started or install failed \(1\)/,
+      })
+    );
     expect(screen.getByText(/14-day limit has not started/)).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Cancel enrollment/ })

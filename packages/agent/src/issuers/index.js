@@ -19,6 +19,8 @@
  *   failed         no certificate, and nothing at the CA to come back for.
  *   not_submitted  the transport proves the request never reached the CA.
  *   uncertain      the request may have reached the CA. Never resubmit it.
+ *   rejected_invalid  the CA answered, and the answer fails a trust check
+ *                  (a new CA key). Do not install it and do not resubmit it.
  *
  * Any outcome may carry `evidence` items, which the executor reports before
  * acting on the outcome. An issuer that can return pending must implement
@@ -39,6 +41,7 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "failed",
   "not_submitted",
   "uncertain",
+  "rejected_invalid",
 ]);
 
 // AD CS runs only after resolveJobIssuerKind accepts the kind. The agent
@@ -83,6 +86,11 @@ function findOutcomeProblem(value) {
         : "requestId must be an integer from 1 to 4294967295";
     case "refused":
       if (!isNonEmptyString(value.rejectionReason)) return "rejectionReason is required";
+      return isNonEmptyString(value.detail) ? null : "detail is required";
+    case "rejected_invalid":
+      if (value.errorCode !== "ADCS_CA_KEY_CHANGED") {
+        return "errorCode must be ADCS_CA_KEY_CHANGED";
+      }
       return isNonEmptyString(value.detail) ? null : "detail is required";
     default:
       return isNonEmptyString(value.detail) ? null : "detail is required";
