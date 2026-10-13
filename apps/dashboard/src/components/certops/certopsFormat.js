@@ -598,7 +598,7 @@ export function resolveTokenCertificate(certificates) {
 export const KEY_REFERENCE_MAX_LENGTH = 256;
 
 /** Separator between location block and shared technical reference in keyReference. */
-const KEY_REFERENCE_TECH_SEP = ' — ';
+const KEY_REFERENCE_TECH_SEP = ' · ';
 
 /**
  * Split user-entered location text into distinct labels (one per line or comma).
