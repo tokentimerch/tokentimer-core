@@ -832,6 +832,35 @@ describe("enrollment rows", () => {
     assert.equal(created.length, 0);
   });
 
+  it("preserves enrollment requester identity for four-eyes approval", async () => {
+    const { assertNonRequester } = require("../../apps/api/services/certops/jobApprovals")._test;
+    const actor = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    for (const actorUserId of [actor, undefined]) {
+      const db = rowDb();
+      db.putIssuer({
+        id: ISSUER, workspace_id: WORKSPACE, kind: "adcs", version: 1,
+        ca_config: "ca01.corp.example.com\\Corp Issuing CA 01",
+        template: "TokenTimerWebServer", ca_key_sha256: "ab".repeat(32),
+        revalidation_required: false,
+      });
+      let job;
+      await createEnrollment({
+        client: db, workspaceId: WORKSPACE, issuerId: ISSUER,
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING, authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa", keySize: 2048, actorUserId, audit,
+        createJob: async (options) => { job = options; return { id: "job-approval" }; },
+      });
+      assert.equal(job.requestedByUserId, actorUserId || null);
+      if (actorUserId) {
+        assert.throws(() => assertNonRequester(job, actor),
+          (error) => error.code === "CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN");
+      }
+      assert.doesNotThrow(() => assertNonRequester(job, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+    }
+  });
+
   it("rolls back the enrollment when the first job cannot be created", async () => {
     const db = rowDb();
     db.putIssuer({

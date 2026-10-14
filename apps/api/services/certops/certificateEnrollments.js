@@ -405,6 +405,7 @@ function createEnrollment({
       operation: "renew",
       source,
       mode,
+      requestedByUserId: actorUserId || null,
       idempotencyKey,
       env,
       subjectType: "managed_certificate",
