@@ -390,6 +390,40 @@ def journal_acl_fields(proof):
     return {"scope": proof["scope"], "installedServiceQualified": False, "nativeCngQualified": False, **dict.fromkeys(fields, True)}
 
 
+def pending_ca_renewal_fields(proof):
+    """Same actual pending request across root CA certificate renewal; no worker-clock claim."""
+    flags = ('matchingActualInstalledPredecessor', 'ownedMyCleanupRegistered', 'actualPendingBeforeCaRenewal', 'pendingCngSignatureVerified', 'actualCaSameKeyRenewal', 'confirmedIssuerUnchanged', 'noReconfirmation', 'pendingCsrKeyRequestPreserved', 'predecessorPreservedAcrossCaRenewal', 'actualSameRequestApproved', 'actualSignedContinuationInstalled', 'claimBoundNativeEvidence', 'nativeSamePendingKeyAndLeaf', 'trustedTlsCutover', 'predecessorKeyAndReceiptPreserved', 'noCaResubmission')
+    if not isinstance(proof, dict) or proof.get("scope") != 'real-pending-enrollment-across-same-key-ca-certificate-renewal' or proof.get("schedulerClock") != "supported-scheduler-now-input" or proof.get("backgroundWorkerIntervalQualified") is not False or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete native pending CA renewal evidence")
+    result = {"scope": proof["scope"], "schedulerClock": proof["schedulerClock"], "backgroundWorkerIntervalQualified": False, **dict.fromkeys(flags, True)}
+    for key in ("enrollmentId", "originalJobId", "continuationJobId"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+            raise ValueError("Invalid native pending CA renewal identity")
+        result[key] = value
+    if len({result[key] for key in ("enrollmentId", "originalJobId", "continuationJobId")}) != 3:
+        raise ValueError("Duplicate native pending CA renewal identities")
+    request_id = proof.get("requestId")
+    if not isinstance(request_id, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", request_id) or int(request_id) > 0xffffffff:
+        raise ValueError("Invalid pending native CA request")
+    result["requestId"] = request_id
+    for key in ("caKeySha256", "csrSha256", "spkiSha256", "leafFingerprint", "predecessorFingerprint"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("Invalid pending native CA fingerprint")
+        result[key] = value
+    if result["leafFingerprint"] == result["predecessorFingerprint"]:
+        raise ValueError("Pending renewal must install a distinct leaf")
+    for key in ("caCertificateCountBefore", "caCertificateCountAfter"):
+        value = proof.get(key)
+        if type(value) is not int or not 1 <= value <= 16:
+            raise ValueError("Invalid actual CA certificate count")
+        result[key] = value
+    if result["caCertificateCountAfter"] <= result["caCertificateCountBefore"]:
+        raise ValueError("No actual CA certificate renewal")
+    return result
+
+
 def browser_abandon_fields(proof):
     flags = ("actualUncertainEnrollmentVisible","keepDidNotMutate","explicitConfirmationRequired","exactPublicAbandonAcknowledged","browserAndTrustDrained","actualProductionContinuation","journalAndDatabaseAbandoned","exactUnacceptedKeyAbsent","noAcceptedLeaf","zeroNativeCaRequests","onePublicAudit","originalUnknownEffectPreserved")
     if not isinstance(proof, dict) or proof.get("scope") != "browser-confirmed-real-uncertain-abandon-and-native-unaccepted-key-cleanup" or any(proof.get(flag) is not True for flag in flags):
@@ -958,6 +992,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Invalid native installer process identity")
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
+        if value.get("suite") == "enterprise-adcs-real":
+            result["nativePendingCaRenewal"] = pending_ca_renewal_fields(value.get("nativePendingCaRenewal"))
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
             result["nativeIssuedRevocation"] = issued_revocation_fields(value.get("nativeIssuedRevocation"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
@@ -967,6 +1003,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Role boundary must bind actual abandoned enrollment")
             result["nativeBrowserReconcile"] = browser_reconcile_fields(value.get("nativeBrowserReconcile"))
             result["nativeAdcsCapacity"] = adcs_capacity_fields(value.get("nativeAdcsCapacity"))
+            if value.get("suite") == "enterprise-adcs-real" and result["nativePendingCaRenewal"]["predecessorFingerprint"] != result["nativeAdcsCapacity"]["fingerprints"][1]:
+                raise ValueError("Pending CA renewal must preserve actual second capacity generation")
             result["nativeBrowserJobApproval"] = browser_job_approval_fields(value.get("nativeBrowserJobApproval"))
             if any(result["nativeBrowserJobApproval"][key] != result["nativeAdcsCapacity"][key] for key in ("jobIds", "enrollmentIds", "requestIds", "fingerprints")):
                 raise ValueError("Browser decisions must bind both actual native capacity generations")

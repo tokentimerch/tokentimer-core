@@ -132,6 +132,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
                 found[0].serverDroppedLines !== 0 || found[0].agentGapLines !== (id === "native-agent-log-413-drop-accounting" ? 1 : 0)) throw new Error("Native log transport persistence or gap evidence invalid");
           }
         }
+        if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal").verifyCrossProof(artifact.report.nativePendingCaRenewal,artifact.report.nativeAdcsCapacity);
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
           require("../tests/e2e/helpers/certops-adcs-issued-revocation").verifyProof(artifact.report.nativeIssuedRevocation);
           require("../tests/e2e/helpers/certops-adcs-issued-san-boundary").verifyProof(artifact.report.nativeIssuedSanBoundary);

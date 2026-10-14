@@ -127,6 +127,10 @@ def browser_cancel_proof():
     return {"scope": 'browser-cancel-requested-approval-gated-renewal-preserves-issued-native-custody', "enrollmentId": "55555555-5555-5555-5555-555555555555", "jobId": "66666666-6666-6666-6666-666666666666", "priorEnrollmentId": c["enrollmentIds"][1], "priorJobId": c["jobIds"][1], "priorRequestId": c["requestIds"][1], "fingerprint": c["fingerprints"][1], "cancelPosts": 1, "otherMutations": 0, "capacityBeforeCancel": 5, "capacityAfterCancel": 4, "initialSixConcurrencyQualified": False, "caSubmissionCancellationQualified": False, **dict.fromkeys(['additionalSequentialPublicRenewal', 'requestedPendingApprovalObserved', 'newJobNeverClaimed', 'exactPublicCancelAcknowledged', 'browserAndTrustDrained', 'onlyNewEnrollmentAndJobCancelled', 'oldInstalledEnrollmentUnchanged', 'oldProtectedCngAndIisUnchanged', 'oldTrustedTlsUnchanged', 'newContainerAndJournalAbsent', 'subjectCaRequestsUnchanged', 'exactHumanCancelAudit', 'capacitySlotReleased', 'cleanupOwnershipRegistered'], True)}
 
 
+def pending_ca_proof():
+    return {"scope": 'real-pending-enrollment-across-same-key-ca-certificate-renewal', "schedulerClock": "supported-scheduler-now-input", "backgroundWorkerIntervalQualified": False, "enrollmentId": "11111111-1111-1111-1111-111111111111", "originalJobId": "22222222-2222-2222-2222-222222222222", "continuationJobId": "33333333-3333-3333-3333-333333333333", "requestId": "17", "caKeySha256": "a"*64, "caCertificateCountBefore": 1, "caCertificateCountAfter": 2, "csrSha256": "b"*64, "spkiSha256": "c"*64, "leafFingerprint": "d"*64, "predecessorFingerprint": adcs_capacity_proof()["fingerprints"][1], **dict.fromkeys(('matchingActualInstalledPredecessor', 'ownedMyCleanupRegistered', 'actualPendingBeforeCaRenewal', 'pendingCngSignatureVerified', 'actualCaSameKeyRenewal', 'confirmedIssuerUnchanged', 'noReconfirmation', 'pendingCsrKeyRequestPreserved', 'predecessorPreservedAcrossCaRenewal', 'actualSameRequestApproved', 'actualSignedContinuationInstalled', 'claimBoundNativeEvidence', 'nativeSamePendingKeyAndLeaf', 'trustedTlsCutover', 'predecessorKeyAndReceiptPreserved', 'noCaResubmission'), True)}
+
+
 def issued_revocation_proof():
     return {"scope": "actual-ca-issued-owned-revoked-leaf-refused-before-accept", "errorCode": "ADCS_CERTIFICATE_INVALID", "schedulerDefaultClockQualified": False, "requestId": "17", "enrollmentId": "11111111-1111-1111-1111-111111111111", "continuationJobId": "22222222-2222-2222-2222-222222222222", **dict.fromkeys(["matchingNativePositiveControl","actualOwnedPendingRequest","actualCaSignatureAndOnlineRevoked","sameRequestCsrSpkiAndTemplate","actualOnlineChainValidBeforeRevocation","nativePendingIdentityBeforeManualDispatch","realRevokedLeafReachedProductionValidation","productionSignedContinuationRefused","rejectedBeforeCertificateAccept","predecessorBindingTlsAndCngUnchanged","unacceptedKeyRemovedAndJournalPreserved","noCaResubmission","ownedCaRequestRevoked","cleanupOwnershipRegistered"], True)}
 
@@ -848,6 +852,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeAdcsCapacity"] = {**adcs_capacity_proof(), "privateManagerCredential": "sentinel"}
         value["nativeBrowserJobApproval"] = {**browser_job_approval_proof(), "privateTrace": "sentinel"}
         value["nativeBrowserCancel"] = {**browser_cancel_proof(), "privateTrace": "sentinel"}
+        value["nativePendingCaRenewal"] = {**pending_ca_proof(), "privateTrace": "sentinel"}
         value["nativeIssuedRevocation"] = {**issued_revocation_proof(), "privateTrace": "sentinel"}
         value["nativeIssuedSanBoundary"] = {**issued_san_proof(), "privateTrace": "sentinel"}
         value["nativeBrowserReconcile"] = {**browser_reconcile_proof(), "privateTrace": "sentinel"}
@@ -867,6 +872,21 @@ class CollectorTests(unittest.TestCase):
         value["nativeAdcsTwoRenewals"]["privateKey"] = "sentinel"
         value["nativeUncertainAbandon"]["private"] = "sentinel"
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
+        self.assertEqual(result[0][1]["nativePendingCaRenewal"], pending_ca_proof())
+        for key, expected in pending_ca_proof().items():
+            invalid = json.loads(json.dumps(value)); del invalid["nativePendingCaRenewal"][key]
+            with self.subTest(pending_ca_missing=key), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+            invalid = json.loads(json.dumps(value)); invalid["nativePendingCaRenewal"][key] = not expected if isinstance(expected, bool) else "invalid"
+            with self.subTest(pending_ca_invalid=key), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for patch in ({"requestId": "4294967296"}, {"caCertificateCountAfter": 17}, {"caCertificateCountAfter": 1}, {"caCertificateCountBefore": True}, {"continuationJobId": pending_ca_proof()["originalJobId"]}, {"leafFingerprint": pending_ca_proof()["predecessorFingerprint"]}, {"schedulerClock": "default-real-now"}, {"backgroundWorkerIntervalQualified": True}, {"predecessorFingerprint": "f"*64}):
+            invalid = json.loads(json.dumps(value)); invalid["nativePendingCaRenewal"].update(patch)
+            with self.subTest(pending_ca_patch=patch), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        invalid = json.loads(json.dumps(value)); del invalid["nativePendingCaRenewal"]
+        with self.assertRaises(ValueError):
+            collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))
         self.assertEqual(result[0][1]["nativeUncertainOperatorAmbiguity"], operator_ambiguity_proof())

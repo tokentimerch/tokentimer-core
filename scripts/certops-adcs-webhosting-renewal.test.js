@@ -77,6 +77,10 @@ test("store cleanup requires exact durable ownership before any public removal",
     1,
   );
   assert.throws(() => helper.cleanupPlan({ ...receipt, guiCancelPendingVerification: true }, [{ thumbprint, containerName }], () => { throw new Error("Must not inspect or delete protected key"); }), /GUI Cancel remains unresolved/);
+  assert.throws(() => helper.cleanupPlan({ ...receipt, pendingCaRenewalUnresolved: true }, [{ thumbprint, containerName }], () => { throw new Error("Must preserve accepted pending-CA custody"); }), /pending CA renewal remains unresolved/);
+  const pendingReceipt={...receipt,pendingCaRenewalUnresolved:true,cleanupCompleted:true,keyCleanupCompleted:true,removedEnrollmentIds:[...receipt.enrollmentIds]};
+  helper.confirmRegisteredKeyCleanup([pendingReceipt]);assert.equal(pendingReceipt.keyCleanupCompleted,false);
+  assert.throws(()=>helper.assertRegisteredCleanupComplete([{...pendingReceipt,keyCleanupCompleted:true}]),/Preserve durable/);
   assert.equal(record.status, "enrolled_by_agent"); assert.equal(receipt.cleanupCompleted, undefined);
   for (const change of [
     (r) => (r.acceptedStore = "My"),

@@ -1457,7 +1457,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Mandatory native CA renewal uses certutil ReuseKeys, requires observed certificates share the confirmed SPKI and new issuance works without reapproval. Host execution is pending; simultaneous pending requests and all cache/chain variants remain."
+      "remainingCoverage": "Mandatory root-domain source now creates an actual pending request before the existing single certutil ReuseKeys CA renewal. It requires unchanged confirmed issuer, CSR/SPKI, protected pending CNG signature and RequestId, then approves and installs that same request through signed continuation without resubmission, preserving predecessor custody and trusted TLS. The existing fresh issuance after renewal remains separate. Root native execution and additional simultaneous/cache/chain variants remain pending; subordinate CA renewal during pending is outside this root-only source."
     },
     {
       "id": "adcs-safety.ca-key-change",

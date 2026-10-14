@@ -142,3 +142,5 @@ The [HTTP.sys client-certificate policy fixture](windows/http-sys-client-policy.
 The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separates actual candidate path/protocol behavior from lab-built CMC and reference Go verifier qualification.
 
 - [Native ARM64 candidate packaged service-host mock-child lifecycle](windows/arm64-packaged-scm.md)
+
+- [Pending request across same-key root CA renewal](adcs/pending-same-key-ca-renewal.md): actual pending custody and same-request continuation; native execution pending.

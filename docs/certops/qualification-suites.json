@@ -301,7 +301,9 @@
       "adcs-real-issued-wrong-san-preserves-predecessor": "real-host",
       "adcs-real-issued-revoked-leaf-preserves-predecessor": "real-host",
       "adcs-real-browser-job-approval-cancel-and-confirm": "real-host",
-      "adcs-real-browser-job-approval-native-capacity-completion": "real-host"
+      "adcs-real-browser-job-approval-native-capacity-completion": "real-host",
+      "adcs-real-ca-renewal-preserves-actual-pending-request": "real-host",
+      "adcs-real-ca-renewal-pending-same-request-installed": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -2024,7 +2026,9 @@
       "adcs-real-issued-wrong-san-preserves-predecessor",
       "adcs-real-issued-revoked-leaf-preserves-predecessor",
       "adcs-real-browser-job-approval-cancel-and-confirm",
-      "adcs-real-browser-job-approval-native-capacity-completion"
+      "adcs-real-browser-job-approval-native-capacity-completion",
+      "adcs-real-ca-renewal-preserves-actual-pending-request",
+      "adcs-real-ca-renewal-pending-same-request-installed"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",

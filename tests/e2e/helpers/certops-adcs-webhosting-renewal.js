@@ -85,6 +85,7 @@ function verifyProof(proof) {
  * subject is only a selector; durable exact container/store/thumb ownership
  * authorizes removal. Missing receipts preserve the whole fixture. */
 function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
+  assert.notEqual(receipt.pendingCaRenewalUnresolved, true, "Preserve native ownership while pending CA renewal remains unresolved");
   assert.notEqual(receipt.guiCancelPendingVerification, true, "Preserve native ownership while GUI Cancel remains unresolved");
   assert.equal(receipt.store, store);
   assert.match(receipt.domain, domainPattern);
@@ -162,6 +163,7 @@ function registerCapacityStoreCertificate(registry, { domain, certificateId }) {
 function confirmRegisteredKeyCleanup(receipts) {
   for (const receipt of receipts)
     receipt.keyCleanupCompleted =
+      receipt.pendingCaRenewalUnresolved !== true &&
       receipt.cleanupCompleted === true &&
       receipt.enrollmentIds.every((id) =>
         receipt.removedEnrollmentIds?.includes(id),
@@ -170,6 +172,7 @@ function confirmRegisteredKeyCleanup(receipts) {
 function assertRegisteredCleanupComplete(receipts) {
   for (const receipt of receipts)
     assert.ok(
+      receipt.pendingCaRenewalUnresolved !== true &&
       receipt.cleanupCompleted === true &&
         receipt.keyCleanupCompleted === true &&
         receipt.enrollmentIds.every((id) =>

@@ -857,7 +857,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -973,7 +976,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1089,7 +1095,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1205,7 +1214,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1321,7 +1333,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1437,7 +1452,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1553,7 +1571,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1669,7 +1690,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
@@ -1785,7 +1809,10 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
+        "infra/certops-adcs/ca-rekey.ps1",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {
