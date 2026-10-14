@@ -178,6 +178,10 @@ def elapsed_proof():
             "configuredRetentionHours": 24, "fullRetentionWindowQualified": False, "waitedMonotonicMs": 420000}
 
 
+def installed_iis_refusal_proof():
+    return json.loads('{"scope":"installed-agent-public-standalone-iis-deploy-refusal","jobId":"11111111-1111-1111-1111-111111111111","claimId":"22222222-2222-2222-2222-222222222222","genuinePriorIssuance":true,"publicDeployAdmitted":true,"sameInstalledAgentClaimedOnce":true,"specificUnsupportedTargetFailure":true,"claimBoundFailureAudit":true,"nativeInventoryAndCustodyUnchanged":true,"bothBindingsAndTrustedTlsUnchanged":true,"actualAcmeClientNotInvoked":true,"dnsTrafficUnchanged":true,"credentialAndPinUnchanged":true,"exactOwnedShadowRemoved":true}')
+
+
 class CollectorTests(unittest.TestCase):
     def test_orphan_journal_projection_requires_all_facts_without_unsupported_promotion(self):
         proof = orphan_journal_proof()
@@ -548,7 +552,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))
@@ -1344,6 +1348,28 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result[0][1]["tests"][0]["status"], "fail")
         self.assertEqual(result[0][1]["fixtureSources"], report["fixtureSources"])
         self.assertNotIn("never-copy", json.dumps(result))
+
+
+    def test_installed_iis_refusal_projection_is_bounded_and_requires_claim_audit(self):
+        proof = installed_iis_refusal_proof()
+        for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384"):
+            event = {"scope": "real-agent-windows-acme-iis/" + profile, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "nativeInstalledIisRefusal": {**proof, "rawCngInventory": "must-not-survive"}}
+            self.assertEqual(collector.installed_iis_refusal_fields(event), {"nativeInstalledIisRefusal": proof})
+            self.assertNotIn("must-not-survive", json.dumps(collector.installed_iis_refusal_fields(event)))
+            for field in proof:
+                wrong = json.loads(json.dumps(event)); del wrong["nativeInstalledIisRefusal"][field]
+                with self.assertRaises(ValueError): collector.installed_iis_refusal_fields(wrong)
+                wrong = json.loads(json.dumps(event)); wrong["nativeInstalledIisRefusal"][field] = False
+                with self.assertRaises(ValueError): collector.installed_iis_refusal_fields(wrong)
+        for field, wrong in (("jobId", "not-uuid"), ("claimId", "not-uuid"), ("scope", "direct-executor"), ("claimBoundFailureAudit", 1)):
+            bad = json.loads(json.dumps(event)); bad["nativeInstalledIisRefusal"][field] = wrong
+            with self.assertRaises(ValueError): collector.installed_iis_refusal_fields(bad)
+        for wrong in (None, [], "unknown", {}):
+            with self.assertRaises(ValueError): collector.installed_iis_refusal_fields({**event, "nativeInstalledIisRefusal": wrong})
+        missing = dict(event); del missing["nativeInstalledIisRefusal"]
+        with self.assertRaises(ValueError): collector.installed_iis_refusal_fields(missing)
+        self.assertEqual(collector.installed_iis_refusal_fields({**event, "scope": "real-agent-acme-filesystem"}), {})
+        self.assertEqual(collector.installed_iis_refusal_fields({**event, "type": "test:fail"}), {})
 
 
 if __name__ == "__main__":

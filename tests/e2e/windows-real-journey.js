@@ -59,7 +59,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   for (const endpoint of [caEndpoint, dnsEndpoint]) assert.ok(["localhost", "127.0.0.1"].includes(endpoint.hostname));
   const workDir = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "certops-windows-journey-"));
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
-  let outputPrivacy, keyReuseRefusalProof;
+  let outputPrivacy, keyReuseRefusalProof, installedIisRefusalProof;
+  const ownedIisRefusalShadows=[];
+  const installedIisRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-installed-iis-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(installedIisRefusalProofPath),false,"Refuse stale installed IIS refusal proof");
   const reuseProofPath=path.join(repoRoot,"qualification-results",`windows-key-reuse-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(reuseProofPath),false,"Refuse stale Windows reuse refusal proof");
   let publicSession, publicIssuanceFacts, publicIssueInput;
   const ownedHandoffs=[];let installedHandoffProof;
@@ -550,6 +552,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const automation = await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE", [workspaceId, certificateId]);
     assert.equal(automation.rows.length, 1, "derived profile must enable the active management period");
     await require("./helpers/certops-windows-certificate-dry-run").qualifyCertificateDryRun({repoRoot,pool,workspaceId,userId,agentId,certificateId,configDir,domain,port,roots,thumbprint,initialJobId:job.id,issuePayload:input.body.payload,profile,powershell:ps,run:command,waitUntil,ownedJobs,dnsRequestCount:()=>dnsProxyRequests});
+    const iisRefusal = require("./helpers/certops-windows-installed-iis-refusal");
+    installedIisRefusalProof = await runNamedScenario(iisRefusal.scenarioName, () => iisRefusal.qualify({publicSession,pool,workspaceId,certificateId,initialJobId:job.id,configDir,domain,site,port,roots,thumbprint,powershell:ps,run:command,waitUntil,ownedJobs,shadowRegistry:ownedIisRefusalShadows,acmeReceiptDirectory:outputPrivacy.directory,dnsRequestCount:()=>dnsProxyRequests}));
     const reuseHelper = require("./helpers/certops-windows-key-reuse-refusal");
     keyReuseRefusalProof = await runNamedScenario(reuseHelper.scenarioName, () => reuseHelper.qualifyKeyReuseRefusal({publicSession,pool,workspaceId,certificateId,profileId:managed.profile_id,configDir,domain,port,roots,thumbprint,powershell:ps,run:command,dnsRequestCount:()=>dnsProxyRequests}));
     reuseHelper.verifyProof(keyReuseRefusalProof);
@@ -655,6 +659,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     journeyFailure = error;
     throw error;
   } finally {
+    // Unknown signed work or shadow ownership must preserve certificate/key,
+    // public job and recovery files before any broad parent cleanup.
+    require("./helpers/certops-windows-installed-iis-refusal").assertCleanupSafe(ownedIisRefusalShadows);
     for(const resource of ownedHandoffs)await cleanup(()=>resource.close());
     if(ownedHandoffs.some(resource=>resource.hasLiveChild()||resource.hasOwnershipReceipt()))throw new AggregateError([...(journeyFailure?[journeyFailure]:[]),...errors],"Preserve installed Windows fixtures while SCM handoff ownership is unresolved");
     if (serviceOwned) {
@@ -702,6 +709,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
     if (!journeyFailure && errors.length === 0) {
+      require("./helpers/certops-windows-installed-iis-refusal").verifyProof(installedIisRefusalProof);fs.writeFileSync(installedIisRefusalProofPath,JSON.stringify(installedIisRefusalProof),{flag:"wx"});
       require("./helpers/certops-windows-key-reuse-refusal").verifyProof(keyReuseRefusalProof);fs.writeFileSync(reuseProofPath,JSON.stringify(keyReuseRefusalProof),{flag:"wx"});
       require("./helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(publicIssuanceFacts);
       fs.writeFileSync(publicIssueProofPath,JSON.stringify(publicIssuanceFacts),{flag:"wx"});

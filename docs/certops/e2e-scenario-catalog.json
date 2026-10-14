@@ -751,8 +751,8 @@
       "requiredEnvironments": [
         "disposable-windows-server-native"
       ],
-      "implementation": "packages/agent/scripts/host/unsupported-target-fixture.js",
-      "remainingCoverage": "Mandatory native host source reaches actual product standalone IIS deploy and unsupported multi-SNI renewal refusal; independent owned stores/CNG names/HasKey/export policy/binding metadata/served TLS must remain unchanged. Native source unexecuted; installed-agent/public API refusal journey variants remain."
+      "implementation": "packages/agent/scripts/host/unsupported-target-fixture.js; tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+      "remainingCoverage": "Mandatory host source reaches direct product standalone IIS deploy and unsupported multi-SNI renewal refusal. Separate installed-agent source now publicly creates a genuine signed standalone deploy job; the same registered agent must claim once and fail with the specific unsupported-target error and claim-bound production failure audit. Two genuinely served trusted SNI endpoints, protected CNG custody, global store/key metadata, credentials, actual ACME child receipts and DNS activity remain unchanged. Exact owned shadow cleanup and a sticky parent recovery guard are required. All ten Server2022/2025/key-profile cells remain unexecuted. Installed multi-target renewal refusal and additional selector/IPv6 layouts remain separate gaps."
     },
     {
       "id": "windows-retention.cutover-clock",

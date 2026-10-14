@@ -248,6 +248,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -279,7 +280,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -293,6 +299,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -324,7 +331,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -338,6 +350,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -369,7 +382,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -383,6 +401,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -414,7 +433,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -428,6 +452,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -459,7 +484,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -534,6 +564,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -565,7 +596,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -579,6 +615,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -610,7 +647,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -624,6 +666,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -655,7 +698,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -669,6 +717,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -700,7 +749,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {
@@ -714,6 +768,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
@@ -745,7 +800,12 @@
         "apps/api/services/certops/renewalProfileAdmin.js",
         "apps/api/services/certops/renewalProfile.js",
         "packages/contracts/certops/job-payload.schema.json",
-        "packages/contracts/certops/renewal-profile.schema.json"
+        "packages/contracts/certops/renewal-profile.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/workspaceKillSwitch.js",
+        "packages/agent/src/windows-iis/index.js"
       ]
     },
     {

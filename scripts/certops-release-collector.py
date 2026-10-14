@@ -586,6 +586,20 @@ def windows_key_reuse_refusal_fields(event):
     return {"nativeWindowsKeyReuseRefusal": {key: proof[key] for key in ("scope", *flags)}}
 
 
+def installed_iis_refusal_fields(event):
+    """Project only native public-dispatch refusal facts, never private state."""
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof = event.get("nativeInstalledIisRefusal")
+    flags = ["genuinePriorIssuance","publicDeployAdmitted","sameInstalledAgentClaimedOnce","specificUnsupportedTargetFailure","claimBoundFailureAudit","nativeInventoryAndCustodyUnchanged","bothBindingsAndTrustedTlsUnchanged","actualAcmeClientNotInvoked","dnsTrafficUnchanged","credentialAndPinUnchanged","exactOwnedShadowRemoved"]
+    if (not isinstance(proof, dict) or proof.get("scope") != "installed-agent-public-standalone-iis-deploy-refusal"
+            or any(proof.get(flag) is not True for flag in flags)
+            or any(not isinstance(proof.get(key), str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", proof[key]) for key in ("jobId", "claimId"))):
+        raise ValueError("Missing installed-agent public IIS refusal proof")
+    return {"nativeInstalledIisRefusal": {key: proof[key] for key in ("scope", "jobId", "claimId", *flags)}}
+
+
 def installed_handoff_fields(event):
     if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
             or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
@@ -1448,6 +1462,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                  **acme_key_reuse_fields(event),
                  **installed_handoff_fields(event),
                  **windows_key_reuse_refusal_fields(event),
+                 **installed_iis_refusal_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
                  **({"fixtureSources": supporting_sources(event["fixtureSources"])} if "fixtureSources" in event else {}),
                  "file": event.get("fixtureSource", {}).get("file", "")}

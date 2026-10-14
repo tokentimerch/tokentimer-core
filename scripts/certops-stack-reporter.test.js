@@ -23,7 +23,10 @@ test("Windows profile evidence binds public admission, recovery and output-priva
     );
   for (const file of [
     "scripts/certops-installer-pe.test.ps1",
-    ...require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").requiredSources,
+    ...require("../tests/e2e/helpers/certops-windows-key-reuse-refusal")
+      .requiredSources,
+    ...require("../tests/e2e/helpers/certops-windows-installed-iis-refusal")
+      .REQUIRED_SOURCES,
     "tests/e2e/helpers/certops-windows-public-issuance.js",
     "tests/e2e/helpers/certops-windows-installed-handoff.js",
     "tests/e2e/helpers/certops-windows-registration-job.ps1",
@@ -86,4 +89,65 @@ test("Every committed Linux ACME scope binds current actual journey and Pebble p
     supplementalSources("real-agent-acme-filesystem/../../secret"),
     undefined,
   );
+});
+
+test("installed IIS sidecar reporter validates real public file lookup for every key profile", () => {
+  const h = require("../tests/e2e/helpers/certops-windows-installed-iis-refusal"),
+    { installedIisRefusalProof } = require("./certops-stack-reporter"),
+    base = path.resolve(__dirname, "../.build");
+  fs.mkdirSync(base, { recursive: true });
+  const root = fs.mkdtempSync(path.join(base, "iis-refusal-reporter-"));
+  assert.ok(
+    path.relative(base, root) && !path.relative(base, root).startsWith(".."),
+  );
+  fs.mkdirSync(path.join(root, "qualification-results"));
+  const proof = {
+      scope: h.SCOPE,
+      jobId: "11111111-1111-1111-1111-111111111111",
+      claimId: "22222222-2222-2222-2222-222222222222",
+      ...Object.fromEntries(h.FLAGS.map((flag) => [flag, true])),
+    },
+    name =
+      "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence";
+  try {
+    for (const profile of [
+      "rsa-2048",
+      "rsa-3072",
+      "rsa-4096",
+      "ec-p256",
+      "ec-p384",
+    ]) {
+      const scope = `real-agent-windows-acme-iis/${profile}`,
+        file = path.join(
+          root,
+          "qualification-results",
+          `windows-installed-iis-refusal-${profile}.json`,
+        );
+      assert.throws(() => installedIisRefusalProof(scope, name, root));
+      fs.writeFileSync(file, JSON.stringify(proof), { flag: "wx" });
+      assert.deepEqual(installedIisRefusalProof(scope, name, root), proof);
+      for (const change of [
+        { claimBoundFailureAudit: false },
+        { scope: "direct-executor" },
+        { privateCngReceipt: "must-not-qualify" },
+      ]) {
+        fs.writeFileSync(file, JSON.stringify({ ...proof, ...change }));
+        assert.throws(() => installedIisRefusalProof(scope, name, root));
+      }
+      fs.unlinkSync(file);
+    }
+    assert.equal(
+      installedIisRefusalProof("real-agent-acme-filesystem", name, root),
+      undefined,
+    );
+    assert.throws(() =>
+      installedIisRefusalProof(
+        "real-agent-windows-acme-iis/unknown",
+        name,
+        root,
+      ),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true });
+  }
 });

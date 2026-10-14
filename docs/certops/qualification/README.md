@@ -152,3 +152,5 @@ The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separate
 The separate [default24h AD CS release contract](adcs/default24h-release-contract.md) requires a genuine same-VM day, original stale caches, production-deadline cleanup and fresh native renewal. Its timing-only and native-stage receipts cannot qualify the new slot; protected execution remains pending.
 
 - [Native orphan reconciliation and open enrollment protection](windows/native-orphan-journal-protection.md): supporting CNG/journal controls with explicit installed-service, CA and age-policy exclusions.
+
+- [Installed public IIS refusal](windows/installed-public-iis-refusal.md): real public deploy admission, installed-agent signed refusal, claim-bound failure audit and two protected CNG/IIS/TLS endpoints. All ten hosted Windows/key-profile cells remain unexecuted.
