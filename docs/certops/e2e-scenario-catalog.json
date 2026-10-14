@@ -166,7 +166,7 @@
         "windows-local"
       ],
       "implementation": "packages/agent/scripts/host/package-fixture.js",
-      "remainingCoverage": "Real candidate archive, independent native digest, both PE architectures, extracted imports and checksum tampering refusal covered. Full Windows journey invokes the checked candidate product installer with only its root redirected to an owned temporary directory, then runs its installed amd64 runtime through registration/CNG/IIS/renewal. Unmodified fixed-root installation, arm64 execution and externally authenticated signed release provenance remain."
+      "remainingCoverage": "Real candidate archive, independent native digest, both PE architectures, extracted imports and checksum tampering refusal covered. Full Windows journey invokes the checked candidate product installer with only its root redirected to an owned temporary directory, then runs its installed amd64 runtime through registration/CNG/IIS/renewal. A separate canonical-root source exercises the byte-identical installer at its default location; hosted native execution, arm64 execution and externally authenticated signed release provenance remain pending."
     },
     {
       "id": "windows-install.new-service",
@@ -391,7 +391,7 @@
         "linux-native-api-postgres"
       ],
       "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
-      "remainingCoverage": "Native agent source reports dry_run_complete through real signing/lease/result paths for harmless noop jobs and observes empty local key directory. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; this does not establish DNS/store/IIS/command absence for certificate-operation dry runs."
+      "remainingCoverage": "Native Linux source additionally completes signed certificate deploy and renew dry runs through production service admission, persists authentic three/six-step plans, and checks unchanged exact custody/deployed files, trusted served TLS and absent command/gateway calls. Real deploy changes the trusted TLS leaf; a deliberately failing renewal command reaches owned CA/DNS sentinels to prove oracle sensitivity. These controls do not qualify real ACME or DNS-provider issuance. Hosted execution and Windows certificate-store, CNG and IIS dry-run variants remain pending."
     },
     {
       "id": "execution.lease-before-write",

@@ -6,7 +6,23 @@
  * outcomes are rewritten. This does not qualify stock long-lived dispatches,
  * host clock changes, or Windows SCM timing. The parent owns child/API cleanup. */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");
+const {setTimeout:delay}=require("node:timers/promises");
 const SCENARIO="native-agent-real-elapsed-dispatch-expiry";
+/** Timers may wake slightly early; qualify elapsed time against the monotonic
+ * deadline rather than assuming one timeout proves the required minimum.
+ * The upper bound still refuses a stalled/overslept fixture, and cancellation
+ * drains the timer before the parent restores configuration or stops children. */
+async function waitMonotonicAtLeast(durationMs,{now=()=>Number(process.hrtime.bigint())/1e6,sleep=delay,signal,maxWaitMs=60000}={}){
+ assert.ok(Number.isInteger(durationMs)&&durationMs>0&&durationMs<=maxWaitMs);
+ assert.ok(Number.isInteger(maxWaitMs)&&maxWaitMs<=60000);
+ const started=now();assert.ok(Number.isFinite(started));let previous=started;
+ for(;;){
+  signal?.throwIfAborted();const current=now();assert.ok(Number.isFinite(current)&&current>=previous,"Monotonic clock moved backwards");previous=current;
+  const elapsed=current-started;assert.ok(elapsed<=maxWaitMs,"Native dispatch hold exceeded its reviewed bound");
+  if(elapsed>=durationMs)return elapsed;
+  await sleep(Math.max(1,Math.ceil(durationMs-elapsed)),undefined,{signal});
+ }
+}
 function verifyTimingFacts(facts){
  assert.equal(facts.fixtureLifetimeSeconds,2);assert.equal(facts.localToleranceMs,1);assert.ok(Number.isFinite(facts.heldMonotonicMs)&&facts.heldMonotonicMs>=5000&&facts.heldMonotonicMs<=60000);assert.ok(Number.isFinite(facts.originalDispatchLifetimeSeconds)&&facts.originalDispatchLifetimeSeconds>2&&facts.originalDispatchLifetimeSeconds<=86400);
  for(const field of ["issuedAt","expiresAt","releasedAt"])assert.ok(Number.isFinite(Date.parse(facts[field])));
@@ -18,7 +34,7 @@ function verifyTimingFacts(facts){
 function decode(envelope){return envelope.envelopeVersion===2?JSON.parse(Buffer.from(envelope.payloadB64,"base64").toString("utf8")):envelope;}
 function createNativeDispatchTiming(context){
  const {fixture,agentRow,configDir,stop,start,wait,row,create,counters,getClockRejections}=context;
- let armed=false,proof=null,resultRefusal=null,transportFailure=null,stage="idle";
+ let armed=false,proof=null,resultRefusal=null,transportFailure=null,stage="idle",holdingAbort=null,holdingWait=null;
  function observedReply(url,request,status,bytes){
   if(proof&&url.endsWith("/results")&&request.messageType==="result"&&request.body?.jobId===proof.jobId){
    const response=JSON.parse(bytes.toString("utf8"));resultRefusal={status,code:response.code};
@@ -33,8 +49,9 @@ function createNativeDispatchTiming(context){
   stage="signed";const current=decode(signed);for(const field of ["jobId","claimId","attemptId","agentId","action"])assert.equal(current[field],payload[field]);
   assert.equal(Date.parse(current.expiresAt)-Date.parse(current.issuedAt),2000);
   const persisted=(await fixture.pool.query("SELECT expires_at,consumed_at FROM certops_consumed_nonces WHERE workspace_id=$1 AND job_id=$2 AND nonce=$3",[fixture.workspaceId,current.jobId,current.nonce])).rows[0];assert.ok(persisted);assert.equal(persisted.expires_at instanceof Date?persisted.expires_at.getTime():Date.parse(persisted.expires_at),Date.parse(current.expiresAt));assert.equal(persisted.consumed_at,null);
-  stage="holding";const started=process.hrtime.bigint();await new Promise(resolve=>setTimeout(resolve,5000));
-  const elapsedMs=Number(process.hrtime.bigint()-started)/1e6,releasedAt=new Date().toISOString();assert.ok(elapsedMs>=5000);assert.ok(Date.parse(releasedAt)>Date.parse(current.expiresAt)+1000);
+  stage="holding";holdingAbort=new AbortController();let elapsedMs;
+  try{holdingWait=waitMonotonicAtLeast(5000,{signal:holdingAbort.signal});elapsedMs=await holdingWait;}finally{holdingAbort=null;holdingWait=null;}
+  const releasedAt=new Date().toISOString();assert.ok(elapsedMs>=5000);assert.ok(Date.parse(releasedAt)>Date.parse(current.expiresAt)+1000);
   proof={jobId:current.jobId,nonce:current.nonce,heldMonotonicMs:elapsedMs,signedLifetimeSeconds:2,originalDispatchLifetimeSeconds:(Date.parse(payload.expiresAt)-Date.parse(payload.issuedAt))/1000,issuedAt:current.issuedAt,expiresAt:current.expiresAt,releasedAt};
   stage="delivered";envelope.jobs=[signed];respond(status,Buffer.from(JSON.stringify(envelope)),{date:new Date().toUTCString()});return true;
  }
@@ -55,7 +72,7 @@ function createNativeDispatchTiming(context){
     const replayPath=path.join(configDir,"replay-store.json");if(fs.existsSync(replayPath))assert.equal(JSON.parse(fs.readFileSync(replayPath,"utf8")).entries.some(entry=>entry.jobId===id),false);
     const nonce=(await fixture.pool.query("SELECT consumed_at,expires_at<NOW() AS actually_expired FROM certops_consumed_nonces WHERE workspace_id=$1 AND job_id=$2 AND nonce=$3",[fixture.workspaceId,id,proof.nonce])).rows[0];assert.equal(nonce.actually_expired,true);assert.equal(nonce.consumed_at,null);
    }catch(error){gate.report.nativeDispatchTimingDiagnostics={stage,transportFailure,proofDelivered:Boolean(proof),clockRefusals:getClockRejections()-before,resultRefusalStatus:resultRefusal?.status||null,resultRefusalCode:resultRefusal?.code||null};primary=error;throw error;}finally{
-    armed=false;try{await stop();fs.writeFileSync(configPath,original,{mode:0o600});start();}catch(error){if(primary)throw new AggregateError([primary,error],"Native timing case and exact configuration restoration failed");throw error;}
+    armed=false;const pendingHold=holdingWait;holdingAbort?.abort();await pendingHold?.catch(()=>{});try{await stop();fs.writeFileSync(configPath,original,{mode:0o600});start();}catch(error){if(primary)throw new AggregateError([primary,error],"Native timing case and exact configuration restoration failed");throw error;}
    }
    const recovery=await create();await wait(async()=>(await row(recovery)).status==="succeeded",60000);assert.deepEqual(["credential","signing-key-pin.json"].map(hash),identity);
    gate.report.nativeDispatchTiming={fixtureLifetimeSeconds:2,localToleranceMs:1,heldMonotonicMs:proof.heldMonotonicMs,originalDispatchLifetimeSeconds:proof.originalDispatchLifetimeSeconds,issuedAt:proof.issuedAt,expiresAt:proof.expiresAt,releasedAt:proof.releasedAt,clocks:"actual-host-monotonic-and-database",fixture:"production-signer-short-lifetime-and-delayed-HTTP-delivery",databaseDatesRewritten:false,journalRewritten:false,nativeClockRefusalObserved:true,leaseCallsBeforeRefusal:0,executionSuccessAbsent:true,expiredNonceResultStatus:409,expiredNonceResultCode:resultRefusal.code,actualServerJobState:"claimed",actualRejectedOutbox:"dead-letter",nonceUnconsumed:true,freshClaimRecoverySucceeded:true,credentialAndPinUnchanged:true,qualificationScope:"native-Linux-shortened-dispatch-fixture-not-stock-TTL-or-Windows-SCM"};
@@ -65,4 +82,4 @@ function createNativeDispatchTiming(context){
  }
  return {replied,observedReply,qualify,failed:error=>{if(armed||stage!=="idle")transportFailure=/^[A-Z0-9_]{1,96}$/.test(error?.code||"")?error.code:"UNCLASSIFIED";}};
 }
-module.exports={SCENARIO,createNativeDispatchTiming,verifyTimingFacts};
+module.exports={SCENARIO,createNativeDispatchTiming,verifyTimingFacts,waitMonotonicAtLeast};

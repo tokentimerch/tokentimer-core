@@ -11,15 +11,16 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { createApiFixture } = require("./helpers/certops-api-fixture");
 const { createRegisteredAgent } = require("./helpers/certops-registered-agent");
 const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 const { createNativeLogFaults, cases: logFaultCases } = require("./helpers/certops-native-log-faults");
 const logFaults = createNativeLogFaults();
 const { qualifyNativeLogPrivacy } = require("./helpers/certops-native-log-privacy");
+const { qualifyNativeCertificateDryRun, scenarios: certificateDryRunScenarios } = require("./helpers/certops-native-certificate-dry-run");
 const { SCENARIO: timingScenario, createNativeDispatchTiming } = require("./helpers/certops-native-dispatch-timing");
-const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-child-output-confidentiality", timingScenario, "native-agent-cleanup"];
+const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-child-output-confidentiality", timingScenario, ...certificateDryRunScenarios, "native-agent-cleanup"];
 async function wait(check, timeout = 30000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 100)); }
@@ -36,8 +37,9 @@ test("real native agent signed gates durable outbox restart and observe-only beh
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "certops-native-agent-"));
   const configDir = path.join(root, "state"); fs.mkdirSync(configDir, { mode: 0o700 });
   const agentId = crypto.randomUUID(), prefix = `/api/v1/workspaces/${fixture.workspaceId}/certops`;
-  const gate = createHostGate({ suite: "native-agent-api", evidenceLevel: "e2e", strict: true, reportPath: process.env.CERTOPS_NATIVE_AGENT_REPORT || process.env.CERTOPS_QUALIFICATION_REPORT, requiredCapabilities: ["api", "postgres", "native-node-agent"], fixtureSource: { file: "tests/e2e/certops-native-agent-e2e.test.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => ({ api: { available: (await fetch(new URL("/", baseUrl))).status === 200 }, postgres: { available: (await fixture.pool.query("SELECT 1")).rows.length === 1 }, "native-node-agent": { available: process.platform === "linux" && fs.existsSync(path.resolve(__dirname, "../../packages/agent/bin/tokentimer-agent.js")) } }) });
-  gate.report.executionScope = "Unmodified native Node agent with real API signing leases results and persisted state; deliberate loopback transport faults; harmless noop jobs only";
+  const gate = createHostGate({ suite: "native-agent-api", evidenceLevel: "e2e", strict: true, reportPath: process.env.CERTOPS_NATIVE_AGENT_REPORT || process.env.CERTOPS_QUALIFICATION_REPORT, requiredCapabilities: ["api", "postgres", "native-node-agent", "openssl"], fixtureSource: { file: "tests/e2e/certops-native-agent-e2e.test.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => ({ api: { available: (await fetch(new URL("/", baseUrl))).status === 200 }, postgres: { available: (await fixture.pool.query("SELECT 1")).rows.length === 1 }, "native-node-agent": { available: process.platform === "linux" && fs.existsSync(path.resolve(__dirname, "../../packages/agent/bin/tokentimer-agent.js")) }, openssl: { available: spawnSync("openssl", ["version"], { stdio: "ignore", timeout: 5000 }).status === 0 } }) });
+  gate.report.executionScope = "Unmodified native Node agent with real API signing leases results and persisted state; deliberate loopback transport faults, harmless noop jobs, local certificate dry-run/deploy and explicit command sentinels; no live CA/DNS-provider or Windows qualification";
+  gate.report.artifactQualification = process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout-source" : "local-worktree-source-baseline-sha-only";
   let mode = "normal", agent, proxy, ready = false, failure, cleanup = "failed";
   let clockRejections=0;
   let rejected = 0, bindingRejected = 0, misdeliveredJob, capturedOwnJob, replayRejections = 0, heartbeatCount = 0, claimCount = 0, blockedResults = 0, blockedLeases = 0, leak = false;
@@ -175,6 +177,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
     await logFaults.qualify({ gate, fixture, prefix, create, row, stop, start, wait, prohibited });
     await qualifyNativeLogPrivacy({ gate, fixture, prefix, configDir, root, stop, start, wait, row, prohibited });
     gate.report.fixtureSources.push({ file: "tests/e2e/helpers/certops-native-log-privacy.js", sha256: hashFile(path.join(__dirname, "helpers/certops-native-log-privacy.js")) });
+    await qualifyNativeCertificateDryRun({ gate, fixture, prefix, configDir, root, stop, start, wait, row, prohibited });
     await gate.scenario(scenarios[3], async () => {
       const before = ["credential", "signing-key-pin.json"].map((file) => hashFile(path.join(configDir, file))); const seen = (await agentRow()).last_seen_at;
       await stop(); start(); await wait(async () => Date.parse((await agentRow()).last_seen_at) > Date.parse(seen)); assert.deepEqual(["credential", "signing-key-pin.json"].map((file) => hashFile(path.join(configDir, file))), before);
@@ -254,6 +257,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
   finally {
     const clean = async () => {
       const outcomes = await Promise.allSettled(children.map((child) => stop(child)));
+      const childrenDrained = outcomes.every(outcome => outcome.status === "fulfilled");
       outcomes.push(...await Promise.allSettled([
         (async () => {
           if (!proxy?.listening) return;
@@ -264,7 +268,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
           try { await new Promise((resolve, reject) => { oracle.once("error", reject); oracle.listen(port, "127.0.0.1", resolve); }); }
           finally { if (oracle.listening) await new Promise((resolve) => oracle.close(resolve)); }
         })(),
-        (async () => { assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith("certops-native-agent-")); fs.rmSync(root, { recursive: true, force: true }); })(),
+        (async () => { if (!childrenDrained) throw new Error("Owned fixture root preserved because an agent child could not be drained"); assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith("certops-native-agent-")); fs.rmSync(root, { recursive: true, force: true }); })(),
         fixture.cleanup(),
         (async () => { const cached = require.cache[require.resolve("../../apps/api/db/database")]; if (cached) await cached.exports.pool.end(); })(),
       ]));

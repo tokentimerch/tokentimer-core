@@ -636,7 +636,7 @@
     {
       "id": "7b2ab3b4f83534cb1504",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 451,
+      "line": 457,
       "name": "happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -649,7 +649,7 @@
     {
       "id": "3caaac79423f621511de",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 567,
+      "line": 573,
       "name": "tamper: mutating a signed field fails agent-side verification",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -662,7 +662,7 @@
     {
       "id": "6429a45a3d220ddac5ba",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 581,
+      "line": 587,
       "name": "bootstrap token reuse is rejected with 401",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -675,7 +675,7 @@
     {
       "id": "5858eb73c41787ba2fbf",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 599,
+      "line": 605,
       "name": "bad agent credential is rejected with 401",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -688,7 +688,7 @@
     {
       "id": "95791b18f12fc411afa8",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 615,
+      "line": 621,
       "name": "retired agent gets 410 on heartbeat, claim, and results",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -701,7 +701,7 @@
     {
       "id": "3a1aff6c52424cf713a9",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 650,
+      "line": 656,
       "name": "workspace kill switch blocks claims with 409",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -714,7 +714,7 @@
     {
       "id": "dac270688885dadbf536",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 673,
+      "line": 679,
       "name": "evidence is accepted; private key material is rejected with 422",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -727,7 +727,7 @@
     {
       "id": "8783b84579370930cc83",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 715,
+      "line": 721,
       "name": "second claim returns no jobs while the lease is held",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -740,7 +740,7 @@
     {
       "id": "2d9f67c60fc3db22c132",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 737,
+      "line": 743,
       "name": "lease reaper defers, then requeues once the claiming agent goes silent",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -753,7 +753,7 @@
     {
       "id": "536d9158d0e1632620bc",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 799,
+      "line": 805,
       "name": "lease reaper fails an expired job with exhausted retry budget",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -766,7 +766,7 @@
     {
       "id": "cb85f5d48f404a1d5905",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 854,
+      "line": 860,
       "name": "sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1234,7 +1234,7 @@
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 32,
+      "line": 33,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",

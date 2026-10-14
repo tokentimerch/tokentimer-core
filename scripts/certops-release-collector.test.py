@@ -25,6 +25,11 @@ def survivor_proof():
     return dict.fromkeys(("differentCertificateCrossStoreProtected", "sameCertificateCrossStoreProtected", "originalKeyPreserved", "replacementTrustedTlsPreserved", "ownedCrossStoreCopiesRemoved"), True)
 
 
+def certificate_dry_run_proof():
+    flags = ("deployDryRunComplete", "renewDryRunComplete", "authenticPlanEvidence", "deployedFilesUnchangedDuringDryRun", "custodyFilesUnchangedDuringDryRun", "servedLeafUnchangedDuringDryRun", "noCommandsOrGatewayCallsDuringDryRun", "realDeployChangedFileAndTrustedTls", "realValidateAndReloadObserved", "realRenewCommandReachedCaAndDnsSentinels", "renewControlFailedBeforeIssuance", "identityAndConfigRestored", "ownedResourcesCleaned")
+    return {**dict.fromkeys(flags, True), "scope": "native-linux-signed-certificate-dry-run-with-local-command-controls", "admission": "production-service-explicit-mode", "dryRunOperations": 2, "deployPlanSteps": 3, "renewPlanSteps": 6, "validateCalls": 1, "reloadCalls": 1, "caSentinelCalls": 1, "dnsSentinelCalls": 1}
+
+
 def uncertain_abandon_proof():
     result = dict.fromkeys(("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged"), True)
     return {**result, "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 61000, "scope": "native-zero-request-uncertain-abandon", "resolvedIssuingCaAddress": "10.64.0.4", "caRequestsAtFault": 0, "caRequestsAfterRecovery": 0, "caRequestsAfterAbandon": 0}
@@ -453,9 +458,21 @@ class CollectorTests(unittest.TestCase):
         row = {"scenario": "native-agent-log-transient-retry", "actualNativeConsole": True, "jobSucceeded": True, "attempts": 1, "persistedLines": 3, "agentGapLines": 0, "serverDroppedLines": 0, "finalAcknowledged": True, "lines": ["sentinel"]}
         value = {"suite": "native-agent-api", "nativeLogFaults": [row], "nativeChildOutputPrivacy": {"executedChildren": 2, "stdoutEmitted": True, "stderrEmitted": True, "rawChildOutputWithheld": True, "genericExecutionMarkerPersisted": True, "jobSucceeded": True, "private": "sentinel"}}
         value["nativeDispatchTiming"] = {"fixtureLifetimeSeconds": 2, "localToleranceMs": 1, "heldMonotonicMs": 5001, "originalDispatchLifetimeSeconds": 3600, "issuedAt": "2026-10-14T12:00:00.000Z", "expiresAt": "2026-10-14T12:00:02.000Z", "releasedAt": "2026-10-14T12:00:05.001Z", "clocks": "actual-host-monotonic-and-database", "fixture": "production-signer-short-lifetime-and-delayed-HTTP-delivery", "databaseDatesRewritten": False, "journalRewritten": False, "nativeClockRefusalObserved": True, "executionSuccessAbsent": True, "nonceUnconsumed": True, "freshClaimRecoverySucceeded": True, "credentialAndPinUnchanged": True, "leaseCallsBeforeRefusal": 0, "expiredNonceResultStatus": 409, "expiredNonceResultCode": "CERTOPS_AGENT_RESULT_NONCE_REJECTED", "actualServerJobState": "claimed", "actualRejectedOutbox": "dead-letter", "qualificationScope": "native-Linux-shortened-dispatch-fixture-not-stock-TTL-or-Windows-SCM", "private": "sentinel"}
+        value["nativeCertificateDryRun"] = {**certificate_dry_run_proof(), "private": "sentinel"}
         result = collector.extract_reports(self.archive("native.json", value), {"native-agent-api"}, set())
         self.assertEqual(result[0][1]["nativeLogFaults"][0]["persistedLines"], 3)
+        self.assertEqual(result[0][1]["nativeCertificateDryRun"], certificate_dry_run_proof())
         self.assertNotIn("sentinel", json.dumps(result))
+        for key, expected in certificate_dry_run_proof().items():
+            with self.subTest(dry_run_field=key):
+                invalid = json.loads(json.dumps(value))
+                del invalid["nativeCertificateDryRun"][key]
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("native.json", invalid), {"native-agent-api"}, set())
+                invalid = json.loads(json.dumps(value))
+                invalid["nativeCertificateDryRun"][key] = False if expected is True else (0 if type(expected) is int else "incorrect")
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("native.json", invalid), {"native-agent-api"}, set())
 
     def test_uncommitted_execution_names_and_values_are_never_artifacts(self):
         sentinel = "private-sentinel"

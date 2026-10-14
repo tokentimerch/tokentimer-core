@@ -6,6 +6,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## API, inventory and worker behavior
 
+- [Native certificate dry-run and independent side-effect controls](api/native-certificate-dry-run.md)
 - [Fleet execution-log quotas](api/fleet-log-quota.md)
 - [Actual elapsed log abandonment and worker retention](api/log-maintenance.md)
 

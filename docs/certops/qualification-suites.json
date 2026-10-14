@@ -597,7 +597,11 @@
       "native-agent-log-413-split": "e2e",
       "native-agent-log-413-drop-accounting": "e2e",
       "native-agent-child-output-confidentiality": "e2e",
-      "native-agent-real-elapsed-dispatch-expiry": "e2e"
+      "native-agent-real-elapsed-dispatch-expiry": "e2e",
+      "native-agent-certificate-deploy-dry-run": "e2e",
+      "native-agent-certificate-renew-dry-run": "e2e",
+      "native-agent-certificate-real-deploy-control": "e2e",
+      "native-agent-certificate-command-sentinel-control": "e2e"
     },
     "csr-bound-observation-api": {
       "csr-bound-observation-public-target": "e2e",
@@ -1305,7 +1309,8 @@
     "native-agent-api": [
       "api",
       "postgres",
-      "native-node-agent"
+      "native-node-agent",
+      "openssl"
     ],
     "csr-bound-observation-api": [
       "api",
@@ -2162,7 +2167,11 @@
       "native-agent-log-413-split",
       "native-agent-log-413-drop-accounting",
       "native-agent-child-output-confidentiality",
-      "native-agent-real-elapsed-dispatch-expiry"
+      "native-agent-real-elapsed-dispatch-expiry",
+      "native-agent-certificate-deploy-dry-run",
+      "native-agent-certificate-renew-dry-run",
+      "native-agent-certificate-real-deploy-control",
+      "native-agent-certificate-command-sentinel-control"
     ],
     "csr-bound-observation-api": [
       "csr-bound-observation-public-target",

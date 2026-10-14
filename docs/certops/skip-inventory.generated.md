@@ -53,17 +53,17 @@ Total skips found: 127
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-alert-e2e.test.js` | 16 | agent alert governance persists policy and rejects foreign groups and unauthorized roles | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 451 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 567 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 581 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 599 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 615 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 650 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 673 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 715 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 737 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 799 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 854 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 457 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 573 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 587 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 605 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 621 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 656 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 679 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 721 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 743 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 805 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 860 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-lease-api-e2e.test.js` | 18 | active claim force retirement fences real agent HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-boundaries-e2e.test.js` | 18 | agent log size and ownership boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-order-e2e.test.js` | 18 | actual agent telemetry ordering, conflict and final closure | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -99,7 +99,7 @@ Total skips found: 127
 | `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 21 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-native-agent-e2e.test.js` | 32 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-native-agent-e2e.test.js` | 33 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-observe-only-e2e.test.js` | 16 | observe-only polling preserves queued work until explicit execution advertisement | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-pause-ingestion-e2e.test.js` | 19 | workspace pause blocks new work while retaining owned result ingestion | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-profile-issuer-switch-e2e.test.js` | 13 | public renewal issuer changes retain runnable policy and atomic audit | dynamic (this.skip() / t.skip()) | `no-host` |

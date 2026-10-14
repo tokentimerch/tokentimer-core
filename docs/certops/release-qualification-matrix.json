@@ -1484,7 +1484,11 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-native-log-faults.js",
         "tests/e2e/helpers/certops-native-log-privacy.js",
-        "tests/e2e/helpers/certops-native-dispatch-timing.js"
+        "tests/e2e/helpers/certops-native-dispatch-timing.js",
+        "tests/e2e/helpers/certops-native-certificate-dry-run.js",
+        "packages/agent/src/index.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {

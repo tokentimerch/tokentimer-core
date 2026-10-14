@@ -106,6 +106,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {
+          require("../tests/e2e/helpers/certops-native-certificate-dry-run").verifyFacts(artifact.report.nativeCertificateDryRun);
           require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
           const privacy = artifact.report.nativeChildOutputPrivacy;
           if (!privacy || privacy.executedChildren !== 2 || !["stdoutEmitted", "stderrEmitted", "rawChildOutputWithheld", "genericExecutionMarkerPersisted", "jobSucceeded"].every(key => privacy[key] === true)) throw new Error("Native child-output confidentiality evidence incomplete");

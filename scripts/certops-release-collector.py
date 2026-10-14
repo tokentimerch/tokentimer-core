@@ -569,6 +569,16 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
         if value.get("suite") == "native-agent-api":
+            dry_run = value.get("nativeCertificateDryRun")
+            flags = ("deployDryRunComplete", "renewDryRunComplete", "authenticPlanEvidence", "deployedFilesUnchangedDuringDryRun", "custodyFilesUnchangedDuringDryRun", "servedLeafUnchangedDuringDryRun", "noCommandsOrGatewayCallsDuringDryRun", "realDeployChangedFileAndTrustedTls", "realValidateAndReloadObserved", "realRenewCommandReachedCaAndDnsSentinels", "renewControlFailedBeforeIssuance", "identityAndConfigRestored", "ownedResourcesCleaned")
+            counts = {"dryRunOperations": 2, "deployPlanSteps": 3, "renewPlanSteps": 6, "validateCalls": 1, "reloadCalls": 1, "caSentinelCalls": 1, "dnsSentinelCalls": 1}
+            if (not isinstance(dry_run, dict)
+                    or dry_run.get("scope") != "native-linux-signed-certificate-dry-run-with-local-command-controls"
+                    or dry_run.get("admission") != "production-service-explicit-mode"
+                    or any(dry_run.get(key) is not True for key in flags)
+                    or any(type(dry_run.get(key)) is not int or dry_run[key] != expected for key, expected in counts.items())):
+                raise ValueError("Invalid native certificate dry-run evidence")
+            result["nativeCertificateDryRun"] = {key: dry_run[key] for key in ("scope", "admission", *flags, *counts)}
             timing = value.get("nativeDispatchTiming")
             if not isinstance(timing, dict):
                 raise ValueError("Missing native dispatch timing evidence")
