@@ -17,6 +17,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Windows IIS ACME renewal refuses explicit private-key reuse (`WINDOWS_ACME_KEY_REUSE_UNSUPPORTED`) before enrollment, including dry runs. New Windows profiles default to fresh-key rotation. **Operator action:** change existing Windows renewal profiles with `keyRotationPolicy.rotateOnRenew=false` to `true`; their stored intent is not silently rewritten. Linux key reuse remains supported.
+
 - ACME jobs stop their external client and its descendant processes when lease renewal confirms ownership loss or expiry. Command timeouts also terminate the owned process tree, so an abandoned client cannot continue running after its agent stops authorizing the job.
 
 - Agents refresh executable actions and local command-profile names on heartbeat. Removing profiles clears their stored names; disabling execution clears executable actions, so the agent stops receiving incompatible work. **Operator action:** upgrade the API before deploying agents from this change; older APIs reject the new heartbeat fields.

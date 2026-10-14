@@ -3,6 +3,9 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+concurrency:
+  group: certops-retention24h-owned-azure-lifecycle
+  cancel-in-progress: false
 permissions:
   contents: read
   id-token: write

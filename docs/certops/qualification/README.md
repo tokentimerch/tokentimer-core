@@ -40,6 +40,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+- [Temporary file response barriers (supporting controls)](adcs/response-delivery-barrier-support.md)
+
 - [AD CS algorithm/template negatives with actual positive issuance controls](adcs/algorithm-template-boundaries.md)
 - [Native CA-signed response decoder signature tamper controls](adcs/signed-response-signature-tamper.md)
 - [Windows 11 ARM64 native CNG runtime and strict desktop scope](windows/arm64-native-cng-runtime.md)
@@ -117,3 +119,9 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Completed-console authority withdrawal](api/browser-completed-console.md)
 
 The [operator-created uncertain ambiguity journey](adcs/operator-created-uncertain-ambiguity.md) exercises public ambiguous-candidate refusal and explicit RequestId recovery after a real zero-request interruption. Its two real operator submissions are distinct from the nonqualified lost-response experiment.
+
+The [resident domain retention journey](windows/resident-domain-retention24h.md) separates short CI jobs from a genuine same-process Windows day, with independently attested lease handoff and bounded cleanup. Preparation and timing-only receipts cannot qualify its native slot.
+
+The [retention controller lifecycle](windows/retention24h-controller-lifecycle.md) documents immutable artifact readback, the bounded resource lease, independent finalization and cleanup.
+
+The [Windows ACME key rotation policy](windows/acme-key-rotation-policy.md) requires fresh CNG keys; its public refusal journey preserves existing native custody and trusted TLS.

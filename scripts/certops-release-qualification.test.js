@@ -450,8 +450,20 @@ test("Windows native stack slots require public admission proof beyond service-c
   assert.ok(verifyMatrix([value], options).length);
   const facts = { anonymousAdmissionRefused: true, viewerAdmissionRefused: true, authorizedAdmissionCreated: true, idempotentSameJob: true, publicRequesterPreserved: true, serverDerivedOsStoreKeyMode: true, publicPayloadPreserved: true, nativeJobSucceeded: true, nativeCngIisTrustedTlsVerified: true, ownedActorCleanup: true, anonymousStatus: 401, viewerStatus: 403, createStatus: 201, replayStatus: 201, source: "api", mode: "real", authorizedRole: "workspace_manager" };
   events.at(-1).windowsPublicIssuance = facts;
+  const reuse=require("../tests/e2e/helpers/certops-windows-key-reuse-refusal");events.at(-1).nativeWindowsKeyReuseRefusal={scope:"public-windows-acme-profile-reuse-refusal",...Object.fromEntries(reuse.fields.map(field=>[field,true]))};
   const handoff=require("../tests/e2e/helpers/certops-windows-installed-handoff");events.at(-1).nativeInstalledStateHandoff={scope:handoff.SCOPE,...Object.fromEntries(handoff.FLAGS.map(flag=>[flag,true]))};
   assert.deepEqual(verifyMatrix([value], options), []);
+  for(const nativeSlot of require("../docs/certops/release-qualification-matrix.json").slots.filter(row=>row.suite.startsWith("real-agent-windows-acme-iis/"))){
+    const sample=structuredClone(value);sample.suite=nativeSlot.suite;sample.environment={...nativeSlot.environment,measurement:"native"};
+    for(const event of sample.events){event.scope=nativeSlot.suite;event.qualificationEnvironment=sample.environment;}
+    assert.deepEqual(verifyMatrix([sample],{candidateSha,specification:{schemaVersion:1,slots:[nativeSlot]}}),[],nativeSlot.id);
+  }
+  {const bad=structuredClone(value);bad.events[0].fixtureSources.find(row=>row.file===reuse.requiredSources[0]).sha256="0".repeat(64);assert.ok(verifyMatrix([bad],options).length);}
+  for(const field of reuse.fields){for(const wrong of [false,1,null,"true"]){const bad=structuredClone(value);bad.events.at(-1).nativeWindowsKeyReuseRefusal[field]=wrong;assert.ok(verifyMatrix([bad],options).length);}const missing=structuredClone(value);delete missing.events.at(-1).nativeWindowsKeyReuseRefusal[field];assert.ok(verifyMatrix([missing],options).length);}
+  for(const change of [{scope:"installed-agent-invalid-signed-job"},{privateKey:"forbidden"}]){const bad=structuredClone(value);Object.assign(bad.events.at(-1).nativeWindowsKeyReuseRefusal,change);assert.ok(verifyMatrix([bad],options).length);}
+  {const bad=structuredClone(value);delete bad.events.at(-1).nativeWindowsKeyReuseRefusal;assert.ok(verifyMatrix([bad],options).length);}
+  {const bad=structuredClone(value);bad.events=bad.events.filter(event=>event.name!==reuse.scenarioName);assert.ok(verifyMatrix([bad],options).length);}
+  for(const file of reuse.requiredSources){const bad=structuredClone(value);bad.events[0].fixtureSources=bad.events[0].fixtureSources.filter(row=>row.file!==file);assert.ok(verifyMatrix([bad],options).length,file);}
   for(const flag of handoff.FLAGS){for(const wrong of [false,1,null,"true"]){const bad=structuredClone(value);bad.events.at(-1).nativeInstalledStateHandoff[flag]=wrong;assert.ok(verifyMatrix([bad],options).length,flag);}const missing=structuredClone(value);delete missing.events.at(-1).nativeInstalledStateHandoff[flag];assert.ok(verifyMatrix([missing],options).length,flag);}
   for(const change of [{scope:"automatic-in-place-reregistration"},{oldAdcsJobsTransferred:true},{rawCredential:"private"}]){const bad=structuredClone(value);Object.assign(bad.events.at(-1).nativeInstalledStateHandoff,change);assert.ok(verifyMatrix([bad],options).length);}
   {const bad=structuredClone(value);delete bad.events.at(-1).nativeInstalledStateHandoff;assert.ok(verifyMatrix([bad],options).length);}
@@ -634,4 +646,17 @@ test("full installer CLI second-rename evidence requires exact scope and all nat
     }
     const stale=structuredClone(value);stale.report.fixtureSources[0].sha256="0".repeat(64);assert.ok(verifyMatrix([stale],options).length);
   }
+});
+
+test("resident domain retention requires genuine day, complete native facts and current candidate sources",()=>{
+ const helper=require("./certops-retention24h-proof"),fixture=require("./certops-retention24h-test-fixture.cjs"),slot=require("../docs/certops/release-qualification-matrix.json").slots.find(item=>item.suite===helper.SUITE);assert.ok(slot);
+ const composite=fixture();composite.publicPreparation.fixtureSources=helper.REQUIRED_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
+ const report=helper.createQualificationReport(composite),value={kind:"host",suite:helper.SUITE,environment:{...slot.environment},report},options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
+ assert.deepEqual(verifyMatrix([value],options),[]);
+ for(const flag of helper.FLAGS){const invalid=structuredClone(value);invalid.report.nativeRetention24h[flag]=false;assert.ok(verifyMatrix([invalid],options).length,flag);}
+ for(const patch of [{monotonicElapsedMs:86399999},{maximumSweepGapMs:3900001},{oldNotAfter:report.nativeRetention24h.cleanupDeadline},{keptSweepCount:2},{scope:"resident-timing-only-native-oracles-required"},{requestIds:["11","11"]}]){const invalid=structuredClone(value);Object.assign(invalid.report.nativeRetention24h,patch);assert.ok(verifyMatrix([invalid],options).length);}
+ for(const id of helper.REQUIRED_SCENARIOS){const invalid=structuredClone(value);invalid.report.scenarios=invalid.report.scenarios.filter(item=>item.id!==id);assert.ok(verifyMatrix([invalid],options).length,id);}
+ const missing=structuredClone(value);delete missing.report.nativeRetention24h;assert.ok(verifyMatrix([missing],options).length);
+ const stale=structuredClone(value);stale.report.fixtureSources[0].sha256="0".repeat(64);assert.ok(verifyMatrix([stale],options).length);
+ const omitted=structuredClone(value);omitted.report.fixtureSources.pop();assert.ok(verifyMatrix([omitted],options).length);
 });

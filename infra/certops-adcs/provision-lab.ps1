@@ -9,6 +9,8 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('en-US','de-DE','fr-FR')][string]$Language = 'en-US',
   [ValidateSet('0','1')][string]$ResponseLossExperiment = '0',
   [ValidateSet('0','1')][string]$PendingElapsedQualification = '0',
+  [ValidateSet('0','1')][string]$Retention24hPrepare = '0',
+  [string]$Retention24hNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [string]$Location = 'westeurope')
@@ -16,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 if($HierarchyRole -eq 'subordinate' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Hierarchy and experimental fault profiles cannot be combined'}
 if($ResponseLossExperiment -ne '0' -and $JournalPhaseExperiment -ne 'none'){throw 'Only one native fault experiment may own a lab'}
 if($PendingElapsedQualification -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Elapsed pending qualification requires its isolated four-hour Server2022 en-US profile'}
+if($Retention24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Retention24h requires explicit isolated four-hour Server2022 en-US preparation'}
 $password = 'Tt!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) + 'a1'
 Write-Output "::add-mask::$password"
 $createdAt = [DateTimeOffset]::UtcNow
@@ -80,7 +83,13 @@ function Start-ControlPlane() {
 try {
   $existing = az group exists --name $ResourceGroup
   if ($LASTEXITCODE -ne 0 -or $existing -ne 'false') { throw 'Qualification resource group must not already exist' }
-  az group create --name $ResourceGroup --location $Location --tags purpose=certops-adcs-qualification "expiresAt=$expiresAt" "createdAt=$($createdAt.ToString('o'))" "candidateSha=$candidateSha" -o none
+  $initialTags=@('purpose=certops-adcs-qualification',"expiresAt=$expiresAt","createdAt=$($createdAt.ToString('o'))","candidateSha=$candidateSha")
+  if($Retention24hPrepare -eq '1'){
+    # Initial ownership permits only exact failed-prepare cleanup. It does not
+    # grant the extended lease; that requires independent artifact/task readback.
+    $initialTags+=@('retentionPrepareKind=certops-native-retention24h',"retentionPrepareNonce=$Retention24hNonce","retentionPrepareRunId=$env:GITHUB_RUN_ID","retentionPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")
+  }
+  az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
   if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
   @{ expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
   az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" -o none
@@ -110,7 +119,7 @@ try {
   $safetyCasesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'safety-cases.json')))
   Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'templates.ps1') 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password","SafetyCasesBase64=$safetyCasesBase64")
   Start-ControlPlane
-  if($PendingElapsedQualification -ne '1'){
+  if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1'){
     Refresh-LabAuthentication
     $browserResponse=az vm run-command invoke -g $ResourceGroup -n control-plane --command-id RunShellScript --scripts "@$(Join-Path $PSScriptRoot 'browser-control-plane.sh')" --parameters "candidate=$candidateSha" -o json | ConvertFrom-Json
     if($LASTEXITCODE -ne 0 -or -not (($browserResponse.value | ForEach-Object message) -join "`n").Contains('CERTOPS_STAGE=private-same-origin-dashboard-ready')){throw 'Private browser dashboard bootstrap failed'}
@@ -125,7 +134,13 @@ try {
   foreach($node in @('domain-ca','windows-agent')){Invoke-Stage $node (Join-Path $PSScriptRoot 'language-verify.ps1') 'CERTOPS_STAGE=installed-language-verified' @("Language=$Language")}
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
-  if($PendingElapsedQualification -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
+  if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
+  if($Retention24hPrepare -eq '1'){
+    # Keep the forest credential in this process only. The dedicated producer
+    # freezes actual cutover before the external controller may extend TTL.
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=retention24h-prepared' @("DomainPassword=$password","Retention24hPrepare=1","Retention24hNonce=$Retention24hNonce","Retention24hCreatedAt=$($createdAt.ToString('o'))","Retention24hRunId=$env:GITHUB_RUN_ID","Retention24hRunAttempt=$env:GITHUB_RUN_ATTEMPT")
+    $reportStatus='prepared-actual-cutover-awaiting-independent-handoff'
+  }else{
   $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
   try { Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters }
   finally {
@@ -134,9 +149,10 @@ try {
     if($reportErrors.Count){throw "Guest execution report retrieval failed for: $($reportErrors -join ', ')"}
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'
+  }
 } finally {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
-  $scenarioReport=if($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
+  $scenarioReport=if($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
   @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
   Remove-Item -LiteralPath $parameterPath -Force -ErrorAction SilentlyContinue
   $password = $null

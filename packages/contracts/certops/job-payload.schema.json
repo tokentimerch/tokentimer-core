@@ -275,7 +275,7 @@
     },
     "keyRotation": {
       "type": "boolean",
-      "description": "When true the agent generates a fresh private key for the renewal instead of reusing the existing one. The key never leaves the agent."
+      "description": "When true the agent generates a fresh private key for the renewal instead of reusing the existing one. Windows os-store-managed IIS ACME renewal does not support reuse and refuses explicit false, including dry runs; omission retains fresh-key behavior. The key never leaves the agent."
     },
     "certPath": {
       "type": "string",
@@ -602,6 +602,11 @@
     }
   },
   "allOf": [
+    {
+      "description": "Windows CNG renewal cannot reuse an existing private key; omission retains fresh-key behavior.",
+      "if": { "required": ["action", "keyMode", "target"], "properties": { "action": { "const": "renew" }, "keyMode": { "const": "os-store-managed" }, "target": { "required": ["type"], "properties": { "type": { "const": "windows-iis" } } } } },
+      "then": { "properties": { "keyRotation": { "const": true } } }
+    },
     {
       "if": {
         "required": ["enrollment"],

@@ -39,7 +39,7 @@ async function fetchPem(endpoint) {
   });
 }
 
-module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot }) {
+module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot, runNamedScenario }) {
   const keyProfiles = { "rsa-2048": { keyAlgorithm: "rsa", keySize: 2048 }, "rsa-3072": { keyAlgorithm: "rsa", keySize: 3072 }, "rsa-4096": { keyAlgorithm: "rsa", keySize: 4096 }, "ec-p256": { keyAlgorithm: "ecdsa", keySize: 256 }, "ec-p384": { keyAlgorithm: "ecdsa", keySize: 384 } };
   const keyProfile = keyProfiles[process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"];
   assert.ok(keyProfile, "unknown Windows qualification key profile");
@@ -59,7 +59,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   for (const endpoint of [caEndpoint, dnsEndpoint]) assert.ok(["localhost", "127.0.0.1"].includes(endpoint.hostname));
   const workDir = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "certops-windows-journey-"));
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
-  let outputPrivacy;
+  let outputPrivacy, keyReuseRefusalProof;
+  const reuseProofPath=path.join(repoRoot,"qualification-results",`windows-key-reuse-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(reuseProofPath),false,"Refuse stale Windows reuse refusal proof");
   let publicSession, publicIssuanceFacts, publicIssueInput;
   const ownedHandoffs=[];let installedHandoffProof;
   const handoffProofPath=path.join(repoRoot,"qualification-results",`windows-installed-handoff-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(handoffProofPath),false,"Refuse stale installed service handoff proof");
@@ -549,6 +550,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const automation = await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE", [workspaceId, certificateId]);
     assert.equal(automation.rows.length, 1, "derived profile must enable the active management period");
     await require("./helpers/certops-windows-certificate-dry-run").qualifyCertificateDryRun({repoRoot,pool,workspaceId,userId,agentId,certificateId,configDir,domain,port,roots,thumbprint,initialJobId:job.id,issuePayload:input.body.payload,profile,powershell:ps,run:command,waitUntil,ownedJobs,dnsRequestCount:()=>dnsProxyRequests});
+    const reuseHelper = require("./helpers/certops-windows-key-reuse-refusal");
+    keyReuseRefusalProof = await runNamedScenario(reuseHelper.scenarioName, () => reuseHelper.qualifyKeyReuseRefusal({publicSession,pool,workspaceId,certificateId,profileId:managed.profile_id,configDir,domain,port,roots,thumbprint,powershell:ps,run:command,dnsRequestCount:()=>dnsProxyRequests}));
+    reuseHelper.verifyProof(keyReuseRefusalProof);
     await require("./helpers/certops-windows-wrong-leaf").qualifyWrongLeaf({publicSession,pool,workspaceId,agentId,certificateId,configDir,workDir,repoRoot,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil,ownedJobs});
     const worker = await import(require("node:url").pathToFileURL(path.join(repoRoot, "apps/worker/src/certops-worker.js")).href);
     const schedulerEnv = { ...process.env, CERTOPS_ENABLED: "true" };
@@ -698,6 +702,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
     if (!journeyFailure && errors.length === 0) {
+      require("./helpers/certops-windows-key-reuse-refusal").verifyProof(keyReuseRefusalProof);fs.writeFileSync(reuseProofPath,JSON.stringify(keyReuseRefusalProof),{flag:"wx"});
       require("./helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(publicIssuanceFacts);
       fs.writeFileSync(publicIssueProofPath,JSON.stringify(publicIssuanceFacts),{flag:"wx"});
       require("./helpers/certops-windows-installed-handoff").verifyProof(installedHandoffProof);fs.writeFileSync(handoffProofPath,JSON.stringify(installedHandoffProof),{flag:"wx"});

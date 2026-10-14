@@ -23,6 +23,7 @@ on:
       - 'tests/e2e/**'
       - 'scripts/qualification/**'
       - 'scripts/certops-*'
+      - 'scripts/certops_retention24h_collection.py'
       - 'infra/certops-adcs/**'
       - 'scripts/run-certops-tooling-tests.js'
       - 'scripts/run-certops-collector-tests.js'
@@ -163,6 +164,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required for installer compatibility' }
           & ./scripts/certops-installer-swap.test.ps1
+      - name: Temporary file response barriers (supporting only)
+        shell: pwsh
+        env:
+          CERTOPS_RESPONSE_BARRIER_SUPPORT: '1'
+        run: |
+          node scripts/certops-response-barrier-support.js
+          if ($LASTEXITCODE -ne 0) { throw 'Temporary file barrier supporting controls failed' }
       - name: Enable hosted IIS without reboot
         shell: pwsh
         run: |
@@ -172,6 +180,13 @@ jobs:
           }
       - name: Build candidate machine-store query helper before native cleanup cases
         run: node packages/agent/scripts/build-windows-chain-helper.js
+      - name: Build candidate service hosts before native helper image controls
+        run: node packages/agent/scripts/build-windows-service-host.js
+      - name: Installer native helper image regression (supporting only)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/certops-installer-pe.test.ps1
       - name: Real Windows discovery CNG IIS and supporting Go checks
         run: node --test packages/agent/scripts/host/windows-host.test.js
       - name: Assert required host scenarios executed

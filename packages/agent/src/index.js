@@ -2470,6 +2470,19 @@ async function executeJob({
     }
   }
 
+  // Windows CNG enrollment creates a fresh non-exportable key. Refuse an
+  // explicit reuse request before planning or any lock/native/CA mutation;
+  // a dry run must not advertise a plan the real executor cannot honor.
+  if (action === "renew" && resolvedIssuerKind.kind === "acme" &&
+      job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis" &&
+      job.keyRotation === false) {
+    return {
+      status: "blocked",
+      keyRotated: null,
+      errorMessage: "WINDOWS_ACME_KEY_REUSE_UNSUPPORTED: Windows CNG renewal requires a fresh key; set keyRotation to true",
+    };
+  }
+
   // B4: signed job.mode wins. Local execution.dryRun may only refuse a
   // real job outright — never silently swap in the dry-run code path.
   if (jobMode === "dry_run") {

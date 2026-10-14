@@ -189,7 +189,7 @@
         "windows-2025-host"
       ],
       "implementation": "packages/agent/scripts/installer-smoke.test.js",
-      "remainingCoverage": "Unique real SCM fixture binary/state path contains spaces and survives start/restart/recovery. Exact released installer, all Node paths and architecture matrix remain. Actual temporary-filesystem controls execute production copy/activation functions on spaces, Unicode and literal bracket paths; six source/destination/ancestor junction refusals and four activation junction refusals preserve outside and predecessor bytes/file IDs. Source and existing destination trees are preflighted before copying. This does not qualify top-level service installation, privileged concurrent path replacement, UNC/drive permutations or helper PE validation before activation."
+      "remainingCoverage": "Unique real SCM fixture binary/state path contains spaces and survives start/restart/recovery. Exact released installer, all Node paths and architecture matrix remain. Actual temporary-filesystem controls execute production copy/activation functions on spaces, Unicode and literal bracket paths; six source/destination/ancestor junction refusals and four activation junction refusals preserve outside and predecessor bytes/file IDs. Source and existing destination trees are preflighted before copying. This path fixture does not qualify top-level service installation, privileged concurrent path replacement or UNC/drive permutations. Separate production installer source now validates both selected helper PE images before source mutation and again before staged activation; supporting malformed-image controls and installed-service refusal scenarios remain distinct from this path fixture."
     },
     {
       "id": "windows-install.state-acl",
@@ -554,7 +554,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "All four Go modules require zero skips. Fresh candidate package verifies both helper digests and PE architectures independently; actual native chain helper checks PEM/DER parity, missing/malformed public input, wrong CA pin, unavailable revocation and genuinely expired/not-yet-valid leaves. Authenticated release signatures, ARM64 native execution and candidate CMC/verifier integration fault variants remain; native execution evidence is pending. A separate strict Windows 11 ARM64 desktop CNG runtime source now requires native Node/PowerShell/Go and fresh chain-helper execution, two real CNG CSR/accepted-leaf/export-refusal profiles and exact owned cleanup. Native ARM64 execution remains pending; this bounded source does not cover ARM64 installed-service, packaged CMC/verifier, IIS, Server or domain qualification."
+      "remainingCoverage": "All four Go modules require zero skips. Fresh candidate package verifies both helper digests and PE architectures independently; actual native chain helper checks PEM/DER parity, missing/malformed public input, wrong CA pin, unavailable revocation and genuinely expired/not-yet-valid leaves. Authenticated release signatures, ARM64 native execution and additional candidate CMC/verifier integration fault variants remain; the separate signed-response decoder tampering source does not establish packaged-helper integration or signed CMC renewal. Native execution evidence is pending. A separate strict Windows 11 ARM64 desktop CNG runtime source now requires native Node/PowerShell/Go and fresh chain-helper execution, two real CNG CSR/accepted-leaf/export-refusal profiles and exact owned cleanup. Native ARM64 execution remains pending; this bounded source does not cover ARM64 installed-service, packaged CMC/verifier, IIS, Server or domain qualification."
     },
     {
       "id": "windows-cng.provider-ground-truth",
@@ -760,10 +760,11 @@
       "status": "partial",
       "evidenceLevel": "e2e",
       "requiredEnvironments": [
-        "windows-2022-disposable-api-postgres-pebble"
+        "windows-2022-disposable-api-postgres-pebble",
+        "windows-2022-domain-native-retention24h"
       ],
-      "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Real issued predecessor remains after verified unattended cutover. Supporting native elapsed-expiry fixture independently proves trusted valid short-lived CNG leaf cutover, factual native expiry, real expiry-plus300s wait and actual native collector deletion while trusted replacement survives. Bind/verify failure clock permutations and full24h elapsed retention remain; native execution evidence is pending."
+      "implementation": "tests/e2e/certops-adcs-retention24h-prepare.js",
+      "remainingCoverage": "Native source spans short authenticated prepare/finalize jobs around one resident SYSTEM process on the same owned domain member. Actual public AD CS A-to-B cutover creates the production 24-hour ledger; independently observed actual expiry is later. Exact stopped-agent drainage, current native CNG/IIS/trusted TLS, bounded hourly/predeadline observations, a full monotonic day, production default-clock deletion, independent final native absence and owned Azure deletion are mandatory. Pure refusal checks are supporting evidence only. Native elapsed execution and bind/verify failure clock permutations remain pending; the seven-day default and background agent interval are outside this scope."
     },
     {
       "id": "windows-retention.active-key",
@@ -799,7 +800,7 @@
         "windows-2025-host"
       ],
       "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js; scripts/certops-retention-boundaries.test.js",
-      "remainingCoverage": "Native collector with a fresh supporting ledger and real clock defers24h cleanup. Separate real-clock fixture retains the supported24h policy but uses the product's earlier actual certificate-expiry-plus300s deadline, waits the actual elapsed grace and verifies cleanup. Synthetic-clock supporting sweep remains separately labeled. Exact full24h passage and every min/max config combination remain; native execution evidence is pending. Supporting production configuration-loader tests cover default168h/6h, minimum24h and maximum720h across valid positive sweep intervals, invalid types/fractions/out-of-range values, and exact unchanged configuration/custody marker. These are loader/filesystem checks, not installed-service cadence execution."
+      "remainingCoverage": "Native collector with a fresh supporting ledger and real clock defers24h cleanup. Separate real-clock fixture retains the supported24h policy but uses the product's earlier actual certificate-expiry-plus300s deadline, waits the actual elapsed grace and verifies cleanup. Synthetic-clock supporting sweep remains separately labeled. A separate domain AD CS resident-keeper source now requires actual full24h passage and production-deadline cleanup on the same VM. Its native execution remains pending; installed-service cadence and retention/configuration cross-products remain separate gaps. Supporting production configuration-loader tests cover default168h/6h, minimum24h and maximum720h across valid positive sweep intervals, invalid types/fractions/out-of-range values, and exact unchanged configuration/custody marker. These are loader/filesystem checks, not installed-service cadence execution."
     },
     {
       "id": "windows-retention.durable-ledger",
@@ -822,7 +823,7 @@
         "disposable-windows-server-native"
       ],
       "implementation": "packages/agent/scripts/host/retention-elapsed-fixture.js",
-      "remainingCoverage": "Mandatory native host fixture delegates every OS command to actual native execution and exits86 only after owned certificate deletion succeeds before key deletion. Independent parent requires certificate absent/key retained/incomplete ledger/replacement trusted; normal product sweep resumes owned dead lock and key cleanup after actual elapsed expiry grace. Native source not executed; full24h window and installed-agent/job interruption variants remain."
+      "remainingCoverage": "Mandatory native host fixture delegates every OS command to actual native execution and exits86 only after owned certificate deletion succeeds before key deletion. Independent parent requires certificate absent/key retained/incomplete ledger/replacement trusted; normal product sweep resumes owned dead lock and key cleanup after actual elapsed expiry grace. Native source not executed; interruption across a full24h window and installed-agent/job interruption variants remain. The separate resident-keeper source covers an uninterrupted production24h deadline, not these interruption variants."
     },
     {
       "id": "windows-retention.container-sweep",
@@ -924,7 +925,7 @@
         "real-agent-acmesh-filesystem"
       ],
       "implementation": "tests/e2e/acme-real-journey.js",
-      "remainingCoverage": "Mandatory Linux source preserves positive SPKI rotation controls and adds public-profile keyRotation=false manual/default-SQL-NOW renewal controls for certbot/acme.sh, with unchanged private custody/SPKI, distinct CA serials/leaves, advancing expiry and trusted TLS. Execution of the new reuse controls and algorithm cross-products remains pending. Windows os-store-managed ACME currently accepts rotateOnRenew=false in the profile mapping but the native executor still creates a fresh CNG enrollment container; explicit refusal or truthful policy handling needs separate product coverage and is not qualified as reuse."
+      "remainingCoverage": "Mandatory Linux source preserves positive SPKI rotation controls and adds public-profile keyRotation=false manual/default-SQL-NOW renewal controls for certbot/acme.sh, with unchanged private custody/SPKI, distinct CA serials/leaves, advancing expiry and trusted TLS. Execution of the new reuse controls and algorithm cross-products remains pending. Windows os-store-managed ACME does not support key reuse. API/schema admission now refuses explicit false and omitted inventory policy defaults to true; legacy signed real/dry-run execution refuses explicit false before native key or CA allocation. Mandatory public PATCH refusal source preserves the existing profile, job inventory, native certificate/CNG custody, binding and trusted TLS in all ten installed Windows cells. Native execution remains pending; this is public admission refusal, not installed execution of an invalid signed job or CNG reuse."
     },
     {
       "id": "acme.zone-provider",
@@ -1288,7 +1289,7 @@
         "disposable-enterprise-adcs-response-loss-experiment"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
-      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending. A same-requester/same-CA other-enrollment leaf is independently proven retrievable, then refused by explicit SPKI candidate verification and bounded search with unchanged original journal/watermark/CNG/TLS and CA counts. This read-only native source also remains pending and does not qualify public uncertain recovery. Mandatory public-flow source now also creates real zero-request uncertainty, then deliberately submits its retained public CSR twice as SYSTEM. Real acknowledged recovery refuses both owned matching candidates; public explicit RequestId proposal and default real-now continuation install the selected same-key leaf without new issuance, then guarded ownership checks revoke only the unused unaccepted issuance. This is operator-created ambiguity, not deterministic lost-submit-response. Native execution remains pending."
+      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing remains experimental and unqualified. The separate public zero-request and deliberately operator-created ambiguous recovery sources below do not establish deterministic loss of an accepted submit response. A same-requester/same-CA other-enrollment leaf is independently proven retrievable, then refused by explicit SPKI candidate verification and bounded search with unchanged original journal/watermark/CNG/TLS and CA counts. This read-only native source also remains pending and does not qualify public uncertain recovery. Mandatory public-flow source now also creates real zero-request uncertainty, then deliberately submits its retained public CSR twice as SYSTEM. Real acknowledged recovery refuses both owned matching candidates; public explicit RequestId proposal and default real-now continuation install the selected same-key leaf without new issuance, then guarded ownership checks revoke only the unused unaccepted issuance. This is operator-created ambiguity, not deterministic lost-submit-response. Native execution remains pending."
     },
     {
       "id": "adcs.unreachable-before-submit",
@@ -1299,7 +1300,7 @@
         "enterprise-adcs-domain-lab"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-submission-boundaries.js",
-      "remainingCoverage": "Native source blocks only the owned certreq RPC path while safety probes remain available, independently requires zero actual CA requests and prepared custody, then restores connectivity and retries the same CSR/key with one CA request and live TLS. Source is mandatory in the 64-case baseline; native lab execution remains pending."
+      "remainingCoverage": "Native source blocks only the owned certreq RPC path while safety probes remain available, independently requires zero actual CA requests and prepared custody, then restores connectivity and retries the same CSR/key with one CA request and live TLS. Source is mandatory in the comprehensive native suites; native lab execution remains pending."
     },
     {
       "id": "adcs.operator-reconcile",

@@ -444,9 +444,9 @@ describe("CertOps agent surface E2E", () => {
     });
   }
   if (process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") {
-    it("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", { timeout: 1080000 }, async () => {
+    it("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", { timeout: 1080000 }, async (t) => {
       assert.equal(dbAvailable, true, "Windows journey requires migrated PostgreSQL");
-      await require("./windows-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
+      await require("./windows-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, runNamedScenario: async (name, work) => { let proof; await t.test(name, async () => { proof = await work(); }); return proof; } });
     });
   }
 

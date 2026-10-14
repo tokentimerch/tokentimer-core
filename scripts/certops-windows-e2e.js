@@ -57,6 +57,7 @@ async function main() {
     verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
     const journeyEvent=fs.readFileSync(report,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.name===journey);
     require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(journeyEvent.windowsPublicIssuance);
+    require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(journeyEvent.nativeWindowsKeyReuseRefusal);
     console.log("Windows installed-agent qualification report verified");
   });
 }

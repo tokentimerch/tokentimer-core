@@ -4309,6 +4309,22 @@ describe("windows-iis renew job (os-store-managed)", () => {
     return { outcome, client, windowsExecFileImpl };
   }
 
+  for (const mode of ["real", "dry_run"]) {
+    it(`refuses explicit CNG key reuse in signed ${mode} jobs before native or CA calls`, async () => {
+      const job = makeJob({ keyRotation: false, mode });
+      const outcome = await executeJob({ job, jobId: job.jobId,
+        policyEngine: permissiveEngine(), client: createRecordingClient(),
+        executionContext: makeExecutionContext({
+          windowsExecFileImpl: () => { assert.fail("native operation before reuse refusal"); },
+          acmeExecFileImpl: () => { assert.fail("CA operation before reuse refusal"); },
+          windowsConnectImpl: () => { assert.fail("TLS mutation before reuse refusal"); },
+        }), log: silentLog });
+      assert.equal(outcome.status, "blocked");
+      assert.equal(outcome.keyRotated, null);
+      assert.match(outcome.errorMessage, /^WINDOWS_ACME_KEY_REUSE_UNSUPPORTED:/);
+    });
+  }
+
   it("runs CNG CSR -> ACME -> certreq accept -> IIS bind -> TLS verify end to end and reports succeeded", async () => {
     const job = makeJob();
     const { outcome } = await runIisRenew({ job });

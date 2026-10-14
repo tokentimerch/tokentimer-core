@@ -11,6 +11,7 @@ from pathlib import Path
 import unittest
 import zipfile
 import tempfile
+import subprocess
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -108,6 +109,45 @@ def elapsed_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_windows_public_reuse_refusal_projection_is_bounded_and_scope_specific(self):
+        flags = ("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged")
+        proof = {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(flags, True)}
+        event = {"scope": "real-agent-windows-acme-iis/rsa-2048", "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "nativeWindowsKeyReuseRefusal": {**proof, "rawKeyInventory": "private-sentinel"}}
+        self.assertEqual(collector.windows_key_reuse_refusal_fields(event), {"nativeWindowsKeyReuseRefusal": proof})
+        for flag in flags:
+            for wrong in (False, 1, None, "true"):
+                bad = json.loads(json.dumps(event)); bad["nativeWindowsKeyReuseRefusal"][flag] = wrong
+                with self.assertRaises(ValueError): collector.windows_key_reuse_refusal_fields(bad)
+            bad = json.loads(json.dumps(event)); del bad["nativeWindowsKeyReuseRefusal"][flag]
+            with self.assertRaises(ValueError): collector.windows_key_reuse_refusal_fields(bad)
+        for proof_patch in ({"scope": "installed-agent-invalid-signed-job"},):
+            bad = json.loads(json.dumps(event)); bad["nativeWindowsKeyReuseRefusal"].update(proof_patch)
+            with self.assertRaises(ValueError): collector.windows_key_reuse_refusal_fields(bad)
+        bad = dict(event); del bad["nativeWindowsKeyReuseRefusal"]
+        with self.assertRaises(ValueError): collector.windows_key_reuse_refusal_fields(bad)
+        self.assertEqual(collector.windows_key_reuse_refusal_fields({**event, "scope": "real-agent-acme-filesystem"}), {})
+
+    def test_resident_domain_retention_strips_private_data_and_rejects_short_or_incomplete_days(self):
+        source = "const f=require('./scripts/certops-retention24h-test-fixture.cjs'),h=require('./scripts/certops-retention24h-proof');process.stdout.write(JSON.stringify(h.verifyCompositeProof(f())))"
+        proof = json.loads(subprocess.check_output(["node", "-e", source], cwd=collector.ROOT, text=True, timeout=15))
+        report = {"suite": "windows-domain-adcs-retention24h", "nativeRetention24h": {**proof, "rawCertificateInventory": "private-sentinel", "privateKey": "private-sentinel"}}
+        projected = collector.sanitized_report(report, {report["suite"]}, set())
+        self.assertEqual(projected["nativeRetention24h"], proof)
+        self.assertNotIn("private-sentinel", json.dumps(projected))
+        for key, expected in proof.items():
+            with self.subTest(field=key):
+                invalid = json.loads(json.dumps(report)); del invalid["nativeRetention24h"][key]
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(invalid, {report["suite"]}, set())
+                invalid = json.loads(json.dumps(report)); invalid["nativeRetention24h"][key] = False if expected is True else "invalid"
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(invalid, {report["suite"]}, set())
+        for change in ({"bootTime": proof["finishedAt"]}, {"processCreatedAt": proof["finishedAt"]}, {"monotonicElapsedMs": 86399999}, {"monotonicElapsedMs": True}, {"keptSweepCount": 2}, {"maximumSweepGapMs": 3900001}, {"oldNotAfter": proof["cleanupDeadline"]}, {"preDeadlineObservedAt": proof["cleanupDeadline"]}, {"cleanupFinishedAt": proof["startedAt"]}, {"scope": "resident-timing-only-native-oracles-required"}, {"requestIds": ["11", "11"]}, {"requestIds": ["11", "4294967296"]}):
+            with self.subTest(change=change):
+                invalid = {**report, "nativeRetention24h": {**proof, **change}}
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(invalid, {report["suite"]}, set())
+
     def test_windows_certificate_dry_run_keeps_only_complete_bounded_observations(self):
         flags = ("priorRealIssuanceVerified", "authenticatedPlansPersisted", "nativeCertificateInventoryUnchanged", "machineKeyMetadataUnchanged", "exactCngCustodyUnchanged", "httpSysBindingUnchanged", "trustedTlsUnchanged", "configurationCredentialPinUnchanged", "dnsProxyRequestsUnchanged")
         proof = {**dict.fromkeys(flags, True), "scope": "installed-windows-signed-certificate-plans-native-state-and-dns-observation", "admission": "production-service-explicit-mode", "deployPlanSteps": 3, "renewPlanSteps": 6}
@@ -416,7 +456,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof()}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))

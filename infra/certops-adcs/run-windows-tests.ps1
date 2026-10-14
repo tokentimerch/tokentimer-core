@@ -3,7 +3,7 @@ Guest SYSTEM test entry point called only by provision-lab.ps1 after domain/tool
 the exact candidate runtime and test-only controller keys, selects the dedicated report, and invokes
 the real API-agent/native harness. It clears the officer password after execution.
 #>
-param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64)
+param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt)
 $ErrorActionPreference = 'Stop'
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
 $runtime=Get-Content 'C:\ttqualification\runtime.json' -Raw | ConvertFrom-Json
@@ -27,7 +27,7 @@ $env:CERTOPS_ADCS_API_URL='https://10.64.0.6'
 $env:CERTOPS_ADCS_REPORT=if($PendingElapsedQualification -eq '1'){'C:\ttqualification\pending-elapsed.json'}else{'C:\ttqualification\enterprise-adcs-report.json'}
 $env:CERTOPS_ADCS_PENDING_ELAPSED=if($PendingElapsedQualification -eq '1'){'1'}else{$null}
 # Every comprehensive base report includes the mandatory native browser cases.
-$env:CERTOPS_ADCS_BROWSER=if($PendingElapsedQualification -eq '1'){$null}else{'1'}
+$env:CERTOPS_ADCS_BROWSER=if($PendingElapsedQualification -eq '1' -or $Retention24hPrepare -eq '1'){$null}else{'1'}
 $env:CERTOPS_ADCS_OFFICER_PASSWORD=$DomainPassword
 $env:CERTOPS_WINDOWS_LANGUAGE=$Language
 $env:GITHUB_ACTIONS='true'
@@ -38,10 +38,13 @@ $env:CERTOPS_ADCS_HIERARCHY=$HierarchyRole
 $env:CERTOPS_ADCS_HIERARCHY_ROOT_CERT=$RootCertificateBase64
 Set-Location $runtime.source
 try {
-  & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js
+  if($Retention24hPrepare -eq '1'){
+    if($runtime.windowsVersion -ne '2022' -or $Language -ne 'en-US' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $PendingElapsedQualification -ne '0' -or $HierarchyRole -ne 'root'){throw 'Retention24h dedicated guest selector mismatch'}
+    & (Join-Path $runtime.source 'scripts/certops-retention24h-bootstrap.ps1') -CandidateSha $runtime.candidateSha -Nonce $Retention24hNonce -RunId $Retention24hRunId -RunAttempt $Retention24hRunAttempt -CreatedAt $Retention24hCreatedAt
+  }else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }
   $testExitCode=$LASTEXITCODE
 } finally {
   $env:CERTOPS_ADCS_OFFICER_PASSWORD=$null
 }
 if ($testExitCode -ne 0) { throw 'Native enterprise AD CS scenarios failed' }
-Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'
+if($Retention24hPrepare -eq '1'){Write-Output 'CERTOPS_STAGE=retention24h-prepared'}else{Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'}

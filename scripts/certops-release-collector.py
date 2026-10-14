@@ -6,6 +6,7 @@ and delegates qualification to the committed matrix. It neither runs native labs
 nor enables AD CS, and experimental/supporting reports cannot fill native slots.
 """
 import io
+import hashlib
 from datetime import datetime
 import json
 import os
@@ -18,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import certops_retention24h_collection as retention24h_collection
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -247,6 +249,48 @@ def windows_public_issuance(value):
     return result
 
 
+def retention24h_fields(value):
+    """Public native-day proof only; timer/prepare/source fixtures cannot qualify."""
+    proof = value.get("nativeRetention24h")
+    flags = ("genuinePublicAdcsCutover", "distinctNativeRequestsAndLeaves", "productionLedger24HourDeadline", "oldExpiryBeyondDeadline", "immutableOriginalPrepareVerified", "sameVmTaskBootAndProcess", "soleInstalledAgentStoppedDrained", "predecessorProtectedCustodyPreserved", "actualPreDeadlinePreserved", "productionDefaultClockCollector", "actualResidentDayElapsed", "oldCertificateActuallyAbsent", "oldKeyActuallyAbsent", "replacementCngIisAndTrustedTlsUnchanged", "immutableLedgerIdentityPreserved", "currentExecutableAndSourceDigestsBound", "independentFinalNativeRecheck", "ownedAzureCleanupVerified")
+    if not isinstance(proof, dict) or proof.get("scope") != "actual-domain-adcs-same-process-native-retention24h" or any(proof.get(key) is not True for key in flags):
+        raise ValueError("Incomplete actual native retention24h evidence")
+    result = {"scope": proof["scope"], **dict.fromkeys(flags, True)}
+    uuid = r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+    for key, pattern in (("candidateSha", r"[a-f0-9]{40}"), ("prepareRunId", r"[1-9][0-9]{0,19}"), ("prepareRunAttempt", r"[1-9][0-9]{0,19}"), ("vmId", uuid), *((key, r"[a-f0-9]{64}") for key in ("nonce", "taskXmlSha256", "configSha256", "nodeSha256", "keeperSha256", "collectorHelperSha256", "ledgerIdentitySha256"))):
+        if not isinstance(proof.get(key), str) or not re.fullmatch(pattern, proof[key]):
+            raise ValueError("Invalid native retention24h identity")
+        result[key] = proof[key]
+    for key, low, high in (("processId", 1, 0xffffffff), ("retentionHours", 24, 24), ("monotonicElapsedMs", 86400000, 90000000), ("keptSweepCount", 24, 26), ("maximumSweepGapMs", 1, 3900000)):
+        if type(proof.get(key)) is not int or not low <= proof[key] <= high:
+            raise ValueError("Invalid native retention24h measured bound")
+        result[key] = proof[key]
+    epochs = {}
+    for key in ("bootTime", "processCreatedAt", "originalCreatedAt", "verifiedCutoverAt", "oldNotAfter", "cleanupDeadline", "startedAt", "finishedAt", "preDeadlineObservedAt", "cleanupFinishedAt"):
+        raw = proof.get(key)
+        if not isinstance(raw, str) or len(raw) > 40 or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})", raw):
+            raise ValueError("Invalid native retention24h actual timestamp")
+        try:
+            epochs[key] = round(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1000)
+        except (ValueError, OverflowError):
+            raise ValueError("Invalid native retention24h timestamp") from None
+        result[key] = raw
+    created, cut, deadline, start, end, pre, clean = (epochs[key] for key in ("originalCreatedAt", "verifiedCutoverAt", "cleanupDeadline", "startedAt", "finishedAt", "preDeadlineObservedAt", "cleanupFinishedAt"))
+    if (not created <= epochs["bootTime"] <= epochs["processCreatedAt"] <= start
+            or not created <= cut <= start or start - cut > 600000 or deadline != cut + 86400000
+            or epochs["oldNotAfter"] <= deadline + 3600000 or not start <= pre < deadline < end <= clean <= created + 115200000
+            or abs(end - start - proof["monotonicElapsedMs"]) > 5000):
+        raise ValueError("Native retention24h elapsed/deadline/expiry scope mismatch")
+    for key, pattern in (("requestIds", r"[1-9][0-9]{0,9}"), ("enrollmentIds", uuid), ("jobIds", uuid), ("thumbprints", r"[A-F0-9]{40}"), ("containerNames", "tokentimer-enr-" + uuid), ("fingerprints", r"[a-f0-9]{64}"), ("spkiSha256", r"[a-f0-9]{64}"), ("serialNumbers", r"[a-f0-9]{1,128}")):
+        items = proof.get(key)
+        if (not isinstance(items, list) or len(items) != 2 or any(not isinstance(item, str) or not re.fullmatch(pattern, item) for item in items) or len({item.lower() for item in items}) != 2):
+            raise ValueError("Invalid distinct native retention24h generations")
+        result[key] = list(items)
+    if any(int(item) > 0xffffffff for item in proof["requestIds"]) or any(proof["containerNames"][i] != "tokentimer-enr-" + proof["enrollmentIds"][i] for i in range(2)):
+        raise ValueError("Native retention24h request/key ownership mismatch")
+    return result
+
+
 def acme_key_reuse_fields(event):
     scopes = ("real-agent-acme-filesystem", "real-agent-acme-eab-filesystem", "real-agent-acmesh-filesystem", "real-agent-acmesh-eab-filesystem", "real-agent-alpine-acmesh")
     if event.get("scope") not in scopes or event.get("name") != "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence":
@@ -273,6 +317,18 @@ def acme_key_reuse_fields(event):
             raise ValueError("Invalid native ACME key reuse source identity")
         result[field] = value[field]
     return {"nativeAcmeKeyReuse": result}
+
+
+def windows_key_reuse_refusal_fields(event):
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof = event.get("nativeWindowsKeyReuseRefusal")
+    flags = ("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged")
+    if (not isinstance(proof, dict) or proof.get("scope") != "public-windows-acme-profile-reuse-refusal"
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Missing public Windows ACME reuse-policy refusal")
+    return {"nativeWindowsKeyReuseRefusal": {key: proof[key] for key in ("scope", *flags)}}
 
 
 def installed_handoff_fields(event):
@@ -405,6 +461,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                                 ("id", "status", "evidenceLevel", "startedAt", "finishedAt")
                                 if key in item} for item in value.get("scenarios", [])
                                if isinstance(item, dict)]
+        if value.get("suite") == "windows-domain-adcs-retention24h":
+            result["nativeRetention24h"] = retention24h_fields(value)
         if value.get("suite") == "windows-arm64-cng-runtime":
             result.update(arm64_runtime_fields(value))
         for scenario in result["scenarios"]:
@@ -966,6 +1024,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
         return [{**{key: event[key] for key in keys if key in event},
                  **acme_key_reuse_fields(event),
                  **installed_handoff_fields(event),
+                 **windows_key_reuse_refusal_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
                  **({"fixtureSources": supporting_sources(event["fixtureSources"])} if "fixtureSources" in event else {}),
                  "file": event.get("fixtureSource", {}).get("file", "")}
@@ -1072,7 +1131,7 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
     return project_case_metadata(result)
 
 
-def extract_reports(raw, suites, scopes, database_scopes=()):
+def extract_reports(raw, suites, scopes, database_scopes=(), authenticate_report=None):
     if len(raw) > MAX_ARCHIVE:
         raise ValueError("Artifact archive exceeds the bounded download limit")
     reports = []
@@ -1091,7 +1150,12 @@ def extract_reports(raw, suites, scopes, database_scopes=()):
                 raise ValueError("Qualification report exceeds size limit")
             text = archive.read(item).decode("utf-8")
             try:
-                value = json.loads(text) if parts.suffix == ".json" else [json.loads(line) for line in text.splitlines() if line.strip()]
+                value = (retention24h_collection.json_bytes(text.encode("utf-8")) if authenticate_report else json.loads(text)) if parts.suffix == ".json" else [json.loads(line) for line in text.splitlines() if line.strip()]
+            except (ValueError, TypeError, AttributeError):
+                raise ValueError("Malformed JSON qualification artifact") from None
+            if authenticate_report is not None and not authenticate_report(value):
+                continue
+            try:
                 sanitized = sanitized_report(value, suites, scopes, database_scopes)
             except (ValueError, TypeError, AttributeError):
                 raise ValueError("Malformed JSON qualification artifact") from None
@@ -1106,25 +1170,52 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def download(url, token=None, redirect=False):
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.username or parsed.password:
-        raise ValueError("Artifact download URL is invalid")
-    if token and parsed.hostname != "api.github.com":
-        raise ValueError("Authenticated request must stay on GitHub API")
-    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "certops-qualification-collector"}
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    try:
-        with urllib.request.build_opener(NoRedirect).open(urllib.request.Request(url, headers=headers), timeout=60) as response:
-            raw = response.read(MAX_ARCHIVE + 1)
-            if len(raw) > MAX_ARCHIVE:
-                raise ValueError("Bounded download exceeded")
-            return raw
-    except urllib.error.HTTPError as error:
-        if redirect and error.code == 302:
-            # The signed blob URL receives no GitHub credential.
-            return download(error.headers["Location"])
-        raise ValueError("Qualification API/download request failed") from None
+    """One authenticated API request and at most one unsigned artifact redirect.
+
+    Signed URLs stay in memory. Blob requests never receive API credentials,
+    follow another redirect, or bypass the existing bounded response size.
+    """
+    def validate(target, blob):
+        if not isinstance(target, str) or len(target) > 16384 or "#" in target or any(ord(char) <= 32 or ord(char) == 127 for char in target):
+            raise ValueError("Artifact download URL is invalid")
+        try:
+            parsed = urllib.parse.urlsplit(target)
+            port = parsed.port
+        except ValueError:
+            raise ValueError("Artifact download URL is invalid") from None
+        if (parsed.scheme != "https" or parsed.username is not None or parsed.password is not None
+                or port not in (None, 443) or parsed.fragment):
+            raise ValueError("Artifact download URL is invalid")
+        host = parsed.hostname or ""
+        if blob:
+            if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", host) or ".." in host or not any(host.endswith(suffix) for suffix in (
+                    ".blob.core.windows.net", ".githubusercontent.com", ".actions.githubusercontent.com")):
+                raise ValueError("Artifact redirect host is not approved")
+        elif host != "api.github.com":
+            raise ValueError("Initial request must stay on GitHub API")
+
+    def request(target, credential=None, blob=False):
+        validate(target, blob)
+        headers = {"User-Agent": "certops-qualification-collector"}
+        if not blob:
+            headers.update({"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+        if credential:
+            headers["Authorization"] = "Bearer " + credential
+        try:
+            with urllib.request.build_opener(NoRedirect).open(urllib.request.Request(target, headers=headers), timeout=60) as response:
+                raw = response.read(MAX_ARCHIVE + 1)
+                if len(raw) > MAX_ARCHIVE:
+                    raise ValueError("Bounded download exceeded")
+                return raw
+        except urllib.error.HTTPError as error:
+            if redirect and not blob and error.code == 302:
+                # The only allowed transition drops all GitHub authentication.
+                location = error.headers.get("Location")
+                validate(location, True)
+                return request(location, None, True)
+            raise ValueError("Qualification API/download request failed") from None
+
+    return request(url, token)
 
 
 def main():
@@ -1150,7 +1241,12 @@ def main():
     try:
         for run_id in run_ids:
             endpoint = f"https://api.github.com/repos/{repository}/actions/runs/{run_id}"
-            validate_run(json.loads(download(endpoint, token)), candidate, repository)
+            run = json.loads(download(endpoint, token))
+            elapsed_finalizer = run.get("path") == retention24h_collection.FINALIZER
+            if elapsed_finalizer:
+                retention24h_collection.validate_finalizer_run(run, repository, run_id)
+            else:
+                validate_run(run, candidate, repository)
             data = json.loads(download(endpoint + "/artifacts?per_page=100", token))
             if data.get("total_count", 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError("Artifact inventory exceeds explicit bound")
@@ -1167,7 +1263,33 @@ def main():
                 downloaded_bytes += len(raw)
                 if downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                     raise ValueError("Collection total download size exceeds limit")
-                for suffix, report in extract_reports(raw, suites, scopes, database_scopes):
+                if elapsed_finalizer and artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
+                    raise ValueError("Retention finalizer artifact digest does not match GitHub")
+                def authenticate_elapsed_report(report):
+                    if not isinstance(report, dict):
+                        return False
+                    if report.get("suite") != retention24h_collection.SUITE:
+                        if report.get("suite") in suites or report.get("scope") in scopes | database_scopes:
+                            raise ValueError("Retention finalizer cannot supply other qualification suites")
+                        return False
+                    # Scheduled controllers can finish several original campaigns.
+                    # Select the explicitly requested native candidate only;
+                    # never relabel another campaign with the controller SHA.
+                    if report.get("candidateSha") != candidate:
+                        return False
+                    def fetch_retention_owner(url, redirect=False):
+                        nonlocal downloaded_bytes, archive_count
+                        owner_raw = download(url, token, redirect=redirect)
+                        downloaded_bytes += len(owner_raw)
+                        if redirect:
+                            archive_count += 1
+                        if downloaded_bytes > MAX_TOTAL_DOWNLOAD or archive_count > limits["archives"]:
+                            raise ValueError("Retention ownership exceeds collection budget")
+                        return owner_raw
+                    retention24h_collection.authenticate(report, run, run_id, candidate, repository, fetch_retention_owner)
+                    return True
+                reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
+                for suffix, report in reports:
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"

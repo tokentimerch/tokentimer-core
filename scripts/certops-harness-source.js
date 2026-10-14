@@ -62,7 +62,7 @@ async function explainNativeQueries(root = path.resolve(__dirname, "..")) {
   if (process.env.CERTOPS_CSR_DISPOSABLE_STACK !== "1") throw new Error("Explicit disposable schema-check stack required");
   const { Pool } = createRequire(path.join(root, "apps/api/package.json"))("pg");
   for (const name of ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]) if (!process.env[name]) throw new Error("Explicit disposable database configuration required");
-  const files = ["tests/e2e/certops-adcs-real-e2e.test.js", "tests/e2e/windows-real-journey.js", "tests/e2e/windows-adoption-retention-journey.js", ...fs.readdirSync(path.join(root, "tests/e2e/helpers")).filter(name => /^certops-(?:adcs|windows)-.*\.js$/.test(name)).map(name => "tests/e2e/helpers/" + name)];
+  const files = ["tests/e2e/certops-adcs-real-e2e.test.js", "tests/e2e/certops-adcs-retention24h-prepare.js", "tests/e2e/windows-real-journey.js", "tests/e2e/windows-adoption-retention-journey.js", ...fs.readdirSync(path.join(root, "tests/e2e/helpers")).filter(name => /^certops-(?:adcs|windows)-.*\.js$/.test(name)).map(name => "tests/e2e/helpers/" + name)];
   const queries = files.flatMap(file => readOnlyQueries(fs.readFileSync(path.join(root, file), "utf8")).map(query => ({ ...query, file })));
   if (queries.length < 20) throw new Error("Native Windows/AD CS SQL inventory unexpectedly empty or narrowed");
   const pool = new Pool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database: process.env.DB_NAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD, connectionTimeoutMillis: 5000 });

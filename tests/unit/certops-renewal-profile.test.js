@@ -177,6 +177,41 @@ describe("certops renewal profile", () => {
     );
   });
 
+  it("public schema accepts actual Windows profiles, refuses reuse and preserves Linux choices", () => {
+    const Ajv = require("ajv"); const ajv = new Ajv({ strict: false });
+    require("ajv-formats")(ajv);
+    const validate = ajv.compile(require("../../packages/contracts/certops/renewal-profile.schema.json"));
+    const target = { type: "windows-iis", reference: "app.example.com", store: "My", binding: { site: "Default Web Site", port: 443, sniHost: "app.example.com" }, thumbprintSha1: "AA".repeat(20) };
+    const profile = validateRenewalProfile(validProfile({ target, deploymentTargets: [target] }));
+    assert.equal(validate(profile), true, JSON.stringify(validate.errors));
+    assert.equal(validate({ ...profile, keyRotationPolicy: { rotateOnRenew: false } }), false);
+    for (const patch of [{ store: undefined }, { binding: undefined }, { binding: { site: "site", port: 0 } }, { store: "../My" }, { thumbprintSha1: "bad" }]) {
+      assert.equal(validate({ ...profile, target: { ...profile.target, ...patch } }), false);
+    }
+    assert.equal(validate(validProfile({ keyRotationPolicy: { rotateOnRenew: false } })), true);
+  });
+
+  it("refuses explicit Windows reuse without rewriting stored intent, preserving Linux reuse", () => {
+    const input = validProfile({ target: { type: "windows-iis", reference: "app.example.com", store: "My", binding: { site: "Default Web Site", port: 443 } }, keyRotationPolicy: { rotateOnRenew: false } });
+    assert.throws(() => validateRenewalProfile(input), /WINDOWS_ACME_KEY_REUSE_UNSUPPORTED/);
+    assert.equal(input.keyRotationPolicy.rotateOnRenew, false);
+    const repaired = require("../../apps/api/services/certops/renewalProfileAdmin").applyRenewalProfilePatch(input, { keyRotationPolicy: { rotateOnRenew: true } });
+    assert.equal(repaired.keyRotationPolicy.rotateOnRenew, true);
+    assert.equal(input.keyRotationPolicy.rotateOnRenew, false, "operator repair must not mutate the stored input in place");
+    assert.equal(validateRenewalProfile(validProfile({ keyRotationPolicy: { rotateOnRenew: false } })).keyRotationPolicy.rotateOnRenew, false);
+  });
+
+  it("defaults an omitted Windows rotation policy to true but refuses explicit stored false", () => {
+    const target = { type: "windows-iis", reference: "app.example.com", store: "My", binding: { site: "Default Web Site", port: 443 } };
+    const source = validProfile({ target, deploymentTargets: [target] });
+    delete source.keyRotationPolicy;
+    const certificate = { id: "cert-windows", profile_id: "profile-windows", key_mode: "os-store-managed", common_name: "app.example.com", subject_alt_names: ["app.example.com"], profile_public_metadata: { renewalProfile: source } };
+    assert.equal(resolveRenewalProfileSnapshot(certificate).keyRotationPolicy.rotateOnRenew, true);
+    source.keyRotationPolicy = { rotateOnRenew: false };
+    assert.throws(() => resolveRenewalProfileSnapshot(certificate), /WINDOWS_ACME_KEY_REUSE_UNSUPPORTED/);
+    assert.equal(source.keyRotationPolicy.rotateOnRenew, false);
+  });
+
   it("rejects a windows-iis target missing store", () => {
     assert.throws(
       () =>

@@ -1173,6 +1173,11 @@
       "windows-arm64-acceptance-and-export-refusal": "real-host",
       "windows-arm64-native-chain-and-key-survivors": "real-host",
       "windows-arm64-owned-cleanup": "real-host"
+    },
+    "windows-domain-adcs-retention24h": {
+      "retention24h-real-adcs-production-cutover": "real-host",
+      "retention24h-real-resident-production-collector": "real-host",
+      "retention24h-independent-native-final-and-owned-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1659,6 +1664,12 @@
       "native-go",
       "native-certreq-certutil",
       "administrator"
+    ],
+    "windows-domain-adcs-retention24h": [
+      "windows",
+      "elevated",
+      "domain",
+      "sameVmResidentKeeper"
     ]
   },
   "suites": {
@@ -2829,6 +2840,11 @@
       "windows-arm64-acceptance-and-export-refusal",
       "windows-arm64-native-chain-and-key-survivors",
       "windows-arm64-owned-cleanup"
+    ],
+    "windows-domain-adcs-retention24h": [
+      "retention24h-real-adcs-production-cutover",
+      "retention24h-real-resident-production-collector",
+      "retention24h-independent-native-final-and-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2926,6 +2942,7 @@
     "windows-canonical-root-lifecycle": "e2e",
     "windows-certificate-dry-run": "e2e",
     "windows-installer-cli-second-rename": "e2e",
-    "windows-arm64-cng-runtime": "real-host"
+    "windows-arm64-cng-runtime": "real-host",
+    "windows-domain-adcs-retention24h": "real-host"
   }
 }

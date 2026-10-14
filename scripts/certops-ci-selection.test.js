@@ -58,3 +58,43 @@ test("installer swap regression runs under Windows PowerShell 5.1 in the selecti
  assert.deepEqual(selectFiles(["scripts/certops-installer-swap.test.ps1"]),{tooling:true,windows:true,stack:false,reason:"changed-files"});
  assert.equal(selectFiles(["packages/agent/scripts/install-agent.ps1"]).windows,true);
 });
+
+test("benign response barrier changes select the existing Windows lane and execute supporting controls",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ for(const file of ["scripts/certops-response-barrier-driver.ps1","scripts/certops-response-barrier-worker.ps1","scripts/certops-response-barrier-support.js","scripts/certops-response-barrier-support.test.js"]){
+  assert.deepEqual(selectFiles([file]),{tooling:true,windows:true,stack:false,reason:"changed-files"});
+  assert.ok(workflow.on.push.paths.includes("scripts/certops-*"));
+ }
+ for(const file of ["scripts/certops-response-barrier-unrelated.js","docs/certops/qualification/adcs/response-delivery-barrier-support.md"]){assert.equal(selectFiles([file]).windows,false);}
+ const step=workflow.jobs.windows.steps.find(item=>item.name==="Temporary file response barriers (supporting only)");
+ assert.ok(step);assert.equal(step.shell,"pwsh");assert.equal(step.env.CERTOPS_RESPONSE_BARRIER_SUPPORT,"1");
+ assert.equal(step.if,undefined);assert.notEqual(step["continue-on-error"],true);
+ assert.match(step.run,/node scripts\/certops-response-barrier-support\.js/);assert.match(step.run,/LASTEXITCODE -ne 0/);
+ assert.equal(workflow.jobs.windows.if,"github.ref == 'refs/heads/main' && needs.selection.outputs.windows == 'true'");
+});
+
+test("native helper image controls build both architecture packages before selected Windows execution",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ const steps=workflow.jobs.windows.steps;
+ const control=steps.findIndex(step=>step.name==="Installer native helper image regression (supporting only)");assert.ok(control>=0);
+ for(const script of ["build-windows-chain-helper.js","build-windows-service-host.js"]){
+  const build=steps.findIndex(step=>step.run===`node packages/agent/scripts/${script}`);assert.ok(build>=0&&build<control,script);
+  assert.equal(steps[build].if,undefined);assert.notEqual(steps[build]["continue-on-error"],true);
+  // The builder's no-argument contract generates AMD64 and ARM64, with no
+  // single-architecture override that would leave the PE control unprepared.
+  const builder=require(`../packages/agent/scripts/${script}`);assert.deepEqual(builder.TARGET_ARCHES,["amd64","arm64"]);
+ }
+ assert.equal(steps[control].shell,"powershell");assert.equal(steps[control].if,undefined);assert.notEqual(steps[control]["continue-on-error"],true);
+ assert.match(steps[control].run,/& \.\/scripts\/certops-installer-pe\.test\.ps1/);
+ assert.deepEqual(selectFiles(["scripts/certops-installer-pe.test.ps1"]),{tooling:true,windows:true,stack:false,reason:"changed-files"});
+});
+
+test("retention owner collection import changes explicitly trigger only tooling",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ assert.ok(workflow.on.push.paths.includes("scripts/certops_retention24h_collection.py"));
+ assert.equal(workflow.on.push.paths.includes("scripts/**"),false);
+ assert.deepEqual(selectFiles(["scripts/certops_retention24h_collection.py"]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+});

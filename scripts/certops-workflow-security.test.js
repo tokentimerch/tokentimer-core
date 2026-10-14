@@ -30,3 +30,19 @@ test("DNS cleanup uses only enrolled provider matrix and its independent unatten
  assert.deepEqual(validateWorkflow(w,"certops-dns-fixture-janitor.yml"),[]);
  for(const change of [value=>{value.jobs.cleanup.environment="certops-dns-${{ matrix.provider }}";},value=>{value.jobs.cleanup.strategy.matrix.provider=["cloudflare","route53"];},value=>{value.jobs.cleanup.if="github.ref == 'refs/heads/main' || needs.enrollment.outputs.enabled == 'true'";},value=>{value.jobs.cleanup.needs="foreign";}]){const value=structuredClone(w);change(value);assert.ok(validateWorkflow(value,"certops-dns-fixture-janitor.yml").length);}
 });
+
+test("only complete original-artifact-first resident handoff may retain a successful lab",()=>{
+ const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module");
+ const yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
+ const workflow=()=>yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-retention24h-prepare.yml"),"utf8"));
+ const name="certops-retention24h-prepare.yml";assert.deepEqual(validateWorkflow(workflow(),name),[]);
+ const find=(w,fragment)=>w.jobs.prepare.steps.findIndex(step=>(step.run||step.with?.path||"").includes(fragment));
+ for(const fragment of ["provision-lab.ps1","-azure.js seal","retention24h-original.json","-azure.js handoff","retention24h-ownership.json","-azure.js abort"]){const w=workflow();w.jobs.prepare.steps.splice(find(w,fragment),1);assert.ok(validateWorkflow(w,name).length,fragment);}
+ for(const change of [w=>{const steps=w.jobs.prepare.steps,a=find(w,"retention24h-original.json"),b=find(w,"-azure.js handoff");[steps[a],steps[b]]=[steps[b],steps[a]];},w=>w.jobs.prepare.steps[find(w,"-azure.js handoff")].if="always()",w=>w.jobs.prepare.steps[find(w,"-azure.js seal")].if="always()",w=>w.jobs.prepare.steps[find(w,"provision-lab.ps1")].if="always()",w=>w.jobs.prepare.steps[find(w,"retention24h-original.json")].with["if-no-files-found"]="warn",w=>w.jobs.prepare.steps[find(w,"-azure.js abort")].if="failure()",w=>w.concurrency["cancel-in-progress"]=true,w=>w.jobs.prepare.environment="certops-adcs-cleanup",w=>w.on.schedule=[{cron:"0 * * * *"}],w=>w.jobs.prepare.if="always()",w=>w.jobs.prepare.steps.push({run:"echo late failure"})]){const w=workflow();change(w);assert.ok(validateWorkflow(w,name).length);}
+ assert.ok(validateWorkflow(workflow(),"certops-unrelated-paid-lab.yml").some(error=>error.includes("independent always cleanup")),"Other labs cannot borrow retained-resource exception");
+});
+
+test("resident finalizer and janitor require unattended cleanup and fixed serialization",()=>{
+ const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module");const yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
+ for(const mode of ["finalize","janitor"]){const name=`certops-retention24h-${mode}.yml`,w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));assert.deepEqual(validateWorkflow(w,name),[]);w.jobs[mode].environment="certops-adcs-lab";assert.ok(validateWorkflow(w,name).some(error=>error.includes("dedicated unattended")));w.jobs[mode].environment="certops-adcs-cleanup";w.concurrency.group="foreign";assert.ok(validateWorkflow(w,name).length);}
+});
