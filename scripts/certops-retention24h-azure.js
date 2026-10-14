@@ -17,10 +17,11 @@ const OUTPUT = path.join(ROOT, "qualification-results");
 const REPOSITORY = "tokentimerch/tokentimer-core";
 const WORKFLOW = ".github/workflows/certops-retention24h-prepare.yml";
 const ARTIFACT = "retention24h-prepare-ownership";
-function command(file, args, binary = false) {
+function command(file, args, binary = false, timeoutMs = 180000) {
+  assert.ok([180000, 660000].includes(timeoutMs));
   return execFileSync(file, args, {
     encoding: binary ? undefined : "utf8",
-    timeout: 180000,
+    timeout: timeoutMs,
     maxBuffer: 2 * 1024 * 1024,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -28,6 +29,15 @@ function command(file, args, binary = false) {
 }
 function az(args) {
   return JSON.parse(command("az", [...args, "-o", "json"]));
+}
+/** A ten-minute Azure deletion poll needs a longer parent-process budget.
+ * Other commands retain their three-minute limit. Only an independent typed
+ * absence result completes cleanup; timeout and transport failures propagate.
+ */
+function waitForOwnedDeletion(name, { execute = command, query = az } = {}) {
+  assert.match(name, /^tt-certops-[1-9][0-9]*-[1-9][0-9]*$/);
+  execute("az", ["group", "wait", "--name", name, "--deleted", "--timeout", "600", "--interval", "15"], false, 660000);
+  assert.equal(query(["group", "exists", "--name", name]), false);
 }
 function github(route) {
   return JSON.parse(command("gh", ["api", `repos/${REPOSITORY}/${route}`]));
@@ -1210,18 +1220,7 @@ async function abort() {
       "-o",
       "none",
     ]);
-    command("az", [
-      "group",
-      "wait",
-      "--name",
-      name,
-      "--deleted",
-      "--timeout",
-      "600",
-      "--interval",
-      "15",
-    ]);
-    assert.equal(az(["group", "exists", "--name", name]), false);
+    waitForOwnedDeletion(name);
   } catch {
     const receipt = {
       schemaVersion: 1,
@@ -1259,18 +1258,7 @@ function deleteOwned(lease) {
     "-o",
     "none",
   ]);
-  command("az", [
-    "group",
-    "wait",
-    "--name",
-    groupName(lease),
-    "--deleted",
-    "--timeout",
-    "600",
-    "--interval",
-    "15",
-  ]);
-  assert.equal(az(["group", "exists", "--name", groupName(lease)]), false);
+  waitForOwnedDeletion(groupName(lease));
 }
 function taggedCleanupDecision(group, run, vm, deployment, now, jobs) {
   const ids = leaseFromGroup(group);
@@ -1366,18 +1354,7 @@ function fallbackJanitor(group) {
     "-o",
     "none",
   ]);
-  command("az", [
-    "group",
-    "wait",
-    "--name",
-    group.name,
-    "--deleted",
-    "--timeout",
-    "600",
-    "--interval",
-    "15",
-  ]);
-  assert.equal(az(["group", "exists", "--name", group.name]), false);
+  waitForOwnedDeletion(group.name);
   return true;
 }
 function currentFinalizer() {
@@ -1574,6 +1551,7 @@ module.exports = {
   verifyOriginalReceipt,
   allowedBlobUrl,
   downloadArtifactZip,
+  waitForOwnedDeletion,
   publicObservation,
   publicResidentResult,
   publicPreparation,

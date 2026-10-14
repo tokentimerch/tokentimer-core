@@ -9,6 +9,27 @@ const crypto = require("node:crypto");
 const adapter = require("./certops-retention24h-azure");
 const contract = require("./certops-retention24h-contract");
 const root = path.resolve(__dirname, "..");
+test("owned deletion polling can outlive three minutes and independently proves absence", () => {
+  const name = "tt-certops-123-2", calls = [];
+  adapter.waitForOwnedDeletion(name, {
+    execute: (...args) => calls.push(args),
+    query: args => { assert.deepEqual(args, ["group", "exists", "--name", name]); return false; },
+  });
+  assert.equal(calls.length, 1);
+  const [file, args, binary, timeout] = calls[0];
+  assert.equal(file, "az"); assert.equal(binary, false);
+  assert.deepEqual(args, ["group", "wait", "--name", name, "--deleted", "--timeout", "600", "--interval", "15"]);
+  assert.equal(timeout, 660000); assert.ok(timeout > Number(args[args.indexOf("--timeout") + 1]) * 1000);
+});
+test("owned deletion refuses timeout, failed transport, surviving groups and coerced absence", () => {
+  const name = "tt-certops-123-2";
+  for (const answer of [true, "false", null, undefined]) assert.throws(() => adapter.waitForOwnedDeletion(name, { execute() {}, query: () => answer }));
+  let queried = false;
+  assert.throws(() => adapter.waitForOwnedDeletion(name, { execute() { throw new Error("bounded poll timeout"); }, query() { queried = true; return false; } }), /bounded poll timeout/);
+  assert.equal(queried, false);
+  assert.throws(() => adapter.waitForOwnedDeletion(name, { execute() {}, query() { throw new Error("transport unavailable"); } }), /transport unavailable/);
+  assert.throws(() => adapter.waitForOwnedDeletion("foreign", { execute() { throw new Error("must not invoke"); } }), { code: "ERR_ASSERTION" });
+});
 const created = "2026-10-14T00:00:00.000Z";
 const at = (hours) =>
   new Date(Date.parse(created) + hours * contract.HOUR).toISOString();
