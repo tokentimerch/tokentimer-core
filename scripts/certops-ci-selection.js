@@ -8,10 +8,12 @@ function selectFiles(files){
  assert.ok(Array.isArray(files));const selected={tooling:true,windows:false,stack:false,reason:"changed-files"};
  for(const file of files){
   assert.equal(typeof file,"string");assert.ok(file&&!file.startsWith("/")&&!file.includes("\\")&&!file.split("/").includes("..")&&!/[\x00-\x1f]/.test(file));
+  if(/\.md$/i.test(file))continue;
   if(/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc)$/.test(file)||/^packages\/(shared|contracts)\//.test(file))return all("shared-runtime-or-dependencies");
   if(/^packages\/agent\//.test(file)){
    if(!/^packages\/agent\/scripts\/(host-gate(?:\.test)?\.js|.*(?:report|qualification).*\.js)$/.test(file)){selected.windows=true;selected.stack=true;}
   }
+  if(/^packages\/(?!agent\/)/.test(file))selected.stack=true;
   if(/^apps\/(api|worker)\//.test(file)||/^deploy\/compose\//.test(file)||/^tests\/(e2e|integration)\//.test(file))selected.stack=true;
   if(/^scripts\/certops-(api-qualification|stack-report|stack-reporter|linux-discovery-report)\.js$/.test(file))selected.stack=true;
   if(/^\.github\/workflows\/certops-qualification\.yml$/.test(file))return all("qualification-workflow-changed");

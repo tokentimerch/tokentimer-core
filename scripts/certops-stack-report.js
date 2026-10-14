@@ -6,7 +6,7 @@
  */
 const fs = require("node:fs");
 const manifest = require("../tests/e2e/agent-protocol-required-tests.json");
-function verify(text, required = manifest.requiredTests, sourceFile = "certops-agent-e2e.test.js", scope = manifest.scope) {
+function verify(text, required = manifest.requiredTests, sourceFile = "certops-agent-e2e.test.js", scope = manifest.scope, expectedSha = process.env.GITHUB_SHA) {
   const events = text.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
   if (!required.length || new Set(required).size !== required.length) throw new Error("Invalid mandatory test inventory");
   for (const name of required) {
@@ -14,7 +14,7 @@ function verify(text, required = manifest.requiredTests, sourceFile = "certops-a
     if (matches.length !== 1 || matches[0].type !== "test:pass" || matches[0].skip || matches[0].todo) throw new Error(`Required protocol test did not execute successfully: ${name}`);
   }
   if (events.some((event) => event.type !== "test:pass" || event.skip || event.todo)) throw new Error("Protocol suite contains failed, skipped or todo tests");
-  if (events.some((event) => require("node:path").basename(event.file || "") !== sourceFile || event.scope !== scope || (process.env.GITHUB_SHA && event.candidateSha !== process.env.GITHUB_SHA))) throw new Error("Report source or candidate identity mismatch");
+  if (events.some((event) => require("node:path").basename(event.file || "") !== sourceFile || event.scope !== scope || (expectedSha && event.candidateSha !== expectedSha))) throw new Error("Report source or candidate identity mismatch");
   return { scope, executed: required.length };
 }
 if (require.main === module) {

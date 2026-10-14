@@ -71,7 +71,7 @@ function createNativePreflightCohorts({ baseUrl, configDir, workDir, caConfig, u
       cohort={fixture,state:path.join(workDir,`preflight-cohort-${cohorts.length+1}`),agentId:`preflight-${crypto.randomUUID()}`,count:0,ruleBytes};
       cohorts.push(cohort);assert.equal(fs.lstatSync(cohort.state,{throwIfNoEntry:false}),undefined,"Refusing an existing cohort state path");fs.mkdirSync(cohort.state);cohort.stateOwned=true;applyRestrictivePermissions(cohort.state,{kind:"dir"});
       cohort.api=`/api/v1/workspaces/${fixture.workspaceId}/certops`;
-      const config={serverUrl:baseUrl,caBundlePath:process.env.NODE_EXTRA_CA_CERTS,agentId:cohort.agentId,heartbeatIntervalMs:1000,pollIntervalMs:500,windowsDiscovery:{enabled:false},execution:{enabled:true,dryRun:false},policy:{allowedPaths:[workDir],allowedCommands:{},allowedCaEndpoints:[],allowedDnsZones:[],allowedDnsProviders:[]},adcs:{enrollmentRules:rules}};
+      const config={serverUrl:baseUrl,caBundlePath:process.env.NODE_EXTRA_CA_CERTS,agentId:cohort.agentId,heartbeatIntervalMs:5000,pollIntervalMs:2000,windowsDiscovery:{enabled:false},execution:{enabled:true,dryRun:false},policy:{allowedPaths:[workDir],allowedCommands:{},allowedCaEndpoints:[],allowedDnsZones:[],allowedDnsProviders:[]},adcs:{enrollmentRules:rules}};
       fs.writeFileSync(path.join(cohort.state,"config.json"),JSON.stringify(config));applyRestrictivePermissions(path.join(cohort.state,"config.json"));
       const bootstrap=await fixture.request(`${cohort.api}/agent-bootstrap-tokens`,"POST",{name:cohort.agentId,expiresAt:new Date(Date.now()+3600000).toISOString()});assert.equal(bootstrap.status,201);
       await start(cohort,bootstrap.body);

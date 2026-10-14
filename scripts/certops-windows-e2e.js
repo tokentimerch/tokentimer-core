@@ -24,6 +24,9 @@ async function main() {
     assert.equal(adoption.suite, "windows-adoption-retention-real");
     const adoptionResult = require("./certops-qualification-report").verifyReport(adoption, require("../tests/e2e/windows-adoption-retention-journey").requiredScenarios);
     assert.deepEqual(adoptionResult, [], JSON.stringify(adoptionResult));
+    const privacy=JSON.parse(fs.readFileSync(`qualification-results/windows-output-privacy-${keyProfile}.json`,"utf8"));
+    assert.deepEqual(require("./certops-qualification-report").verifyReport(privacy),[]);
+    require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(privacy);
     verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
     console.log("Windows installed-agent qualification report verified");
   });

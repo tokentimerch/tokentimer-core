@@ -26,7 +26,7 @@ test("required named scenarios and completion are verified", async () => {
   const run = gate(); await run.preflight();
   await run.scenario("native-roundtrip", async () => assert.equal(1, 1));
   const report = await run.finish({ requiredScenarios: ["native-roundtrip"] });
-  assert.deepEqual(verifyReport(report, ["native-roundtrip"]), []);
+  assert.deepEqual(verifyReport(report, ["native-roundtrip"], { expectedSha: "a".repeat(40) }), []);
 });
 test("missing, skipped, empty and failed runs cannot qualify", async () => {
   const empty = gate(); await empty.preflight(); await assert.rejects(empty.finish(), /incomplete/);
@@ -74,7 +74,7 @@ test("completed report persists atomically with explicit cleanup evidence", asyn
     await run.preflight(); await run.scenario("native", async () => {}, { evidenceLevel: "real-host", oracle: "Independent host state" });
     await run.finish({ requiredScenarios: ["native"], cleanup: { status: "passed" } });
     const saved = JSON.parse(await fs.readFile(reportPath, "utf8"));
-    assert.deepEqual(verifyReport(saved, ["native"]), []);
+    assert.deepEqual(verifyReport(saved, ["native"], { expectedSha: "a".repeat(40) }), []);
     assert.equal(saved.cleanup.status, "passed");
     assert.deepEqual(await fs.readdir(directory), ["report.json"]);
   } finally { await fs.rm(directory, { recursive: true, force: true }); }

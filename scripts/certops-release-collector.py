@@ -200,6 +200,17 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Invalid pending elapsed scope")
                 bounded[key] = expected
             result["nativePendingElapsed"] = bounded
+        if value.get("suite") == "windows-native-child-output-privacy":
+            for key in ("actualStdoutAndStderrEmission", "actualDelegatedSuccess", "actualAcmeSuccessLogObserved", "actualHttpUploadsSecretFree", "persistedLogsEvidenceResultsSecretFree", "scmConsoleSecretFree"):
+                result[key] = value.get(key) is True
+            for key, expected in (("actualNativeIdentity", "LocalSystem"), ("childOutputPolicy", "captured-and-withheld-not-live-forwarded"), ("nativeCertificateOutcome", "parent-independent-CNG-IIS-trusted-TLS")):
+                if value.get(key) != expected:
+                    raise ValueError("Invalid native Windows privacy scope")
+                result[key] = expected
+            for key in ("receiptCount", "jobLogCount", "evidenceCount", "httpUploadCount"):
+                if type(value.get(key)) is not int or not 1 <= value[key] <= (32 if key == "receiptCount" else 10000):
+                    raise ValueError("Invalid native Windows privacy counter")
+                result[key] = value[key]
         if value.get("suite") == "core-api-migration-upgrade":
             result.update(migration_evidence(value))
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
@@ -264,6 +275,11 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
         if value.get("suite") == "native-agent-api":
+            privacy = value.get("nativeChildOutputPrivacy")
+            if not isinstance(privacy, dict) or privacy.get("executedChildren") != 2:
+                raise ValueError("Invalid native child output evidence")
+            result["nativeChildOutputPrivacy"] = {key: privacy.get(key) is True for key in ("stdoutEmitted", "stderrEmitted", "rawChildOutputWithheld", "genericExecutionMarkerPersisted", "jobSucceeded")}
+            result["nativeChildOutputPrivacy"]["executedChildren"] = 2
             rows = value.get("nativeLogFaults")
             if not isinstance(rows, list) or len(rows) > 16:
                 raise ValueError("Invalid native log transport evidence")

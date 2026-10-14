@@ -57,11 +57,35 @@ function artifact() {
   const report = { schemaVersion: 1, suite, candidateSha, startedAt: now, finishedAt: now, status: "passed", strict: true, evidenceLevel: "integration", requiredCapabilities: contract.requiredCapabilities[suite], capabilities: { api: { available: true }, postgres: { available: true } }, requiredScenarios: contract.suites[suite], missingCapabilities: [], missingScenarios: [], scenarios: contract.suites[suite].map((id) => ({ id, status: "passed", evidenceLevel: "integration", startedAt: now, finishedAt: now })), qualificationEnvironment: { ...environment, measurement: "native" }, artifactQualification: "workflow-checkout-source", fixtureSource: { file: source, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, source))).digest("hex") } };
   return { kind: "host", suite, environment: report.qualificationEnvironment, report };
 }
+test("explicit matrix candidate survives a different collector workflow SHA", () => {
+  const previous = process.env.GITHUB_SHA;
+  try {
+    process.env.GITHUB_SHA = "e".repeat(40);
+    assert.deepEqual(verifyMatrix([artifact()], { candidateSha, specification }), []);
+    assert.ok(verifyMatrix([artifact()], { candidateSha: "b".repeat(40), specification }).length);
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_SHA;
+    else process.env.GITHUB_SHA = previous;
+  }
+});
 function suiteArtifact(suite, file, fields) {
   const value = artifact(); value.suite = suite;
   Object.assign(value.report, { suite, evidenceLevel: contract.suiteEvidenceLevels[suite], requiredCapabilities: contract.requiredCapabilities[suite], capabilities: Object.fromEntries(contract.requiredCapabilities[suite].map(name => [name, { available: true }])), requiredScenarios: contract.suites[suite], scenarios: contract.suites[suite].map(id => ({ ...value.report.scenarios[0], id, evidenceLevel: contract.scenarioEvidenceLevels[suite][id] })), fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }, ...fields });
   return value;
 }
+test("Windows child-output proof requires native profile identity bounded facts and current sources", () => {
+  const suite = "windows-native-child-output-privacy";
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+  const fields = { actualNativeIdentity: "LocalSystem", actualStdoutAndStderrEmission: true, actualDelegatedSuccess: true, actualAcmeSuccessLogObserved: true, actualHttpUploadsSecretFree: true, persistedLogsEvidenceResultsSecretFree: true, scmConsoleSecretFree: true, childOutputPolicy: "captured-and-withheld-not-live-forwarded", nativeCertificateOutcome: "parent-independent-CNG-IIS-trusted-TLS", receiptCount: 1, jobLogCount: 1, evidenceCount: 1, httpUploadCount: 1 };
+  const value = suiteArtifact(suite, slot.source, fields);
+  value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native", build: "20348", keyAlgorithm: "rsa", keySize: 2048 };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  for (const mutate of [item => { item.report.receiptCount = 33; }, item => { item.report.actualHttpUploadsSecretFree = false; }, item => { item.report.qualificationEnvironment.keySize = 4096; }, item => { item.report.fixtureSources.pop(); }]) {
+    const invalid = structuredClone(value); mutate(invalid); assert.ok(verifyMatrix([invalid], options).length);
+  }
+});
 
 test("native Kubernetes compaction needs actual expired cursor and newer observed revision", () => {
   const suite = "kubernetes-host", file = "scripts/certops-kubernetes-host.js";
@@ -75,10 +99,10 @@ test("native Kubernetes compaction needs actual expired cursor and newer observe
 
 test("native console fault evidence requires exact persisted gap and unchanged job outcome", () => {
   const suite = "native-agent-api", file = "tests/e2e/certops-native-agent-e2e.test.js";
-  const value = suiteArtifact(suite, file, { nativeLogFaults: contract.suites[suite].filter(id => id.startsWith("native-agent-log-")).map(scenario => ({ scenario, actualNativeConsole: true, jobSucceeded: true, attempts: 1, persistedLines: 3, agentGapLines: scenario === "native-agent-log-413-drop-accounting" ? 1 : 0, serverDroppedLines: 0, finalAcknowledged: true })) });
+  const value = suiteArtifact(suite, file, { nativeChildOutputPrivacy: { executedChildren: 2, stdoutEmitted: true, stderrEmitted: true, rawChildOutputWithheld: true, genericExecutionMarkerPersisted: true, jobSucceeded: true }, nativeLogFaults: contract.suites[suite].filter(id => id.startsWith("native-agent-log-")).map(scenario => ({ scenario, actualNativeConsole: true, jobSucceeded: true, attempts: 1, persistedLines: 3, agentGapLines: scenario === "native-agent-log-413-drop-accounting" ? 1 : 0, serverDroppedLines: 0, finalAcknowledged: true })) });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "native-console", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
-  for (const mutate of [item => { item.report.nativeLogFaults.pop(); }, item => { item.report.nativeLogFaults[0].jobSucceeded = false; }, item => { item.report.nativeLogFaults[0].agentGapLines = 1; }, item => { item.report.nativeLogFaults[0].attempts = 2; }]) {
+  for (const mutate of [item => { delete item.report.nativeChildOutputPrivacy; }, item => { item.report.nativeChildOutputPrivacy.rawChildOutputWithheld = false; }, item => { item.report.nativeLogFaults.pop(); }, item => { item.report.nativeLogFaults[0].jobSucceeded = false; }, item => { item.report.nativeLogFaults[0].agentGapLines = 1; }, item => { item.report.nativeLogFaults[0].attempts = 2; }]) {
     const invalid = structuredClone(value); mutate(invalid); assert.ok(verifyMatrix([invalid], options).length);
   }
 });

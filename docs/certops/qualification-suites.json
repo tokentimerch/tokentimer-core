@@ -571,7 +571,8 @@
       "native-agent-log-transient-retry": "e2e",
       "native-agent-log-lost-acknowledgement": "e2e",
       "native-agent-log-413-split": "e2e",
-      "native-agent-log-413-drop-accounting": "e2e"
+      "native-agent-log-413-drop-accounting": "e2e",
+      "native-agent-child-output-confidentiality": "e2e"
     },
     "csr-bound-observation-api": {
       "csr-bound-observation-public-target": "e2e",
@@ -891,7 +892,8 @@
       "adcs-policy-api-bounded-options": "integration",
       "adcs-policy-api-invalid-atomic": "integration",
       "adcs-policy-api-cancel-preserves-snapshot": "integration",
-      "adcs-policy-api-cleanup": "integration"
+      "adcs-policy-api-cleanup": "integration",
+      "adcs-policy-api-native-request-id-distinct-from-operator-hint": "integration"
     },
     "import-metadata-api": {
       "import-metadata-public-assignment": "integration",
@@ -922,6 +924,17 @@
       "adcs-real-rsa2048-issued-cng-iis": "real-host",
       "adcs-elapsed-pending-one-hour-terminal-cleanup": "real-host",
       "adcs-real-owned-cleanup": "real-host"
+    },
+    "agent-log-quota-api": {
+      "fleet-log-quota-concurrent-streams": "integration",
+      "fleet-log-quota-replay-once": "integration",
+      "fleet-log-quota-workspace-isolation": "integration",
+      "fleet-log-storage-disabled-no-charge": "integration",
+      "fleet-log-quota-final-keeps-job": "integration",
+      "fleet-log-quota-cleanup": "integration"
+    },
+    "windows-native-child-output-privacy": {
+      "windows-native-child-output-withheld": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1262,6 +1275,16 @@
       "domain",
       "api",
       "qualifiedBuild"
+    ],
+    "agent-log-quota-api": [
+      "api",
+      "postgres"
+    ],
+    "windows-native-child-output-privacy": [
+      "windows",
+      "scm",
+      "api",
+      "nativeAcme"
     ]
   },
   "suites": {
@@ -1835,7 +1858,8 @@
       "native-agent-log-transient-retry",
       "native-agent-log-lost-acknowledgement",
       "native-agent-log-413-split",
-      "native-agent-log-413-drop-accounting"
+      "native-agent-log-413-drop-accounting",
+      "native-agent-child-output-confidentiality"
     ],
     "csr-bound-observation-api": [
       "csr-bound-observation-public-target",
@@ -2155,7 +2179,8 @@
       "adcs-policy-api-bounded-options",
       "adcs-policy-api-invalid-atomic",
       "adcs-policy-api-cancel-preserves-snapshot",
-      "adcs-policy-api-cleanup"
+      "adcs-policy-api-cleanup",
+      "adcs-policy-api-native-request-id-distinct-from-operator-hint"
     ],
     "import-metadata-api": [
       "import-metadata-public-assignment",
@@ -2186,6 +2211,17 @@
       "adcs-real-rsa2048-issued-cng-iis",
       "adcs-elapsed-pending-one-hour-terminal-cleanup",
       "adcs-real-owned-cleanup"
+    ],
+    "agent-log-quota-api": [
+      "fleet-log-quota-concurrent-streams",
+      "fleet-log-quota-replay-once",
+      "fleet-log-quota-workspace-isolation",
+      "fleet-log-storage-disabled-no-charge",
+      "fleet-log-quota-final-keeps-job",
+      "fleet-log-quota-cleanup"
+    ],
+    "windows-native-child-output-privacy": [
+      "windows-native-child-output-withheld"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2259,6 +2295,8 @@
     "import-metadata-api": "integration",
     "bulk-eligible-api": "integration",
     "scheduler-capacity-api": "integration",
-    "enterprise-adcs-elapsed-pending-real": "real-host"
+    "enterprise-adcs-elapsed-pending-real": "real-host",
+    "agent-log-quota-api": "integration",
+    "windows-native-child-output-privacy": "e2e"
   }
 }

@@ -59,6 +59,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   for (const endpoint of [caEndpoint, dnsEndpoint]) assert.ok(["localhost", "127.0.0.1"].includes(endpoint.hostname));
   const workDir = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "certops-windows-journey-"));
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
+  let outputPrivacy;
   const domain = `certops-${crypto.randomBytes(6).toString("hex")}.example.test`;
   const adoptionDomain = `certops-adopt-${crypto.randomBytes(6).toString("hex")}.example.test`;
   const site = `CertOps-${crypto.randomUUID()}`;
@@ -105,7 +106,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const bash = process.env.CERTOPS_WINDOWS_BASH;
     const acmeSh = process.env.CERTOPS_WINDOWS_ACMESH;
     assert.ok(bash && acmeSh && fs.existsSync(bash) && fs.existsSync(acmeSh));
-    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ serverUrl: baseUrl, agentId, allowInsecureLocalHttp: true, pollIntervalMs: 500, heartbeatIntervalMs: 1000, windowsDiscovery: { enabled: true, intervalMs: 1000, stores: ["My"] }, declaredTargetSelectors: [domain, adoptionDomain], declaredCommandProfileNames: ["qualification-acmesh"], execution: { enabled: true, dryRun: false }, policy: { allowedPaths: [workDir], allowedCommands: { "qualification-acmesh": { argv: [bash, acmeSh, "--insecure", "--accountemail", "certops@example.test"] } }, allowedCaEndpoints: [caEndpoint.href], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] }, dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } }, dnsPropagation: { resolvers: [process.env.CERTOPS_PEBBLE_DNS_RESOLVER], checkAuthoritative: false, intervalMs: 500, timeoutMs: 30000 } }));
+    // Leave headroom below the shared machine-route limiter for discovery, logs and results.
+    outputPrivacy=await require("./helpers/certops-windows-output-privacy").prepareOutputPrivacy(workDir,bash,[acmeSh,"--insecure","--accountemail","certops@example.test"],baseUrl);
+    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ serverUrl: outputPrivacy.agentUrl, agentId, allowInsecureLocalHttp: true, pollIntervalMs: 2000, heartbeatIntervalMs: 5000, windowsDiscovery: { enabled: true, intervalMs: 5000, stores: ["My"] }, declaredTargetSelectors: [domain, adoptionDomain], declaredCommandProfileNames: ["qualification-acmesh"], execution: { enabled: true, dryRun: false }, policy: { allowedPaths: [workDir], allowedCommands: { "qualification-acmesh": { argv: outputPrivacy.argv } }, allowedCaEndpoints: [caEndpoint.href], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] }, dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } }, dnsPropagation: { resolvers: [process.env.CERTOPS_PEBBLE_DNS_RESOLVER], checkAuthoritative: false, intervalMs: 500, timeoutMs: 30000 } }));
     const platform = require(path.join(repoRoot, "packages/agent/src/platform"));
     platform.applyRestrictivePermissions(configDir, { kind: "directory" });
     platform.applyRestrictivePermissions(path.join(configDir, "config.json"), { kind: "file" });
@@ -451,6 +454,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.equal(crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex"), credentialDigest,
       "product uninstaller must preserve the actual registered credential");
     assert.ok(fs.existsSync(path.join(configDir, "config.json")), "product uninstaller must preserve operator state");
+    const outputPrivacyReport=await require("./helpers/certops-windows-output-privacy").verifyOutputPrivacy({pool,workspaceId,jobId:job.id,configDir,proof:outputPrivacy,waitUntil,ps,keyProfile});
+    fs.mkdirSync("qualification-results",{recursive:true});fs.writeFileSync(`qualification-results/windows-output-privacy-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`,JSON.stringify(outputPrivacyReport));
+
   } catch (error) {
     journeyFailure = error;
     throw error;
@@ -492,6 +498,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     for (const root of roots) await cleanup(async () => ps(`$p='Cert:\\LocalMachine\\${root.store}\\${root.thumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Fixture CA trust remains' }`));
     for (const jobId of ownedJobs) for (const table of ["certificate_evidence", "certops_agent_job_log", "certificate_job_log", "certificate_jobs"]) await cleanup(() => pool.query(`DELETE FROM ${table} WHERE workspace_id=$1 AND ${table === "certificate_jobs" ? "id" : "job_id"}=$2`, [workspaceId, jobId]));
     if (certificateId) await cleanup(() => pool.query("DELETE FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [workspaceId, certificateId]));
+    if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
     if (errors.length) throw new AggregateError(journeyFailure ? [journeyFailure, ...errors] : errors, "Windows real journey owned cleanup failed", { cause: journeyFailure });
   }

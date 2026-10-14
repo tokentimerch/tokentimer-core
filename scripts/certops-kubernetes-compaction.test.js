@@ -18,3 +18,10 @@ test("API restart selects exactly one native running API container from the same
  for(const mutate of [value=>{value.state="CONTAINER_EXITED";},value=>{value.metadata.name="etcd";},value=>{value.labels["io.kubernetes.pod.namespace"]="foreign";},value=>{value.labels["io.kubernetes.pod.name"]="foreign";},value=>{value.id="unsafe";}]){const value=structuredClone(entry);mutate(value);assert.throws(()=>apiContainer({containers:[value]},node));}
  assert.throws(()=>apiContainer({containers:[entry,entry]},node));assert.throws(()=>apiContainer({containers:[]},node));
 });
+
+test("native handshake publication exposes complete JSON and refuses prior ownership receipts",()=>{
+ const fs=require("node:fs"),path=require("node:path"),os=require("node:os"),{publish}=require("./certops-kubernetes-compaction-incluster");const root=fs.mkdtempSync(path.join(os.tmpdir(),"certops-kube-handshake-")),file=path.join(root,"checkpoint.json"),value={resourceVersion:"123",certificateUid:"owned-certificate"};
+ try{publish(file,value);assert.deepEqual(JSON.parse(fs.readFileSync(file,"utf8")),value);assert.equal(fs.existsSync(file+".tmp"),false);assert.throws(()=>publish(file,{resourceVersion:"forged"}));assert.deepEqual(JSON.parse(fs.readFileSync(file,"utf8")),value);
+ const other=path.join(root,"relisted.json");fs.writeFileSync(other+".tmp","preexisting");assert.throws(()=>publish(other,{ready:true}),{code:"EEXIST"});assert.equal(fs.existsSync(other),false);assert.equal(fs.readFileSync(other+".tmp","utf8"),"preexisting");}
+ finally{fs.rmSync(root,{recursive:true});}
+});

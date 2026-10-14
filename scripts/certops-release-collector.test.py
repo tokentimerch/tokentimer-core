@@ -18,6 +18,25 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_windows_privacy_preserves_only_bounded_proof(self):
+        suite = "windows-native-child-output-privacy"
+        value = {"suite": suite, "actualNativeIdentity": "LocalSystem",
+                 "childOutputPolicy": "captured-and-withheld-not-live-forwarded",
+                 "nativeCertificateOutcome": "parent-independent-CNG-IIS-trusted-TLS",
+                 "actualStdoutAndStderrEmission": True, "actualDelegatedSuccess": True,
+                 "actualAcmeSuccessLogObserved": True, "actualHttpUploadsSecretFree": True,
+                 "persistedLogsEvidenceResultsSecretFree": True, "scmConsoleSecretFree": True,
+                 "receiptCount": 2, "jobLogCount": 3, "evidenceCount": 4,
+                 "httpUploadCount": 5, "rawOutput": "sentinel"}
+        result = collector.sanitized_report(value, {suite}, set())
+        self.assertEqual(result["receiptCount"], 2)
+        self.assertTrue(result["actualHttpUploadsSecretFree"])
+        self.assertNotIn("sentinel", json.dumps(result))
+        for count in (33, "2", True):
+            value["receiptCount"] = count
+            with self.assertRaises(ValueError):
+                collector.sanitized_report(value, {suite}, set())
+
     def test_elapsed_pending_preserves_only_bounded_native_facts(self):
         facts = {"pendingTimeoutSeconds": 3600, "pollIntervalSeconds": 60,
                  "monotonicWaitSeconds": 3601, "databaseElapsedSeconds": 3602,
@@ -55,7 +74,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_native_console_evidence_cannot_copy_raw_lines(self):
         row = {"scenario": "native-agent-log-transient-retry", "actualNativeConsole": True, "jobSucceeded": True, "attempts": 1, "persistedLines": 3, "agentGapLines": 0, "serverDroppedLines": 0, "finalAcknowledged": True, "lines": ["sentinel"]}
-        value = {"suite": "native-agent-api", "nativeLogFaults": [row]}
+        value = {"suite": "native-agent-api", "nativeLogFaults": [row], "nativeChildOutputPrivacy": {"executedChildren": 2, "stdoutEmitted": True, "stderrEmitted": True, "rawChildOutputWithheld": True, "genericExecutionMarkerPersisted": True, "jobSucceeded": True, "private": "sentinel"}}
         result = collector.extract_reports(self.archive("native.json", value), {"native-agent-api"}, set())
         self.assertEqual(result[0][1]["nativeLogFaults"][0]["persistedLines"], 3)
         self.assertNotIn("sentinel", json.dumps(result))

@@ -1926,7 +1926,7 @@
         "disposable-kind-cert-manager-api-postgres"
       ],
       "implementation": "scripts/certops-kubernetes-controller-e2e.js",
-      "remainingCoverage": "Actual transport suspension/resumption, new issued/served leaf with retained history, production pod restart and fresh watch evidence are wired. API server loss, Kubernetes watch compaction and longer outage/backpressure variants remain. Native execution is pending. Supporting loopback HTTP production-client tests now exercise an actual streamed Status Failure/code410, relist once, resume resourceVersion20 and observe event21; sixteen observer/client tests passed. This is real client protocol evidence, not native etcd compaction."
+      "remainingCoverage": "Production controller restart and transport outage/recovery source retain certificate identity and history. The separate native host scenario now compacts owned etcd, restarts only the verified disposable API-server container, requires a genuine stale-watch HTTP410, then relists and observes a higher resourceVersion through the production client and observer. Atomic handshakes prevent partial JSON publication. Native execution, longer outages/backpressure and additional restart timing variants remain pending; the sixteen passing loopback client/observer tests are supporting protocol evidence."
     },
     {
       "id": "controller.pause-gates",
@@ -2138,7 +2138,7 @@
         "core-real-dashboard-disposable-stack"
       ],
       "implementation": "scripts/certops-browser.js",
-      "remainingCoverage": "Actualphonewidth certificate navigation with light/darkmedia tested; visualthemecontrast/dialogkeyboard and othereditions remain."
+      "remainingCoverage": "Actual focused browser execution covers phone-width certificate navigation, light/dark media preferences and dialog keyboard focus/closure behavior. Visual contrast, broader responsive certificate surfaces and additional pending/error states remain; no screenshot-based theme or exhaustive accessibility qualification is claimed."
     },
     {
       "id": "experience.console-live",
@@ -2182,7 +2182,7 @@
         "core-disposable-api-postgres"
       ],
       "implementation": "tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-agent-log-boundaries-e2e.test.js; tests/e2e/certops-native-agent-e2e.test.js; tests/e2e/helpers/certops-native-log-faults.js",
-      "remainingCoverage": "Actual API bounds, replay and synthetic diagnostic gap/drop cases are complemented by four passing actual native Linux process/API/PostgreSQL fault scenarios:503/429/network retries, lost committed acknowledgement with exact cached replay, recursive413 splitting, and permanent single-line413 with exactly one agent gap and no double counting. Genuine console lines and unchanged successful noop execution are independently checked; no diagnostic batches are injected. Fleet/daily quotas, exhausted long retry budgets, retained history and certificate-operation interruption/Windows/browser variants remain distinct coverage."
+      "remainingCoverage": "Actual API bounds, replay and synthetic diagnostic gap/drop cases are complemented by four passing actual native Linux process/API/PostgreSQL fault scenarios:503/429/network retries, lost committed acknowledgement with exact cached replay, recursive413 splitting, and permanent single-line413 with exactly one agent gap and no double counting. A separate six-case production-ingestion/PostgreSQL suite passed concurrent two-stream workspace/day budget locking, cached replay charges once, independent workspace budgets, disabled storage without charges, telemetry finalization preserving claimed jobs and cleanup. The small quota and diagnostic lines are explicit service-environment fixtures, not global API configuration or native fleet load. Exhausted long retry budgets, elapsed retention and certificate-operation interruption/Windows/browser variants remain distinct coverage."
     },
     {
       "id": "experience.log-disabled",
@@ -2205,7 +2205,7 @@
         "agent-log-order-api"
       ],
       "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js",
-      "remainingCoverage": "Focused real authenticated agent-log upload and PostgreSQL persistence cases exercise private-key, password and bearer sentinel scrubbing and sequencing. Native stdout/stderr/provider failure, live browser rendering and every diagnostic artifact channel require their own evidence."
+      "remainingCoverage": "Focused real authenticated agent-log upload/PostgreSQL cases exercise private-key, password and bearer sentinel scrubbing and sequencing. A separate passing real native Linux agent case executes allowlisted validate/reload child processes that emit generated fixture secrets to stdout/stderr; owned receipts prove emission, raw child output remains withheld, genuine generic execution markers persist, and actual API logs/PostgreSQL evidence/results plus parent console contain no sentinels. This is child-output confidentiality, not streamed-child-output or certificate-operation proof. Native provider failures, live browser rendering and other diagnostic artifact channels remain distinct qualification."
     },
     {
       "id": "experience.audit-target",

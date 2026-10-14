@@ -201,7 +201,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -219,7 +222,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -237,7 +243,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -255,7 +264,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -273,7 +285,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -301,7 +316,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -319,7 +337,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -337,7 +358,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -355,7 +379,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -373,7 +400,10 @@
       ],
       "requiredSources": [
         "tests/e2e/helpers/certops-windows-reregistration.js",
-        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+        "tests/e2e/helpers/certops-windows-capability-refresh.js",
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     },
     {
@@ -1238,7 +1268,8 @@
         "osFamily": "linux"
       },
       "requiredSources": [
-        "tests/e2e/helpers/certops-native-log-faults.js"
+        "tests/e2e/helpers/certops-native-log-faults.js",
+        "tests/e2e/helpers/certops-native-log-privacy.js"
       ]
     },
     {
@@ -1749,6 +1780,185 @@
       },
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-pending-elapsed.js"
+      ]
+    },
+    {
+      "id": "api-fleet-log-quota",
+      "kind": "host",
+      "suite": "agent-log-quota-api",
+      "source": "tests/e2e/certops-agent-log-quota-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "windows-output-privacy-2022-rsa-2048",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2022-rsa-3072",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-3072"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2022-rsa-4096",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-4096"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2022-ec-p256",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p256"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2022-ec-p384",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p384"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2025-rsa-2048",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2025-rsa-3072",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-3072"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2025-rsa-4096",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-4096"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2025-ec-p256",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p256"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
+      ]
+    },
+    {
+      "id": "windows-output-privacy-2025-ec-p384",
+      "kind": "host",
+      "suite": "windows-native-child-output-privacy",
+      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p384"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-output-child.js",
+        "tests/e2e/helpers/certops-windows-output-privacy.js",
+        "tests/e2e/windows-real-journey.js"
       ]
     }
   ]

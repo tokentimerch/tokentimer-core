@@ -6,7 +6,7 @@
  */
 const fs = require("node:fs");
 
-function verifyReport(report, expectedScenarios) {
+function verifyReport(report, expectedScenarios, { expectedSha = process.env.GITHUB_SHA } = {}) {
   if (!report || typeof report !== "object" || Array.isArray(report)) return ["Invalid report object"];
   expectedScenarios ??= require("../docs/certops/qualification-suites.json").suites[report.suite];
   const errors = [];
@@ -19,7 +19,7 @@ function verifyReport(report, expectedScenarios) {
   if (!validTime(report.startedAt) || !validTime(report.finishedAt) || Date.parse(report.finishedAt) < Date.parse(report.startedAt)) errors.push("Invalid report execution interval");
   if (!Array.isArray(report.requiredCapabilities) || !Array.isArray(report.requiredScenarios) || !Array.isArray(report.missingCapabilities) || !Array.isArray(report.missingScenarios)) errors.push("Missing or malformed required execution metadata");
   if (typeof report.candidateSha !== "string" || !/^[a-f0-9]{40}$/i.test(report.candidateSha)) errors.push("Missing candidate commit identity");
-  if (process.env.GITHUB_SHA && report.candidateSha !== process.env.GITHUB_SHA) errors.push("Report candidate differs from requested commit");
+  if (expectedSha && report.candidateSha !== expectedSha) errors.push("Report candidate differs from requested commit");
   const expectedSuiteLevel = require("../docs/certops/qualification-suites.json").suiteEvidenceLevels?.[report.suite];
   if (expectedSuiteLevel ? report.evidenceLevel !== expectedSuiteLevel : !["real-host", "e2e"].includes(report.evidenceLevel)) errors.push("Unsupported qualification evidence level");
   if (!Array.isArray(expectedScenarios) || !expectedScenarios.length) errors.push("Suite has no committed mandatory scenario specification");

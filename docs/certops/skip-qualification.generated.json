@@ -804,6 +804,19 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "ef2af40c8d26df183310",
+      "file": "tests/e2e/certops-agent-log-quota-e2e.test.js",
+      "line": 21,
+      "name": "production fleet-log quota concurrency and workspace isolation",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "prerequisite-review",
+      "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "5e77fcd26694941a7dd5",
       "file": "tests/e2e/certops-agent-logs-api-e2e.test.js",
       "line": 17,
@@ -1170,7 +1183,7 @@
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 30,
+      "line": 31,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",

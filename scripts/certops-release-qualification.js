@@ -82,7 +82,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
       }
       if (slot.kind === "host") {
         if (artifact.report.suite !== slot.suite) throw new Error("Suite mismatch");
-        if (verifyReport(artifact.report).length) throw new Error("Mandatory runtime evidence incomplete");
+        if (verifyReport(artifact.report, undefined, { expectedSha: candidateSha }).length) throw new Error("Mandatory runtime evidence incomplete");
         if (slot.suite === "dns-provider-errors") require("./certops-dns-provider-errors-report").verifyDnsErrors(artifact.report);
         if (slot.suite === "kubernetes-host") {
           const evidence = artifact.report.nativeCompaction;
@@ -91,6 +91,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
         }
         if (slot.suite === "native-agent-api") {
+          const privacy = artifact.report.nativeChildOutputPrivacy;
+          if (!privacy || privacy.executedChildren !== 2 || !["stdoutEmitted", "stderrEmitted", "rawChildOutputWithheld", "genericExecutionMarkerPersisted", "jobSucceeded"].every(key => privacy[key] === true)) throw new Error("Native child-output confidentiality evidence incomplete");
           const cases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("native-agent-log-"));
           const rows = artifact.report.nativeLogFaults;
           if (!Array.isArray(rows) || rows.length !== cases.length) throw new Error("Native log transport fault evidence incomplete");
@@ -135,7 +137,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               evidence.allowedWrite !== true || evidence.deniedError !== "EROFS" || evidence.samePeerDacMode !== "0777" ||
               !Number.isInteger(evidence.nonRootUid) || evidence.nonRootUid <= 0) throw new Error("Native systemd write-path isolation evidence incomplete");
         }
-        if (slot.suite === "enterprise-adcs-elapsed-pending-real") require("./certops-adcs-pending-elapsed-report").verify(artifact.report);
+        if (slot.suite === "windows-native-child-output-privacy") require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(artifact.report, { expectedSha: candidateSha });
+        if (slot.suite === "enterprise-adcs-elapsed-pending-real") require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "core-api-migration-upgrade") {
           require("./certops-migration-upgrade-report").verifyEvidence(artifact.report);
           if (artifact.report.sourceIdentity?.candidate?.sha !== candidateSha) throw new Error("Migration candidate differs from release candidate");
@@ -147,7 +150,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         }
       } else if (slot.kind === "stack") {
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
-        verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite);
+        verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);
       } else if (slot.kind === "database") {
         const definition = require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup];
         if (!definition || artifact.report.evidenceLevel !== "integration") throw new Error("Unknown database evidence classification");

@@ -29,7 +29,7 @@ async function qualifyNativeCompaction({kubectl,namespace,gate}){
  ]}));
  kubectl(["wait","--for=condition=Ready","pod/compaction-fixture","-n",namespace,"--timeout=120s"]);
  const read=file=>JSON.parse(kubectl(["exec","compaction-fixture","-n",namespace,"--","node","-e","const fs=require('fs');const p=process.argv[1];process.stdout.write(fs.existsSync(p)?fs.readFileSync(p,'utf8'):'null');",`/tmp/${file}.json`]));
- const write=(file,value)=>kubectl(["exec","compaction-fixture","-n",namespace,"--","node","-e","require('fs').writeFileSync(process.argv[1],process.argv[2],{flag:'wx'});",`/tmp/${file}.json`,JSON.stringify(value)]);
+ const write=(file,value)=>kubectl(["exec","compaction-fixture","-n",namespace,"--","node","-e","const fs=require('fs'),p=process.argv[1];if(fs.existsSync(p))throw new Error('Duplicate native handshake');fs.writeFileSync(p+'.tmp',process.argv[2],{flag:'wx'});fs.renameSync(p+'.tmp',p);",`/tmp/${file}.json`,JSON.stringify(value)]);
  const checkpoint=await until(()=>read("checkpoint"));assert.match(checkpoint.resourceVersion,/^[1-9][0-9]*$/);
  // Bounded, owned namespace writes advance the actual etcd revision. No
  // revision, watch Status or Certificate observation is manufactured.

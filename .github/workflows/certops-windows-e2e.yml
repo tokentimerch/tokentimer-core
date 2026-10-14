@@ -189,6 +189,7 @@ jobs:
           path: |
             qualification-results/windows-real-${{ matrix.key_profile }}.jsonl
             qualification-results/windows-adoption-${{ matrix.key_profile }}.json
+            qualification-results/windows-output-privacy-${{ matrix.key_profile }}.json
             qualification-results/windows-candidate-${{ matrix.key_profile }}.json
             qualification-results/windows-historical-${{ matrix.key_profile }}.json
           if-no-files-found: error

@@ -17,7 +17,8 @@ const { createRegisteredAgent } = require("./helpers/certops-registered-agent");
 const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 const { createNativeLogFaults, cases: logFaultCases } = require("./helpers/certops-native-log-faults");
 const logFaults = createNativeLogFaults();
-const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-cleanup"];
+const { qualifyNativeLogPrivacy } = require("./helpers/certops-native-log-privacy");
+const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-child-output-confidentiality", "native-agent-cleanup"];
 async function wait(check, timeout = 30000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 100)); }
@@ -165,6 +166,8 @@ test("real native agent signed gates durable outbox restart and observe-only beh
       assert.equal((await row(id)).attempt_count,1);
     },{oracle:"Actual native process console batches, authenticated API persistence and stream finalization survive real process restart; no diagnostic lines injected"});
     await logFaults.qualify({ gate, fixture, prefix, create, row, stop, start, wait, prohibited });
+    await qualifyNativeLogPrivacy({ gate, fixture, prefix, configDir, root, stop, start, wait, row, prohibited });
+    gate.report.fixtureSources.push({ file: "tests/e2e/helpers/certops-native-log-privacy.js", sha256: hashFile(path.join(__dirname, "helpers/certops-native-log-privacy.js")) });
     await gate.scenario(scenarios[3], async () => {
       const before = ["credential", "signing-key-pin.json"].map((file) => hashFile(path.join(configDir, file))); const seen = (await agentRow()).last_seen_at;
       await stop(); start(); await wait(async () => Date.parse((await agentRow()).last_seen_at) > Date.parse(seen)); assert.deepEqual(["credential", "signing-key-pin.json"].map((file) => hashFile(path.join(configDir, file))), before);

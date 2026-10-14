@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 118
+Total skips found: 119
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -67,6 +67,7 @@ Total skips found: 118
 | `tests/e2e/certops-agent-lease-api-e2e.test.js` | 18 | active claim force retirement fences real agent HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-boundaries-e2e.test.js` | 18 | agent log size and ownership boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-order-e2e.test.js` | 18 | actual agent telemetry ordering, conflict and final closure | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-log-quota-e2e.test.js` | 21 | production fleet-log quota concurrency and workspace isolation | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-logs-api-e2e.test.js` | 17 | registered agent log redaction and replay through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-audit-history-e2e.test.js` | 14 | certificate profile audit history remains searchable scoped and role restricted | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-bootstrap-fences-e2e.test.js` | 17 | unused bootstrap revocation, expiry and workspace ownership through real API | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -95,7 +96,7 @@ Total skips found: 118
 | `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 21 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-native-agent-e2e.test.js` | 30 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-native-agent-e2e.test.js` | 31 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-observe-only-e2e.test.js` | 16 | observe-only polling preserves queued work until explicit execution advertisement | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-pause-ingestion-e2e.test.js` | 19 | workspace pause blocks new work while retaining owned result ingestion | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-profile-issuer-switch-e2e.test.js` | 13 | public renewal issuer changes retain runnable policy and atomic audit | dynamic (this.skip() / t.skip()) | `no-host` |

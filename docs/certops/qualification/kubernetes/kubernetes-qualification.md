@@ -2,6 +2,8 @@
 
 The trusted manual `certops-kubernetes-qualification.yml` workflow uses Ubuntu 24.04, an isolated kind cluster, digest-pinned Kubernetes and a fixed cert-manager chart. It builds the candidate production controller image and loads that image into the owned cluster. The workflow never connects to an existing customer cluster.
 
+Both native workflows install the matching Kubernetes 1.35.0 client from its official release, verify its fixed SHA-256 digest and put it ahead of the hosted image tools before creating the pinned 1.35.0 server. Hosted image client upgrades therefore cannot silently introduce unsupported version skew. Installer wiring checks passed; native cluster execution remains pending.
+
 The host suite exercises the Certificate provisioner with real Kubernetes resources, including Ready issuance, ownership and namespace boundaries, idempotency, and independent public certificate parsing. Production-image fixture pods exercise the shipped in-cluster client with mounted service-account credentials, list/watch and merge patch. A read-only pod must receive actual Kubernetes 403 responses for create and patch, with independent checks that the existing resource is unchanged and the refused resource absent.
 
 The separate API E2E suite starts migrated PostgreSQL and the real API. A real administrator session creates an idempotent public provision intent. The unmodified production controller pod consumes its cluster-bound command using a scoped machine token, obtains authorization from the API, mutates its owned Certificate and reports actual list/watch observations. cert-manager issues the certificate. The persisted fingerprint must match independently parsed public `tls.crt`, and the workspace must contain no agent registration.

@@ -6,6 +6,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## API, inventory and worker behavior
 
+- [Fleet execution-log quotas](api/fleet-log-quota.md)
+
 - [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
 - [Certificate audit history qualification](api/audit-history-qualification.md)
 - [Mixed eligible bulk renewal admission](api/bulk-eligible-qualification.md)
@@ -52,7 +54,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Disposable Kubernetes qualification](kubernetes/kubernetes-qualification.md)
 - [Native Kubernetes public Secret fallback](kubernetes/kubernetes-secret-fallback-qualification.md)
 
-## Cloud and Enterprise
+## Downstream extensions
 
 - [Edition qualification stays tied to its composition](editions/downstream-qualification.md)
 

@@ -3,7 +3,7 @@
 The standard Core qualification workflow runs only on trusted `main` pushes and manual requests. It first verifies that the checkout matches the exact candidate SHA, then selects affected lanes from that push's actual Git diff. It does not dispatch Azure labs, DNS-provider qualification, native ACME, Kubernetes or any other expensive manual workflow.
 
 - Documentation, qualification reports, Python collector code and security-guard changes run the cheap tooling lane.
-- API, worker, Compose and integration/E2E changes select the migrated API/PostgreSQL stack, without Windows feature installation.
+- API, worker, their shared server packages, Compose and integration/E2E changes select the migrated API/PostgreSQL stack, without Windows feature installation.
 - Agent runtime changes select Windows host checks and the supporting stack. Shared contracts and dependency changes conservatively select all standard lanes.
 - Missing history, a new branch or a forced push selects all standard lanes rather than silently omitting coverage.
 
@@ -14,6 +14,8 @@ For an iteration, use **Run workflow** and choose `tooling`, `windows` or `stack
 GitHub also supports rerunning a specific failed job; reruns retain the original commit and ref. See [GitHub's rerun documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs).
 
 Selection is a cost-control decision, not release qualification. A selected run does not establish that omitted suites passed. The release collector still requires the complete mandatory environment matrix, matching candidate SHA and current source hashes; partial iteration evidence cannot satisfy missing cells. Full hosted/native execution remains a separate pre-release decision.
+
+Each release matrix cell is a required report/environment combination. One job can produce several cells: the API stack runs multiple supporting suites, and a Windows job produces both its certificate journey and child-output privacy evidence. The cell count is not a count of provisioned machines or workflow jobs.
 
 The tooling job installs the official Actionlint `1.7.12` binary from its fixed release URL and checks its committed SHA256 before execution. Framework regressions then validate actual GitHub Actions contexts and expressions in every Core qualification workflow. Valid YAML alone is insufficient: for example, a service's allocated port must be resolved in a step where the `job` context exists, rather than job-level `env`.
 

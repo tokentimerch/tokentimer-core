@@ -3,7 +3,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { validateScenarioCalls, validateHarnessSources } = require("./certops-harness-source");
-const { readOnlyQueries, explainAdcsQueries } = require("./certops-harness-source");
+const { readOnlyQueries, explainNativeQueries } = require("./certops-harness-source");
 test("native scenario registration refuses multiple IDs substituted for its callback", () => {
   for (const source of ['gate.scenario("discovery", "repeat", "rollback", async () => {});', 'gate.scenario("discovery", "other");', 'gate.scenario("discovery", {});', 'gate.scenario("discovery");']) assert.ok(validateScenarioCalls(source).length);
 });
@@ -20,6 +20,6 @@ test("schema inventory extracts actual literal read queries and excludes mutatio
 test("native SQL schema probing refuses an unauthorized database before connecting", async () => {
   const previous = process.env.CERTOPS_CSR_DISPOSABLE_STACK;
   delete process.env.CERTOPS_CSR_DISPOSABLE_STACK;
-  try { await assert.rejects(explainAdcsQueries(), /Explicit disposable schema-check stack/); }
+  try { await assert.rejects(explainNativeQueries(), /Explicit disposable schema-check stack/); }
   finally { if (previous === undefined) delete process.env.CERTOPS_CSR_DISPOSABLE_STACK; else process.env.CERTOPS_CSR_DISPOSABLE_STACK = previous; }
 });

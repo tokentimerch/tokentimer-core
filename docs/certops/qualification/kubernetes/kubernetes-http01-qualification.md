@@ -2,6 +2,8 @@
 
 The manual `certops-kubernetes-http01-qualification.yml` workflow on trusted `main` creates a dedicated single-node kind cluster, cert-manager, the candidate production controller and a migrated API/PostgreSQL fixture. This source has not yet executed on its native hosted environment.
 
+Both native workflows install the matching Kubernetes 1.35.0 client from its official release, verify its fixed SHA-256 digest and put it ahead of the hosted image tools before creating the pinned 1.35.0 server. Hosted image client upgrades therefore cannot silently introduce unsupported version skew. Installer wiring checks passed; native cluster execution remains pending.
+
 A private Pebble 2.8 test CA performs real HTTP-01 validation. A pinned Traefik 3.7.14 ingress serves cert-manager's genuine solver response on the kind node's port 80. The DNS-only challenge fixture resolves reserved `certops.invalid` names to that node; fake HTTP/TLS challenge servers and Pebble validation bypass are disabled. A watched, actually presented HTTP-01 Challenge is mandatory. This validates the supported external controller path; it does not qualify native-agent HTTP-01 or a public certificate authority.
 
 Eight named scenarios require public provisioning/idempotency, actual HTTP-01 presentation and issuance, persisted public certificate observation, CA-root-trusted destination TLS, pause admission with continued observation, real API transport interruption/reissue recovery, production controller restart, and cleanup. Only the destination pod consumes its mounted private key. The harness reads bounded public certificates and records sanitized scenario results, candidate identity and source fingerprint.

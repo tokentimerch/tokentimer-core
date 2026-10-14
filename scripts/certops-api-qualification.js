@@ -36,6 +36,7 @@ const suites = [
 
   ["csr-observation-api", "certops-csr-observation-e2e.test.js", "CERTOPS_CSR_OBSERVATION_REPORT"],
   ["renewal-admission-api", "certops-renewal-admission-e2e.test.js", "CERTOPS_RENEWAL_ADMISSION_REPORT"],
+  ["agent-log-quota-api", "certops-agent-log-quota-e2e.test.js", "CERTOPS_LOG_QUOTA_REPORT"],
   ["agent-log-order-api", "certops-agent-log-order-e2e.test.js", "CERTOPS_LOG_ORDER_REPORT"],
   ["profile-permissions-api", "certops-profile-permissions-e2e.test.js", "CERTOPS_PROFILE_PERMISSIONS_REPORT"],
   ["public-import-api", "certops-public-import-e2e.test.js", "CERTOPS_PUBLIC_IMPORT_REPORT"],

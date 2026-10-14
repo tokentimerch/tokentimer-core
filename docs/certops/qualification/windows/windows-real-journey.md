@@ -15,6 +15,24 @@ server/algorithm combinations. At most two runner jobs execute concurrently.
 Individual selections qualify only their selected environments; the complete
 release matrix requires reports from every server/algorithm combination.
 
+Each selected job also produces `windows-output-privacy-<key-profile>.json`.
+An owned command-profile launcher emits generated test-only password, bearer
+and private-key-shaped sentinels to actual child stdout and stderr, then
+delegates the unchanged real ACME executable, arguments and environment.
+Receipts must prove LocalSystem identity, emission and successful delegation;
+the parent still independently requires actual CNG/IIS issuance and trusted TLS.
+The production agent withholds captured child output. A bounded loopback observer
+and independent PostgreSQL/SCM-log reads must find no sentinels while the genuine
+ACME success marker remains available. This proves child-output confidentiality,
+not live forwarding of subprocess output. Only counts, booleans, source digests
+and public environment facts enter the report. All ten server/key-profile cells
+require both the parent journey and this strict privacy evidence. Native
+execution remains pending.
+
+The fixture polls every two seconds and sends heartbeats and Windows discovery
+updates every five seconds, preserving headroom under the unchanged production
+machine-token rate limit. Slower fixture traffic does not relax server policy.
+
 Select `historical_upgrade=true` to start with the genuine `v0.17.2` source
 at immutable commit `6c902405c7b5d229e2f47b4d5436d780e91c5e17`. The workflow
 requires GitHub's valid verification of its signed tag object before building
@@ -134,3 +152,29 @@ exiting with code1; the old immediate exit reproduced a native Windows abort
 during the registration conflict.
 
 Run `node scripts/certops-windows-e2e.js` only after provisioning those prerequisites and setting `CERTOPS_WINDOWS_BASH` and `CERTOPS_WINDOWS_ACMESH`. This implementation has not yet undergone an opted-in hosted execution; syntax and contract checks do not prove the real-host journey passes.
+
+### Native child output privacy
+
+The qualification command profile delegates the actual Git Bash/acme.sh client
+through an owned launcher that emits random test-only bearer/password and PEM
+sentinels to both real child streams. Native identity/emission/exit receipts stay
+inside protected temporary paths. The actual client still performs its real
+ACME order; existing CNG custody, issued-leaf and trusted IIS TLS checks remain
+mandatory.
+
+Successful ACME child output is captured and intentionally withheld, rather
+than streamed as individual console lines. The fixture requires the genuine
+agent ACME-success marker, checks a transparent literal-loopback machine upload
+observer, and independently scans persisted job logs/evidence/results and SCM
+console files for sentinel absence. It makes no claim that child stream lines
+were uploaded. The observer admits only exact POST machine routes and bounded
+machine headers, forwards original bodies, refuses URL/path escapes and drains
+only its owned sockets during cleanup.
+
+Every key-profile/Server slot must also produce and verify
+`windows-output-privacy-<key-profile>.json`; missing proof cannot be hidden by a
+successful parent test. Reports contain measured Server/SYSTEM identity, source
+hashes, bounded counts and boolean privacy observations, never the recipe,
+stream contents or credentials. Portable process/socket tests cover fixture
+behavior; actual installed SCM/ACME privacy execution remains pending until the
+protected Windows workflow runs.
