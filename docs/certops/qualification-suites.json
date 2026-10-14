@@ -37,7 +37,8 @@
       "controller-fixture-cleanup": "real-host",
       "controller-incluster-client": "real-host",
       "controller-readonly-client": "real-host",
-      "controller-secret-fallback": "real-host"
+      "controller-secret-fallback": "real-host",
+      "controller-native-watch-compaction": "real-host"
     },
     "csr-api-lifecycle": {
       "csr-api-private-material-refusal": "integration",
@@ -242,7 +243,8 @@
       "adcs-real-local-rule-key-algorithm-refused": "real-host",
       "adcs-real-local-rule-cross-product-refused": "real-host",
       "adcs-real-local-rule-extra-san-refused": "real-host",
-      "adcs-real-local-rule-tightening-frees-pending-key": "real-host"
+      "adcs-real-local-rule-tightening-frees-pending-key": "real-host",
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -519,7 +521,8 @@
       "adcs-real-local-rule-key-algorithm-refused": "real-host",
       "adcs-real-local-rule-cross-product-refused": "real-host",
       "adcs-real-local-rule-extra-san-refused": "real-host",
-      "adcs-real-local-rule-tightening-frees-pending-key": "real-host"
+      "adcs-real-local-rule-tightening-frees-pending-key": "real-host",
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -564,7 +567,11 @@
       "native-agent-local-command-policy": "e2e",
       "native-agent-cross-agent-binding": "e2e",
       "native-agent-durable-replay": "e2e",
-      "native-agent-real-log-persistence": "e2e"
+      "native-agent-real-log-persistence": "e2e",
+      "native-agent-log-transient-retry": "e2e",
+      "native-agent-log-lost-acknowledgement": "e2e",
+      "native-agent-log-413-split": "e2e",
+      "native-agent-log-413-drop-accounting": "e2e"
     },
     "csr-bound-observation-api": {
       "csr-bound-observation-public-target": "e2e",
@@ -1279,7 +1286,8 @@
       "controller-fixture-cleanup",
       "controller-incluster-client",
       "controller-readonly-client",
-      "controller-secret-fallback"
+      "controller-secret-fallback",
+      "controller-native-watch-compaction"
     ],
     "csr-api-lifecycle": [
       "csr-api-create-idempotency",
@@ -1484,7 +1492,8 @@
       "adcs-real-local-rule-key-algorithm-refused",
       "adcs-real-local-rule-cross-product-refused",
       "adcs-real-local-rule-extra-san-refused",
-      "adcs-real-local-rule-tightening-frees-pending-key"
+      "adcs-real-local-rule-tightening-frees-pending-key",
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -1761,7 +1770,8 @@
       "adcs-real-local-rule-key-algorithm-refused",
       "adcs-real-local-rule-cross-product-refused",
       "adcs-real-local-rule-extra-san-refused",
-      "adcs-real-local-rule-tightening-frees-pending-key"
+      "adcs-real-local-rule-tightening-frees-pending-key",
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -1806,7 +1816,11 @@
       "native-agent-cross-agent-binding",
       "native-agent-durable-replay",
       "native-agent-cleanup",
-      "native-agent-real-log-persistence"
+      "native-agent-real-log-persistence",
+      "native-agent-log-transient-retry",
+      "native-agent-log-lost-acknowledgement",
+      "native-agent-log-413-split",
+      "native-agent-log-413-drop-accounting"
     ],
     "csr-bound-observation-api": [
       "csr-bound-observation-public-target",

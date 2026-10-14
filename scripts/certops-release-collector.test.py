@@ -15,6 +15,27 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_native_compaction_evidence_keeps_only_bounded_public_facts(self):
+        evidence = {"expiredStatus": 410, "originalResourceVersion": "10", "compactedRevision": "20", "observedResourceVersion": "21", "certificateUid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "productionClient": True, "productionObserver": True, "controlPlaneRestarted": True, "ownedSingleNodeCluster": True, "private": "sentinel"}
+        value = {"suite": "kubernetes-host", "nativeCompaction": evidence}
+        result = collector.extract_reports(self.archive("kube.json", value), {"kubernetes-host"}, set())
+        self.assertEqual(result[0][1]["nativeCompaction"]["expiredStatus"], 410)
+        self.assertNotIn("sentinel", json.dumps(result))
+        evidence["certificateUid"] = "-" * 36
+        with self.assertRaises(ValueError):
+            collector.extract_reports(self.archive("kube.json", value), {"kubernetes-host"}, set())
+        evidence["certificateUid"] = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        evidence["compactedRevision"] = "sentinel"
+        with self.assertRaises(ValueError):
+            collector.extract_reports(self.archive("kube.json", value), {"kubernetes-host"}, set())
+
+    def test_native_console_evidence_cannot_copy_raw_lines(self):
+        row = {"scenario": "native-agent-log-transient-retry", "actualNativeConsole": True, "jobSucceeded": True, "attempts": 1, "persistedLines": 3, "agentGapLines": 0, "serverDroppedLines": 0, "finalAcknowledged": True, "lines": ["sentinel"]}
+        value = {"suite": "native-agent-api", "nativeLogFaults": [row]}
+        result = collector.extract_reports(self.archive("native.json", value), {"native-agent-api"}, set())
+        self.assertEqual(result[0][1]["nativeLogFaults"][0]["persistedLines"], 3)
+        self.assertNotIn("sentinel", json.dumps(result))
+
     def test_uncommitted_execution_names_and_values_are_never_artifacts(self):
         sentinel = "private-sentinel"
         value = {"suite": "job-decisions-api", "requiredScenarios": [sentinel], "missingScenarios": [sentinel], "requiredCapabilities": [sentinel], "capabilities": {sentinel: {"available": {"private": sentinel}}}, "scenarios": [{"id": sentinel, "status": sentinel, "evidenceLevel": sentinel, "startedAt": sentinel}]}
@@ -24,7 +45,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_native_cohort_budgets_are_bounded_without_private_fields(self):
         cohort = {"workspaceId": "a" * 36, "agentId": "b" * 36, "dispatchCount": 18, "dispatchLimit": 18, "nativeIdentity": "LocalSystem", "runtime": "candidate-cli", "privateState": "sentinel"}
-        value = {"suite": "enterprise-adcs-real", "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": []}
+        value = {"suite": "enterprise-adcs-real", "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))

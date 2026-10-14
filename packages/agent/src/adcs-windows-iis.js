@@ -33,6 +33,7 @@ const {
 } = require("./issuers");
 const fs = require("node:fs");
 const { retrieveProposedEnrollmentCandidate } = require("./issuers/adcs-enrollment-reconcile");
+const { newValidationDeadline } = require("./issuers/adcs-validation-deadline");
 const { matchWholeEnrollmentRule } = require("./issuers/adcs-enrollment-rules");
 const { createEnrollmentSafetyGuard } = require("./issuers/adcs-safety");
 const {
@@ -1386,7 +1387,7 @@ function createAdcsWindowsIisExecutors(deps) {
         issuanceOutcome =
           validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
         if (validation.state === "validation_deferred") {
-          const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          const deadline = newValidationDeadline(executionContext);
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "validation_deferred",
             attempt: decoded.attempt,
@@ -1812,7 +1813,7 @@ function createAdcsWindowsIisExecutors(deps) {
         const deadline =
           typeof journal.validationDeadlineAt === "string"
             ? journal.validationDeadlineAt
-            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            : newValidationDeadline(executionContext);
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "validation_deferred",
           ...journalBase,
@@ -2630,7 +2631,7 @@ function createAdcsWindowsIisExecutors(deps) {
             const deadline =
               typeof journal.validationDeadlineAt === "string"
                 ? journal.validationDeadlineAt
-                : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+                : newValidationDeadline(executionContext);
             await persistUncertain({
               reconcileSearchFrom: journal.reconcileSearchFrom,
               reconcileCandidateRequestId: journal.reconcileCandidateRequestId,
@@ -2778,7 +2779,7 @@ function createAdcsWindowsIisExecutors(deps) {
               enrollmentId: decoded.enrollmentId,
               leafPem: reconciled.certificatePem,
             });
-            const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            const deadline = newValidationDeadline(executionContext);
             await persistUncertain({
               // Keep earliest unresolved cursor (includes this candidate).
               reconcileSearchFrom: reconciled.nextSearchFrom,

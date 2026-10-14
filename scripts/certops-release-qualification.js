@@ -79,7 +79,33 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (artifact.report.suite !== slot.suite) throw new Error("Suite mismatch");
         if (verifyReport(artifact.report).length) throw new Error("Mandatory runtime evidence incomplete");
         if (slot.suite === "dns-provider-errors") require("./certops-dns-provider-errors-report").verifyDnsErrors(artifact.report);
+        if (slot.suite === "kubernetes-host") {
+          const evidence = artifact.report.nativeCompaction;
+          if (!evidence || evidence.expiredStatus !== 410 || !["productionClient", "productionObserver", "controlPlaneRestarted", "ownedSingleNodeCluster"].every(key => evidence[key] === true) ||
+              !["originalResourceVersion", "compactedRevision", "observedResourceVersion"].every(key => typeof evidence[key] === "string" && /^[1-9][0-9]{0,19}$/.test(evidence[key])) ||
+              typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
+        }
+        if (slot.suite === "native-agent-api") {
+          const cases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("native-agent-log-"));
+          const rows = artifact.report.nativeLogFaults;
+          if (!Array.isArray(rows) || rows.length !== cases.length) throw new Error("Native log transport fault evidence incomplete");
+          for (const id of cases) {
+            const found = rows.filter(row => row?.scenario === id);
+            if (found.length !== 1 || !["actualNativeConsole", "jobSucceeded", "finalAcknowledged"].every(key => found[0][key] === true) ||
+                found[0].attempts !== 1 || !Number.isInteger(found[0].persistedLines) || found[0].persistedLines < 1 || found[0].persistedLines > 1000 ||
+                found[0].serverDroppedLines !== 0 || found[0].agentGapLines !== (id === "native-agent-log-413-drop-accounting" ? 1 : 0)) throw new Error("Native log transport persistence or gap evidence invalid");
+          }
+        }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          const expiry = artifact.report.nativeValidationExpiry;
+          if (!expiry || expiry.configuredTimeoutSeconds !== 300 || expiry.defaultTimeoutSeconds !== 86400 ||
+              !Number.isFinite(expiry.storedWindowSeconds) || expiry.storedWindowSeconds < 270 || expiry.storedWindowSeconds > 300 ||
+              !Number.isFinite(expiry.monotonicObservedWaitSeconds) || expiry.monotonicObservedWaitSeconds < 300 || expiry.monotonicObservedWaitSeconds > 86400 ||
+              typeof expiry.actualDeadline !== "string" || !Number.isFinite(Date.parse(expiry.actualDeadline)) ||
+              typeof expiry.requestId !== "string" || !/^[1-9][0-9]{0,9}$/.test(expiry.requestId) || Number(expiry.requestId) > 0xffffffff ||
+              typeof expiry.snapshotSha256 !== "string" || !/^[a-f0-9]{64}$/.test(expiry.snapshotSha256) ||
+              !["actualNativeRevocationUnknown", "actualSignedContinuationExpired", "persistedDeadlineSurvivedRestartAndPolicyRestoration", "exactUnacceptedKeyFreed", "noCertificateAccepted", "noCaResubmission", "outgoingTrustedTlsPreserved", "chainCacheValueRestored"].every(key => expiry[key] === true) ||
+              expiry.nativeAndCaClocks !== "actual" || expiry.qualificationScope !== "configured-five-minute-window-not-default-24-hour-elapsed") throw new Error("Actual configured native validation deadline evidence incomplete");
           const count = artifact.report.primaryNativePreflightDispatchCount, cohorts = artifact.report.nativePreflightCohorts;
           if (!Number.isInteger(count) || count < 0 || count > 18 || !Array.isArray(cohorts) || cohorts.length > 128) throw new Error("Native preflight budget evidence incomplete");
           const workspaces = new Set(), agents = new Set();

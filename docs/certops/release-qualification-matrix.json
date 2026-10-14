@@ -170,7 +170,11 @@
       "source": "scripts/certops-kubernetes-host.js",
       "environment": {
         "osFamily": "linux"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-kubernetes-compaction.js",
+        "scripts/certops-kubernetes-compaction-incluster.js"
+      ]
     },
     {
       "id": "windows-host-2022",
@@ -394,7 +398,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -419,7 +426,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -444,7 +454,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -469,7 +482,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -494,7 +510,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -519,7 +538,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -544,7 +566,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -569,7 +594,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -594,7 +622,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -1101,7 +1132,10 @@
         "infra/certops-adcs/owned-ca-request-certificate.ps1",
         "tests/e2e/helpers/certops-adcs-template-mutations.js",
         "infra/certops-adcs/template-safety-mutation.ps1",
-        "tests/e2e/helpers/certops-adcs-local-rules.js"
+        "tests/e2e/helpers/certops-adcs-local-rules.js",
+        "tests/e2e/helpers/certops-adcs-validation-expiry.js",
+        "tests/e2e/helpers/certops-adcs-crl-fault.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
     },
     {
@@ -1169,7 +1203,10 @@
       "source": "tests/e2e/certops-native-agent-e2e.test.js",
       "environment": {
         "osFamily": "linux"
-      }
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-native-log-faults.js"
+      ]
     },
     {
       "id": "linux-csr-bound-observation-api",

@@ -122,13 +122,16 @@ async function main() {
       await assert.rejects(provisioner.reconcile(command),{code:"CERTOPS_K8S_UNMANAGED_RESOURCE_CONFLICT"});
       assert.equal((await client.getCertificate({namespace,name:"owned"})).metadata.labels["certops.tokentimer.io/workspace-id"],resource.metadata.labels["certops.tokentimer.io/workspace-id"]);
     },{evidenceLevel:"real-host",oracle:"Product local policy before actual Kubernetes mutation"});
+    await gate.scenario("controller-native-watch-compaction",async()=>{
+      await require("./certops-kubernetes-compaction").qualifyNativeCompaction({kubectl,namespace,gate});
+    },{evidenceLevel:"real-host",oracle:"Actual owned etcd compaction and control-plane cache restart produce native410; shipped mounted-credential client and observer relist and receive a real Certificate watch update"});
   } catch(error) { primaryError=error; throw error; }
   finally {
     try {
     await gate.scenario("controller-fixture-cleanup",async()=>{
       if(owned) kubectl(["delete","namespace",namespace,"--wait=true","--timeout=120s"]);
     },{evidenceLevel:"real-host",oracle:"Owned namespace deletion completes"});
-    await gate.finish({requiredScenarios:["controller-owned-provision","controller-secret-fallback","controller-incluster-client","controller-readonly-client","controller-local-scope","controller-fixture-cleanup"]});
+    await gate.finish({requiredScenarios:["controller-owned-provision","controller-secret-fallback","controller-incluster-client","controller-readonly-client","controller-local-scope","controller-native-watch-compaction","controller-fixture-cleanup"]});
     } catch(error) {
       if(primaryError) throw new AggregateError([primaryError,error],"Kubernetes journey and cleanup/finalization failed");
       throw error;

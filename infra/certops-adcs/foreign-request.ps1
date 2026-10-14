@@ -36,7 +36,10 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   $proof=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json;if($proof.commonName -ne $commonName -or $proof.requester -ine 'TTQUAL\tt-lab-admin' -or $proof.ownershipToken -ne $OwnershipToken){throw 'Foreign receipt ownership mismatch'}
   Clear-OwnedArtifacts
   $row=Read-OwnedRequest -AllowMissing ($RequestId -eq 0);if(-not $row){Remove-Item -LiteralPath $receipt;@{absent=$true}|ConvertTo-Json -Compress;return};if(($RequestId -ne 0 -and $row.requestId -ne $RequestId) -or $row.disposition -notin @(20,21)){throw 'Refusing foreign or non-issued request revocation'};$RequestId=$row.requestId;if($row.disposition -eq 21){Remove-Item -LiteralPath $receipt;@{requestId=$RequestId;revoked=$true}|ConvertTo-Json -Compress;return}
-  & certutil.exe -revoke ([string]$RequestId) 0 | Out-Null;if($LASTEXITCODE -ne 0){throw 'Owned foreign request revocation failed'}
+  $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($row.certificateB64))
+  try{$serial=$certificate.SerialNumber}finally{$certificate.Dispose()}
+  if($serial -notmatch '^[a-fA-F0-9]{2,128}$'){throw 'Owned foreign request lacks its actual certificate serial'}
+  & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -revoke $serial 0 | Out-Null;if($LASTEXITCODE -ne 0){throw 'Owned foreign request revocation failed'}
   $row=Read-OwnedRequest;if($row.disposition -ne 21){throw 'Owned foreign request not revoked'}
   Remove-Item -LiteralPath $receipt
   @{requestId=$RequestId;revoked=$true}|ConvertTo-Json -Compress;return

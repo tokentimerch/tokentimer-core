@@ -380,7 +380,12 @@ is collected for diagnostics and evidence only, never as the decision.
 obtained, the enrollment moves to `validation_deferred`: the certificate
 stays uninstalled, the key is retained, and validation is retried with
 backoff until an agent-local deadline (default 24 hours), after which the
-enrollment ends `validation_expired` and the key is freed. The agent-local
+enrollment ends `validation_expired` and the key is freed. The host operator may
+shorten that window with `adcs.validationTimeoutSeconds` (integer 300–86400);
+omission keeps the 24-hour default, and invalid values fail agent startup.
+The recorded deadline survives restarts and later configuration changes,
+so restoring a longer timeout cannot extend an already deferred enrollment.
+The agent-local
 `adcs.revocationCheck` setting is `require` by default; `best-effort` is an
 explicit local exception, and every certificate accepted under it is
 recorded as such in evidence.

@@ -29,6 +29,14 @@ The public `POST /api/v1/workspaces/:workspaceId/certops/enrollments` request ac
 
 Omitting these fields retains the existing defaults. Explicit nulls, strings, fractional numbers and values outside these bounds are rejected before an enrollment or job is created. These options do not bypass issuer confirmation, local enrollment rules, native certificate validation or approval policy. A certificate that fails the frozen validity policy is refused before acceptance; its unaccepted key is removed and the outgoing IIS binding remains in place.
 
+## Validation-deferral deadline
+
+When native revocation status cannot be obtained, the issued certificate stays uninstalled and its key remains protected in `validation_deferred`. The agent retries validation until a host-local deadline, then reports `validation_expired` and removes only that unaccepted key.
+
+Set `adcs.validationTimeoutSeconds` in the agent's protected `config.json` to an integer from `300` through `86400`. The default is `86400` (24 hours); the option permits shortening the window, not disabling or extending it. Nulls, strings, fractions and out-of-range values prevent agent startup. Restart `TokenTimerAgent` after editing it. This setting belongs to the host operator; an API enrollment or signed snapshot cannot override it.
+
+**Operator guidance:** a short window can discard an otherwise valid issued certificate during a prolonged CRL outage. The deadline is recorded when validation first defers. Restarting the agent or restoring a longer timeout does not extend that enrollment's existing deadline. New enrollments use the new setting; installed or already accepted keys are preserved by installation-recovery custody checks.
+
 ## Where the agent runs
 
 Install the agent on a domain-joined Windows member. The service runs as `LocalSystem` and authenticates to the CA with Kerberos as `DOMAIN\HOST$`. Grant Enroll on the template to that computer account, or to a group that contains it.

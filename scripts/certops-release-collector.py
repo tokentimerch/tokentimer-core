@@ -179,6 +179,22 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
             if type(count) is not int or not 0 <= count <= 18 or not isinstance(cohorts, list) or len(cohorts) > 128:
                 raise ValueError("Invalid native preflight budget evidence")
             result["primaryNativePreflightDispatchCount"] = count
+            expiry = value.get("nativeValidationExpiry")
+            if not isinstance(expiry, dict):
+                raise ValueError("Missing native validation deadline evidence")
+            bounded_expiry = {key: expiry.get(key) is True for key in ("actualNativeRevocationUnknown", "actualSignedContinuationExpired", "persistedDeadlineSurvivedRestartAndPolicyRestoration", "exactUnacceptedKeyFreed", "noCertificateAccepted", "noCaResubmission", "outgoingTrustedTlsPreserved", "chainCacheValueRestored")}
+            for key in ("configuredTimeoutSeconds", "defaultTimeoutSeconds", "storedWindowSeconds", "monotonicObservedWaitSeconds"):
+                if type(expiry.get(key)) not in (int, float) or not 0 <= expiry[key] <= 86400:
+                    raise ValueError("Invalid native deadline duration")
+                bounded_expiry[key] = expiry[key]
+            for key, pattern in (("actualDeadline", r"[0-9TZ:.+\-]{16,40}"), ("requestId", r"[1-9][0-9]{0,9}"), ("snapshotSha256", r"[a-f0-9]{64}")):
+                if not isinstance(expiry.get(key), str) or not re.fullmatch(pattern, expiry[key]):
+                    raise ValueError("Invalid native deadline identity")
+                bounded_expiry[key] = expiry[key]
+            if expiry.get("nativeAndCaClocks") != "actual" or expiry.get("qualificationScope") != "configured-five-minute-window-not-default-24-hour-elapsed":
+                raise ValueError("Invalid native elapsed deadline scope")
+            bounded_expiry.update({"nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"})
+            result["nativeValidationExpiry"] = bounded_expiry
             result["nativePreflightCohorts"] = []
             mutations = value.get("nativeTemplateMutations")
             if not isinstance(mutations, list) or len(mutations) > 32:
@@ -204,6 +220,36 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Invalid native systemd evidence")
             result["nativeWritePath"] = {key: evidence.get(key) is True for key in ("freshExecStartPreEvidence", "hostDacWriteVerified", "allowedWrite")}
             result["nativeWritePath"].update({"deniedError": "EROFS" if evidence.get("deniedError") == "EROFS" else "invalid", "samePeerDacMode": "0777" if evidence.get("samePeerDacMode") == "0777" else "invalid", "nonRootUid": evidence.get("nonRootUid") if type(evidence.get("nonRootUid")) is int and 0 < evidence["nonRootUid"] <= 4294967295 else 0})
+        if value.get("suite") == "kubernetes-host":
+            evidence = value.get("nativeCompaction")
+            if not isinstance(evidence, dict):
+                raise ValueError("Missing native compaction evidence")
+            bounded = {key: evidence.get(key) is True for key in ("productionClient", "productionObserver", "controlPlaneRestarted", "ownedSingleNodeCluster")}
+            bounded["expiredStatus"] = 410 if type(evidence.get("expiredStatus")) is int and evidence["expiredStatus"] == 410 else 0
+            for key in ("originalResourceVersion", "compactedRevision", "observedResourceVersion"):
+                if not isinstance(evidence.get(key), str) or not re.fullmatch(r"[1-9][0-9]{0,19}", evidence[key]):
+                    raise ValueError("Invalid compaction revision")
+                bounded[key] = evidence[key]
+            if not isinstance(evidence.get("certificateUid"), str) or not re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", evidence["certificateUid"]):
+                raise ValueError("Invalid compaction certificate identity")
+            bounded["certificateUid"] = evidence["certificateUid"]
+            result["nativeCompaction"] = bounded
+        if value.get("suite") == "native-agent-api":
+            rows = value.get("nativeLogFaults")
+            if not isinstance(rows, list) or len(rows) > 16:
+                raise ValueError("Invalid native log transport evidence")
+            known = {name for name in known_ids if name.startswith("native-agent-log-")}
+            result["nativeLogFaults"] = []
+            for row in rows:
+                if not isinstance(row, dict) or row.get("scenario") not in known:
+                    raise ValueError("Unknown native log transport scenario")
+                item = {"scenario": row["scenario"]}
+                item.update({key: row.get(key) is True for key in ("actualNativeConsole", "jobSucceeded", "finalAcknowledged")})
+                for key in ("attempts", "persistedLines", "agentGapLines", "serverDroppedLines"):
+                    if type(row.get(key)) is not int or not 0 <= row[key] <= 1000:
+                        raise ValueError("Invalid native log transport counter")
+                    item[key] = row[key]
+                result["nativeLogFaults"].append(item)
         if value.get("suite") == "dns-provider-errors":
             inventory = json.loads((ROOT / "docs/certops/dns-provider-errors.json").read_text())
             expected = {(provider["file"], name) for provider in inventory["providers"] + inventory.get("sharedContracts", []) for name in provider["requiredTests"]}

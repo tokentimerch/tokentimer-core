@@ -6670,6 +6670,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,
+    adcsValidationTimeoutSeconds: config.adcs?.validationTimeoutSeconds,
     adcsEnrollmentRules: Array.isArray(config.adcs?.enrollmentRules)
       ? config.adcs.enrollmentRules
       : [],

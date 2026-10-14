@@ -2148,8 +2148,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js",
-      "remainingCoverage": "Actual protocol and API incremental stream persistence/cursor paging/final closure are covered; stream closure explicitly does not fabricate terminal job success. Browser console rendering during real native execution and all interruption/terminal states still require qualified E2E."
+      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Actual protocol and API incremental stream persistence/cursor paging/final closure are covered; stream closure explicitly does not fabricate terminal job success. Browser console rendering during real native execution and all interruption/terminal states still require qualified E2E. Eighteen focused native-process scenarios now pass, including actual noop console persistence/finalization/restart and four real transport fault/counter cases. Harmless noop evidence does not qualify all certificate operations or browser rendering."
     },
     {
       "id": "experience.log-pagination",
@@ -2181,8 +2181,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-agent-log-boundaries-e2e.test.js",
-      "remainingCoverage": "Actual API bounds, sequence-gap/drop accounting, late/conflicting replay, atomic noncontiguous refusal and telemetry final closure are covered using synthetic public diagnostics. Fleet quotas, daily budget pressure, reconnect/413 accounting and retention under real agent execution remain."
+      "implementation": "tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-agent-log-boundaries-e2e.test.js; tests/e2e/certops-native-agent-e2e.test.js; tests/e2e/helpers/certops-native-log-faults.js",
+      "remainingCoverage": "Actual API bounds, replay and synthetic diagnostic gap/drop cases are complemented by four passing actual native Linux process/API/PostgreSQL fault scenarios:503/429/network retries, lost committed acknowledgement with exact cached replay, recursive413 splitting, and permanent single-line413 with exactly one agent gap and no double counting. Genuine console lines and unchanged successful noop execution are independently checked; no diagnostic batches are injected. Fleet/daily quotas, exhausted long retry budgets, retained history and certificate-operation interruption/Windows/browser variants remain distinct coverage."
     },
     {
       "id": "experience.log-disabled",

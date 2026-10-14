@@ -10,7 +10,9 @@ const { spawn } = require("node:child_process");
 const { createApiFixture } = require("./helpers/certops-api-fixture");
 const { createRegisteredAgent } = require("./helpers/certops-registered-agent");
 const { createHostGate } = require("../../packages/agent/scripts/host-gate");
-const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", "native-agent-cleanup"];
+const { createNativeLogFaults, cases: logFaultCases } = require("./helpers/certops-native-log-faults");
+const logFaults = createNativeLogFaults();
+const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-cleanup"];
 async function wait(check, timeout = 30000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 100)); }
@@ -31,6 +33,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
   gate.report.executionScope = "Unmodified native Node agent with real API signing leases results and persisted state; deliberate loopback transport faults; harmless noop jobs only";
   let mode = "normal", agent, proxy, ready = false, failure, cleanup = "failed";
   let rejected = 0, bindingRejected = 0, misdeliveredJob, capturedOwnJob, replayRejections = 0, heartbeatCount = 0, claimCount = 0, blockedResults = 0, blockedLeases = 0, leak = false;
+  const heartbeatFacts = { declaredOperations: -1, lastStatus: 0, acceptedObserveOnly: 0 };
   const prohibited = new Set(), counters = new Map(), children = [];
   const count = (jobId, field) => { const row = counters.get(jobId) || { results: 0, evidence: 0, leases: 0, mutations: 0 }; row[field]++; counters.set(jobId, row); };
   const row = async (id) => (await fixture.pool.query("SELECT status,attempt_count,claim_id,result_metadata FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
@@ -44,7 +47,9 @@ test("real native agent signed gates durable outbox restart and observe-only beh
     catch { child.kill("SIGKILL"); await wait(() => child.exitCode !== null || child.signalCode !== null, 5000); }
   }
   function configure(enabled = true) {
-    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ serverUrl: `http://127.0.0.1:${proxy.address().port}`, agentId, allowInsecureLocalHttp: true, pollIntervalMs: 250, heartbeatIntervalMs: 500, discovery: null, windowsDiscovery: { enabled: false }, execution: { enabled, dryRun: false }, policy: { allowedPaths: [root], allowedCommands: {} } }), { mode: 0o600 });
+    // Keep the expanded fault suite within the real 120/minute machine-token
+    // budget instead of raising or bypassing the server's production limiter.
+    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ serverUrl: `http://127.0.0.1:${proxy.address().port}`, agentId, allowInsecureLocalHttp: true, pollIntervalMs: 1000, heartbeatIntervalMs: 3000, discovery: null, windowsDiscovery: { enabled: false }, execution: { enabled, dryRun: false }, policy: { allowedPaths: [root], allowedCommands: {} } }), { mode: 0o600 });
   }
   function start(bootstrap) {
     const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", TOKENTIMER_AGENT_CONFIG_DIR: configDir, ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}), ...(bootstrap ? { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: bootstrap.plaintextToken, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID: String(bootstrap.token.id) } : {}) };
@@ -75,14 +80,15 @@ test("real native agent signed gates durable outbox restart and observe-only beh
     await gate.preflight(); ready = true;
     proxy = http.createServer((request, response) => {
       const faultMode = mode; const chunks = []; let size = 0;
-      const respond = (status, output = Buffer.alloc(0)) => { if (!response.destroyed && !response.writableEnded && !response.headersSent) response.writeHead(status, { "content-type": "application/json", "content-length": output.length }).end(output); };
+      const respond = (status, output = Buffer.alloc(0), headers = {}) => { if (!response.destroyed && !response.writableEnded && !response.headersSent) response.writeHead(status, { "content-type": "application/json", "content-length": output.length, ...headers }).end(output); };
       request.on("data", (chunk) => { size += chunk.length; if (size > 1048576) request.destroy(); else chunks.push(chunk); });
       request.on("end", () => {
         if (request.method !== "POST" || !request.url.startsWith("/api/v1/certops/agent/")) { respond(403); return; }
         const body = Buffer.concat(chunks); let parsed;
         try { parsed = JSON.parse(body.toString()); } catch { respond(400); return; }
+        if (logFaults.incoming(request.url, parsed, response, respond)) return;
         const jobId = parsed.body?.jobId || request.url.match(/jobs\/([^/]+)\/lease/)?.[1];
-        if (request.url.endsWith("/heartbeat")) heartbeatCount++;
+        if (request.url.endsWith("/heartbeat")) { heartbeatCount++; heartbeatFacts.declaredOperations = Array.isArray(parsed.body?.supportedOperations) ? parsed.body.supportedOperations.length : -1; }
         if (request.url.endsWith("/claim")) claimCount++;
         if (jobId && request.url.endsWith("/results")) count(jobId, parsed.messageType === "evidence" ? "evidence" : "results");
         if (jobId && parsed.messageType === "result" && parsed.body.rejectionReason === "job_replay_rejected") replayRejections++;
@@ -97,6 +103,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
           reply.on("end", () => {
             let output = Buffer.concat(parts);
             try {
+              if (request.url.endsWith("/heartbeat")) { heartbeatFacts.lastStatus = reply.statusCode; if (reply.statusCode === 200 && Array.isArray(parsed.body?.supportedOperations) && parsed.body.supportedOperations.length === 0) heartbeatFacts.acceptedObserveOnly++; }
               if (request.url.endsWith("/claim") && faultMode === "normal" && !capturedOwnJob) {
                 const envelope = JSON.parse(output.toString());
                 if (envelope.jobs?.length) capturedOwnJob = structuredClone(envelope.jobs[0]);
@@ -120,6 +127,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
                 }
                 output = Buffer.from(JSON.stringify(envelope));
               }
+              if (logFaults.replied(request.url, parsed, reply.statusCode, output, response)) return;
               respond(reply.statusCode, output);
             } catch { respond(502); }
           }); reply.on("error", () => respond(502));
@@ -151,6 +159,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
       const after=await read();assert.deepEqual(after.items,persisted.items);assert.equal(after.logsComplete,true);
       assert.equal((await row(id)).attempt_count,1);
     },{oracle:"Actual native process console batches, authenticated API persistence and stream finalization survive real process restart; no diagnostic lines injected"});
+    await logFaults.qualify({ gate, fixture, prefix, create, row, stop, start, wait, prohibited });
     await gate.scenario(scenarios[3], async () => {
       const before = ["credential", "signing-key-pin.json"].map((file) => hashFile(path.join(configDir, file))); const seen = (await agentRow()).last_seen_at;
       await stop(); start(); await wait(async () => Date.parse((await agentRow()).last_seen_at) > Date.parse(seen)); assert.deepEqual(["credential", "signing-key-pin.json"].map((file) => hashFile(path.join(configDir, file))), before);
@@ -220,6 +229,10 @@ test("real native agent signed gates durable outbox restart and observe-only beh
     });
     await gate.scenario(scenarios[8], async () => {
       await stop(); configure(false); const before = claimCount, heartbeats = heartbeatCount; const id = await create(); start(); await wait(() => heartbeatCount >= heartbeats + 3);
+      gate.report.observeOnlyDiagnostics = { beforeClaims: before, afterClaims: claimCount, beforeHeartbeats: heartbeats, afterHeartbeats: heartbeatCount, jobStatus: (await row(id)).status, advertisedOperations: (await agentRow()).supported_operations.length, leakedCredential: leak, heartbeatFacts };
+      // An observed HTTP request is not a committed capability declaration.
+      await wait(async () => heartbeatFacts.acceptedObserveOnly > 0 && (await agentRow()).supported_operations.length === 0);
+      gate.report.observeOnlyDiagnostics.advertisedOperations = (await agentRow()).supported_operations.length;
       assert.equal(claimCount, before); assert.equal((await row(id)).status, "pending"); assert.equal((await agentRow()).supported_operations.length, 0); assert.equal(leak, false);
     });
   } catch (error) { failure = error; }

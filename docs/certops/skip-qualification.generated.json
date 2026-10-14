@@ -1170,7 +1170,7 @@
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 23,
+      "line": 25,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
