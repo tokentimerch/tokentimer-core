@@ -347,6 +347,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     }
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
+      require("./ipv6-shadow-fixture").assertCleanupSafe(workDir);
       require("./orphan-journal-fixture").assertCleanupSafe(workDir);
       require("./journal-read-refusal-fixture").assertCleanupSafe(workDir);
       require("./packaged-helper-runtime-fixture").assertCleanupSafe(workDir);
@@ -386,6 +387,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         }
       }
       require("./state-read-refusal-fixture").assertCleanupSafe(workDir);
+      require("./ipv6-shadow-fixture").assertCleanupSafe(workDir);
       require("./orphan-journal-fixture").assertCleanupSafe(workDir);
       require("./journal-read-refusal-fixture").assertCleanupSafe(workDir);
       fs.rmSync(workDir, { recursive: true, force: true });

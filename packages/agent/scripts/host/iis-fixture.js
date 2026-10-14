@@ -203,6 +203,13 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
       shadowOwned = false;
       assert.equal(await checkSniPrecedenceConflict({ binding }), undefined, "removing owned shadow must clear warning");
       await expectServed(port, certificates[1].thumbprint, servername);
+      if (gate) await gate.scenario("windows-iis-ipv6-native-shadow-rollback", async () => {
+        const fixture = require("./ipv6-shadow-fixture");
+        gate.report.nativeIpv6SniShadow = await fixture.qualifyIpv6Shadow({ certificates, powershell, run, workDir });
+        fixture.verifyProof(gate.report.nativeIpv6SniShadow);
+        gate.report.fixtureSources ||= [];
+        for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
+      }, { evidenceLevel: "real-host", oracle: "Actual IPv6 HTTP.sys shadow causes real production verification failure and rollback; native endpoint and independently trusted IPv6 TLS recover, separate IPv4 sibling stays unchanged" });
       if (gate) await gate.scenario("windows-iis-rollback-failure", async () => {
         // Remove only the owned predecessor's public store copy. Its exact
         // recorded CNG key remains owned and is deleted by outer teardown.
@@ -228,6 +235,8 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     }
   } catch (error) { primaryError = error; throw error; }
   finally {
+    // Preserve certificate keys still borrowed by an unresolved nested fixture.
+    require("./ipv6-shadow-fixture").assertCleanupSafe(workDir);
     for (let i = 0; i < 4; i += 1) {
       const receipt = path.join(directory, `certificate-${i}.receipt`);
       if (fs.existsSync(receipt)) {

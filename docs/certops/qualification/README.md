@@ -154,3 +154,5 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [Native orphan reconciliation and open enrollment protection](windows/native-orphan-journal-protection.md): supporting CNG/journal controls with explicit installed-service, CA and age-policy exclusions.
 
 - [Installed public IIS refusal](windows/installed-public-iis-refusal.md): real public deploy admission, installed-agent signed refusal, claim-bound failure audit and two protected CNG/IIS/TLS endpoints. All ten hosted Windows/key-profile cells remain unexecuted.
+
+- [IPv6 SNI shadow and rollback](windows/ipv6-sni-shadow-rollback.md): concrete IPv6 native failure/recovery with a separate preserved IPv4 sibling; native execution pending.

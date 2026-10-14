@@ -234,7 +234,8 @@
         "packages/agent/src/keys/index.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
         "packages/agent/scripts/host/orphan-journal-fixture.js",
-        "packages/agent/src/job-journal/index.js"
+        "packages/agent/src/job-journal/index.js",
+        "packages/agent/scripts/host/ipv6-shadow-fixture.js"
       ]
     },
     {
@@ -550,7 +551,8 @@
         "packages/agent/src/keys/index.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
         "packages/agent/scripts/host/orphan-journal-fixture.js",
-        "packages/agent/src/job-journal/index.js"
+        "packages/agent/src/job-journal/index.js",
+        "packages/agent/scripts/host/ipv6-shadow-fixture.js"
       ]
     },
     {
