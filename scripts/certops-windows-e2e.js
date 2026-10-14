@@ -35,6 +35,10 @@ async function main() {
     assert.equal(twoRenewals.suite,"windows-two-unattended-renewals");
     assert.deepEqual(require("./certops-qualification-report").verifyReport(twoRenewals),[]);
     require("../tests/e2e/helpers/certops-windows-two-renewals").verifyProof(twoRenewals.nativeTwoRenewals);
+    const dryRun = JSON.parse(fs.readFileSync("qualification-results/windows-certificate-dry-run.json", "utf8"));
+    assert.equal(dryRun.suite, "windows-certificate-dry-run");
+    assert.deepEqual(require("./certops-qualification-report").verifyReport(dryRun), []);
+    require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(dryRun.nativeCertificateDryRun);
     if (keyProfile === "rsa-2048") {
       const renameRefusal=JSON.parse(fs.readFileSync("qualification-results/windows-first-rename-refusal.json","utf8"));
       assert.equal(renameRefusal.suite,"windows-installer-first-rename-refusal");

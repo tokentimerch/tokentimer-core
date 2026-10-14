@@ -102,6 +102,23 @@ test("Windows two-cycle evidence requires both native generations and refuses ex
   }
 });
 
+test("Windows certificate dry-run requires native observations in every server and key-profile cell", () => {
+  const helper = require("../tests/e2e/helpers/certops-windows-certificate-dry-run");
+  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === helper.suite);
+  assert.equal(slots.length, 10);
+  const proof = { scope: helper.scope, admission: "production-service-explicit-mode", deployPlanSteps: 3, renewPlanSteps: 6, ...Object.fromEntries(helper.fields.map(field => [field, true])) };
+  for (const slot of slots) {
+    assert.deepEqual(slot.requiredSources, helper.requiredSources);
+    const value = suiteArtifact(helper.suite, slot.source, { nativeCertificateDryRun: proof });
+    value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+    value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+    const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+    assert.deepEqual(verifyMatrix([value], options), []);
+    for (const field of Object.keys(proof)) { const invalid = structuredClone(value); delete invalid.report.nativeCertificateDryRun[field]; assert.ok(verifyMatrix([invalid], options).length, field); }
+    const stale = structuredClone(value); stale.report.fixtureSources[0].sha256 = "0".repeat(64); assert.ok(verifyMatrix([stale], options).length);
+  }
+});
+
 test("browser audit requires all six executions and current UI/API source evidence", () => {
   const suite = "browser-certificate-audit", slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
   const value = suiteArtifact(suite, slot.source, {});

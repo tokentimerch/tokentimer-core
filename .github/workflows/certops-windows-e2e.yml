@@ -194,6 +194,7 @@ jobs:
             qualification-results/windows-output-privacy-${{ matrix.key_profile }}.json
             qualification-results/windows-wrong-spki-${{ matrix.key_profile }}.json
             qualification-results/windows-two-renewals-${{ matrix.key_profile }}.json
+            qualification-results/windows-certificate-dry-run.json
             qualification-results/windows-candidate-${{ matrix.key_profile }}.json
             qualification-results/windows-source-upgrade.json
             qualification-results/windows-first-rename-refusal.json

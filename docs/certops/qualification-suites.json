@@ -1109,6 +1109,10 @@
       "windows-canonical-candidate-reapplication": "e2e",
       "windows-canonical-unmodified-uninstall": "e2e",
       "windows-canonical-owned-cleanup": "e2e"
+    },
+    "windows-certificate-dry-run": {
+      "windows-certificate-deploy-dry-run": "e2e",
+      "windows-certificate-renew-dry-run": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1568,6 +1572,13 @@
       "system",
       "disposableHost",
       "api"
+    ],
+    "windows-certificate-dry-run": [
+      "windows",
+      "system",
+      "installedAgent",
+      "api",
+      "iis"
     ]
   },
   "suites": {
@@ -2674,6 +2685,10 @@
       "windows-canonical-candidate-reapplication",
       "windows-canonical-unmodified-uninstall",
       "windows-canonical-owned-cleanup"
+    ],
+    "windows-certificate-dry-run": [
+      "windows-certificate-deploy-dry-run",
+      "windows-certificate-renew-dry-run"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2768,6 +2783,7 @@
     "browser-certificate-audit": "e2e",
     "windows-two-unattended-renewals": "e2e",
     "renewal-key-facts-api": "integration",
-    "windows-canonical-root-lifecycle": "e2e"
+    "windows-canonical-root-lifecycle": "e2e",
+    "windows-certificate-dry-run": "e2e"
   }
 }

@@ -44,6 +44,22 @@ def elapsed_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_windows_certificate_dry_run_keeps_only_complete_bounded_observations(self):
+        flags = ("priorRealIssuanceVerified", "authenticatedPlansPersisted", "nativeCertificateInventoryUnchanged", "machineKeyMetadataUnchanged", "exactCngCustodyUnchanged", "httpSysBindingUnchanged", "trustedTlsUnchanged", "configurationCredentialPinUnchanged", "dnsProxyRequestsUnchanged")
+        proof = {**dict.fromkeys(flags, True), "scope": "installed-windows-signed-certificate-plans-native-state-and-dns-observation", "admission": "production-service-explicit-mode", "deployPlanSteps": 3, "renewPlanSteps": 6}
+        report = {"suite": "windows-certificate-dry-run", "nativeCertificateDryRun": {**proof, "machineKeyNames": "sentinel", "credential": "sentinel"}}
+        result = collector.sanitized_report(report, {report["suite"]}, set())
+        self.assertEqual(result["nativeCertificateDryRun"], proof)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for key, expected in proof.items():
+            with self.subTest(field=key):
+                invalid = json.loads(json.dumps(report)); del invalid["nativeCertificateDryRun"][key]
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(invalid, {report["suite"]}, set())
+                invalid = json.loads(json.dumps(report)); invalid["nativeCertificateDryRun"][key] = False if expected is True else (0 if type(expected) is int else "incorrect")
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(invalid, {report["suite"]}, set())
+
     def test_canonical_installer_and_completed_console_keep_only_bounded_facts(self):
         cases = [
             ("windows-canonical-root-lifecycle", "nativeCanonicalRoot", ("initialRootAbsent", "initialServiceAbsent", "ownershipRecordedBeforeInstall", "originalInstallerBytesUnchanged", "canonicalInstalledHostVerified", "localSystemServiceVerified", "authenticatedRegistration", "bootstrapRegistryScrubbed", "restartChangedServicePid", "freshHeartbeatAfterRestart", "candidateReapplicationSucceeded", "configurationCredentialAndPinPreserved", "freshHeartbeatAfterReapplication", "unmodifiedUninstallerSucceeded", "serviceAndAppRemoved", "uninstallPreservedState", "exactOwnedRootRemoved"), {"scope": "unmodified-candidate-cli-canonical-root-same-version-reapplication"}),

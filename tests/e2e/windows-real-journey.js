@@ -85,7 +85,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   let holdDns = false;
   let heldDnsObserved = false;
   const heldResponses = new Set();
+  let dnsProxyRequests = 0;
   const dnsProxy = http.createServer((request, response) => {
+    dnsProxyRequests++;
     if (holdDns && request.method === "POST") {
       heldDnsObserved = true; request.resume(); heldResponses.add(response);
       response.once("close", () => heldResponses.delete(response)); return;
@@ -387,6 +389,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.ok(Date.parse(managed.not_after) <= Date.now() + (managed.renew_before_days || 30) * 86400000, "disposable Pebble leaf must naturally fall within the renewal window");
     const automation = await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE", [workspaceId, certificateId]);
     assert.equal(automation.rows.length, 1, "derived profile must enable the active management period");
+    await require("./helpers/certops-windows-certificate-dry-run").qualifyCertificateDryRun({repoRoot,pool,workspaceId,userId,agentId,certificateId,configDir,domain,port,roots,thumbprint,initialJobId:job.id,issuePayload:input.body.payload,profile,powershell:ps,run:command,waitUntil,ownedJobs,dnsRequestCount:()=>dnsProxyRequests});
     await require("./helpers/certops-windows-wrong-leaf").qualifyWrongLeaf({publicSession,pool,workspaceId,agentId,certificateId,configDir,workDir,repoRoot,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil,ownedJobs});
     const worker = await import(require("node:url").pathToFileURL(path.join(repoRoot, "apps/worker/src/certops-worker.js")).href);
     const schedulerEnv = { ...process.env, CERTOPS_ENABLED: "true" };

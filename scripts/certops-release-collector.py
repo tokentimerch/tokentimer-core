@@ -568,6 +568,17 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Invalid compaction certificate identity")
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
+        if value.get("suite") == "windows-certificate-dry-run":
+            dry_run = value.get("nativeCertificateDryRun")
+            flags = ("priorRealIssuanceVerified", "authenticatedPlansPersisted", "nativeCertificateInventoryUnchanged", "machineKeyMetadataUnchanged", "exactCngCustodyUnchanged", "httpSysBindingUnchanged", "trustedTlsUnchanged", "configurationCredentialPinUnchanged", "dnsProxyRequestsUnchanged")
+            if (not isinstance(dry_run, dict)
+                    or dry_run.get("scope") != "installed-windows-signed-certificate-plans-native-state-and-dns-observation"
+                    or dry_run.get("admission") != "production-service-explicit-mode"
+                    or any(dry_run.get(key) is not True for key in flags)
+                    or type(dry_run.get("deployPlanSteps")) is not int or dry_run["deployPlanSteps"] != 3
+                    or type(dry_run.get("renewPlanSteps")) is not int or dry_run["renewPlanSteps"] != 6):
+                raise ValueError("Invalid native Windows certificate dry-run evidence")
+            result["nativeCertificateDryRun"] = {key: dry_run[key] for key in ("scope", "admission", "deployPlanSteps", "renewPlanSteps", *flags)}
         if value.get("suite") == "native-agent-api":
             dry_run = value.get("nativeCertificateDryRun")
             flags = ("deployDryRunComplete", "renewDryRunComplete", "authenticPlanEvidence", "deployedFilesUnchangedDuringDryRun", "custodyFilesUnchangedDuringDryRun", "servedLeafUnchangedDuringDryRun", "noCommandsOrGatewayCallsDuringDryRun", "realDeployChangedFileAndTrustedTls", "realValidateAndReloadObserved", "realRenewCommandReachedCaAndDnsSentinels", "renewControlFailedBeforeIssuance", "identityAndConfigRestored", "ownedResourcesCleaned")

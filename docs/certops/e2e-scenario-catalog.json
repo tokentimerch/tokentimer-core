@@ -391,7 +391,7 @@
         "linux-native-api-postgres"
       ],
       "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
-      "remainingCoverage": "Native Linux source additionally completes signed certificate deploy and renew dry runs through production service admission, persists authentic three/six-step plans, and checks unchanged exact custody/deployed files, trusted served TLS and absent command/gateway calls. Real deploy changes the trusted TLS leaf; a deliberately failing renewal command reaches owned CA/DNS sentinels to prove oracle sensitivity. These controls do not qualify real ACME or DNS-provider issuance. Hosted execution and Windows certificate-store, CNG and IIS dry-run variants remain pending."
+      "remainingCoverage": "Native Linux source additionally completes signed certificate deploy and renew dry runs through production service admission, persists authentic three/six-step plans, and checks unchanged exact custody/deployed files, trusted served TLS and absent command/gateway calls. Real deploy changes the trusted TLS leaf; a deliberately failing renewal command reaches owned CA/DNS sentinels to prove oracle sensitivity. These controls do not qualify real ACME or DNS-provider issuance. Installed Windows source compares My certificates, machine CNG metadata and protected key identity, HTTP.sys binding, trusted TLS, configuration/credential/pin and owned DNS proxy traffic across both plans; genuine prior issuance proves native capability. Hosted execution remains pending; arbitrary process absence, direct CA traffic and transient ETW effects are outside these Windows observations."
     },
     {
       "id": "execution.lease-before-write",
