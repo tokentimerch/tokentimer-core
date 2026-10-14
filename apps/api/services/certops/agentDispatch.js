@@ -2031,7 +2031,7 @@ async function reconcileProvisionedCertificate({
 }
 
 /**
- * A successful 'renew' against a certificate that is already 'active' never
+ * A successful 'renew' against an active or discovered certificate never
  * reaches reconcileProvisionedCertificate's UPDATE: that function only locks
  * rows WHERE status = 'provisioning' and returns null for anything else, by
  * design (it exists to promote a first issuance, not to touch a certificate
@@ -2052,7 +2052,8 @@ async function reconcileProvisionedCertificate({
  * refresh mirrors the new facts onto the linked token in the same
  * transaction (deliberately still narrower than first reconciliation: no
  * status transition, no profile derivation -- those already happened once
- * and are not re-run on every renewal).
+ * and are not re-run on every renewal). Discovery can leave an issued source
+ * in 'discovered', which remains renewable and accepts the same evidence.
  */
 async function refreshRenewedCertificateEvidence({
   client,
@@ -2069,7 +2070,7 @@ async function refreshRenewedCertificateEvidence({
        FROM managed_certificates
       WHERE workspace_id = $1
         AND id = $2::uuid
-        AND status = 'active'
+        AND status IN ('active', 'discovered')
       AND EXISTS (SELECT 1 FROM certificate_jobs j
         JOIN certops_management_periods p ON p.id = j.management_period_id
         WHERE j.workspace_id = $1 AND j.id = $3 AND p.ended_at IS NULL
@@ -2134,7 +2135,7 @@ async function refreshRenewedCertificateEvidence({
               updated_at = NOW()
         WHERE workspace_id = $1
           AND id = $2::uuid
-          AND status = 'active'`,
+          AND status IN ('active', 'discovered')`,
       [workspaceId, job.subject_id, reason],
     );
     await auditWriter({
@@ -2183,7 +2184,7 @@ async function refreshRenewedCertificateEvidence({
             updated_at = NOW()
       WHERE workspace_id = $1
         AND id = $2::uuid
-        AND status = 'active'`,
+        AND status IN ('active', 'discovered')`,
     [
       workspaceId,
       job.subject_id,

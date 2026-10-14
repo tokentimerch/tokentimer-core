@@ -828,6 +828,21 @@ async function ensureManagedCertificateToken(
   return tokenId;
 }
 
+async function syncAcceptedCertificateToken(client, row) {
+  const record = toInventoryRecord(row);
+  if (record?.tokenId && record.fingerprintSha256 && record.notAfter) {
+    // Use the returned row: observation-ordering triggers may keep the prior
+    // material instead of accepting a delayed observation.
+    await updateCertificateTokenFacts({
+      client,
+      workspaceId: record.workspaceId,
+      tokenId: record.tokenId,
+      certificate: { ...record, subject: row.subject },
+    });
+  }
+  return record;
+}
+
 async function upsertManagedCertificate(client, certificate, options, chainIndex) {
   const keyReference = normalizeKeyReference(options.keyReference);
   const params = [
@@ -935,7 +950,7 @@ async function upsertManagedCertificate(client, certificate, options, chainIndex
     params,
   );
 
-  return toInventoryRecord(result.rows[0]);
+  return syncAcceptedCertificateToken(client, result.rows[0]);
 }
 
 /**
@@ -1026,7 +1041,7 @@ async function refreshManagedCertificateById(
       CERTOPS_CERTIFICATE_NOT_FOUND,
     );
   }
-  return toInventoryRecord(result.rows[0]);
+  return syncAcceptedCertificateToken(client, result.rows[0]);
 }
 
 /**
@@ -1167,7 +1182,7 @@ async function upsertManagedCertificateByMonitorSource(
     params,
   );
 
-  return toInventoryRecord(result.rows[0]);
+  return syncAcceptedCertificateToken(client, result.rows[0]);
 }
 
 // Only these two sources are ever produced by the agent-observation pipeline
@@ -1778,6 +1793,41 @@ async function retireManagedCertificate(clientOrPool, options) {
   } finally { if (ownsTransaction) client.release(); }
 }
 
+async function updateCertificateTokenFacts({
+  client,
+  workspaceId,
+  tokenId,
+  certificate,
+}) {
+  const domains = certificateDomainsFor(certificate);
+  const expiration = formatDateYmd(certificate.notAfter);
+
+  await client.query(
+    `UPDATE tokens
+        SET expiration = COALESCE($3, expiration),
+            issuer = COALESCE($4, issuer),
+            serial_number = COALESCE($5, serial_number),
+            subject = COALESCE($6, subject),
+            domains = CASE
+              WHEN COALESCE(array_length($7::text[], 1), 0) > 0
+                THEN $7::text[]
+              ELSE domains
+            END,
+            updated_at = NOW()
+      WHERE id = $1
+        AND workspace_id = $2`,
+    [
+      tokenId,
+      workspaceId,
+      expiration,
+      certificate.issuer || null,
+      certificate.serialNumber || null,
+      certificate.subject || null,
+      domains,
+    ],
+  );
+}
+
 /**
  * Link a just-verified provisioning certificate into the token-centric
  * inventory, and mirror its facts onto the token exactly as discovery and
@@ -1813,33 +1863,7 @@ async function linkReconciledCertificateToken({
       null,
     ));
 
-  const domains = certificateDomainsFor(certificate);
-  const expiration = formatDateYmd(certificate.notAfter);
-
-  await client.query(
-    `UPDATE tokens
-        SET expiration = COALESCE($3, expiration),
-            issuer = COALESCE($4, issuer),
-            serial_number = COALESCE($5, serial_number),
-            subject = COALESCE($6, subject),
-            domains = CASE
-              WHEN COALESCE(array_length($7::text[], 1), 0) > 0
-                THEN $7::text[]
-              ELSE domains
-            END,
-            updated_at = NOW()
-      WHERE id = $1
-        AND workspace_id = $2`,
-    [
-      tokenId,
-      workspaceId,
-      expiration,
-      certificate.issuer || null,
-      certificate.serialNumber || null,
-      certificate.subject || null,
-      domains,
-    ],
-  );
+  await updateCertificateTokenFacts({ client, workspaceId, tokenId, certificate });
 
   await client.query(
     `UPDATE managed_certificates

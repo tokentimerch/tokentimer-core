@@ -1061,6 +1061,73 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     });
     assert.equal(await countActiveManagedCertificatesWithClient(db, ws), 1);
   });
+  it("keeps certificate tokens current across discovery and repeated agent renewals", async () => {
+    const ws = await workspace(), tid = await token(ws), ref = randomUUID();
+    await db.query("UPDATE tokens SET expiration='2026-10-20',notes='Operator notes' WHERE id=$1", [tid]);
+    const mc = await source(ws, A, {
+      source: "agent_issuance", sourceRef: ref, status: "active",
+      tokenId: tid, notAfter: "2026-10-20",
+    });
+    await upsertManagedCertificateByMonitorSource(db,
+      { fingerprintSha256: A, commonName: "app.example", notAfter: "2026-10-20" },
+      { workspaceId: ws, source: "agent_issuance", sourceRef: ref,
+        reuseCertificateId: mc.id, tokenId: tid, status: "discovered", observedAt: new Date() }, 0);
+    const refresh = require("../../apps/api/services/certops/agentDispatch")._test.refreshRenewedCertificateEvidence;
+    for (const [fingerprint, expiry] of [[B, "2027-01-12"], [C, "2027-04-12"]]) {
+      const renewed = await job(ws, mc, "claimed");
+      renewed.claim_id = randomUUID();
+      await db.query("UPDATE certificate_jobs SET claim_id=$2 WHERE id=$1", [renewed.id, renewed.claim_id]);
+      await db.query(
+        "INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,metadata) VALUES($1,$2,'validation.passed',$3,$4::jsonb)",
+        [ws, renewed.id, renewed.claim_id, JSON.stringify({ step: "verify",
+          fingerprintSha256: fingerprint, validTo: expiry + "T00:00:00.000Z",
+          subject: "CN=app.example", serialNumber: fingerprint.slice(0, 8),
+          subjectAltNames: "app.example" })]);
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await refresh({ client, workspaceId: ws, job: renewed });
+        assert.equal(result?.refreshed, true, "discovered certificates must accept verified renewals");
+        await client.query("COMMIT");
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+      const t = (await db.query("SELECT expiration::text,notes,serial_number FROM tokens WHERE id=$1", [tid])).rows[0];
+      assert.equal(t.expiration, expiry);
+      assert.equal(t.serial_number, fingerprint.slice(0, 8));
+      assert.equal(t.notes, "Operator notes");
+      await db.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1", [renewed.id]);
+    }
+  });
+  for (const observedSource of ["agent_filesystem", "agent_windows", "cert_manager"]) {
+    it("synchronizes token facts from accepted " + observedSource + " observations and rejects stale projection", async () => {
+      const ws = await workspace(), tid = await token(ws), ref = randomUUID();
+      await db.query("UPDATE tokens SET expiration='2026-10-20',notes='Keep my notes' WHERE id=$1", [tid]);
+      const mc = await source(ws, A, { source: observedSource, sourceRef: ref, tokenId: tid, notAfter: "2026-10-20" });
+      const observedAt = new Date();
+      const options = { workspaceId: ws, source: observedSource, sourceRef: ref, tokenId: tid, status: "discovered", observedAt };
+      const material = { fingerprintSha256: B, commonName: "app.example", subject: "CN=app.example",
+        subjectAltNames: ["DNS:app.example"], issuer: "New issuer", serialNumber: "new-serial", notAfter: "2027-01-12" };
+      await upsertManagedCertificateByMonitorSource(db, material, options, 0);
+      const read = async () => (await db.query("SELECT expiration::text,issuer,serial_number,notes FROM tokens WHERE id=$1", [tid])).rows[0];
+      assert.deepEqual(await read(), { expiration: "2027-01-12", issuer: "New issuer", serial_number: "new-serial", notes: "Keep my notes" });
+      await upsertManagedCertificateByMonitorSource(db,
+        { ...material, fingerprintSha256: A, notAfter: "2026-10-20", serialNumber: "stale" },
+        { ...options, observedAt: new Date(observedAt.getTime() - 30000) }, 0);
+      assert.equal((await read()).expiration, "2027-01-12");
+      assert.equal((await read()).serial_number, "new-serial");
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+        await upsertManagedCertificateByMonitorSource(client,
+          { ...material, fingerprintSha256: C, notAfter: "2027-04-12" },
+          { ...options, observedAt: new Date(observedAt.getTime() + 1000) }, 0);
+        assert.equal((await client.query("SELECT expiration::text FROM tokens WHERE id=$1", [tid])).rows[0].expiration, "2027-04-12");
+        await client.query("ROLLBACK");
+      } finally { client.release(); }
+      assert.equal((await read()).expiration, "2027-01-12");
+      assert.equal((await period(mc)).current_identity_id, (await identity(ws, B)).id);
+    });
+  }
   it("v64 repairs already-applied v63 without exempting closed or foreign periods from admission", async () => {
     const ws = await workspace(1),
       first = await source(ws, A),
