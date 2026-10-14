@@ -43,6 +43,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+- [Native preflight process containment](adcs/preflight-process-containment.md)
+
 
 - [Temporary file response barriers (supporting controls)](adcs/response-delivery-barrier-support.md)
 
