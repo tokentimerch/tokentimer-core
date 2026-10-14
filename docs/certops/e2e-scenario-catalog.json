@@ -451,14 +451,14 @@
     {
       "id": "windows-cng.rsa-ec",
       "outcome": "Generate and use supported RSA/P-256/P-384 machine keys with expected provider, key usage and non-exportability.",
-      "status": "partial",
+      "status": "implemented",
       "evidenceLevel": "real-host",
       "requiredEnvironments": [
         "windows-2022",
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "All supported RSA sizes (2048/3072/4096) and EC curves (P256/P384) have native CSR, accept, same-container and non-exportability host scenarios. Independently asserting the generated CNG key usage is still a source gap; exact shipped architecture/package and native host execution qualification remain pending."
+      "implementationNotes": "Implemented native host source covers all supported RSA sizes (2048/3072/4096) and EC curves (P256/P384) in both machine stores. It independently verifies provider, size, exact container identity, non-exportability, actual accepted certificate KeyUsage copied from the production CSR, and native CNG signing permission. Ten source-bound usage cases require exact RSA digitalSignature+keyEncipherment or EC digitalSignature flags and known signing-capable native operation masks. This does not promise an exact default NCrypt policy or ECDSA decryption support. Native Server execution and package/architecture qualification remain separate and pending."
     },
     {
       "id": "windows-cng.csr-identity",

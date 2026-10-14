@@ -210,7 +210,8 @@
         "packages/agent/scripts/build-windows-chain-helper.js",
         "packages/agent/reference/adcs-chain/main.go",
         "packages/agent/reference/adcs-chain/keyrefs/result.go",
-        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go"
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
+        "packages/agent/scripts/host/cng-key-usage-proof.js"
       ]
     },
     {
@@ -362,7 +363,8 @@
         "packages/agent/scripts/build-windows-chain-helper.js",
         "packages/agent/reference/adcs-chain/main.go",
         "packages/agent/reference/adcs-chain/keyrefs/result.go",
-        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go"
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
+        "packages/agent/scripts/host/cng-key-usage-proof.js"
       ]
     },
     {

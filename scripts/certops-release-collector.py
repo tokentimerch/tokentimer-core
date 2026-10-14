@@ -362,6 +362,26 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
         if value.get("suite") == "windows-host":
+            usage = value.get("nativeKeyUsage")
+            if (not isinstance(usage, dict) or usage.get("scope") != "native-copied-csr-x509-usage-and-cng-signing-permission"
+                    or usage.get("copiedActualCsrExtensions") is not True
+                    or usage.get("privateKeyUsageClaim") != "signing-permitted-not-exact-default-ncrypt-mask"
+                    or not isinstance(usage.get("cases"), list) or len(usage["cases"]) != 10):
+                raise ValueError("Incomplete native certificate/CNG key usage evidence")
+            expected_usage = {"rsa-2048": 160, "rsa-3072": 160, "rsa-4096": 160, "ec-p256": 128, "ec-p384": 128}
+            known_cases = {f"{profile}/{store}" for profile in expected_usage for store in ("My", "WebHosting")}
+            bounded_usage, seen_usage = [], set()
+            for item in usage["cases"]:
+                if not isinstance(item, dict) or not isinstance(item.get("caseId"), str) or item["caseId"] not in known_cases or item["caseId"] in seen_usage:
+                    raise ValueError("Invalid or repeated native key usage identity")
+                seen_usage.add(item["caseId"])
+                if (type(item.get("certificateUsageFlags")) is not int or item["certificateUsageFlags"] != expected_usage[item["caseId"].split("/")[0]]
+                        or type(item.get("cngAllowedOperations")) is not int or not 0 <= item["cngAllowedOperations"] <= 0xffffffff
+                        or (item["cngAllowedOperations"] != 0x00ffffff and item["cngAllowedOperations"] & ~7 != 0)
+                        or item["cngAllowedOperations"] & 2 != 2):
+                    raise ValueError("Native certificate usage or signing permission mismatch")
+                bounded_usage.append({key: item[key] for key in ("caseId", "certificateUsageFlags", "cngAllowedOperations")})
+            result["nativeKeyUsage"] = {"scope": usage["scope"], "copiedActualCsrExtensions": True, "privateKeyUsageClaim": usage["privateKeyUsageClaim"], "cases": bounded_usage}
             survivor_fields = ("differentCertificateCrossStoreProtected", "sameCertificateCrossStoreProtected", "originalKeyPreserved", "replacementTrustedTlsPreserved", "ownedCrossStoreCopiesRemoved")
             survivors = value.get("nativeKeySurvivors")
             if not isinstance(survivors, dict) or any(survivors.get(field) is not True for field in survivor_fields):

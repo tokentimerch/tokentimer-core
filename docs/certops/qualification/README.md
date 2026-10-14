@@ -42,6 +42,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 - [Installed certificate dry-run native state and DNS observation](windows/certificate-dry-run.md)
 - [Native CNG export refusal and operational key custody](windows/cng-export-refusal-qualification.md)
+- [Native certificate KeyUsage and CNG signing permission](windows/native-key-usage.md)
 - [IIS SNI isolation between sites sharing one port](windows/shared-port-sni-qualification.md)
 - [Native store and HTTP.sys discovery selectors](windows/native-discovery-qualification.md)
 - [Canonical-root unmodified Windows installer lifecycle](windows/canonical-root-lifecycle.md)

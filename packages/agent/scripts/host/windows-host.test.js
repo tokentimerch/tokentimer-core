@@ -59,6 +59,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
   const acceptedCertificates = [];
   const acceptedStores = new Map();
   const custodyCertificates = [];
+  const keyUsageCases = [];
   try {
     await gate.scenario("windows-discovery-fingerprint", async () => {
       const receipt = path.join(workDir, "discovery.receipt").replace(/'/g, "''");
@@ -140,22 +141,31 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         const accepted = await acceptCertificateViaCng({ certificatePem, workDir: directory, store });
         assert.equal(accepted.ok, true, JSON.stringify(accepted));
         assert.equal(accepted.thumbprint, issuedThumbprint);
-        const key = JSON.parse(powershell(`$c=Get-Item 'Cert:\\LocalMachine\\${store}\\${issuedThumbprint}'; $k=$null; try { $k=if ($c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1') { [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c) } else { [Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) }; [pscustomobject]@{hasPrivateKey=$c.HasPrivateKey; name=$k.Key.KeyName; exportPolicy=[string]$k.Key.ExportPolicy; provider=$k.Key.Provider.Provider; size=$k.KeySize} | ConvertTo-Json -Compress } finally { if ($null -ne $k) { $k.Dispose() }; $c.Dispose() }`));
+        const key = JSON.parse(powershell(`$c=Get-Item 'Cert:\\LocalMachine\\${store}\\${issuedThumbprint}'; $k=$null; try { $k=if ($c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1') { [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c) } else { [Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) }; $usage=@($c.Extensions|Where-Object {$_.Oid.Value -eq '2.5.29.15'});if($usage.Count -ne 1){throw 'Exactly one actual certificate KeyUsage extension required'};$parsedUsage=[Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new($usage[0],$usage[0].Critical); [pscustomobject]@{certificateUsageFlags=[int]$parsedUsage.KeyUsages;cngAllowedOperations=[uint32]$k.Key.KeyUsage;hasPrivateKey=$c.HasPrivateKey; name=$k.Key.KeyName; exportPolicy=[string]$k.Key.ExportPolicy; provider=$k.Key.Provider.Provider; size=$k.KeySize} | ConvertTo-Json -Compress } finally { if ($null -ne $k) { $k.Dispose() }; $c.Dispose() }`));
         assert.equal(key.hasPrivateKey, true);
         assert.equal(key.name, containerName);
         assert.equal(key.exportPolicy, "None");
         assert.equal(key.provider, "Microsoft Software Key Storage Provider");
         assert.equal(key.size, Number(algorithm.match(/(\d+)$/)[1]), "native key size must match requested algorithm");
+        const usage = { caseId: `${algorithm}/${store}`, certificateUsageFlags: key.certificateUsageFlags, cngAllowedOperations: key.cngAllowedOperations };
+        require("./cng-key-usage-proof").verifyCase(usage);
+        keyUsageCases.push(usage);
         custodyCertificates.push({algorithm,store,thumbprint:issuedThumbprint,containerName});
         if (store !== "My") assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${issuedThumbprint}')`), "False", "mirror must not leave duplicate My certificate");
       }
+      const usageProof = require("./cng-key-usage-proof");
+      gate.report.nativeKeyUsage = { scope: usageProof.SCOPE, copiedActualCsrExtensions: true, privateKeyUsageClaim: "signing-permitted-not-exact-default-ncrypt-mask", cases: keyUsageCases };
+      usageProof.verifyProof(gate.report.nativeKeyUsage);
+      gate.report.fixtureSources ||= [];
+      const usageSource = "packages/agent/scripts/host/cng-key-usage-proof.js";
+      gate.report.fixtureSources.push({ file: usageSource, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", usageSource))).digest("hex") });
       await gate.scenario("windows-native-chain-verdicts", async () => {
         await require("./adcs-chain-fixture").qualifyNativeChain({ run, workDir });
       }, { evidenceLevel: "real-host", oracle: "real CryptoAPI chain evaluation of owned CA/CNG leaf: no-CDP revocation, changed CA key pin and actual expired leaf; no enterprise enrollment claim" });
       } finally {
         powershell(`$p='Cert:\\LocalMachine\\Root\\${caThumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Owned signing root remains' }`);
       }
-    }, { evidenceLevel: "real-host", oracle: "certutil KSP key enumeration and independent .NET accepted certificate private-key container/export policy" });
+    }, { evidenceLevel: "real-host", oracle: "certutil KSP enumeration and independent native .NET accepted certificate/provider/export policy, actual copied-CSR X509 KeyUsage and CNG signing permission across five profiles and two machine stores; no exact default NCrypt policy claim" });
     await gate.scenario("windows-enrollment-lock-cng-contention", async () => {
       gate.report.nativeEnrollmentContention = await require("./enrollment-contention-fixture").qualifyEnrollmentContention({ powershell, run, workDir });
       gate.report.fixtureSources ||= [];
