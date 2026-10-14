@@ -20,6 +20,7 @@ const {
   countActiveManagedCertificatesWithClient,
   countQuotaConsumingNewFingerprints,
   upsertManagedCertificateByMonitorSource,
+  listManagedCertificates,
 } = require("../../apps/api/services/certops/inventory");
 
 const A = "a".repeat(64),
@@ -1120,6 +1121,9 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       (await db.query("SELECT COUNT(*)::int n FROM tokens WHERE workspace_id=$1", [ws])).rows[0].n,
       1,
     );
+    const linked = (await listManagedCertificates({ workspaceId: ws, client: db })).items;
+    assert.deepEqual(linked.map(item => item.fingerprintSha256), [C],
+      "renewal snapshots alone do not become additional token action targets");
   });
   it("updates a shared token even when another source has a different certificate identity", async () => {
     const ws = await workspace(), tid = await token(ws);
@@ -1136,6 +1140,20 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       2,
       "different live source identities do not gate the token write",
     );
+    const linked = (await listManagedCertificates({ workspaceId: ws, client: db })).items;
+    assert.deepEqual(new Set(linked.map(item => item.fingerprintSha256)), new Set([B, C]),
+      "a second source on the older fingerprint creates the actual token UI ambiguity");
+    await retireCertificateIdentity({ workspaceId: ws, identityId: (await identity(ws, C)).id,
+      expectedFingerprintSha256: C, status: "revoked", reason: "Selected certificate revoked", client: db });
+    assert.equal((await identity(ws, C)).lifecycle_status, "revoked");
+    assert.equal((await identity(ws, B)).lifecycle_status, "active",
+      "explicit retirement does not retire another fingerprint sharing the token");
+    assert.equal((await db.query("SELECT cert_lifecycle_status FROM tokens WHERE id=$1", [tid])).rows[0].cert_lifecycle_status,
+      "active", "the token stays active while another live source identity remains");
+    await retireCertificateIdentity({ workspaceId: ws, identityId: (await identity(ws, B)).id,
+      expectedFingerprintSha256: B, status: "revoked", reason: "Other certificate revoked", client: db });
+    assert.equal((await db.query("SELECT cert_lifecycle_status FROM tokens WHERE id=$1", [tid])).rows[0].cert_lifecycle_status,
+      "revoked", "retiring all linked live identities retires the token");
   });
   it("updates the token before fencing a renewal result whose source already rotated", async () => {
     const ws = await workspace(), tid = await token(ws);

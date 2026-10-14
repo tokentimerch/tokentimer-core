@@ -43,11 +43,10 @@ describe('ambiguous certificate inventory actions', () => {
     __certificateLinkAmbiguous: true,
   };
 
-  it('keeps desktop and mobile lifecycle actions disabled, without offering hard deletion', () => {
+  it('allows desktop and mobile retirement to choose a certificate while keeping renewal gated', () => {
     const handlers = show(token);
     for (const button of [
       ...screen.getAllByRole('button', { name: /Renew/, hidden: true }),
-      ...screen.getAllByRole('button', { name: /Retire/, hidden: true }),
     ]) {
       expect(button).toBeDisabled();
       fireEvent.click(button);
@@ -56,7 +55,16 @@ describe('ambiguous certificate inventory actions', () => {
       screen.queryByRole('button', { name: /Delete/, hidden: true })
     ).not.toBeInTheDocument();
     expect(handlers.onOpenRenew).not.toHaveBeenCalled();
-    expect(handlers.onDeleteToken).not.toHaveBeenCalled();
+    const retireButtons = screen.getAllByRole('button', {
+      name: /Retire/,
+      hidden: true,
+    });
+    for (const button of retireButtons) {
+      expect(button).not.toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(handlers.onDeleteToken).toHaveBeenCalledTimes(retireButtons.length);
+    expect(handlers.onDeleteToken).toHaveBeenCalledWith(token.id);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(handlers.onOpenTokenModal).toHaveBeenCalledWith(token);
   });
