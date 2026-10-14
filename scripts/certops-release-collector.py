@@ -1104,6 +1104,42 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if counts[2] > 1000 or counts[1] != counts[0] + 1 or counts[2] != counts[1] + 1 or not expiry[0] < expiry[1] < expiry[2]:
                 raise ValueError("Invalid native AD CS renewal generation progression")
             result["nativeAdcsTwoRenewals"] = bounded_cycles
+            cycles = value.get("nativeAdcsBackgroundRenewals")
+            flags = ("defaultSqlNowSelection", "automaticSourceAndRealMode", "distinctExpiryGenerations", "independentCaRequests", "freshLeafSerialAndSpki", "protectedUniqueMachineKeys", "nativeIisAndSniCutovers", "independentTrustedTls", "claimBoundVerificationEvidence", "unchangedStoredProfile", "sameManagementPeriod", "predecessorCustodyPreserved", "actualInventoryMatchesLatest", "ownedEnrollmentCleanupRegistered", "noDateOrJournalOverrides")
+            strings = {"scope": "two-real-default-interval-worker-native-adcs-renewals", "renewalProtocol": "fresh-enrollment-with-new-key-and-csr", "schedulerInvocation": "actual-production-runner-default-interval"}
+            if (not isinstance(cycles, dict) or any(cycles.get(key) != expected for key, expected in strings.items())
+                    or any(cycles.get(key) is not True for key in flags)
+                    or cycles.get("workerIntervalQualified") is not True or cycles.get("expiryCleanupQualified") is not False
+                    or type(cycles.get("successfulAutomationCycles")) is not int or cycles["successfulAutomationCycles"] != 2):
+                raise ValueError("Invalid native AD CS renewal cycle scope")
+            bounded_cycles = {key: cycles[key] for key in (*strings, *flags, "workerIntervalQualified", "expiryCleanupQualified", "successfulAutomationCycles")}
+            patterns = {"requestIds": r"[1-9][0-9]{0,9}", "fingerprints": r"[a-f0-9]{64}", "spkiFingerprints": r"[a-f0-9]{64}", "serialNumbers": r"[a-f0-9]{1,128}", "containerNames": r"tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"}
+            for key, pattern in patterns.items():
+                values = cycles.get(key)
+                if (not isinstance(values, list) or len(values) != 3
+                        or any(not isinstance(item, str) or not re.fullmatch(pattern, item) for item in values)
+                        or len(set(values)) != 3):
+                    raise ValueError("Invalid native AD CS renewal generation identities")
+                bounded_cycles[key] = values
+            if any(int(item) > 0xffffffff for item in cycles["requestIds"]):
+                raise ValueError("Invalid native AD CS request identity")
+            for key in ("caRequestCounts", "expiryEpochs"):
+                values = cycles.get(key)
+                if not isinstance(values, list) or len(values) != 3 or any(type(item) is not int or not 0 < item <= 9007199254740991 for item in values):
+                    raise ValueError("Invalid native AD CS renewal generation counters")
+                bounded_cycles[key] = values
+            counts, expiry = cycles["caRequestCounts"], cycles["expiryEpochs"]
+            if counts[2] > 1000 or counts[1] != counts[0] + 1 or counts[2] != counts[1] + 1 or not expiry[0] < expiry[1] < expiry[2]:
+                raise ValueError("Invalid native AD CS renewal generation progression")
+            result["nativeAdcsBackgroundRenewals"] = bounded_cycles
+            lifecycle = cycles.get("workerLifecycle")
+            expected = {"failed": False, "starts": 1, "created": 2, "stops": 1, "forwarded": True, "exitCode": 0, "nativeDrained": True, "bridgeReady": True}
+            if (not isinstance(lifecycle, dict) or any(type(lifecycle.get(key)) is not type(want) or lifecycle[key] != want for key, want in expected.items())
+                    or any(type(lifecycle.get(key)) is not int for key in ("ticks", "finishes", "summaries", "firstTickElapsedMs"))
+                    or not 2 <= lifecycle["ticks"] <= 20 or not 2 <= lifecycle["finishes"] <= lifecycle["ticks"]
+                    or lifecycle["summaries"] != lifecycle["finishes"] or not 60000 <= lifecycle["firstTickElapsedMs"] <= 180000):
+                raise ValueError("Invalid actual background worker lifecycle")
+            result["nativeAdcsBackgroundRenewals"]["workerLifecycle"] = {key: lifecycle[key] for key in (*expected, "ticks", "finishes", "summaries", "firstTickElapsedMs")}
             abandon = value.get("nativeUncertainAbandon")
             flags = ("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged")
             counts = ("caRequestsAtFault", "caRequestsAfterRecovery", "caRequestsAfterAbandon")

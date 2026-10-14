@@ -150,6 +150,11 @@ def operator_ambiguity_proof():
     return {**dict.fromkeys(flags, True), "scope": "native-zero-request-uncertainty-with-operator-created-same-csr-ambiguity", "fixtureOrigin": "operator-created-two-real-system-submissions-of-the-same-public-csr", "resolvedIssuingCaAddress": "10.64.0.4", "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 120000, "caRequestsAtFault": 0, "caRequestsAfterOperatorSubmissions": 2, "caRequestsAfterAmbiguousRecovery": 2, "caRequestsAfterExplicitRecovery": 2, "requestIds": ["101", "102"], "fingerprints": ["1" * 64, "2" * 64], "serialNumbers": ["aa", "bb"], "csrSpkiSha256": "3" * 64, "csrSha256": "4" * 64, "selectedRequestId": "101", "unusedRequestId": "102", "enrollmentId": enrollment, "containerName": "tokentimer-enr-" + enrollment, "jobIds": [value * 8 + "-" + value * 4 + "-" + value * 4 + "-" + value * 4 + "-" + value * 12 for value in ("2", "3", "4")], "reconcileSearchFrom": 100, "scanWindowSize": 16}
 
 
+def background_adcs_proof():
+    return {**two_adcs_renewals_proof(), "scope": "two-real-default-interval-worker-native-adcs-renewals", "schedulerInvocation": "actual-production-runner-default-interval", "workerIntervalQualified": True,
+            "workerLifecycle": {"failed": False, "starts": 1, "ticks": 2, "finishes": 2, "summaries": 2, "created": 2, "stops": 1, "forwarded": True, "firstTickElapsedMs": 60010, "exitCode": 0, "nativeDrained": True, "bridgeReady": True}}
+
+
 def two_adcs_renewals_proof():
     flags = ("defaultSqlNowSelection", "automaticSourceAndRealMode", "distinctExpiryGenerations", "independentCaRequests", "freshLeafSerialAndSpki", "protectedUniqueMachineKeys", "nativeIisAndSniCutovers", "independentTrustedTls", "claimBoundVerificationEvidence", "unchangedStoredProfile", "sameManagementPeriod", "predecessorCustodyPreserved", "actualInventoryMatchesLatest", "ownedEnrollmentCleanupRegistered", "noDateOrJournalOverrides")
     return {**dict.fromkeys(flags, True), "scope": "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", "renewalProtocol": "fresh-enrollment-with-new-key-and-csr", "schedulerInvocation": "qualification-invoked-production-default-sweep", "workerIntervalQualified": False, "successfulAutomationCycles": 2, "expiryCleanupQualified": False,
@@ -869,6 +874,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
         value["browserNativePreflightDispatch"] = {"count": 2, "jobIds": ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"], "privateReceipt": "sentinel"}
         value["nativeAdcsTwoRenewals"] = two_adcs_renewals_proof()
+        value["nativeAdcsBackgroundRenewals"] = background_adcs_proof()
         value["nativeAdcsTwoRenewals"]["privateKey"] = "sentinel"
         value["nativeUncertainAbandon"]["private"] = "sentinel"
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
@@ -1095,6 +1101,16 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeAdcsTwoRenewals"], two_adcs_renewals_proof())
+        self.assertEqual(result[0][1]["nativeAdcsBackgroundRenewals"], background_adcs_proof())
+        for key in background_adcs_proof():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeAdcsBackgroundRenewals"][key]
+            with self.subTest(background_missing=key), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for key, bad in {"failed": True, "ticks": 1, "finishes": 1, "created": 3, "stops": 0, "forwarded": False, "firstTickElapsedMs": 59999, "exitCode": 1, "nativeDrained": False, "bridgeReady": False}.items():
+            invalid = json.loads(json.dumps(value)); invalid["nativeAdcsBackgroundRenewals"]["workerLifecycle"][key] = bad
+            with self.subTest(background_lifecycle=key), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+
         for key, expected in two_adcs_renewals_proof().items():
             with self.subTest(two_adcs_renewals_field=key):
                 invalid = json.loads(json.dumps(value))

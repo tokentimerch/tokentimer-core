@@ -153,6 +153,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           if (!browserDispatch || Object.keys(browserDispatch).sort().join(",") !== "count,jobIds" || browserDispatch.count !== 2 || !Array.isArray(browserDispatch.jobIds) || browserDispatch.jobIds.length !== 2 ||
               !browserDispatch.jobIds.every(id => typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) || new Set(browserDispatch.jobIds.map(id => id.toLowerCase())).size !== 2) throw new Error("Browser native preflight dispatch accounting incomplete");
           require("../tests/e2e/helpers/certops-adcs-two-renewals").verifyProof(artifact.report.nativeAdcsTwoRenewals);
+          require("../tests/e2e/helpers/certops-adcs-background-renewals").verifyProof(artifact.report.nativeAdcsBackgroundRenewals);
           require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").assertProof(artifact.report.nativeUncertainAbandon);
           require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity").verifyProof(artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-issued-cancellation").verifyIssuedCancellationFacts(artifact.report.nativeIssuedCancellation);

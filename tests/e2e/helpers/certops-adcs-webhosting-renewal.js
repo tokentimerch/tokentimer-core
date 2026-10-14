@@ -85,6 +85,7 @@ function verifyProof(proof) {
  * subject is only a selector; durable exact container/store/thumb ownership
  * authorizes removal. Missing receipts preserve the whole fixture. */
 function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
+  assert.notEqual(receipt.workerPendingVerification, true, "Preserve native ownership while actual background renewal remains unresolved");
   assert.notEqual(receipt.pendingCaRenewalUnresolved, true, "Preserve native ownership while pending CA renewal remains unresolved");
   assert.notEqual(receipt.guiCancelPendingVerification, true, "Preserve native ownership while GUI Cancel remains unresolved");
   assert.equal(receipt.store, store);
@@ -141,6 +142,47 @@ function capacityCleanupPlan(receipt, entries, readRecord) {
     "My",
     /^certops-adcs-[a-f0-9]{10}-capacity[0-5]\.example\.test$/,
   );
+}
+// The existing primary RSA fixture has its own registry; capacity selectors stay exact.
+function backgroundCleanupPlan(receipt, entries, readRecord) {
+  return storeCleanupPlan(receipt, entries, readRecord, "My", /^certops-adcs-[a-f0-9]{10}-rsa2048\.example\.test$/);
+}
+function registerBackgroundStoreCertificate(registry, {domain, certificateId, enrollmentIds}) {
+  const receipt = {store:"My",domain,certificateId,enrollmentIds:[...enrollmentIds],thumbprints:[]};
+  backgroundCleanupPlan(receipt,[],()=>null);
+  assert.equal(new Set(receipt.enrollmentIds).size,receipt.enrollmentIds.length);
+  assert.ok(!registry.length);
+  registry.push(receipt);
+  return receipt;
+}
+// Later existing scenarios may accept another leaf for the same primary identity.
+// Adopt only IDs already recorded by the parent and exact durable My receipts.
+function refreshBackgroundEnrollmentOwnership(receipts, enrollmentIds, readRecord, {workspaceId,rows,readJournal}) {
+  assert.match(workspaceId,uuid);
+  assert.ok(Array.isArray(rows));
+  for(const receipt of receipts) {
+    backgroundCleanupPlan(receipt,[],()=>null);
+    for(const id of enrollmentIds) {
+      assert.match(id,uuid);
+      const containerName=buildEnrollmentContainerName(id), record=readRecord(containerName);
+      if(record?.certificateId !== receipt.certificateId) continue;
+      if(record.status === "generated" && record.acceptedThumbprint === null && record.acceptedStore === null) continue;
+      assert.equal(record.status,"enrolled_by_agent");
+      assert.equal(record.containerName,containerName);
+      assert.equal(record.acceptedStore,"My");
+      assert.match(record.acceptedThumbprint,/^[A-F0-9]{40}$/);
+      const matches=rows.filter(row=>row.id===id && row.workspace_id===workspaceId && row.certificate_id===receipt.certificateId);
+      assert.equal(matches.length,1,"Preserve enrollment without exact workspace ownership");
+      assert.ok(["installed","install_failed"].includes(matches[0].state));
+      assert.ok(matches[0].job_ids.includes(record.jobId),"Preserve receipt with unowned issuing job");
+      const journal=readJournal(id);
+      assert.equal(journal.kind,"valid");
+      assert.equal(journal.journal.containerName,containerName);
+      assert.ok(["installed","install_failed"].includes(journal.journal.state));
+      assert.match(journal.journal.leafSha256,/^[a-f0-9]{64}$/);
+      if(!receipt.enrollmentIds.includes(id))receipt.enrollmentIds.push(id);
+    }
+  }
 }
 function registerCapacityStoreCertificate(registry, { domain, certificateId }) {
   const receipt = {
@@ -225,7 +267,7 @@ function assertDrainAbsent(drain, current) {
   return true;
 }
 function cleanupRegisteredStore({ receipts, configDir, ps, drain }, capacity) {
-  const validate = capacity ? capacityCleanupPlan : cleanupPlan;
+  const validate = capacity === "background" ? backgroundCleanupPlan : capacity ? capacityCleanupPlan : cleanupPlan;
   const store = capacity ? "My" : "WebHosting",
     otherStore = capacity ? "WebHosting" : "My";
   if (!receipts.length) return;
@@ -568,6 +610,10 @@ module.exports = {
   assertRegisteredCleanupComplete,
   registerCapacityStoreCertificate,
   cleanupCapacity,
+  backgroundCleanupPlan,
+  refreshBackgroundEnrollmentOwnership,
+  registerBackgroundStoreCertificate,
+  cleanupBackground: context => cleanupRegisteredStore(context,"background"),
   captureServiceDrain,
   assertDrainAbsent,
   cleanupWebHosting,

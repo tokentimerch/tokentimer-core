@@ -860,7 +860,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -979,7 +989,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1098,7 +1118,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1217,7 +1247,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1336,7 +1376,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1455,7 +1505,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1574,7 +1634,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1693,7 +1763,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -1812,7 +1892,17 @@
         "apps/api/routes/certops.js",
         "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
         "infra/certops-adcs/ca-rekey.ps1",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {
@@ -2465,7 +2555,17 @@
         "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
         "apps/dashboard/src/components/certops/certopsJobsApi.js",
         "apps/dashboard/src/hooks/useCertOpsUrlState.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-adcs-background-renewals.js",
+        "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
+        "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
+        "tests/e2e/helpers/certops-adcs-worker-job.ps1",
+        "tests/e2e/helpers/certops-adcs-worker-stop-bridge.mjs",
+        "apps/worker/src/runner.js",
+        "apps/worker/src/db.js",
+        "apps/worker/src/logger.js",
+        "apps/api/services/certops/jobSigning.js",
+        "scripts/load-root-env.js"
       ]
     },
     {

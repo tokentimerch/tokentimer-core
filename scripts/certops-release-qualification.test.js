@@ -53,6 +53,9 @@ function browserAdcsProof() {
   return { ...Object.fromEntries(FLAGS.map(key => [key, true])), scope: SCOPE, lifecycle: "renew-existing-inventory-not-first-issue-or-manual-job", scheduler: "production-default-sweep-not-background-worker-loop", browserEngine: "chromium", browserMutationCount: 6, successfulEnrollments: 1,
     fingerprints: ["a", "b"].map(value => value.repeat(64)), spkiFingerprints: ["c", "d"].map(value => value.repeat(64)), requestId: "17", enrollmentId: uuid("a"), jobId: uuid("b"), profileId: uuid("c"), issuerId: uuid("d") };
 }
+function backgroundAdcsProof() {
+ return {...twoAdcsRenewalsProof(),scope:"two-real-default-interval-worker-native-adcs-renewals",schedulerInvocation:"actual-production-runner-default-interval",workerIntervalQualified:true,workerLifecycle:{failed:false,starts:1,ticks:2,finishes:2,summaries:2,created:2,stops:1,forwarded:true,firstTickElapsedMs:60010,exitCode:0,nativeDrained:true,bridgeReady:true}};
+}
 function twoAdcsRenewalsProof() {
   const { FLAGS } = require("../tests/e2e/helpers/certops-adcs-two-renewals");
   return { scope: "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", renewalProtocol: "fresh-enrollment-with-new-key-and-csr", schedulerInvocation: "qualification-invoked-production-default-sweep", workerIntervalQualified: false,
@@ -256,6 +259,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") },
     nativeIssuedCancellation: { requestId: "17", snapshotSha256: "a".repeat(64), pollIntervalSeconds: 900, schedulerClock: "default-real-now", actualCaIssuedBeforeCancel: true, caLeafSignatureAndCsrSpkiVerified: true, controlPlaneStillPendingBeforeCancel: true, nonExportableKeyPresentBeforeCancel: true, signedTerminalCleanupSucceeded: true, exactUnacceptedKeyAbsent: true, certificateNeverAccepted: true, sameRequestSnapshotAndCsrPreserved: true, noAdditionalCaRequest: true, outgoingTrustedTlsUnchanged: true, terminalReconcileRefused: true, unusedIssuedLeafRevoked: true, databaseDatesRewritten: false, journalRewritten: false },
     nativeAdcsTwoRenewals: twoAdcsRenewalsProof(),
+    nativeAdcsBackgroundRenewals: backgroundAdcsProof(),
     nativeBrowserAbandon: {"scope":"browser-confirmed-real-uncertain-abandon-and-native-unaccepted-key-cleanup","enrollmentId":"11111111-1111-1111-1111-111111111111","cleanupJobId":"22222222-2222-2222-2222-222222222222","abandonPosts":1,"keepPosts":0,"actualUncertainEnrollmentVisible":true,"keepDidNotMutate":true,"explicitConfirmationRequired":true,"exactPublicAbandonAcknowledged":true,"browserAndTrustDrained":true,"actualProductionContinuation":true,"journalAndDatabaseAbandoned":true,"exactUnacceptedKeyAbsent":true,"noAcceptedLeaf":true,"zeroNativeCaRequests":true,"onePublicAudit":true,"originalUnknownEffectPreserved":true},
     nativeWebHostingRenewal: {"scope":"real-adcs-webhosting-issue-and-fresh-key-manual-renewal","store":"WebHosting","expiryCleanupQualified":false,"requestIds":["17","18"],"fingerprints":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"publicIssueAndRenewInstalled":true,"twoIndependentCaRequests":true,"freshSerialSpkiAndKey":true,"webHostingProtectedCustody":true,"myCopiesAbsent":true,"exactNativeIisAndHttpSysStore":true,"trustedSniTls":true,"installedDiscoveryInventory":true,"immutableAcceptedStore":true,"predecessorRetentionStorePreserved":true,"storeQualifiedCleanupRegistered":true},
     nativeLocalRulePairs: localPairsProof(),
@@ -331,6 +335,12 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     const missing=structuredClone(value);delete missing.report.nativeLocalRulePairs[0][flag];assert.ok(verifyMatrix([missing],options).length,flag);
   }
   for(const rows of [undefined,[],[localPairsProof()[0],localPairsProof()[0],localPairsProof()[2]],localPairsProof().map(row=>({...row,rawKey:"private"}))]){const bad=structuredClone(value);bad.report.nativeLocalRulePairs=rows;assert.ok(verifyMatrix([bad],options).length);}
+  for(const key of Object.keys(value.report.nativeAdcsBackgroundRenewals)) {
+    const missing=structuredClone(value);delete missing.report.nativeAdcsBackgroundRenewals[key];assert.ok(verifyMatrix([missing],options).length,key);
+  }
+  for(const [key,bad] of Object.entries({failed:true,ticks:1,finishes:1,created:3,stops:0,forwarded:false,firstTickElapsedMs:59999,exitCode:1,nativeDrained:false,bridgeReady:false})) {
+    const invalid=structuredClone(value);invalid.report.nativeAdcsBackgroundRenewals.workerLifecycle[key]=bad;assert.ok(verifyMatrix([invalid],options).length,key);
+  }
   for (const [key, prior] of Object.entries(value.report.nativeAdcsTwoRenewals)) {
     const missing = structuredClone(value); delete missing.report.nativeAdcsTwoRenewals[key]; assert.ok(verifyMatrix([missing], options).length, key);
     const changed = structuredClone(value); changed.report.nativeAdcsTwoRenewals[key] = Array.isArray(prior) ? [...prior, prior[0]] : typeof prior === "boolean" ? !prior : typeof prior === "number" ? 1 : "unqualified";

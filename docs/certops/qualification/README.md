@@ -82,6 +82,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [AD CS renewal, discovery and retention coordinates in WebHosting](adcs/webhosting-renewal.md)
 - [Native AD CS per-issuer capacity and genuine approval release](adcs/native-issuer-capacity.md)
 - [Two native AD CS renewal generations through default scheduler sweeps](adcs/two-unattended-renewals.md)
+- [Production interval worker and native AD CS renewals](adcs/background-worker-renewals.md)
 - [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
 - [Experimental new IIS binding before durable completion](adcs/bound-install-recovery-experiment.md)
 - [Browser-driven issuer, profile and native AD CS enrollment](adcs/browser-native-journey.md)
