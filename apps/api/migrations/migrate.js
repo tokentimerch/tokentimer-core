@@ -4789,6 +4789,12 @@ const migrations = [
   },
 ];
 
+migrations.push({
+  version: 73,
+  name: "certops_job_alert_context",
+  sql: fs.readFileSync(require("path").join(__dirname, "073-certops-job-alert-context.sql"), "utf8"),
+});
+
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
 // the CertOps numbering. Those installations already have v45 in the ledger,
 // but v45 there was trust-anchor jobs, not observation locality.

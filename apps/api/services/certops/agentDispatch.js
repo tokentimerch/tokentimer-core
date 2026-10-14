@@ -1184,19 +1184,14 @@ async function claimJobs({
             OR EXISTS (
               SELECT 1 FROM certops_management_periods period
               LEFT JOIN certops_certificate_identities identity
-                ON identity.id = COALESCE(cj.certificate_identity_id,
-                  period.current_identity_id)
+                ON identity.id = cj.certificate_identity_id
+               AND identity.workspace_id = cj.workspace_id
               WHERE period.workspace_id = cj.workspace_id
                 AND period.managed_certificate_id::text = cj.subject_id
                 AND period.ended_at IS NULL
                 AND (cj.management_period_id IS NULL OR cj.management_period_id = period.id)
-                AND (identity.lifecycle_status IS NULL
-                  OR identity.lifecycle_status = 'active'
-                  OR cj.operation NOT IN ('renew', 'deploy', 'reload')
-                  OR (lower(cj.payload->>'targetFingerprintSha256')
-                        IS DISTINCT FROM identity.fingerprint_sha256
-                    AND cj.payload->>'targetFingerprintSha256' IS NOT NULL
-                    AND cj.payload->>'canRestoreOriginal' = 'false'))
+                AND (identity.lifecycle_status = 'active'
+                  OR cj.operation NOT IN ('renew', 'deploy', 'reload'))
             )
           )
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])

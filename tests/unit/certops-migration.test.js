@@ -35,17 +35,17 @@ describe("operational notifications migration", () => {
       migrations.find((entry) => entry.version === 68).name,
       "certops_adcs_awaiting_issuer_and_continue_enrollment",
     );
-    assert.equal(migrations.at(-1).version, 72);
-    assert.equal(migrations.at(-1).name, "certops_profile_issuer");
+    assert.equal(migrations.at(-1).version, 73);
+    assert.equal(migrations.at(-1).name, "certops_job_alert_context");
     assert.match(
       migrations.find((entry) => entry.version === 71).sql,
       /'adcs-template-verdict', 'adcs-submitted', 'adcs-pending'/,
     );
-    assert.match(migrations.at(-1).sql, /fk_certificate_profiles_issuer/);
-    assert.match(migrations.at(-1).sql, /ON DELETE SET NULL \(issuer_id\)/);
+    assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
+    assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 72 }, (_, index) => index + 1),
+      Array.from({ length: 73 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -1871,7 +1871,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 72);
+    assert.equal(sorted[sorted.length - 1], 73);
   });
 });
 

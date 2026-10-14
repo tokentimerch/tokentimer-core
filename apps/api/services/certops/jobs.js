@@ -2010,17 +2010,17 @@ async function createCertificateJob(options) {
     const lifecycle = await db.query(
       `SELECT identity.lifecycle_status, identity.fingerprint_sha256
          FROM managed_certificates mc
-         JOIN certops_certificate_identities identity
+         LEFT JOIN certops_certificate_identities identity
            ON identity.workspace_id = mc.workspace_id
           AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
         WHERE mc.workspace_id = $1 AND mc.id = $2::uuid`,
       [workspaceId, subjectId],
     );
     const identity = lifecycle.rows[0];
-    const targetFingerprint = String(payload.targetFingerprintSha256 || "").replace(/:/g, "").trim().toLowerCase();
-    const replacement = /^[a-f0-9]{64}$/.test(targetFingerprint) &&
-      targetFingerprint !== identity?.fingerprint_sha256 && payload.canRestoreOriginal === false;
-    if (["revoked", "decommissioned"].includes(identity?.lifecycle_status) && !replacement) {
+    if (identity?.lifecycle_status === null) {
+      throw serviceError("An observed certificate fingerprint is required before this operation", CERTOPS_JOB_INVALID);
+    }
+    if (["revoked", "decommissioned"].includes(identity?.lifecycle_status)) {
       throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
     }
   }

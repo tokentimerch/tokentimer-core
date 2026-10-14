@@ -114,8 +114,15 @@ source and period belong to the same workspace; otherwise they are null.
 Observation matching normalizes legacy instance fingerprints on reads with
 `certops_normalize_fingerprint`, including the decommission safety check.
 Slot and unmanaged observations enforce canonical fingerprints with database
-constraints. The same normalizer checks job targets before permitting a
-replacement operation to bypass retirement restrictions.
+constraints. Caller-supplied replacement fingerprints and rollback assertions
+do not bypass retirement restrictions. An accepted replacement first acquires
+its own active fingerprint identity; subsequent jobs bind to that identity.
+
+Renewal-failure alerts require a known immutable job identity and the token
+association captured by the database when the job was inserted. Unknown
+historical attribution and later token relinking suppress delivery rather than
+guessing from the source's current certificate or token. The original job,
+discarded alerts, observations and audit evidence remain available.
 
 Grouped list and detail responses return at most 20 locations, with a full
 `locationCount`. PostgreSQL computes `visibilityUnknown` over all matching

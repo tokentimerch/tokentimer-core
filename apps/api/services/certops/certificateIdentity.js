@@ -736,11 +736,9 @@ async function retireCertificateIdentity({
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('claimed', 'running')
            AND cj.operation IN ('renew', 'deploy', 'reload')
-           AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
-             AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
-             AND cj.payload->>'canRestoreOriginal' = 'false')
+
          LIMIT 1`,
-        [workspaceId, identityId, fingerprint],
+        [workspaceId, identityId],
       );
       if (running.rows.length) {
         fail(
@@ -802,16 +800,14 @@ async function retireCertificateIdentity({
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('pending_approval', 'approved', 'pending')
            AND cj.operation IN ('renew', 'deploy', 'reload')
-           AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
-             AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
-             AND cj.payload->>'canRestoreOriginal' = 'false')
+
         ), locked AS MATERIALIZED (
           SELECT pending.id FROM certificate_jobs pending
             WHERE pending.id IN (SELECT id FROM eligible) FOR UPDATE SKIP LOCKED
         )
         UPDATE certificate_jobs SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
           WHERE id IN (SELECT id FROM locked)`,
-      [workspaceId, identityId, fingerprint],
+      [workspaceId, identityId],
     );
     // Historical jobs retain their identity when a source rotates. Clean up
     // only this identity's unsent alerts, including jobs on rotated sources.
@@ -827,11 +823,13 @@ async function retireCertificateIdentity({
     for (const { token_id: tokenId } of tokens.rows) {
       const sibling = await tx.query(
         `SELECT mc.* FROM managed_certificates mc
-          JOIN certops_certificate_identities identity
+          LEFT JOIN certops_certificate_identities identity
             ON identity.workspace_id = mc.workspace_id
            AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
          WHERE mc.workspace_id = $1 AND mc.token_id = $2
-           AND identity.id <> $3 AND identity.lifecycle_status = 'active'
+           AND identity.id IS DISTINCT FROM $3
+           AND (identity.lifecycle_status = 'active'
+             OR (identity.id IS NULL AND mc.status NOT IN ('revoked','decommissioned')))
          ORDER BY mc.identity_observed_at DESC NULLS LAST, mc.updated_at DESC, mc.id LIMIT 1`,
         [workspaceId, tokenId, identityId],
       );

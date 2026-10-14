@@ -86,7 +86,7 @@ import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
 import RequireManagerRoute from './components/RequireManagerRoute.jsx';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
-import { retireCertificate } from './components/certops/certopsApi.js';
+import { retireCertificateAndRefreshAssets } from './components/certops/certificateRetirement.js';
 import {
   resolveTokenCertificate,
   isRetiredStatus,
@@ -3385,14 +3385,19 @@ function DashboardView({
   const handleRetireConfirm = useCallback(
     async ({ certificate: cert, status, reason, acknowledgeUncertainty }) => {
       if (!cert?.id) return;
-      await retireCertificate(workspaceId, cert.id, {
+      const { refreshFailed } = await retireCertificateAndRefreshAssets({
+        workspaceId,
+        certificate: cert,
         status,
         reason,
         acknowledgeUncertainty,
-        identityId: cert.identityId,
-        fingerprintSha256: cert.fingerprintSha256,
+        tokenId: retireTarget?.token?.id,
+        managedByTokenId,
+        updateTokens: _setTokens,
+        isCurrentWorkspace: () =>
+          dashboardSelectionIdRef.current === workspaceId,
+        refreshCertOps,
       });
-      refreshCertOps();
       onRetireModalClose();
       setRetireTarget(null);
       try {
@@ -3401,9 +3406,20 @@ function DashboardView({
             ? 'Certificate marked revoked in CertOps.'
             : 'Certificate decommissioned.'
         );
+        if (refreshFailed)
+          toast.error(
+            'Certificate retired. Refresh inventory to reload asset details.'
+          );
       } catch (_) {}
     },
-    [workspaceId, refreshCertOps, onRetireModalClose]
+    [
+      workspaceId,
+      retireTarget,
+      managedByTokenId,
+      _setTokens,
+      refreshCertOps,
+      onRetireModalClose,
+    ]
   );
 
   const {

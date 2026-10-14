@@ -322,7 +322,7 @@
           "items": { "type": "string" },
           "uniqueItems": true,
           "not": { "$ref": "#/definitions/certOpsSafeRequiredColumns/not" },
-          "minItems": 9,
+          "minItems": 11,
           "allOf": [
             { "contains": { "const": "id" } },
             { "contains": { "const": "workspace_id" } },
@@ -332,6 +332,7 @@
             { "contains": { "const": "payload" } },
             { "contains": { "const": "result_metadata" } },
             { "contains": { "const": "creation_request_hash" } },
+            { "contains": { "const": "certificate_token_id" } },
             { "contains": { "const": "created_at" } },
             { "contains": { "const": "updated_at" } }
           ]

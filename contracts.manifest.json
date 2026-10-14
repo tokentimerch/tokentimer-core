@@ -147,7 +147,8 @@
           "id": "baseline-minimum-db-shape",
           "kind": "schema",
           "path": "packages/contracts/db/baseline-minimum.schema.json",
-          "status": "existing"
+          "status": "existing",
+          "sha256": "9fdd10c644f367829e6a1680d7744055288ccca7be13fb334dfff726105dfacc"
         }
       ]
     },
