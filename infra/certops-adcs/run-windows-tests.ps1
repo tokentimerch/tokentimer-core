@@ -26,6 +26,8 @@ $env:CERTOPS_ADCS_DISPOSABLE_LAB='1'
 $env:CERTOPS_ADCS_API_URL='https://10.64.0.6'
 $env:CERTOPS_ADCS_REPORT=if($PendingElapsedQualification -eq '1'){'C:\ttqualification\pending-elapsed.json'}else{'C:\ttqualification\enterprise-adcs-report.json'}
 $env:CERTOPS_ADCS_PENDING_ELAPSED=if($PendingElapsedQualification -eq '1'){'1'}else{$null}
+# Every comprehensive base report includes the mandatory native browser cases.
+$env:CERTOPS_ADCS_BROWSER=if($PendingElapsedQualification -eq '1'){$null}else{'1'}
 $env:CERTOPS_ADCS_OFFICER_PASSWORD=$DomainPassword
 $env:CERTOPS_WINDOWS_LANGUAGE=$Language
 $env:GITHUB_ACTIONS='true'

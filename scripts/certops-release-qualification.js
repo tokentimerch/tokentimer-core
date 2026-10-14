@@ -123,6 +123,10 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(artifact.report.nativeBrowserAdcs);
+          const browserDispatch = artifact.report.browserNativePreflightDispatch;
+          if (!browserDispatch || Object.keys(browserDispatch).sort().join(",") !== "count,jobIds" || browserDispatch.count !== 2 || !Array.isArray(browserDispatch.jobIds) || browserDispatch.jobIds.length !== 2 ||
+              !browserDispatch.jobIds.every(id => typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) || new Set(browserDispatch.jobIds.map(id => id.toLowerCase())).size !== 2) throw new Error("Browser native preflight dispatch accounting incomplete");
           require("../tests/e2e/helpers/certops-adcs-two-renewals").verifyProof(artifact.report.nativeAdcsTwoRenewals);
           require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").assertProof(artifact.report.nativeUncertainAbandon);
           require("../tests/e2e/helpers/certops-adcs-issued-cancellation").verifyIssuedCancellationFacts(artifact.report.nativeIssuedCancellation);
@@ -136,7 +140,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               !["actualNativeRevocationUnknown", "actualSignedContinuationExpired", "persistedDeadlineSurvivedRestartAndPolicyRestoration", "exactUnacceptedKeyFreed", "noCertificateAccepted", "noCaResubmission", "outgoingTrustedTlsPreserved", "chainCacheValueRestored"].every(key => expiry[key] === true) ||
               expiry.nativeAndCaClocks !== "actual" || expiry.qualificationScope !== "configured-five-minute-window-not-default-24-hour-elapsed") throw new Error("Actual configured native validation deadline evidence incomplete");
           const count = artifact.report.primaryNativePreflightDispatchCount, cohorts = artifact.report.nativePreflightCohorts;
-          if (!Number.isInteger(count) || count < 0 || count > 18 || !Array.isArray(cohorts) || cohorts.length > 128) throw new Error("Native preflight budget evidence incomplete");
+          if (!Number.isInteger(count) || count < 2 || count > 20 || count - browserDispatch.count > 18 || !Array.isArray(cohorts) || cohorts.length > 128) throw new Error("Native preflight budget evidence incomplete");
           const workspaces = new Set(), agents = new Set();
           for (const cohort of cohorts) {
             if (!cohort || ![cohort.workspaceId, cohort.agentId].every(id => typeof id === "string" && /^[a-f0-9-]{36}$/i.test(id)) ||
@@ -162,7 +166,11 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-historical-source-upgrade") require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "windows-acme-wrong-spki") require("../tests/e2e/helpers/certops-windows-wrong-leaf").verifyProof(artifact.report.nativeWrongSpki);
         if (slot.suite === "windows-native-child-output-privacy") require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(artifact.report, { expectedSha: candidateSha });
-        if (slot.suite === "enterprise-adcs-elapsed-pending-real") require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
+        if (slot.suite === "enterprise-adcs-elapsed-pending-real") {
+          require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
+          const count = artifact.report.primaryNativePreflightDispatchCount;
+          if (count !== undefined && (!Number.isInteger(count) || count < 0 || count > 18)) throw new Error("Elapsed AD CS preflight budget cannot claim the browser exception");
+        }
         if (slot.suite === "core-api-migration-upgrade") {
           require("./certops-migration-upgrade-report").verifyEvidence(artifact.report);
           if (artifact.report.sourceIdentity?.candidate?.sha !== candidateSha) throw new Error("Migration candidate differs from release candidate");

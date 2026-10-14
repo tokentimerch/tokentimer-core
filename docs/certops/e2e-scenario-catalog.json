@@ -1199,8 +1199,8 @@
       "requiredEnvironments": [
         "enterprise-domain-native-adcs"
       ],
-      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Mandatory native source registers the actual LocalSystem candidate, dispatches issuer preflight through the public API, persists native CA/template/SPKI results and confirms the observed key. Enterprise host execution is pending; unsupported discovery transports, all unsafe flags and freshness-expiry variants remain."
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; tests/e2e/helpers/certops-adcs-browser-journey.js",
+      "remainingCoverage": "Mandatory native source registers the actual LocalSystem candidate, dispatches public issuer preflight and persists CA/template/SPKI results. The browser source creates an issuer, selects the independently current CA key by its visible certificate fingerprint, confirms it through the real UI, and executes the required fresh post-confirmation native preflight. No API response is mocked. Protected host/browser execution, unsupported discovery transports and remaining unsafe/freshness combinations remain pending."
     },
     {
       "id": "adcs.preflight-refresh",
@@ -1221,8 +1221,8 @@
       "requiredEnvironments": [
         "enterprise-domain-native-adcs"
       ],
-      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Five algorithm/template variants use the public enrollment API and actual installed LocalSystem agent, native CA issuance/CNG/IIS, persisted evidence and independent served TLS. Host execution is pending; complete browser initiation and all installation/fault variants remain."
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; tests/e2e/helpers/certops-adcs-browser-journey.js",
+      "remainingCoverage": "Five algorithm/template variants use the public enrollment API and installed LocalSystem agent, real CA/CNG/IIS, persisted evidence and independent trusted TLS. Browser source follows the supported existing-inventory path: actual issuer/preflight/confirmation/profile/attachment UI interactions enable automation, a production default scheduler sweep creates enrollment, and actual CA request, fresh leaf/SPKI, protected machine key, SNI binding, claim-bound evidence and visible installed state are independently required. This is renewal of existing inventory; the UI does not provide first-issue or generic manual AD CS enrollment. Protected execution and remaining installation/fault variants are pending."
     },
     {
       "id": "adcs.manager-approval",

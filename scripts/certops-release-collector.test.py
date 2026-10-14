@@ -32,6 +32,14 @@ def key_usage_proof():
             "cases": [{"caseId": f"{profile}/{store}", "certificateUsageFlags": usage, "cngAllowedOperations": 0x00ffffff} for store in ("My", "WebHosting") for profile, usage in profiles.items()]}
 
 
+def browser_adcs_proof():
+    flags = ("browserIssuerCreation", "nativeSafePreflight", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
+    def uuid(value):
+        return f"{value * 8}-{value * 4}-4{value * 3}-8{value * 3}-{value * 12}"
+    return {**dict.fromkeys(flags, True), "scope": "browser-issuer-profile-default-scheduler-native-adcs", "lifecycle": "renew-existing-inventory-not-first-issue-or-manual-job", "scheduler": "production-default-sweep-not-background-worker-loop", "browserEngine": "chromium", "browserMutationCount": 6, "successfulEnrollments": 1,
+            "fingerprints": ["a" * 64, "b" * 64], "spkiFingerprints": ["c" * 64, "d" * 64], "requestId": "17", "enrollmentId": uuid("a"), "jobId": uuid("b"), "profileId": uuid("c"), "issuerId": uuid("d")}
+
+
 def certificate_dry_run_proof():
     flags = ("deployDryRunComplete", "renewDryRunComplete", "authenticPlanEvidence", "deployedFilesUnchangedDuringDryRun", "custodyFilesUnchangedDuringDryRun", "servedLeafUnchangedDuringDryRun", "noCommandsOrGatewayCallsDuringDryRun", "realDeployChangedFileAndTrustedTls", "realValidateAndReloadObserved", "realRenewCommandReachedCaAndDnsSentinels", "renewControlFailedBeforeIssuance", "identityAndConfigRestored", "ownedResourcesCleaned")
     return {**dict.fromkeys(flags, True), "scope": "native-linux-signed-certificate-dry-run-with-local-command-controls", "admission": "production-service-explicit-mode", "dryRunOperations": 2, "deployPlanSteps": 3, "renewPlanSteps": 6, "validateCalls": 1, "reloadCalls": 1, "caSentinelCalls": 1, "dnsSentinelCalls": 1}
@@ -498,6 +506,14 @@ class CollectorTests(unittest.TestCase):
         result = collector.sanitized_report(value, {value["suite"]}, set())
         self.assertEqual(result["nativePendingElapsed"]["monotonicWaitSeconds"], 3601)
         self.assertNotIn("sentinel", json.dumps(result))
+        value["primaryNativePreflightDispatchCount"] = 18
+        self.assertEqual(collector.sanitized_report(value, {value["suite"]}, set())["primaryNativePreflightDispatchCount"], 18)
+        for count in (19, 20, True, "18"):
+            invalid = json.loads(json.dumps(value))
+            invalid["primaryNativePreflightDispatchCount"] = count
+            invalid["nativeBrowserAdcs"] = browser_adcs_proof()
+            with self.assertRaises(ValueError):
+                collector.sanitized_report(invalid, {value["suite"]}, set())
         facts["journalRewritten"] = True
         with self.assertRaises(ValueError):
             collector.sanitized_report(value, {value["suite"]}, set())
@@ -552,12 +568,57 @@ class CollectorTests(unittest.TestCase):
         value = {"suite": "enterprise-adcs-real", "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
+        value["nativeBrowserAdcs"] = browser_adcs_proof()
+        value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
+        value["browserNativePreflightDispatch"] = {"count": 2, "jobIds": ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"], "privateReceipt": "sentinel"}
         value["nativeAdcsTwoRenewals"] = two_adcs_renewals_proof()
         value["nativeAdcsTwoRenewals"]["privateKey"] = "sentinel"
         value["nativeUncertainAbandon"]["private"] = "sentinel"
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))
+        self.assertEqual(result[0][1]["nativeBrowserAdcs"], browser_adcs_proof())
+        self.assertNotIn("privateReceipt", result[0][1]["browserNativePreflightDispatch"])
+        hierarchy = json.loads(json.dumps(value))
+        hierarchy["suite"] = "enterprise-adcs-hierarchy-real"
+        self.assertEqual(collector.extract_reports(self.archive("hierarchy.json", hierarchy), {hierarchy["suite"]}, set())[0][1]["nativeBrowserAdcs"], browser_adcs_proof())
+        del hierarchy["nativeBrowserAdcs"]
+        with self.assertRaises(ValueError):
+            collector.extract_reports(self.archive("hierarchy.json", hierarchy), {hierarchy["suite"]}, set())
+        for key, expected in browser_adcs_proof().items():
+            with self.subTest(browser_adcs_field=key):
+                invalid = json.loads(json.dumps(value))
+                del invalid["nativeBrowserAdcs"][key]
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+                invalid = json.loads(json.dumps(value))
+                invalid["nativeBrowserAdcs"][key] = [expected[0], expected[0]] if isinstance(expected, list) else False if type(expected) is bool else expected + 1 if type(expected) is int else "unqualified"
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for count in (2, 18, 19, 20):
+            valid = json.loads(json.dumps(value))
+            valid["primaryNativePreflightDispatchCount"] = count
+            self.assertEqual(collector.extract_reports(self.archive("adcs.json", valid), {"enterprise-adcs-real"}, set())[0][1]["primaryNativePreflightDispatchCount"], count)
+        for key in ("nativeBrowserAdcs", "browserNativePreflightDispatch"):
+            invalid = json.loads(json.dumps(value))
+            invalid["primaryNativePreflightDispatchCount"] = 20
+            del invalid[key]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for dispatch in ({"count": 3, "jobIds": value["browserNativePreflightDispatch"]["jobIds"]}, {"count": True, "jobIds": value["browserNativePreflightDispatch"]["jobIds"]}, {"count": 2, "jobIds": ["invalid", "invalid"]}, {"count": 2, "jobIds": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"]}, {"count": 2, "jobIds": [value["browserNativePreflightDispatch"]["jobIds"][0]]}):
+            invalid = json.loads(json.dumps(value))
+            invalid["browserNativePreflightDispatch"] = dispatch
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for count in (1, 21, -1, True, "20"):
+            invalid = json.loads(json.dumps(value))
+            invalid["primaryNativePreflightDispatchCount"] = count
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        invalid = json.loads(json.dumps(value))
+        invalid["nativeBrowserAdcs"]["requestId"] = "4294967296"
+        with self.assertRaises(ValueError):
+            collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeAdcsTwoRenewals"], two_adcs_renewals_proof())
         for key, expected in two_adcs_renewals_proof().items():
             with self.subTest(two_adcs_renewals_field=key):

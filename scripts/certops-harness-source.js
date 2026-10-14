@@ -37,7 +37,11 @@ function readOnlyQueries(source) {
     meta: { type: "problem", schema: [] },
     create() {
       return { CallExpression(node) {
-        if (node.callee.type !== "MemberExpression" || node.callee.property.name !== "query") return;
+        // Native helpers also use a local query(sql, args) forwarding function.
+        // Its literal call sites need the same schema check as pool.query().
+        const direct = node.callee.type === "Identifier" && node.callee.name === "query";
+        const member = node.callee.type === "MemberExpression" && !node.callee.computed && node.callee.property.name === "query";
+        if (!direct && !member) return;
         const argument = node.arguments[0];
         const sql = argument?.type === "Literal" && typeof argument.value === "string" ? argument.value : argument?.type === "TemplateLiteral" && argument.expressions.length === 0 ? argument.quasis[0].value.cooked : null;
         if (sql && /^\s*SELECT\b/i.test(sql)) queries.push({ sql, line: node.loc.start.line });

@@ -285,6 +285,11 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
         if "cleanup" in value:
             result["cleanup"] = {"status": value["cleanup"].get("status")}
         if value.get("suite") == "enterprise-adcs-elapsed-pending-real":
+            if "primaryNativePreflightDispatchCount" in value:
+                count = value["primaryNativePreflightDispatchCount"]
+                if type(count) is not int or not 0 <= count <= 18:
+                    raise ValueError("Elapsed AD CS cannot claim the browser preflight exception")
+                result["primaryNativePreflightDispatchCount"] = count
             facts = value.get("nativePendingElapsed")
             if not isinstance(facts, dict):
                 raise ValueError("Missing actual pending elapsed evidence")
@@ -503,6 +508,36 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            browser = value.get("nativeBrowserAdcs")
+            browser_flags = ("browserIssuerCreation", "nativeSafePreflight", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
+            fixed = {"scope": "browser-issuer-profile-default-scheduler-native-adcs", "lifecycle": "renew-existing-inventory-not-first-issue-or-manual-job", "scheduler": "production-default-sweep-not-background-worker-loop", "browserEngine": "chromium"}
+            if (not isinstance(browser, dict) or any(browser.get(key) != expected for key, expected in fixed.items())
+                    or any(browser.get(key) is not True for key in browser_flags)
+                    or type(browser.get("browserMutationCount")) is not int or browser["browserMutationCount"] != 6
+                    or type(browser.get("successfulEnrollments")) is not int or browser["successfulEnrollments"] != 1):
+                raise ValueError("Invalid native AD CS browser lifecycle evidence")
+            bounded_browser = {key: browser[key] for key in (*fixed, *browser_flags, "browserMutationCount", "successfulEnrollments")}
+            for key in ("fingerprints", "spkiFingerprints"):
+                values = browser.get(key)
+                if not isinstance(values, list) or len(values) != 2 or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item) for item in values) or len(set(values)) != 2:
+                    raise ValueError("Invalid browser native certificate identities")
+                bounded_browser[key] = values
+            uuid_pattern = r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}"
+            for key in ("enrollmentId", "jobId", "profileId", "issuerId"):
+                if not isinstance(browser.get(key), str) or not re.fullmatch(uuid_pattern, browser[key]):
+                    raise ValueError("Invalid browser native lifecycle identity")
+                bounded_browser[key] = browser[key]
+            if not isinstance(browser.get("requestId"), str) or not re.fullmatch(r"[1-9][0-9]{0,9}", browser["requestId"]) or int(browser["requestId"]) > 0xffffffff:
+                raise ValueError("Invalid browser native CA request identity")
+            bounded_browser["requestId"] = browser["requestId"]
+            result["nativeBrowserAdcs"] = bounded_browser
+            dispatch = value.get("browserNativePreflightDispatch")
+            if (not isinstance(dispatch, dict) or type(dispatch.get("count")) is not int or dispatch["count"] != 2
+                    or not isinstance(dispatch.get("jobIds"), list) or len(dispatch["jobIds"]) != 2
+                    or any(not isinstance(item, str) or not re.fullmatch(uuid_pattern, item) for item in dispatch["jobIds"])
+                    or len({item.lower() for item in dispatch["jobIds"]}) != 2):
+                raise ValueError("Invalid browser native preflight accounting")
+            result["browserNativePreflightDispatch"] = {"count": 2, "jobIds": dispatch["jobIds"]}
             cycles = value.get("nativeAdcsTwoRenewals")
             flags = ("defaultSqlNowSelection", "automaticSourceAndRealMode", "distinctExpiryGenerations", "independentCaRequests", "freshLeafSerialAndSpki", "protectedUniqueMachineKeys", "nativeIisAndSniCutovers", "independentTrustedTls", "claimBoundVerificationEvidence", "unchangedStoredProfile", "sameManagementPeriod", "predecessorCustodyPreserved", "actualInventoryMatchesLatest", "ownedEnrollmentCleanupRegistered", "noDateOrJournalOverrides")
             strings = {"scope": "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", "renewalProtocol": "fresh-enrollment-with-new-key-and-csr", "schedulerInvocation": "qualification-invoked-production-default-sweep"}
@@ -560,7 +595,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeIssuedCancellation"] = bounded_cancel
             count = value.get("primaryNativePreflightDispatchCount")
             cohorts = value.get("nativePreflightCohorts")
-            if type(count) is not int or not 0 <= count <= 18 or not isinstance(cohorts, list) or len(cohorts) > 128:
+            if type(count) is not int or not 2 <= count <= 20 or count - dispatch["count"] > 18 or not isinstance(cohorts, list) or len(cohorts) > 128:
                 raise ValueError("Invalid native preflight budget evidence")
             result["primaryNativePreflightDispatchCount"] = count
             expiry = value.get("nativeValidationExpiry")

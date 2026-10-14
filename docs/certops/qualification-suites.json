@@ -256,7 +256,13 @@
       "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host",
       "adcs-real-two-unattended-natural-generations": "real-host",
       "adcs-real-two-unattended-native-key-cutovers": "real-host",
-      "adcs-real-two-unattended-profile-and-custody-preservation": "real-host"
+      "adcs-real-two-unattended-profile-and-custody-preservation": "real-host",
+      "adcs-real-browser-issuer-native-preflight": "real-host",
+      "adcs-real-browser-confirmed-ca-pin": "real-host",
+      "adcs-real-browser-profile-attachment": "real-host",
+      "adcs-real-browser-automation-native-enrollment": "real-host",
+      "adcs-real-browser-installed-enrollment-visible": "real-host",
+      "adcs-real-browser-owned-cleanup": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -552,7 +558,13 @@
       "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host",
       "adcs-real-two-unattended-natural-generations": "real-host",
       "adcs-real-two-unattended-native-key-cutovers": "real-host",
-      "adcs-real-two-unattended-profile-and-custody-preservation": "real-host"
+      "adcs-real-two-unattended-profile-and-custody-preservation": "real-host",
+      "adcs-real-browser-issuer-native-preflight": "real-host",
+      "adcs-real-browser-confirmed-ca-pin": "real-host",
+      "adcs-real-browser-profile-attachment": "real-host",
+      "adcs-real-browser-automation-native-enrollment": "real-host",
+      "adcs-real-browser-installed-enrollment-visible": "real-host",
+      "adcs-real-browser-owned-cleanup": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1195,7 +1207,9 @@
       "elevated",
       "domain",
       "api",
-      "qualifiedBuild"
+      "qualifiedBuild",
+      "browserRuntime",
+      "dashboard"
     ],
     "adcs-api-release-gates": [
       "api",
@@ -1298,7 +1312,9 @@
       "elevated",
       "domain",
       "api",
-      "qualifiedBuild"
+      "qualifiedBuild",
+      "browserRuntime",
+      "dashboard"
     ],
     "result-fences-api": [
       "api",
@@ -1845,7 +1861,13 @@
       "adcs-real-uncertain-zero-request-public-abandon-cleans-key",
       "adcs-real-two-unattended-natural-generations",
       "adcs-real-two-unattended-native-key-cutovers",
-      "adcs-real-two-unattended-profile-and-custody-preservation"
+      "adcs-real-two-unattended-profile-and-custody-preservation",
+      "adcs-real-browser-issuer-native-preflight",
+      "adcs-real-browser-confirmed-ca-pin",
+      "adcs-real-browser-profile-attachment",
+      "adcs-real-browser-automation-native-enrollment",
+      "adcs-real-browser-installed-enrollment-visible",
+      "adcs-real-browser-owned-cleanup"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2141,7 +2163,13 @@
       "adcs-real-uncertain-zero-request-public-abandon-cleans-key",
       "adcs-real-two-unattended-natural-generations",
       "adcs-real-two-unattended-native-key-cutovers",
-      "adcs-real-two-unattended-profile-and-custody-preservation"
+      "adcs-real-two-unattended-profile-and-custody-preservation",
+      "adcs-real-browser-issuer-native-preflight",
+      "adcs-real-browser-confirmed-ca-pin",
+      "adcs-real-browser-profile-attachment",
+      "adcs-real-browser-automation-native-enrollment",
+      "adcs-real-browser-installed-enrollment-visible",
+      "adcs-real-browser-owned-cleanup"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

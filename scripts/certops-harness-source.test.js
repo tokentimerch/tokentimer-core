@@ -12,9 +12,10 @@ test("native scenario registration accepts executable callbacks and cleanup refe
 });
 test("the committed native harness source has valid scenario calls", () => assert.deepEqual(validateHarnessSources(), []));
 test("schema inventory extracts actual literal read queries and excludes mutations or interpolated SQL", () => {
-  const queries = readOnlyQueries('pool.query("SELECT state, operator_request_id AS request_id FROM certificate_enrollments WHERE id=$1", [id]); pool.query(`SELECT count(*) FROM certificate_jobs`); pool.query("DELETE FROM certificate_enrollments"); pool.query(`SELECT ${column} FROM ${table}`);');
-  assert.equal(queries.length, 2);
+  const queries = readOnlyQueries('pool.query("SELECT state, operator_request_id AS request_id FROM certificate_enrollments WHERE id=$1", [id]); pool.query(`SELECT count(*) FROM certificate_jobs`); pool.query("DELETE FROM certificate_enrollments"); pool.query(`SELECT ${column} FROM ${table}`); const query=(sql,args)=>pool.query(sql,args); query("SELECT profile_id FROM managed_certificates WHERE id=$1",[id]); query(`SELECT count(*) FROM certificate_profiles`); query("DELETE FROM certificate_jobs"); query(`SELECT ${column} FROM ${table}`);');
+  assert.equal(queries.length, 4);
   assert.match(queries[0].sql, /operator_request_id AS request_id/);
+  assert.match(queries[2].sql, /profile_id FROM managed_certificates/);
   assert.throws(() => readOnlyQueries("const = invalid"));
 });
 test("native SQL schema probing refuses an unauthorized database before connecting", async () => {

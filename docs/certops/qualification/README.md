@@ -60,6 +60,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [AD CS operator guide](../agent/adcs.md)
 - [Native uncertain submission, acknowledged recovery and safe abandonment](adcs/uncertain-abandon.md)
 - [Two native AD CS renewal generations through default scheduler sweeps](adcs/two-unattended-renewals.md)
+- [Browser-driven issuer, profile and native AD CS enrollment](adcs/browser-native-journey.md)
 
 ## Linux agents and deployment
 

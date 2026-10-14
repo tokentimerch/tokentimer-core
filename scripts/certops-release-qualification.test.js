@@ -20,6 +20,12 @@ function keyUsageProof() {
   const { CASES, CERTIFICATE_USAGE, SCOPE } = require("../packages/agent/scripts/host/cng-key-usage-proof");
   return { scope: SCOPE, copiedActualCsrExtensions: true, privateKeyUsageClaim: "signing-permitted-not-exact-default-ncrypt-mask", cases: CASES.map(caseId => ({ caseId, certificateUsageFlags: CERTIFICATE_USAGE[caseId.split("/")[0]], cngAllowedOperations: 0x00ffffff })) };
 }
+function browserAdcsProof() {
+  const { FLAGS, SCOPE } = require("../tests/e2e/helpers/certops-adcs-browser-journey");
+  const uuid = value => `${value.repeat(8)}-${value.repeat(4)}-4${value.repeat(3)}-8${value.repeat(3)}-${value.repeat(12)}`;
+  return { ...Object.fromEntries(FLAGS.map(key => [key, true])), scope: SCOPE, lifecycle: "renew-existing-inventory-not-first-issue-or-manual-job", scheduler: "production-default-sweep-not-background-worker-loop", browserEngine: "chromium", browserMutationCount: 6, successfulEnrollments: 1,
+    fingerprints: ["a", "b"].map(value => value.repeat(64)), spkiFingerprints: ["c", "d"].map(value => value.repeat(64)), requestId: "17", enrollmentId: uuid("a"), jobId: uuid("b"), profileId: uuid("c"), issuerId: uuid("d") };
+}
 function twoAdcsRenewalsProof() {
   const { FLAGS } = require("../tests/e2e/helpers/certops-adcs-two-renewals");
   return { scope: "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", renewalProtocol: "fresh-enrollment-with-new-key-and-csr", schedulerInvocation: "qualification-invoked-production-default-sweep", workerIntervalQualified: false,
@@ -67,6 +73,12 @@ test("dedicated elapsed-pending release slot requires actual-hour evidence", () 
     requestId: "17", snapshotSha256: "a".repeat(64) };
   for (const field of ["snapshotAndCsrStableAcrossRestart", "keyProtectedBeforeDeadline", "signedTerminalCleanup", "exactKeyAbsent", "noCertificateAccepted", "noCaResubmission", "lateApprovalTerminalRefusal", "lateIssuedCertificateRevoked", "outgoingTrustedTlsUnchanged"]) report.nativePendingElapsed[field] = true;
   assert.deepEqual(verifyMatrix([item], { candidateSha, specification: spec }), []);
+  report.primaryNativePreflightDispatchCount = 18;
+  assert.deepEqual(verifyMatrix([item], { candidateSha, specification: spec }), []);
+  for (const count of [19, 20, true, "18"]) {
+    const invalid = structuredClone(item); invalid.report.primaryNativePreflightDispatchCount = count; invalid.report.nativeBrowserAdcs = browserAdcsProof();
+    assert.ok(verifyMatrix([invalid], { candidateSha, specification: spec }).length);
+  }
   report.nativePendingElapsed.monotonicWaitSeconds = 3599;
   assert.ok(verifyMatrix([item], { candidateSha, specification: spec }).length);
 });
@@ -217,14 +229,30 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") },
     nativeIssuedCancellation: { requestId: "17", snapshotSha256: "a".repeat(64), pollIntervalSeconds: 900, schedulerClock: "default-real-now", actualCaIssuedBeforeCancel: true, caLeafSignatureAndCsrSpkiVerified: true, controlPlaneStillPendingBeforeCancel: true, nonExportableKeyPresentBeforeCancel: true, signedTerminalCleanupSucceeded: true, exactUnacceptedKeyAbsent: true, certificateNeverAccepted: true, sameRequestSnapshotAndCsrPreserved: true, noAdditionalCaRequest: true, outgoingTrustedTlsUnchanged: true, terminalReconcileRefused: true, unusedIssuedLeafRevoked: true, databaseDatesRewritten: false, journalRewritten: false },
     nativeAdcsTwoRenewals: twoAdcsRenewalsProof(),
+    nativeBrowserAdcs: browserAdcsProof(),
+    browserNativePreflightDispatch: { count: 2, jobIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] },
     nativeUncertainAbandon: { leaseRemainingAtFaultMs: 60000, recoveryWaitBudgetMs: 150000, actualLeaseWaitMs: 61000, scope: "native-zero-request-uncertain-abandon", resolvedIssuingCaAddress: "10.64.0.4", ownedObserverDrained: true, ownedTransportBlock: true, observedSubmittingTermination: true, actualLeaseExpiry: true, acknowledgedPublicRecovery: true, sameCsrAndKey: true, noAutomaticResubmit: true, publicAbandonAudited: true, unacceptedKeyRemoved: true, originalOrphanPreserved: true, recoveryPolicyUnchanged: true, caRequestsAtFault: 0, caRequestsAfterRecovery: 0, caRequestsAfterAbandon: 0 },
     nativeValidationExpiry: { configuredTimeoutSeconds: 300, defaultTimeoutSeconds: 86400, storedWindowSeconds: 299, monotonicObservedWaitSeconds: 301, actualDeadline: new Date().toISOString(), requestId: "17", snapshotSha256: "a".repeat(64), actualNativeRevocationUnknown: true, actualSignedContinuationExpired: true, persistedDeadlineSurvivedRestartAndPolicyRestoration: true, exactUnacceptedKeyFreed: true, noCertificateAccepted: true, noCaResubmission: true, outgoingTrustedTlsPreserved: true, chainCacheValueRestored: true, nativeAndCaClocks: "actual", qualificationScope: "configured-five-minute-window-not-default-24-hour-elapsed" },
-    primaryNativePreflightDispatchCount: 18,
+    primaryNativePreflightDispatchCount: 20,
     nativePreflightCohorts: [{ workspaceId: "a".repeat(36), agentId: "b".repeat(36), dispatchCount: 18, dispatchLimit: 18, nativeIdentity: "LocalSystem", runtime: "candidate-cli" }],
     nativeTemplateMutations: contract.suites[suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => ({ caseId: id.slice("adcs-real-mutated-template-".length, -"-native-refused".length), template: "TTQualificationRSAShort", preflightVerdict: "unsafe", originalConfirmedIssuerReused: true, actualSignedJobRefused: true, noCaRequestAllocated: true, noKeyGenerated: true, outgoingTrustedTlsPreserved: true })),
   });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "cohort", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
+  const hierarchy = structuredClone(value), hierarchyOptions = structuredClone(options), hierarchySuite = "enterprise-adcs-hierarchy-real";
+  hierarchy.suite = hierarchy.report.suite = hierarchyOptions.specification.slots[0].suite = hierarchySuite;
+  hierarchy.report.requiredScenarios = contract.suites[hierarchySuite]; hierarchy.report.scenarios = contract.suites[hierarchySuite].map(id => ({ ...value.report.scenarios[0], id }));
+  assert.deepEqual(verifyMatrix([hierarchy], hierarchyOptions), []);
+  const missingHierarchyBrowser = structuredClone(hierarchy); delete missingHierarchyBrowser.report.nativeBrowserAdcs; assert.ok(verifyMatrix([missingHierarchyBrowser], hierarchyOptions).length);
+  for (const [key, prior] of Object.entries(value.report.nativeBrowserAdcs)) {
+    const missing = structuredClone(value); delete missing.report.nativeBrowserAdcs[key]; assert.ok(verifyMatrix([missing], options).length, key);
+    const changed = structuredClone(value); changed.report.nativeBrowserAdcs[key] = Array.isArray(prior) ? [prior[0], prior[0]] : typeof prior === "boolean" ? false : typeof prior === "number" ? prior + 1 : "unqualified";
+    assert.ok(verifyMatrix([changed], options).length, key);
+  }
+  for (const count of [2, 18, 19, 20]) { const good = structuredClone(value); good.report.primaryNativePreflightDispatchCount = count; assert.deepEqual(verifyMatrix([good], options), []); }
+  for (const mutate of [item => { delete item.report.nativeBrowserAdcs; }, item => { delete item.report.browserNativePreflightDispatch; }, item => { item.report.browserNativePreflightDispatch.count = 3; }, item => { item.report.browserNativePreflightDispatch.count = true; }, item => { item.report.browserNativePreflightDispatch.jobIds.pop(); }, item => { item.report.browserNativePreflightDispatch.jobIds[1] = item.report.browserNativePreflightDispatch.jobIds[0]; }, item => { item.report.browserNativePreflightDispatch.jobIds = ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"]; }, item => { item.report.browserNativePreflightDispatch.jobIds[0] = "invalid"; }, item => { item.report.primaryNativePreflightDispatchCount = 1; }, item => { item.report.primaryNativePreflightDispatchCount = 21; }, item => { item.report.nativeBrowserAdcs.requestId = "4294967296"; }, item => { item.report.nativeBrowserAdcs.scheduler = "continuous-worker-qualified"; }, item => { item.report.nativeBrowserAdcs.privateKey = "unexpected"; }]) {
+    const invalid = structuredClone(value); mutate(invalid); assert.ok(verifyMatrix([invalid], options).length);
+  }
   for (const [key, prior] of Object.entries(value.report.nativeAdcsTwoRenewals)) {
     const missing = structuredClone(value); delete missing.report.nativeAdcsTwoRenewals[key]; assert.ok(verifyMatrix([missing], options).length, key);
     const changed = structuredClone(value); changed.report.nativeAdcsTwoRenewals[key] = Array.isArray(prior) ? [...prior, prior[0]] : typeof prior === "boolean" ? !prior : typeof prior === "number" ? 1 : "unqualified";
@@ -244,7 +272,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     changed.report.nativeUncertainAbandon[key] = typeof prior === "boolean" ? false : typeof prior === "number" ? 1 : "unqualified";
     assert.ok(verifyMatrix([changed], options).length, key);
   }
-  const requiredSources = [...new Set([...require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").REQUIRED_SOURCES, ...require("../tests/e2e/helpers/certops-adcs-two-renewals").REQUIRED_SOURCES])];
+  const requiredSources = [...new Set([...require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").REQUIRED_SOURCES, ...require("../tests/e2e/helpers/certops-adcs-two-renewals").REQUIRED_SOURCES, ...require("../tests/e2e/helpers/certops-adcs-browser-journey").REQUIRED_SOURCES])];
   const sourceOptions = structuredClone(options); sourceOptions.specification.slots[0].requiredSources = requiredSources;
   const sourced = structuredClone(value); sourced.report.fixtureSources = requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
   assert.deepEqual(verifyMatrix([sourced], sourceOptions), []);
@@ -254,7 +282,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     const stale = structuredClone(sourced); stale.report.fixtureSources.find(row => row.file === file).sha256 = "0".repeat(64);
     assert.ok(verifyMatrix([stale], sourceOptions).length, file);
   }
-  for (const mutate of [item => { item.report.nativeIssuedCancellation.unusedIssuedLeafRevoked = false; }, item => { item.report.nativeIssuedCancellation.certificateNeverAccepted = false; }, item => { delete item.report.nativePreflightCohorts; }, item => { item.report.primaryNativePreflightDispatchCount = 19; }, item => { item.report.nativePreflightCohorts[0].dispatchCount = 19; }, item => { item.report.nativePreflightCohorts.push(item.report.nativePreflightCohorts[0]); }, item => { item.report.nativePreflightCohorts[0].runtime = "mock"; }]) {
+  for (const mutate of [item => { item.report.nativeIssuedCancellation.unusedIssuedLeafRevoked = false; }, item => { item.report.nativeIssuedCancellation.certificateNeverAccepted = false; }, item => { delete item.report.nativePreflightCohorts; }, item => { item.report.primaryNativePreflightDispatchCount = 21; }, item => { item.report.nativePreflightCohorts[0].dispatchCount = 19; }, item => { item.report.nativePreflightCohorts.push(item.report.nativePreflightCohorts[0]); }, item => { item.report.nativePreflightCohorts[0].runtime = "mock"; }]) {
     const invalid = structuredClone(value); mutate(invalid); assert.ok(verifyMatrix([invalid], options).length);
   }
   for (const mutate of [item => { item.report.nativeValidationExpiry.monotonicObservedWaitSeconds = 299; }, item => { item.report.nativeValidationExpiry.exactUnacceptedKeyFreed = false; }, item => { item.report.nativeValidationExpiry.qualificationScope = "default-24-hour-elapsed"; }, item => { item.report.nativeTemplateMutations.pop(); }, item => { item.report.nativeTemplateMutations[0].noKeyGenerated = false; }, item => { item.report.nativeTemplateMutations[0].preflightVerdict = "safe"; }]) {
