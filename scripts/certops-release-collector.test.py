@@ -45,6 +45,10 @@ def retention_reference_proof():
     return {**dict.fromkeys(fields, True), "scope": "native-collector-supporting-ledger-reference-lifecycle", "elapsed24HourQualified": False}
 
 
+def journal_read_proof():
+    return {"scope":"native-temporary-adcs-journal-acl-refusals-not-installed-enrollment","installedServiceQualified":False,"nativeCngQualified":False,"genuinePreparedPublicCsr":True,"twoActualNativeAccessDenials":True,"journalUnreadableNotAbsent":True,"globalProtectionScanDeferred":True,"exactFileIdentitiesAndBytesPreserved":True,"exactNativeAclsRestored":True,"productionReadersRecovered":True,"ownedTemporaryStateRemoved":True}
+
+
 def state_read_proof():
     fields = ("threeReadablePositiveControls", "threeActualNativeReadDenials", "productionReadersRefused", "exactFileIdentityAndBytesPreserved", "exactAclRestored", "allReadersRecovered", "ownedTemporaryStateRemoved")
     return {**dict.fromkeys(fields, True), "scope": "native-temporary-state-read-denials-production-readers", "installedServiceStartupQualified": False}
@@ -150,6 +154,17 @@ def elapsed_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_journal_acl_projection_requires_all_native_facts_and_strips_private_fields(self):
+        proof = journal_read_proof()
+        self.assertEqual(collector.journal_acl_fields({**proof, "rawPrivateJournal": "sentinel"}), proof)
+        with self.assertRaises(ValueError): collector.journal_acl_fields(None)
+        for key, expected in proof.items():
+            missing = dict(proof); del missing[key]
+            with self.assertRaises(ValueError): collector.journal_acl_fields(missing)
+            for bad in ([not expected, 1, "true", None] if type(expected) is bool else ["installed-native-enrollment"]):
+                invalid = {**proof, key: bad}
+                with self.assertRaises(ValueError): collector.journal_acl_fields(invalid)
+
     def test_windows_public_reuse_refusal_projection_is_bounded_and_scope_specific(self):
         flags = ("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged")
         proof = {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(flags, True)}
@@ -362,9 +377,9 @@ class CollectorTests(unittest.TestCase):
         custody_fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True,
                    "cases": [{"caseId": profile + "/" + store, **dict.fromkeys(custody_fields, True), "privateExportHResult": -2146893813} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]}
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeRetentionAtomicReplace"], proof)
-        survivor_report = {"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof, "nativeElapsedRetention": elapsed_proof(), "nativeKeySurvivors": {**survivor_proof(), "rawInventory": "sentinel", "containerName": "sentinel"}}
+        survivor_report = {"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof, "nativeElapsedRetention": elapsed_proof(), "nativeKeySurvivors": {**survivor_proof(), "rawInventory": "sentinel", "containerName": "sentinel"}}
         self.assertEqual(collector.sanitized_report(survivor_report, {suite}, set())["nativeKeySurvivors"], survivor_proof())
         self.assertNotIn("sentinel", json.dumps(collector.sanitized_report(survivor_report, {suite}, set())))
         reference_report = {**survivor_report, "nativeRetentionReferences": {**retention_reference_proof(), "rawInventory": "sentinel"}}
@@ -397,7 +412,7 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(ValueError): collector.sanitized_report(survivor_report, {suite}, set())
 
         elapsed = elapsed_proof()
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof,
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof,
             "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": {**elapsed, "rawLedger": "sentinel", "nativeKeyPath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeElapsedRetention"], elapsed)
         self.assertNotIn("sentinel", json.dumps(result))
@@ -407,9 +422,9 @@ class CollectorTests(unittest.TestCase):
                        {"configuredRetentionHours": 1}, {"fullRetentionWindowQualified": True},
                        {"waitedMonotonicMs": 299999}, {"waitedMonotonicMs": 600000}, {"waitedMonotonicMs": float("nan")},
                        {"mode": "synthetic-clock"}):
-            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(),
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(),
                 "nativeRetentionAtomicReplace": proof, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": {**elapsed, **change}}, {suite}, set())
-        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof}, {suite}, set())
+        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof}, {suite}, set())
 
         self.assertNotIn("sentinel", json.dumps(result))
         for field in fields:
@@ -594,10 +609,10 @@ class CollectorTests(unittest.TestCase):
         cases = [{"caseId": profile + "/" + store, **dict.fromkeys(fields, True), "privateExportHResult": -2146893813, "rawPrivateBlob": "sentinel"} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True, "cases": cases, "signature": "sentinel"}
         sni = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My", **dict.fromkeys(("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified"), True), "privateConfig": "sentinel"}
-        result = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": sni}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": sni}, {suite}, set())
         self.assertEqual(result["nativeSamePortSni"]["siteCount"], 2)
         self.assertTrue(result["nativeSamePortSni"]["peerRollbackPrimaryUnchanged"])
-        usage_report = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof()}
+        usage_report = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof()}
         usage_report["nativeKeyUsage"]["rawKeyPath"] = "sentinel"
         usage_report["nativeKeyUsage"]["cases"][0]["privateBlob"] = "sentinel"
         projected_usage = collector.sanitized_report(usage_report, {suite}, set())
@@ -670,16 +685,16 @@ class CollectorTests(unittest.TestCase):
                 collector.sanitized_report(invalid, {suite}, set())
         for change in ({"siteCount": True}, {"hostnameCount": 1}, {"certificateStore": "Other"}):
             with self.assertRaises(ValueError):
-                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, **change}}, {suite}, set())
-        missing = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
+                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, **change}}, {suite}, set())
+        missing = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
         self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
         contention = {**dict.fromkeys(("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved"), True), "loserNativeCalls": 0, "loserCertreqCalls": 0, "retryCertreqCalls": 0, "winnerCertreqCalls": 1, "retryNativeCalls": 1, "privateRaw": "sentinel"}
-        projected = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": contention}, {suite}, set())
+        projected = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": contention}, {suite}, set())
         self.assertEqual(projected["nativeEnrollmentContention"]["loserNativeCalls"], 0)
         self.assertNotIn("sentinel", json.dumps(projected))
         for bad in (True, "0", -1, 33):
             with self.assertRaises(ValueError):
-                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": {**contention, "loserNativeCalls": bad}}, {suite}, set())
+                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": {**contention, "loserNativeCalls": bad}}, {suite}, set())
         self.assertEqual(len(result["cngCustody"]["cases"]), 10)
         self.assertNotIn("sentinel", json.dumps(result))
         for field in ("privateExportBytesWritten", "privateExportBytesReported"):

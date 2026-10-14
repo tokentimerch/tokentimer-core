@@ -228,7 +228,11 @@
         "packages/agent/windows-service-host/console_windows.go",
         "packages/agent/windows-service-host/service_windows.go",
         "packages/agent/reference/adcs-chain/go.mod",
-        "packages/agent/reference/adcs-chain/go.sum"
+        "packages/agent/reference/adcs-chain/go.sum",
+        "packages/agent/scripts/host/journal-read-refusal-fixture.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -508,7 +512,11 @@
         "packages/agent/windows-service-host/console_windows.go",
         "packages/agent/windows-service-host/service_windows.go",
         "packages/agent/reference/adcs-chain/go.mod",
-        "packages/agent/reference/adcs-chain/go.sum"
+        "packages/agent/reference/adcs-chain/go.sum",
+        "packages/agent/scripts/host/journal-read-refusal-fixture.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {

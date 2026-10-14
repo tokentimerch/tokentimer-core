@@ -42,7 +42,9 @@
       "windows-state-credential-read-denied": "real-host",
       "windows-state-signing-pin-read-denied": "real-host",
       "windows-iis-client-revocation-policy-preservation": "real-host",
-      "windows-packaged-chain-runtime-protocol-refusal": "real-host"
+      "windows-packaged-chain-runtime-protocol-refusal": "real-host",
+      "windows-adcs-v2-journal-native-read-denied": "real-host",
+      "windows-adcs-journal-root-native-list-denied": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -1757,7 +1759,9 @@
       "windows-state-credential-read-denied",
       "windows-state-signing-pin-read-denied",
       "windows-iis-client-revocation-policy-preservation",
-      "windows-packaged-chain-runtime-protocol-refusal"
+      "windows-packaged-chain-runtime-protocol-refusal",
+      "windows-adcs-v2-journal-native-read-denied",
+      "windows-adcs-journal-root-native-list-denied"
     ],
     "kubernetes-host": [
       "controller-owned-provision",

@@ -114,6 +114,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-elapsed-fixture").verifyElapsedProof(artifact.report.nativeElapsedRetention);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/state-read-refusal-fixture").verifyProof(artifact.report.nativeStateReadRefusals);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/journal-read-refusal-fixture").verifyProof(artifact.report.nativeJournalReadRefusals);
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {

@@ -343,6 +343,15 @@ def browser_admin_boundary_fields(proof):
     return result
 
 
+def journal_acl_fields(proof):
+    fields = ["genuinePreparedPublicCsr","twoActualNativeAccessDenials","journalUnreadableNotAbsent","globalProtectionScanDeferred","exactFileIdentitiesAndBytesPreserved","exactNativeAclsRestored","productionReadersRecovered","ownedTemporaryStateRemoved"]
+    if (not isinstance(proof, dict) or proof.get("scope") != "native-temporary-adcs-journal-acl-refusals-not-installed-enrollment"
+            or proof.get("installedServiceQualified") is not False or proof.get("nativeCngQualified") is not False
+            or any(proof.get(field) is not True for field in fields)):
+        raise ValueError("Incomplete native temporary journal ACL refusal evidence")
+    return {"scope": proof["scope"], "installedServiceQualified": False, "nativeCngQualified": False, **dict.fromkeys(fields, True)}
+
+
 def browser_abandon_fields(proof):
     flags = ("actualUncertainEnrollmentVisible","keepDidNotMutate","explicitConfirmationRequired","exactPublicAbandonAcknowledged","browserAndTrustDrained","actualProductionContinuation","journalAndDatabaseAbandoned","exactUnacceptedKeyAbsent","noAcceptedLeaf","zeroNativeCaRequests","onePublicAudit","originalUnknownEffectPreserved")
     if not isinstance(proof, dict) or proof.get("scope") != "browser-confirmed-real-uncertain-abandon-and-native-unaccepted-key-cleanup" or any(proof.get(flag) is not True for flag in flags):
@@ -795,6 +804,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     or any(state_read.get(field) is not True for field in state_fields)):
                 raise ValueError("Incomplete native state read refusal evidence")
             result["nativeStateReadRefusals"] = {**dict.fromkeys(state_fields, True), "scope": state_scope, "installedServiceStartupQualified": False}
+            result["nativeJournalReadRefusals"] = journal_acl_fields(value.get("nativeJournalReadRefusals"))
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):

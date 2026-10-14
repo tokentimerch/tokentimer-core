@@ -64,6 +64,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Two successful unattended Windows renewal generations](windows/two-unattended-renewals.md)
 - [Retention-ledger atomic replacement refusal](windows/retention-ledger-atomic-replace.md)
 - [Native retention reference protection and configuration boundaries](windows/retention-reference-guards.md)
+- [Native AD CS journal read/list ACL refusals](windows/journal-read-refusals.md)
 - [Native configuration, credential and signing-pin read-access refusals](windows/state-read-refusals.md)
 - [Retention replacement lineage, cross-store key survivors and protected cleanup](windows/retention-replacement-lineage.md)
 - [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
