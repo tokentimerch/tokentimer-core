@@ -73,6 +73,21 @@ function suiteArtifact(suite, file, fields) {
   Object.assign(value.report, { suite, evidenceLevel: contract.suiteEvidenceLevels[suite], requiredCapabilities: contract.requiredCapabilities[suite], capabilities: Object.fromEntries(contract.requiredCapabilities[suite].map(name => [name, { available: true }])), requiredScenarios: contract.suites[suite], scenarios: contract.suites[suite].map(id => ({ ...value.report.scenarios[0], id, evidenceLevel: contract.scenarioEvidenceLevels[suite][id] })), fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }, ...fields });
   return value;
 }
+test("systemd reapplication and real-elapsed worker facts cannot be omitted or weakened", () => {
+  const cases = [
+    ["linux-systemd-reapply", { nativeInstallerReapply: { installation: "same-candidate-reapplication", operatorConfigBytesPreserved: true, credentialBytesPreserved: true, candidatePackageInstalled: true, dropinPreserved: true, privatePermissionsPreserved: true, sameRegistration: true, spareBootstrapUnconsumed: true, bootstrapFileAbsent: true, bootstrapAbsentAfterFreshRestart: true, freshAuthenticatedHeartbeat: true, originalConfigRestored: true, beforePid: 100, reappliedPid: 101, freshRestartPid: 102, nativeUid: 1001 } }, value => { value.report.nativeInstallerReapply.reappliedPid = 100; }],
+    ["agent-log-maintenance-worker", { maintenance: { defaultGraceMs: 300000, observedMonotonicMs: 300100, actualDatabaseExpired: true, originalJobSucceeded: true, lateUploadRefused: true, tombstoneRetained: true, onlySelectedWorkerSweeps: true, timestampsRewritten: false, abandonedStreams: 1, purgedLines: 2, repeatedPurgeDeleted: 0, retentionDays: 0, scope: "actual-default-five-minute-grace-and-supported-retention-zero" } }, value => { value.report.maintenance.observedMonotonicMs = 299999; }],
+  ];
+  for (const [suite, facts, mutate] of cases) {
+    const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+    const value = suiteArtifact(suite, slot.source, facts);
+    value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+    value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+    const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+    assert.deepEqual(verifyMatrix([value], options), []);
+    mutate(value); assert.ok(verifyMatrix([value], options).length);
+  }
+});
 test("Windows child-output proof requires native profile identity bounded facts and current sources", () => {
   const suite = "windows-native-child-output-privacy";
   const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
@@ -122,6 +137,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     capabilities: Object.fromEntries(contract.requiredCapabilities[suite].map(name => [name, { available: true }])),
     requiredScenarios: contract.suites[suite], scenarios: contract.suites[suite].map(id => ({ ...value.report.scenarios[0], id, evidenceLevel: "real-host" })),
     fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") },
+    nativeIssuedCancellation: { requestId: "17", snapshotSha256: "a".repeat(64), pollIntervalSeconds: 900, schedulerClock: "default-real-now", actualCaIssuedBeforeCancel: true, caLeafSignatureAndCsrSpkiVerified: true, controlPlaneStillPendingBeforeCancel: true, nonExportableKeyPresentBeforeCancel: true, signedTerminalCleanupSucceeded: true, exactUnacceptedKeyAbsent: true, certificateNeverAccepted: true, sameRequestSnapshotAndCsrPreserved: true, noAdditionalCaRequest: true, outgoingTrustedTlsUnchanged: true, terminalReconcileRefused: true, unusedIssuedLeafRevoked: true, databaseDatesRewritten: false, journalRewritten: false },
     nativeValidationExpiry: { configuredTimeoutSeconds: 300, defaultTimeoutSeconds: 86400, storedWindowSeconds: 299, monotonicObservedWaitSeconds: 301, actualDeadline: new Date().toISOString(), requestId: "17", snapshotSha256: "a".repeat(64), actualNativeRevocationUnknown: true, actualSignedContinuationExpired: true, persistedDeadlineSurvivedRestartAndPolicyRestoration: true, exactUnacceptedKeyFreed: true, noCertificateAccepted: true, noCaResubmission: true, outgoingTrustedTlsPreserved: true, chainCacheValueRestored: true, nativeAndCaClocks: "actual", qualificationScope: "configured-five-minute-window-not-default-24-hour-elapsed" },
     primaryNativePreflightDispatchCount: 18,
     nativePreflightCohorts: [{ workspaceId: "a".repeat(36), agentId: "b".repeat(36), dispatchCount: 18, dispatchLimit: 18, nativeIdentity: "LocalSystem", runtime: "candidate-cli" }],
@@ -129,7 +145,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "cohort", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
-  for (const mutate of [item => { delete item.report.nativePreflightCohorts; }, item => { item.report.primaryNativePreflightDispatchCount = 19; }, item => { item.report.nativePreflightCohorts[0].dispatchCount = 19; }, item => { item.report.nativePreflightCohorts.push(item.report.nativePreflightCohorts[0]); }, item => { item.report.nativePreflightCohorts[0].runtime = "mock"; }]) {
+  for (const mutate of [item => { item.report.nativeIssuedCancellation.unusedIssuedLeafRevoked = false; }, item => { item.report.nativeIssuedCancellation.certificateNeverAccepted = false; }, item => { delete item.report.nativePreflightCohorts; }, item => { item.report.primaryNativePreflightDispatchCount = 19; }, item => { item.report.nativePreflightCohorts[0].dispatchCount = 19; }, item => { item.report.nativePreflightCohorts.push(item.report.nativePreflightCohorts[0]); }, item => { item.report.nativePreflightCohorts[0].runtime = "mock"; }]) {
     const invalid = structuredClone(value); mutate(invalid); assert.ok(verifyMatrix([invalid], options).length);
   }
   for (const mutate of [item => { item.report.nativeValidationExpiry.monotonicObservedWaitSeconds = 299; }, item => { item.report.nativeValidationExpiry.exactUnacceptedKeyFreed = false; }, item => { item.report.nativeValidationExpiry.qualificationScope = "default-24-hour-elapsed"; }, item => { item.report.nativeTemplateMutations.pop(); }, item => { item.report.nativeTemplateMutations[0].noKeyGenerated = false; }, item => { item.report.nativeTemplateMutations[0].preflightVerdict = "safe"; }]) {

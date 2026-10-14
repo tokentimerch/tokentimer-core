@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 120
+Total skips found: 121
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -53,17 +53,17 @@ Total skips found: 120
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-alert-e2e.test.js` | 16 | agent alert governance persists policy and rejects foreign groups and unauthorized roles | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 450 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 566 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 580 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 598 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 614 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 649 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 672 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 714 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 736 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 798 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 853 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 451 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 567 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 581 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 599 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 615 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 650 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 673 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 715 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 737 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 799 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 854 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-lease-api-e2e.test.js` | 18 | active claim force retirement fences real agent HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-boundaries-e2e.test.js` | 18 | agent log size and ownership boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-order-e2e.test.js` | 18 | actual agent telemetry ordering, conflict and final closure | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -94,6 +94,7 @@ Total skips found: 120
 | `tests/e2e/certops-job-decisions-e2e.test.js` | 19 | real API approval rejection and protocol terminal transitions | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-jobs-api-e2e.test.js` | 17 | manual job approval and pause boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-log-disabled-e2e.test.js` | 13 | missing log capability produces explicit disabled offer without inventing job completion | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-log-maintenance-e2e.test.js` | 27 | actual log upload grace, abandoned stream and worker retention | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 21 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `no-host` |

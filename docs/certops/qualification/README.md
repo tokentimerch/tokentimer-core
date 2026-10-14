@@ -7,6 +7,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 ## API, inventory and worker behavior
 
 - [Fleet execution-log quotas](api/fleet-log-quota.md)
+- [Actual elapsed log abandonment and worker retention](api/log-maintenance.md)
 
 - [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
 - [Certificate audit history qualification](api/audit-history-qualification.md)
@@ -17,6 +18,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [CSR observation qualification](api/csr-observation-qualification.md)
 - [Shared CSR ownership and truthful installation evidence](api/csr-provisional-qualification.md)
 - [Certificate import metadata preservation](api/import-metadata-qualification.md)
+- [Retirement through fresh and concurrent TLS observations](api/retired-observation.md)
 - [Public certificate import and private container refusal](api/public-import-qualification.md)
 - [Certificate-producing integration source qualification](api/integration-source-qualification.md)
 - [Public renewal issuer switch policy](api/issuer-switch-qualification.md)
@@ -42,6 +44,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native certificate filesystem qualification](linux/filesystem-qualification.md)
 - [Real Linux ACME qualification](linux/linux-acme-qualification.md)
 - [Installed Linux agent qualification](linux/linux-systemd-qualification.md)
+- [Same-candidate Linux installer reapplication](linux/linux-systemd-reapply-qualification.md)
 - [Native Linux trust-store qualification](linux/linux-trust-qualification.md)
 - [Native Linux agent fault qualification](linux/native-agent-qualification.md)
 - [Native Linux consuming-server certificate reload qualification](linux/nginx-qualification.md)

@@ -245,7 +245,8 @@
       "adcs-real-local-rule-cross-product-refused": "real-host",
       "adcs-real-local-rule-extra-san-refused": "real-host",
       "adcs-real-local-rule-tightening-frees-pending-key": "real-host",
-      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host"
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host",
+      "adcs-real-cancel-ca-issued-unaccepted-key": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -281,7 +282,10 @@
       "retired-observation-rescan-stays-retired": "e2e",
       "retired-observation-cleanup": "e2e",
       "retired-observation-real-source": "e2e",
-      "retired-observation-operator-retire": "e2e"
+      "retired-observation-operator-retire": "e2e",
+      "retired-observation-invalid-retire-atomic": "e2e",
+      "retired-observation-concurrent-rescans": "e2e",
+      "retired-observation-rotation-return": "e2e"
     },
     "job-decisions-api": {
       "job-decisions-viewer-refusal": "integration",
@@ -531,7 +535,8 @@
       "adcs-real-local-rule-cross-product-refused": "real-host",
       "adcs-real-local-rule-extra-san-refused": "real-host",
       "adcs-real-local-rule-tightening-frees-pending-key": "real-host",
-      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host"
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host",
+      "adcs-real-cancel-ca-issued-unaccepted-key": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -962,6 +967,20 @@
       "csr-provisional-real-observation-rebinds-siblings": "integration",
       "csr-observed-foreign-owner-cannot-promote-selected-identity": "integration",
       "csr-provisional-owned-cleanup": "integration"
+    },
+    "linux-systemd-reapply": {
+      "linux-systemd-reapply-preserves-operator-state": "real-host",
+      "linux-systemd-reapply-reuses-registration": "real-host",
+      "linux-systemd-reapply-owned-cleanup": "real-host"
+    },
+    "agent-log-maintenance-worker": {
+      "log-maintenance-genuine-stream-terminal-job": "integration",
+      "log-maintenance-default-grace-preserves-lines": "integration",
+      "log-maintenance-actual-five-minute-abandonment": "integration",
+      "log-maintenance-late-upload-refused": "integration",
+      "log-maintenance-disabled-retention-worker-purge": "integration",
+      "log-maintenance-purge-idempotency": "integration",
+      "log-maintenance-owned-cleanup": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1322,6 +1341,15 @@
       "api",
       "postgres",
       "openssl"
+    ],
+    "linux-systemd-reapply": [
+      "linux",
+      "systemd"
+    ],
+    "agent-log-maintenance-worker": [
+      "api",
+      "postgres",
+      "workerProcess"
     ]
   },
   "suites": {
@@ -1569,7 +1597,8 @@
       "adcs-real-local-rule-cross-product-refused",
       "adcs-real-local-rule-extra-san-refused",
       "adcs-real-local-rule-tightening-frees-pending-key",
-      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key"
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key",
+      "adcs-real-cancel-ca-issued-unaccepted-key"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -1605,7 +1634,10 @@
       "retired-observation-real-source",
       "retired-observation-operator-retire",
       "retired-observation-rescan-stays-retired",
-      "retired-observation-cleanup"
+      "retired-observation-cleanup",
+      "retired-observation-invalid-retire-atomic",
+      "retired-observation-concurrent-rescans",
+      "retired-observation-rotation-return"
     ],
     "job-decisions-api": [
       "job-decisions-viewer-refusal",
@@ -1855,7 +1887,8 @@
       "adcs-real-local-rule-cross-product-refused",
       "adcs-real-local-rule-extra-san-refused",
       "adcs-real-local-rule-tightening-frees-pending-key",
-      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key"
+      "adcs-real-elapsed-validation-deadline-frees-unaccepted-key",
+      "adcs-real-cancel-ca-issued-unaccepted-key"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -2286,6 +2319,20 @@
       "csr-provisional-real-observation-rebinds-siblings",
       "csr-observed-foreign-owner-cannot-promote-selected-identity",
       "csr-provisional-owned-cleanup"
+    ],
+    "linux-systemd-reapply": [
+      "linux-systemd-reapply-preserves-operator-state",
+      "linux-systemd-reapply-reuses-registration",
+      "linux-systemd-reapply-owned-cleanup"
+    ],
+    "agent-log-maintenance-worker": [
+      "log-maintenance-genuine-stream-terminal-job",
+      "log-maintenance-default-grace-preserves-lines",
+      "log-maintenance-actual-five-minute-abandonment",
+      "log-maintenance-late-upload-refused",
+      "log-maintenance-disabled-retention-worker-purge",
+      "log-maintenance-purge-idempotency",
+      "log-maintenance-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2363,6 +2410,8 @@
     "agent-log-quota-api": "integration",
     "windows-native-child-output-privacy": "e2e",
     "browser-agent-console": "e2e",
-    "csr-provisional-api": "integration"
+    "csr-provisional-api": "integration",
+    "linux-systemd-reapply": "real-host",
+    "agent-log-maintenance-worker": "integration"
   }
 }

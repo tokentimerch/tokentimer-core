@@ -430,7 +430,8 @@ describe("CertOps agent surface E2E", () => {
     });
   }
   if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") {
-    it("real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart", { timeout: 480000 }, async () => {
+    // Bound actual first install, reapplication, crash recovery and service restarts.
+    it("real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart", { timeout: 600000 }, async () => {
       assert.equal(dbAvailable, true, "Linux systemd journey requires migrated PostgreSQL");
       await require("./linux-systemd-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
     });

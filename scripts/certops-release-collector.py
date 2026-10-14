@@ -28,6 +28,7 @@ WORKFLOWS = {
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
         "certops-renewal-alert-qualification.yml",
+        "certops-log-maintenance-qualification.yml",
         "certops-alpine-acme-qualification.yml",
         "certops-signing-rotation-qualification.yml",
         "certops-enterprise-adcs-qualification.yml",
@@ -213,7 +214,44 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                 result[key] = value[key]
         if value.get("suite") == "core-api-migration-upgrade":
             result.update(migration_evidence(value))
+        if value.get("suite") == "agent-log-maintenance-worker":
+            facts = value.get("maintenance")
+            if not isinstance(facts, dict) or facts.get("scope") != "actual-default-five-minute-grace-and-supported-retention-zero":
+                raise ValueError("Invalid worker log maintenance scope")
+            bounded = {"scope": "actual-default-five-minute-grace-and-supported-retention-zero"}
+            bounded.update({key: facts.get(key) is True for key in ("actualDatabaseExpired", "originalJobSucceeded", "lateUploadRefused", "tombstoneRetained", "onlySelectedWorkerSweeps")})
+            if facts.get("timestampsRewritten") is not False:
+                raise ValueError("Worker log maintenance timestamps rewritten")
+            bounded["timestampsRewritten"] = False
+            for key in ("defaultGraceMs", "observedMonotonicMs", "abandonedStreams", "purgedLines", "repeatedPurgeDeleted", "retentionDays"):
+                if type(facts.get(key)) not in (int, float) or not 0 <= facts[key] <= 420000:
+                    raise ValueError("Invalid worker log maintenance counter")
+                bounded[key] = facts[key]
+            result["maintenance"] = bounded
+        if value.get("suite") == "linux-systemd-reapply":
+            proof = value.get("nativeInstallerReapply")
+            if not isinstance(proof, dict) or proof.get("installation") != "same-candidate-reapplication":
+                raise ValueError("Invalid native installer reapplication evidence")
+            bounded = {"installation": "same-candidate-reapplication"}
+            bounded.update({key: proof.get(key) is True for key in ("operatorConfigBytesPreserved", "credentialBytesPreserved", "candidatePackageInstalled", "dropinPreserved", "privatePermissionsPreserved", "sameRegistration", "spareBootstrapUnconsumed", "bootstrapFileAbsent", "bootstrapAbsentAfterFreshRestart", "freshAuthenticatedHeartbeat", "originalConfigRestored")})
+            for key in ("beforePid", "reappliedPid", "freshRestartPid", "nativeUid"):
+                if type(proof.get(key)) is not int or not 0 < proof[key] <= 2147483647:
+                    raise ValueError("Invalid native installer process identity")
+                bounded[key] = proof[key]
+            result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            cancellation = value.get("nativeIssuedCancellation")
+            if not isinstance(cancellation, dict):
+                raise ValueError("Missing native issued cancellation evidence")
+            bounded_cancel = {key: cancellation.get(key) is True for key in ("actualCaIssuedBeforeCancel", "caLeafSignatureAndCsrSpkiVerified", "controlPlaneStillPendingBeforeCancel", "nonExportableKeyPresentBeforeCancel", "signedTerminalCleanupSucceeded", "exactUnacceptedKeyAbsent", "certificateNeverAccepted", "sameRequestSnapshotAndCsrPreserved", "noAdditionalCaRequest", "outgoingTrustedTlsUnchanged", "terminalReconcileRefused", "unusedIssuedLeafRevoked")}
+            for key, pattern in (("requestId", r"[1-9][0-9]{0,9}"), ("snapshotSha256", r"[a-fA-F0-9]{64}")):
+                if not isinstance(cancellation.get(key), str) or not re.fullmatch(pattern, cancellation[key]):
+                    raise ValueError("Invalid issued cancellation identity")
+                bounded_cancel[key] = cancellation[key]
+            if cancellation.get("pollIntervalSeconds") != 900 or cancellation.get("schedulerClock") != "default-real-now" or cancellation.get("databaseDatesRewritten") is not False or cancellation.get("journalRewritten") is not False:
+                raise ValueError("Invalid issued cancellation clock evidence")
+            bounded_cancel.update({"pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False})
+            result["nativeIssuedCancellation"] = bounded_cancel
             count = value.get("primaryNativePreflightDispatchCount")
             cohorts = value.get("nativePreflightCohorts")
             if type(count) is not int or not 0 <= count <= 18 or not isinstance(cohorts, list) or len(cohorts) > 128:

@@ -437,7 +437,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -465,7 +466,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -493,7 +495,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -521,7 +524,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -549,7 +553,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -577,7 +582,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -605,7 +611,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -633,7 +640,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -661,7 +669,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -1204,7 +1213,8 @@
         "tests/e2e/helpers/certops-adcs-local-rules.js",
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
       ]
     },
     {
@@ -1985,6 +1995,52 @@
       "environment": {
         "osFamily": "linux"
       }
+    },
+    {
+      "id": "linux-systemd-reapply-22.04",
+      "kind": "host",
+      "suite": "linux-systemd-reapply",
+      "source": "tests/e2e/helpers/linux-systemd-reapply.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "22.04"
+      },
+      "requiredSources": [
+        "packages/agent/scripts/install-agent.sh",
+        "tests/e2e/linux-systemd-real-journey.js"
+      ]
+    },
+    {
+      "id": "linux-systemd-reapply-24.04",
+      "kind": "host",
+      "suite": "linux-systemd-reapply",
+      "source": "tests/e2e/helpers/linux-systemd-reapply.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      },
+      "requiredSources": [
+        "packages/agent/scripts/install-agent.sh",
+        "tests/e2e/linux-systemd-real-journey.js"
+      ]
+    },
+    {
+      "id": "agent-log-maintenance-ubuntu24",
+      "kind": "host",
+      "suite": "agent-log-maintenance-worker",
+      "source": "tests/e2e/certops-log-maintenance-e2e.test.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-log-maintenance-worker.mjs",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/agentJobLogs.js"
+      ]
     }
   ]
 }

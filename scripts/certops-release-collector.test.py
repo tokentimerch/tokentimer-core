@@ -18,6 +18,32 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_native_reapplication_and_worker_maintenance_are_bounded(self):
+        suite = "linux-systemd-reapply"
+        value = {"suite": suite, "nativeInstallerReapply": {
+            "installation": "same-candidate-reapplication", "beforePid": 100,
+            "reappliedPid": 101, "freshRestartPid": 102, "nativeUid": 1001,
+            "credentialBytesPreserved": True, "rawCredential": "sentinel"}}
+        result = collector.sanitized_report(value, {suite}, set())
+        self.assertEqual(result["nativeInstallerReapply"]["nativeUid"], 1001)
+        self.assertNotIn("sentinel", json.dumps(result))
+        value["nativeInstallerReapply"]["nativeUid"] = "1001"
+        with self.assertRaises(ValueError):
+            collector.sanitized_report(value, {suite}, set())
+        suite = "agent-log-maintenance-worker"
+        facts = {"scope": "actual-default-five-minute-grace-and-supported-retention-zero",
+                 "timestampsRewritten": False, "defaultGraceMs": 300000,
+                 "observedMonotonicMs": 300100, "abandonedStreams": 1,
+                 "purgedLines": 2, "repeatedPurgeDeleted": 0, "retentionDays": 0,
+                 "rawLine": "sentinel"}
+        value = {"suite": suite, "maintenance": facts}
+        result = collector.sanitized_report(value, {suite}, set())
+        self.assertEqual(result["maintenance"]["observedMonotonicMs"], 300100)
+        self.assertNotIn("sentinel", json.dumps(result))
+        facts["timestampsRewritten"] = True
+        with self.assertRaises(ValueError):
+            collector.sanitized_report(value, {suite}, set())
+
     def test_windows_privacy_preserves_only_bounded_proof(self):
         suite = "windows-native-child-output-privacy"
         value = {"suite": suite, "actualNativeIdentity": "LocalSystem",
@@ -90,6 +116,7 @@ class CollectorTests(unittest.TestCase):
     def test_native_cohort_budgets_are_bounded_without_private_fields(self):
         cohort = {"workspaceId": "a" * 36, "agentId": "b" * 36, "dispatchCount": 18, "dispatchLimit": 18, "nativeIdentity": "LocalSystem", "runtime": "candidate-cli", "privateState": "sentinel"}
         value = {"suite": "enterprise-adcs-real", "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
+        value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))

@@ -1988,13 +1988,13 @@
     {
       "id": "governance.retire-precondition",
       "outcome": "Retire requires exact fingerprint and reason, preserves histories and does not reactivate when the same fingerprint is scanned.",
-      "status": "partial",
+      "status": "implemented",
       "evidenceLevel": "e2e",
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-governance-e2e.test.js",
-      "remainingCoverage": "ActualHTTP428/412 fingerprint gates on realTLS observedidentity tested; concurrentretire and otherroles further needed."
+      "implementation": "tests/e2e/certops-governance-e2e.test.js; tests/e2e/certops-retired-observation-e2e.test.js",
+      "implementationNotes": "Implemented for the declared API/PostgreSQL scope: exact fingerprint preconditions and valid reasons gate retirement; invalid reasons preserve identity/audit atomically. Independent trusted TLS and advancing capture timestamps prove fresh/concurrent rescans and actual old/new/old leaf rotation retain revoked identity, reason/time, audit, observation histories, token lifecycle and original expiry. Native key/store retirement and edition-specific policies require separate qualification and are not implied."
     },
     {
       "id": "governance.decommission-use",

@@ -153,6 +153,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     identity();
     await waitFor(async () => Date.parse(await lastSeen()) > Date.parse(seenBeforeCrash), "recovered service authenticates again");
     assert.equal(digest(credential), originalCredential);
+    await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
     const { retireAgent } = require("../../apps/api/services/certops/agentRegistry");
     await retireAgent({ client: pool, workspaceId, agentId, retiredBy: userId, reason: "disposable installer qualification" });
     await waitFor(() => mainPid() === 0, "actual API retirement stops the installed service");

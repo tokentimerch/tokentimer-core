@@ -90,3 +90,19 @@ The report explicitly identifies a configured five-minute window. It does not cl
 ## Separate actual pending-timeout duration
 
 The main-only `certops-enterprise-adcs-pending-elapsed.yml` workflow selects `-PendingElapsedQualification 1`, fixed Server 2022 / en-US and four-hour resource expiry. It runs only the installed-agent/RSA/IIS prerequisites, a genuine held request with public `pendingTimeout: 3600`, actual one-hour host/database wait, signed terminal cleanup and late-approval refusal, then owned cleanup. Its independent `enterprise-adcs-elapsed-pending-real` report must pass both the generic suite verifier and `scripts/certops-adcs-pending-elapsed-report.js`. The 80-minute native test fits Action RunCommand’s 90-minute ceiling; the workflow limit is 180 minutes. Baseline, hierarchy and fault selectors cannot be combined with it. See the [elapsed qualification runbook](../../docs/certops/qualification/windows/adcs-pending-elapsed.md). Native execution is pending; this does not claim a fourteen-day default-policy elapsed test.
+
+## Cancellation after genuine CA issuance, before local acceptance
+
+The native baseline and hierarchy suites include
+`adcs-real-cancel-ca-issued-unaccepted-key`. A real public pending enrollment
+owns a nonexportable CNG key. The officer approves its actual CA row before the
+ordinary fifteen-minute poll is due; independent public-leaf signature and CSR
+SPKI checks prove issuance already happened while the server/journal still say
+pending. Public cancellation and the default real-clock scheduler must dispatch
+signed cleanup that deletes only that unaccepted key. The certificate must
+never enter My/WebHosting, the existing trusted IIS endpoint must stay unchanged,
+and no second CA request or terminal reconciliation revival is allowed. The
+unused issued certificate is revoked in `finally`, including failure paths.
+This is deterministic ordering of real actions, not an injected journal/clock
+race; native execution remains pending. Its bounded `nativeIssuedCancellation`
+report and current helper source are mandatory for both suites.

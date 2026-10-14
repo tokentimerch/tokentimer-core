@@ -90,6 +90,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               !["originalResourceVersion", "compactedRevision", "observedResourceVersion"].every(key => typeof evidence[key] === "string" && /^[1-9][0-9]{0,19}$/.test(evidence[key])) ||
               typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
         }
+        if (slot.suite === "agent-log-maintenance-worker") require("./certops-log-maintenance-report").verify(artifact.report, root, candidateSha);
+        if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {
           require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
           const privacy = artifact.report.nativeChildOutputPrivacy;
@@ -105,6 +107,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          require("../tests/e2e/helpers/certops-adcs-issued-cancellation").verifyIssuedCancellationFacts(artifact.report.nativeIssuedCancellation);
           const expiry = artifact.report.nativeValidationExpiry;
           if (!expiry || expiry.configuredTimeoutSeconds !== 300 || expiry.defaultTimeoutSeconds !== 86400 ||
               !Number.isFinite(expiry.storedWindowSeconds) || expiry.storedWindowSeconds < 270 || expiry.storedWindowSeconds > 300 ||

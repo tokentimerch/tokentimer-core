@@ -624,7 +624,7 @@
     {
       "id": "7b2ab3b4f83534cb1504",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 450,
+      "line": 451,
       "name": "happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -637,7 +637,7 @@
     {
       "id": "3caaac79423f621511de",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 566,
+      "line": 567,
       "name": "tamper: mutating a signed field fails agent-side verification",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -650,7 +650,7 @@
     {
       "id": "6429a45a3d220ddac5ba",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 580,
+      "line": 581,
       "name": "bootstrap token reuse is rejected with 401",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -663,7 +663,7 @@
     {
       "id": "5858eb73c41787ba2fbf",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 598,
+      "line": 599,
       "name": "bad agent credential is rejected with 401",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -676,7 +676,7 @@
     {
       "id": "95791b18f12fc411afa8",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 614,
+      "line": 615,
       "name": "retired agent gets 410 on heartbeat, claim, and results",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -689,7 +689,7 @@
     {
       "id": "3a1aff6c52424cf713a9",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 649,
+      "line": 650,
       "name": "workspace kill switch blocks claims with 409",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -702,7 +702,7 @@
     {
       "id": "dac270688885dadbf536",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 672,
+      "line": 673,
       "name": "evidence is accepted; private key material is rejected with 422",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -715,7 +715,7 @@
     {
       "id": "8783b84579370930cc83",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 714,
+      "line": 715,
       "name": "second claim returns no jobs while the lease is held",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -728,7 +728,7 @@
     {
       "id": "2d9f67c60fc3db22c132",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 736,
+      "line": 737,
       "name": "lease reaper defers, then requeues once the claiming agent goes silent",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -741,7 +741,7 @@
     {
       "id": "536d9158d0e1632620bc",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 798,
+      "line": 799,
       "name": "lease reaper fails an expired job with exhausted retry budget",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -754,7 +754,7 @@
     {
       "id": "cb85f5d48f404a1d5905",
       "file": "tests/e2e/certops-agent-e2e.test.js",
-      "line": 853,
+      "line": 854,
       "name": "sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1151,6 +1151,19 @@
       "environment": "prerequisite-review",
       "workflow": ".github/workflows/certops-qualification.yml",
       "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
+      "id": "2f9f7531658946706268",
+      "file": "tests/e2e/certops-log-maintenance-e2e.test.js",
+      "line": 27,
+      "name": "actual log upload grace, abandoned stream and worker retention",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "prerequisite-review",
+      "workflow": null,
+      "workflowStatus": "exact-site-execution-not-configured",
       "executionStatus": "not-qualified",
       "classificationStatus": "candidate-needs-review"
     },

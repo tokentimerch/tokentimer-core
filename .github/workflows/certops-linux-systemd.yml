@@ -65,4 +65,5 @@ jobs:
           path: |
             qualification-results/linux-systemd.jsonl
             qualification-results/linux-systemd-writepath.json
+            qualification-results/linux-systemd-reapply.json
           if-no-files-found: error

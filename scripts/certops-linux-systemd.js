@@ -19,13 +19,16 @@ async function main() {
   fs.mkdirSync("qualification-results", { recursive: true });
   const report = "qualification-results/linux-systemd.jsonl";
   const scope = "real-agent-linux-systemd";
+  // The native test includes a second actual installer run and two additional
+  // service restarts; keep two minutes outside its ten-minute deadline for protocol/report work.
   const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js",
     `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], {
-    stdio: "inherit", timeout: 600000,
+    stdio: "inherit", timeout: 720000,
     env: { ...process.env, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope },
   });
   assert.equal(result.status, 0, "real Linux installer/systemd suite failed");
   const writeReport=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-writepath.json","utf8"));assert.equal(writeReport.suite,"linux-systemd-writepath");assert.deepEqual(require("./certops-qualification-report").verifyReport(writeReport,["linux-systemd-native-writepath-allowed-peer-erofs","linux-systemd-native-writepath-owned-cleanup"]),[]);
+  const reapplyReport=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-reapply.json","utf8"));assert.equal(reapplyReport.suite,"linux-systemd-reapply");assert.deepEqual(require("./certops-qualification-report").verifyReport(reapplyReport),[]);require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(reapplyReport.nativeInstallerReapply);
   console.log(JSON.stringify(verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope)));
 }
 module.exports = { main, journey };
