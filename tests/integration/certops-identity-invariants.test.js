@@ -1095,8 +1095,71 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       assert.equal(t.expiration, expiry);
       assert.equal(t.serial_number, fingerprint.slice(0, 8));
       assert.equal(t.notes, "Operator notes");
+      assert.equal(
+        (await db.query("SELECT token_id FROM managed_certificates WHERE id=$1", [mc.id])).rows[0].token_id,
+        tid,
+        "renewal keeps the same token while adding another fingerprint identity",
+      );
       await db.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1", [renewed.id]);
     }
+    assert.equal(
+      (await db.query("SELECT COUNT(*)::int n FROM certops_certificate_identities WHERE workspace_id=$1", [ws])).rows[0].n,
+      3,
+      "original certificate and both renewed identities remain in history",
+    );
+    assert.equal(
+      (await db.query("SELECT COUNT(DISTINCT identity_id)::int n FROM certops_identity_detail_history WHERE workspace_id=$1 AND token_id=$2", [ws, tid])).rows[0].n,
+      3,
+      "all three certificate identity snapshots retain their association to the same token",
+    );
+    assert.equal(
+      (await db.query("SELECT COUNT(*)::int n FROM certops_management_associations WHERE workspace_id=$1", [ws])).rows[0].n,
+      3,
+    );
+    assert.equal(
+      (await db.query("SELECT COUNT(*)::int n FROM tokens WHERE workspace_id=$1", [ws])).rows[0].n,
+      1,
+    );
+  });
+  it("updates a shared token even when another source has a different certificate identity", async () => {
+    const ws = await workspace(), tid = await token(ws);
+    const selected = await source(ws, A, { tokenId: tid, notAfter: "2026-10-20" });
+    await source(ws, B, { tokenId: tid, notAfter: "2027-02-12" });
+    await upsertManagedCertificateByMonitorSource(db,
+      { fingerprintSha256: C, commonName: "app.example", serialNumber: "third-leaf", notAfter: "2027-04-12" },
+      { workspaceId: ws, source: selected.source, sourceRef: selected.source_ref,
+        tokenId: tid, status: "discovered", observedAt: new Date() }, 0);
+    const t = (await db.query("SELECT expiration::text,serial_number FROM tokens WHERE id=$1", [tid])).rows[0];
+    assert.deepEqual(t, { expiration: "2027-04-12", serial_number: "third-leaf" });
+    assert.equal(
+      (await db.query("SELECT COUNT(DISTINCT fingerprint_sha256)::int n FROM managed_certificates WHERE token_id=$1", [tid])).rows[0].n,
+      2,
+      "different live source identities do not gate the token write",
+    );
+  });
+  it("updates the token before fencing a renewal result whose source already rotated", async () => {
+    const ws = await workspace(), tid = await token(ws);
+    const mc = await source(ws, A, { status: "active", tokenId: tid, notAfter: "2026-10-20" });
+    const renewed = await job(ws, mc, "claimed");
+    renewed.claim_id = randomUUID();
+    await db.query("UPDATE certificate_jobs SET claim_id=$2 WHERE id=$1", [renewed.id, renewed.claim_id]);
+    await db.query(
+      "INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,metadata) VALUES($1,$2,'validation.passed',$3,$4::jsonb)",
+      [ws, renewed.id, renewed.claim_id, JSON.stringify({ step: "verify",
+        fingerprintSha256: B, validTo: "2027-01-12T00:00:00.000Z", serialNumber: "renewed-leaf" })]);
+    await upsertManagedCertificateByMonitorSource(db,
+      { fingerprintSha256: B, commonName: "app.example", serialNumber: "renewed-leaf", notAfter: "2027-01-12" },
+      { workspaceId: ws, source: mc.source, sourceRef: mc.source_ref,
+        tokenId: tid, status: "active", observedAt: new Date() }, 0);
+    const refresh = require("../../apps/api/services/certops/agentDispatch")._test.refreshRenewedCertificateEvidence;
+    assert.equal(await refresh({ client: db, workspaceId: ws, job: renewed }), null,
+      "a result for the old management association stays fenced");
+    assert.equal(
+      (await db.query("SELECT expiration::text FROM tokens WHERE id=$1", [tid])).rows[0].expiration,
+      "2027-01-12",
+      "accepted discovery already synchronized the renewed identity's token",
+    );
+    assert.equal((await period(mc)).current_identity_id, (await identity(ws, B)).id);
   });
   for (const observedSource of ["agent_filesystem", "agent_windows", "cert_manager"]) {
     it("synchronizes token facts from accepted " + observedSource + " observations and rejects stale projection", async () => {
