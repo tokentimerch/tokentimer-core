@@ -1964,7 +1964,7 @@
     {
       "id": "governance.pause",
       "outcome": "Pause/resume is audited; new dispatch/provision is blocked while allowed observations/results remain ingestible.",
-      "status": "partial",
+      "status": "implemented",
       "evidenceLevel": "integration",
       "requiredEnvironments": [
         "pause-ingestion-api",
@@ -1972,7 +1972,7 @@
         "trust-api-lifecycle"
       ],
       "implementation": "tests/e2e/certops-pause-ingestion-e2e.test.js; tests/e2e/certops-jobs-api-e2e.test.js; tests/e2e/certops-trust-api-e2e.test.js",
-      "remainingCoverage": "Focused actual public API/protocol/PostgreSQL cases pass audited idempotent pause/resume, blocked new claim/provision without new certificate/attempt, permitted existing heartbeat/claim-bound evidence/result ingestion and exactly-once resumed claim. Existing approval/trust policy boundaries support this. Protocol noop fixtures do not prove certificate side effects; native service recovery, controller and edition cross-products still need host/overlay qualification."
+      "implementationNotes": "Implemented for the declared API/PostgreSQL scope: audited idempotent pause/resume blocks new claim/provision, preserves job/attempt state, accepts existing heartbeat/claim-bound evidence/results, and resumes the exact queued claim once. A real public-file discovery scan also ingests a freshly generated certificate while paused, independently verifies its fingerprint/stored-copy inventory location and one observation slot, and preserves all job/claim state plus the original pause audit. Actual focused seven-case execution passed. Installed-service, controller and edition recovery remain separate qualification outcomes."
     },
     {
       "id": "governance.roles",

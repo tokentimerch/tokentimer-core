@@ -1744,7 +1744,13 @@
       "source": "tests/e2e/certops-pause-ingestion-e2e.test.js",
       "environment": {
         "osFamily": "linux"
-      }
+      },
+      "requiredSources": [
+        "tests/e2e/certops-pause-ingestion-e2e.test.js",
+        "tests/e2e/helpers/certops-registered-agent.js",
+        "packages/agent/src/discovery/index.js",
+        "packages/agent/src/index.js"
+      ]
     },
     {
       "id": "linux-derivation-failure-api",

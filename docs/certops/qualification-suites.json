@@ -700,7 +700,8 @@
       "pause-ingestion-blocked-provision": "integration",
       "pause-ingestion-existing-result-evidence": "integration",
       "pause-ingestion-audited-resume": "integration",
-      "pause-ingestion-cleanup": "integration"
+      "pause-ingestion-cleanup": "integration",
+      "pause-ingestion-native-discovery-observation": "integration"
     },
     "derivation-failure-api": {
       "derivation-failure-public-material": "integration",
@@ -1373,7 +1374,8 @@
     ],
     "pause-ingestion-api": [
       "api",
-      "postgres"
+      "postgres",
+      "openssl"
     ],
     "derivation-failure-api": [
       "api",
@@ -2287,7 +2289,8 @@
       "pause-ingestion-blocked-provision",
       "pause-ingestion-existing-result-evidence",
       "pause-ingestion-audited-resume",
-      "pause-ingestion-cleanup"
+      "pause-ingestion-cleanup",
+      "pause-ingestion-native-discovery-observation"
     ],
     "derivation-failure-api": [
       "derivation-failure-public-material",

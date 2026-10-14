@@ -1260,7 +1260,7 @@
     {
       "id": "aae9e3fbe69a56c66390",
       "file": "tests/e2e/certops-pause-ingestion-e2e.test.js",
-      "line": 19,
+      "line": 21,
       "name": "workspace pause blocks new work while retaining owned result ingestion",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
