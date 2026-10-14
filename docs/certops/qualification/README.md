@@ -54,6 +54,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Two successful unattended Windows renewal generations](windows/two-unattended-renewals.md)
 - [Retention-ledger atomic replacement refusal](windows/retention-ledger-atomic-replace.md)
 - [Native retention reference protection and configuration boundaries](windows/retention-reference-guards.md)
+- [Native configuration, credential and signing-pin read-access refusals](windows/state-read-refusals.md)
 - [Retention replacement lineage, cross-store key survivors and protected cleanup](windows/retention-replacement-lineage.md)
 - [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
 - [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
@@ -62,8 +63,10 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [AD CS operator guide](../agent/adcs.md)
 - [Native uncertain submission, acknowledged recovery and safe abandonment](adcs/uncertain-abandon.md)
 - [Two native AD CS renewal generations through default scheduler sweeps](adcs/two-unattended-renewals.md)
+- [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
 - [Browser-driven issuer, profile and native AD CS enrollment](adcs/browser-native-journey.md)
 - [Exact local CA/template permission boundaries](adcs/local-ca-template-boundaries.md)
+- [Other-enrollment native CA candidate SPKI refusal](adcs/foreign-spki-candidate.md)
 - [Native fault observer ownership and drainage](adcs/fault-observer-lifecycle.md)
 
 ## Linux agents and deployment

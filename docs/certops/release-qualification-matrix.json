@@ -212,7 +212,9 @@
         "packages/agent/reference/adcs-chain/keyrefs/result.go",
         "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
         "packages/agent/scripts/host/cng-key-usage-proof.js",
-        "packages/agent/scripts/host/retention-reference-fixture.js"
+        "packages/agent/scripts/host/retention-reference-fixture.js",
+        "packages/agent/scripts/host/state-read-refusal-fixture.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -366,7 +368,9 @@
         "packages/agent/reference/adcs-chain/keyrefs/result.go",
         "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
         "packages/agent/scripts/host/cng-key-usage-proof.js",
-        "packages/agent/scripts/host/retention-reference-fixture.js"
+        "packages/agent/scripts/host/retention-reference-fixture.js",
+        "packages/agent/scripts/host/state-read-refusal-fixture.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {

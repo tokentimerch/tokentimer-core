@@ -199,8 +199,8 @@
       "requiredEnvironments": [
         "windows-2022-disposable-api-postgres-pebble"
       ],
-      "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Real SYSTEM harness prepares production restrictive config/DNS ACLs and reads agent restricted credential/journal state; exhaustive weak-ACL refusal and every state artifact remain."
+      "implementation": "tests/e2e/windows-real-journey.js; packages/agent/scripts/host/state-read-refusal-fixture.js",
+      "remainingCoverage": "Real SYSTEM harness prepares production restrictive config/DNS ACLs and reads agent restricted credential/journal state; exhaustive weak-ACL refusal and every state artifact remain. Supporting native temporary-filesystem source now requires actual ReadData denial for config, credential and signing pin; exact production-return identities before/after, independent OS read errors, unchanged bytes/native file IDs and exact ACL restoration are mandatory. A pre-mutation parent guard preserves state if restoration is unproven. Three focused desktop cases passed with current source hashes, but this is production-reader permission evidence, not installed SCM startup, weak-ACL exposure or hosted Server qualification."
     },
     {
       "id": "windows-install.system-environment",
@@ -1277,7 +1277,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
-      "remainingCoverage": "Native mandatory source restarts the owned SCM service while a genuine CA request is pending and verifies new PID, unchanged durable CSR/SPKI/snapshot/RequestId and no duplicate submission. A real owned IIS outage exercises protected-key installation failure and audited public retry with same CSR/key/RequestId and trusted TLS. A separate experimental observed-journal fixture terminates the verified owned service tree at prepared, submitting or initial installing, waits for actual lease/reaper orphaning, and uses acknowledged public recovery without journal/DB-clock rewrites; it remains unqualified until native interception runs. Deferred and each remaining installation-step fault timing, default long lease/grace and complete native evidence remain."
+      "remainingCoverage": "Native mandatory source restarts the owned SCM service while a genuine CA request is pending and verifies new PID, unchanged durable CSR/SPKI/snapshot/RequestId and no duplicate submission. A real owned IIS outage exercises protected-key installation failure and audited public retry with same CSR/key/RequestId and trusted TLS. A separate experimental observed-journal fixture terminates the verified owned service tree at prepared, submitting or initial installing, waits for actual lease/reaper orphaning, and uses acknowledged public recovery without journal/DB-clock rewrites; it remains unqualified until native interception runs. Deferred and each remaining installation-step fault timing, default long lease/grace and complete native evidence remain. Optional accepted-before-bind experiment now requires real durable installing/bind observation, exact native accepted leaf and private-key possession, unchanged outgoing IIS and trusted TLS, exact owned process-tree drainage, real lease expiry plus grace and acknowledged same-request/key/leaf recovery. It remains source-only, explicitly not-qualified and excluded from release cells; a missed window or unresolved native drain fails and preserves fixtures."
     },
     {
       "id": "adcs.lost-submit-response",
@@ -1288,7 +1288,7 @@
         "disposable-enterprise-adcs-response-loss-experiment"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
-      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending."
+      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending. A same-requester/same-CA other-enrollment leaf is independently proven retrievable, then refused by explicit SPKI candidate verification and bounded search with unchanged original journal/watermark/CNG/TLS and CA counts. This read-only native source also remains pending and does not qualify public uncertain recovery."
     },
     {
       "id": "adcs.unreachable-before-submit",
@@ -1310,7 +1310,7 @@
         "disposable-enterprise-adcs-response-loss-experiment"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
-      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending."
+      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending. A same-requester/same-CA other-enrollment leaf is independently proven retrievable, then refused by explicit SPKI candidate verification and bounded search with unchanged original journal/watermark/CNG/TLS and CA counts. This read-only native source also remains pending and does not qualify public uncertain recovery."
     },
     {
       "id": "adcs.abandon",

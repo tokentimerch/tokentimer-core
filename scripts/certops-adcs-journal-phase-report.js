@@ -7,6 +7,7 @@
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 function verify(report){
+  if(report?.phase==="accepted-before-bind")return require("../tests/e2e/helpers/certops-adcs-accepted-install-recovery").verifyReport(report);
   assert.equal(report.schemaVersion,1);assert.equal(report.scope,"enterprise-adcs-journal-phase-experimental");
   assert.equal(report.qualificationStatus,"not-qualified");assert.equal(report.status,"passed");
   assert.match(report.candidateSha,/^[a-f0-9]{40}$/i);assert.match(report.fixtureSource?.sha256,/^[a-f0-9]{64}$/i);

@@ -9,7 +9,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('en-US','de-DE','fr-FR')][string]$Language = 'en-US',
   [ValidateSet('0','1')][string]$ResponseLossExperiment = '0',
   [ValidateSet('0','1')][string]$PendingElapsedQualification = '0',
-  [ValidateSet('none','keygen_intent','prepared','submitting','installing')][string]$JournalPhaseExperiment='none',
+  [ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [string]$Location = 'westeurope')
 $ErrorActionPreference = 'Stop'

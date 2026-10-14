@@ -8,7 +8,7 @@ candidate="${1#*=}"
 [[ "$candidate" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid candidate SHA' >&2; exit 1; }
 journal_phase_arg="${2:-journal_phase=none}"
 journal_phase="${journal_phase_arg#*=}"
-case "$journal_phase" in none|keygen_intent|prepared|submitting|installing) ;; *) echo 'Unsupported journal phase experiment' >&2; exit 1 ;; esac
+case "$journal_phase" in none|keygen_intent|prepared|submitting|installing|accepted-before-bind) ;; *) echo 'Unsupported journal phase experiment' >&2; exit 1 ;; esac
 workspace=/opt/ttqualification
 test ! -e "$workspace" || { echo 'Refusing existing qualification workspace' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive

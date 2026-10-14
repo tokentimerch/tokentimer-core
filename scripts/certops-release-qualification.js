@@ -107,6 +107,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").verifyAtomicProof(artifact.report.nativeRetentionAtomicReplace);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-elapsed-fixture").verifyElapsedProof(artifact.report.nativeElapsedRetention);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/state-read-refusal-fixture").verifyProof(artifact.report.nativeStateReadRefusals);
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {
@@ -127,6 +128,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
           require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(artifact.report.nativeBrowserAdcs);
           require("../tests/e2e/helpers/certops-adcs-local-rules").verifyPairProof(artifact.report.nativeLocalRulePairs);
+          require("../tests/e2e/helpers/certops-adcs-native-reconcile").verifyForeignProof(artifact.report.nativeForeignSpkiCandidate);
           const browserDispatch = artifact.report.browserNativePreflightDispatch;
           if (!browserDispatch || Object.keys(browserDispatch).sort().join(",") !== "count,jobIds" || browserDispatch.count !== 2 || !Array.isArray(browserDispatch.jobIds) || browserDispatch.jobIds.length !== 2 ||
               !browserDispatch.jobIds.every(id => typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) || new Set(browserDispatch.jobIds.map(id => id.toLowerCase())).size !== 2) throw new Error("Browser native preflight dispatch accounting incomplete");

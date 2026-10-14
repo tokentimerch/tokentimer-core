@@ -428,6 +428,14 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     or any(references.get(field) is not True for field in reference_fields)):
                 raise ValueError("Incomplete native retention reference guard evidence")
             result["nativeRetentionReferences"] = {**dict.fromkeys(reference_fields, True), "scope": reference_scope, "elapsed24HourQualified": False}
+            state_fields = ("threeReadablePositiveControls", "threeActualNativeReadDenials", "productionReadersRefused", "exactFileIdentityAndBytesPreserved", "exactAclRestored", "allReadersRecovered", "ownedTemporaryStateRemoved")
+            state_read = value.get("nativeStateReadRefusals")
+            state_scope = "native-temporary-state-read-denials-production-readers"
+            if (not isinstance(state_read, dict) or state_read.get("scope") != state_scope
+                    or state_read.get("installedServiceStartupQualified") is not False
+                    or any(state_read.get(field) is not True for field in state_fields)):
+                raise ValueError("Incomplete native state read refusal evidence")
+            result["nativeStateReadRefusals"] = {**dict.fromkeys(state_fields, True), "scope": state_scope, "installedServiceStartupQualified": False}
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
@@ -544,6 +552,23 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            foreign = value.get("nativeForeignSpkiCandidate")
+            foreign_flags = ("sameRequesterNativeRetrieveSucceeded", "nativeCaIdentityMatched", "differentEnrollmentSpkiProved", "explicitCandidateRefused", "boundedSearchUnresolved", "originalJournalWatermarkPreserved", "originalNativeCustodyAndTlsPreserved", "noAdditionalCaRequest")
+            if (not isinstance(foreign, dict) or foreign.get("scope") != "read-only-native-foreign-spki-candidate-not-public-uncertain-recovery"
+                    or any(foreign.get(flag) is not True for flag in foreign_flags)):
+                raise ValueError("Missing native other-enrollment SPKI refusal")
+            bounded_foreign = {key: foreign[key] for key in ("scope", *foreign_flags)}
+            for key in ("requestIds", "spkiFingerprints"):
+                entries = foreign.get(key)
+                if not isinstance(entries, list) or len(entries) != 2 or any(not isinstance(entry, str) for entry in entries) or len(set(entries)) != 2:
+                    raise ValueError("Invalid native other-enrollment public identity")
+                if key == "requestIds":
+                    if any(not re.fullmatch(r"[1-9][0-9]{0,9}", entry) or int(entry) > 0xffffffff for entry in entries):
+                        raise ValueError("Invalid native other-enrollment request ID")
+                elif any(not re.fullmatch(r"[a-f0-9]{64}", entry) for entry in entries):
+                    raise ValueError("Invalid native other-enrollment SPKI")
+                bounded_foreign[key] = entries
+            result["nativeForeignSpkiCandidate"] = bounded_foreign
             pair_cases = {"ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch"}
             pair_flags = ("actualSignedJobRefused", "claimBoundOutcome", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "originalNativeCustodyPreserved", "outgoingTrustedTlsPreserved", "configurationAndCredentialRestored")
             pairs = value.get("nativeLocalRulePairs")

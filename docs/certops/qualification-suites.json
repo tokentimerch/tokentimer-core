@@ -37,7 +37,10 @@
       "windows-retention-atomic-replace-refusal": "real-host",
       "windows-retention-two-open-references-protect": "real-host",
       "windows-retention-one-closed-reference-still-protects": "real-host",
-      "windows-retention-all-closed-respects-real-deadline": "real-host"
+      "windows-retention-all-closed-respects-real-deadline": "real-host",
+      "windows-state-config-read-denied": "real-host",
+      "windows-state-credential-read-denied": "real-host",
+      "windows-state-signing-pin-read-denied": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -268,7 +271,8 @@
       "adcs-real-browser-owned-cleanup": "real-host",
       "adcs-real-local-rule-ca-host-mismatch-refused": "real-host",
       "adcs-real-local-rule-ca-authority-mismatch-refused": "real-host",
-      "adcs-real-local-rule-template-pair-mismatch-refused": "real-host"
+      "adcs-real-local-rule-template-pair-mismatch-refused": "real-host",
+      "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -573,7 +577,8 @@
       "adcs-real-browser-owned-cleanup": "real-host",
       "adcs-real-local-rule-ca-host-mismatch-refused": "real-host",
       "adcs-real-local-rule-ca-authority-mismatch-refused": "real-host",
-      "adcs-real-local-rule-template-pair-mismatch-refused": "real-host"
+      "adcs-real-local-rule-template-pair-mismatch-refused": "real-host",
+      "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1664,7 +1669,10 @@
       "windows-retention-atomic-replace-refusal",
       "windows-retention-two-open-references-protect",
       "windows-retention-one-closed-reference-still-protects",
-      "windows-retention-all-closed-respects-real-deadline"
+      "windows-retention-all-closed-respects-real-deadline",
+      "windows-state-config-read-denied",
+      "windows-state-credential-read-denied",
+      "windows-state-signing-pin-read-denied"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -1895,7 +1903,8 @@
       "adcs-real-browser-owned-cleanup",
       "adcs-real-local-rule-ca-host-mismatch-refused",
       "adcs-real-local-rule-ca-authority-mismatch-refused",
-      "adcs-real-local-rule-template-pair-mismatch-refused"
+      "adcs-real-local-rule-template-pair-mismatch-refused",
+      "adcs-real-native-reconcile-other-enrollment-spki-refused"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2200,7 +2209,8 @@
       "adcs-real-browser-owned-cleanup",
       "adcs-real-local-rule-ca-host-mismatch-refused",
       "adcs-real-local-rule-ca-authority-mismatch-refused",
-      "adcs-real-local-rule-template-pair-mismatch-refused"
+      "adcs-real-local-rule-template-pair-mismatch-refused",
+      "adcs-real-native-reconcile-other-enrollment-spki-refused"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

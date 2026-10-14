@@ -3,7 +3,7 @@ Guest SYSTEM test entry point called only by provision-lab.ps1 after domain/tool
 the exact candidate runtime and test-only controller keys, selects the dedicated report, and invokes
 the real API-agent/native harness. It clears the officer password after execution.
 #>
-param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64)
+param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64)
 $ErrorActionPreference = 'Stop'
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
 $runtime=Get-Content 'C:\ttqualification\runtime.json' -Raw | ConvertFrom-Json

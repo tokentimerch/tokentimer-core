@@ -83,6 +83,12 @@ published predecessor is still required for published-package upgrade
 qualification; rebuilding that source or adding candidate helpers cannot
 satisfy it. This blocked packaging prerequisite is separate from the executable
 source-upgrade matrix slots.
+The preflight also requires the exact public release ID, asset ID, asset name,
+size, download URL and GitHub-reported digest before inspecting the archive.
+Missing, duplicated or changed release metadata fails; matching metadata does
+not qualify a cryptographic release signature or execute an upgrade. The local
+read-only inspection confirms this blocked prerequisite and never substitutes
+candidate executables into the published archive.
 Current candidate package tests freshly build both helpers and require their
 presence and architectures. Archive checksums and a signed source tag do
 not establish a signed executable or release-asset attestation.

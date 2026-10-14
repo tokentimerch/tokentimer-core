@@ -15,7 +15,7 @@ on:
       phase:
         description: Durable native journal phase that must actually be observed before owned service interruption
         type: choice
-        options: ['keygen_intent', 'prepared', 'submitting', 'installing']
+        options: ['keygen_intent', 'prepared', 'submitting', 'installing', 'accepted-before-bind']
         default: 'installing'
       language:
         description: Installed native Windows display language on CA and member
