@@ -1191,6 +1191,60 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       assert.equal((await period(mc)).current_identity_id, (await identity(ws, B)).id);
     });
   }
+  for (const retiredStatus of ["revoked", "decommissioned"]) {
+    it("synchronizes token lifecycle through " + retiredStatus + ", replacement, and another renewal", async () => {
+      const ws = await workspace(), tid = await token(ws);
+      await db.query("UPDATE tokens SET expiration='2026-10-20',notes='Lifecycle notes' WHERE id=$1", [tid]);
+      const mc = await source(ws, A, { status: "active", tokenId: tid, notAfter: "2026-10-20" });
+      await retireCertificateIdentity({
+        workspaceId: ws, identityId: (await identity(ws, A)).id,
+        expectedFingerprintSha256: A, status: retiredStatus,
+        reason: "Lifecycle verification", acknowledgeUncertainty: true, client: db,
+      });
+      const readToken = async () => (await db.query(
+        "SELECT expiration::text,cert_lifecycle_status,serial_number,notes FROM tokens WHERE id=$1", [tid])).rows[0];
+      assert.equal((await readToken()).cert_lifecycle_status, retiredStatus);
+      assert.equal((await readToken()).expiration, "2026-10-20");
+      await assert.rejects(job(ws, mc, "claimed", "renew"),
+        error => error.code === "55000" && /lifecycle blocks/.test(error.message),
+        "ordinary renewal of the retired fingerprint must remain blocked");
+      await upsertManagedCertificateByMonitorSource(db,
+        { fingerprintSha256: A, commonName: "app.example", notAfter: "2026-10-20" },
+        { workspaceId: ws, source: mc.source, sourceRef: mc.source_ref,
+          tokenId: tid, status: "active", observedAt: new Date() }, 0);
+      assert.equal((await identity(ws, A)).lifecycle_status, retiredStatus);
+      assert.equal((await readToken()).cert_lifecycle_status, retiredStatus,
+        "rediscovery of the same fingerprint does not reactivate its token");
+      await upsertManagedCertificateByMonitorSource(db,
+        { fingerprintSha256: B, commonName: "app.example", notAfter: "2027-01-12", serialNumber: "replacement-leaf" },
+        { workspaceId: ws, source: mc.source, sourceRef: mc.source_ref,
+          tokenId: tid, status: "active", observedAt: new Date() }, 0);
+      assert.equal((await identity(ws, A)).lifecycle_status, retiredStatus);
+      assert.equal((await identity(ws, B)).lifecycle_status, "active");
+      assert.deepEqual(await readToken(), { expiration: "2027-01-12",
+        cert_lifecycle_status: "active", serial_number: "replacement-leaf", notes: "Lifecycle notes" });
+      const renewed = await job(ws, mc, "claimed", "renew");
+      renewed.claim_id = randomUUID();
+      await db.query("UPDATE certificate_jobs SET claim_id=$2 WHERE id=$1", [renewed.id, renewed.claim_id]);
+      await db.query(
+        "INSERT INTO certificate_evidence(workspace_id,job_id,evidence_type,claim_id,metadata) VALUES($1,$2,'validation.passed',$3,$4::jsonb)",
+        [ws, renewed.id, renewed.claim_id, JSON.stringify({ step: "verify",
+          fingerprintSha256: C, validTo: "2027-04-12T00:00:00.000Z", serialNumber: "next-renewal" })]);
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await require("../../apps/api/services/certops/agentDispatch")._test.refreshRenewedCertificateEvidence({
+          client, workspaceId: ws, job: renewed,
+        });
+        assert.equal(result?.refreshed, true);
+        await client.query("COMMIT");
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+      assert.deepEqual(await readToken(), { expiration: "2027-04-12",
+        cert_lifecycle_status: "active", serial_number: "next-renewal", notes: "Lifecycle notes" });
+      assert.equal((await identity(ws, A)).lifecycle_status, retiredStatus);
+    });
+  }
   it("v64 repairs already-applied v63 without exempting closed or foreign periods from admission", async () => {
     const ws = await workspace(1),
       first = await source(ws, A),
