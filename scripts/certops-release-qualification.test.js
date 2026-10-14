@@ -401,7 +401,11 @@ test("Windows native stack slots require public admission proof beyond service-c
   assert.ok(verifyMatrix([value], options).length);
   const facts = { anonymousAdmissionRefused: true, viewerAdmissionRefused: true, authorizedAdmissionCreated: true, idempotentSameJob: true, publicRequesterPreserved: true, serverDerivedOsStoreKeyMode: true, publicPayloadPreserved: true, nativeJobSucceeded: true, nativeCngIisTrustedTlsVerified: true, ownedActorCleanup: true, anonymousStatus: 401, viewerStatus: 403, createStatus: 201, replayStatus: 201, source: "api", mode: "real", authorizedRole: "workspace_manager" };
   events.at(-1).windowsPublicIssuance = facts;
+  const handoff=require("../tests/e2e/helpers/certops-windows-installed-handoff");events.at(-1).nativeInstalledStateHandoff={scope:handoff.SCOPE,...Object.fromEntries(handoff.FLAGS.map(flag=>[flag,true]))};
   assert.deepEqual(verifyMatrix([value], options), []);
+  for(const flag of handoff.FLAGS){for(const wrong of [false,1,null,"true"]){const bad=structuredClone(value);bad.events.at(-1).nativeInstalledStateHandoff[flag]=wrong;assert.ok(verifyMatrix([bad],options).length,flag);}const missing=structuredClone(value);delete missing.events.at(-1).nativeInstalledStateHandoff[flag];assert.ok(verifyMatrix([missing],options).length,flag);}
+  for(const change of [{scope:"automatic-in-place-reregistration"},{oldAdcsJobsTransferred:true},{rawCredential:"private"}]){const bad=structuredClone(value);Object.assign(bad.events.at(-1).nativeInstalledStateHandoff,change);assert.ok(verifyMatrix([bad],options).length);}
+  {const bad=structuredClone(value);delete bad.events.at(-1).nativeInstalledStateHandoff;assert.ok(verifyMatrix([bad],options).length);}
   for (const change of [{ ownedActorCleanup: false }, { serverDerivedOsStoreKeyMode: false }, { source: "automation" }, { authorizedRole: "admin" }, { viewerStatus: 201 }, { idempotentSameJob: false }]) {
     const bad = structuredClone(value); Object.assign(bad.events.at(-1).windowsPublicIssuance, change);
     assert.ok(verifyMatrix([bad], options).length);

@@ -80,7 +80,9 @@ try {
   # captured app -> previous -> app notifications under a different owned root.
   $null = & node (Join-Path $PSScriptRoot 'certops-installer-second-rename-support.js')
   if ($LASTEXITCODE -ne 0) { throw 'Supporting second-rename activation regression failed' }
-  [ordered]@{ productionAstParsed = $true; bothRenamesProtected = $true; unexpectedPathsRefused = $true; realFirstRenameRefused = $true; predecessorPreserved = $true; failedStagingRemoved = $true; handleReleased = $true; actualPositiveActivation = $true; existingRecoveryPreserved = $true; actualSecondRenameRestoration = $true; scope = 'owned-temporary-filesystem-only' } | ConvertTo-Json -Compress
+  $null = & node (Join-Path $PSScriptRoot 'certops-installer-path-support.js')
+  if ($LASTEXITCODE -ne 0) { throw 'Supporting literal path and junction regression failed' }
+  [ordered]@{ productionAstParsed = $true; bothRenamesProtected = $true; unexpectedPathsRefused = $true; realFirstRenameRefused = $true; predecessorPreserved = $true; failedStagingRemoved = $true; handleReleased = $true; actualPositiveActivation = $true; existingRecoveryPreserved = $true; actualSecondRenameRestoration = $true; actualCopyPathAndJunctionControls = $true; scope = 'owned-temporary-filesystem-only' } | ConvertTo-Json -Compress
 } finally {
   if ($handle) { $handle.Dispose() }
   $resolved = [IO.Path]::GetFullPath($root)

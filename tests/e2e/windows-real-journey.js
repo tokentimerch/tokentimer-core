@@ -61,6 +61,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
   let outputPrivacy;
   let publicSession, publicIssuanceFacts, publicIssueInput;
+  const ownedHandoffs=[];let installedHandoffProof;
+  const handoffProofPath=path.join(repoRoot,"qualification-results",`windows-installed-handoff-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(handoffProofPath),false,"Refuse stale installed service handoff proof");
   const publicIssueProofPath=path.join(repoRoot,"qualification-results",`windows-public-issue-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(publicIssueProofPath),false,"Refuse stale public admission proof");
   const domain = `certops-${crypto.randomBytes(6).toString("hex")}.example.test`;
@@ -472,6 +474,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       baseUrl, workspaceId, oldAgentId: agentId, pool, createBootstrap,
       packageRoot: path.join(workDir, "app"), workDir,
     });
+    installedHandoffProof=await require("./helpers/certops-windows-installed-handoff").qualifyInstalledStateHandoff({pool,baseUrl,workspaceId,oldAgentId:agentId,publicSession,packageRoot:path.join(workDir,"app"),configDir,workDir,ps,command,waitUntil,domain,site,port,roots,thumbprint:deployedThumbprint,keyProfile,ownedHandoffs});
     assert.equal(crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex"), credentialDigest,
       "fresh registration in a separate protected state must preserve predecessor credential bytes");
     const afterReregistration = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate().fingerprint256); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Registration preservation TLS timeout"))); });
@@ -491,6 +494,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     journeyFailure = error;
     throw error;
   } finally {
+    for(const resource of ownedHandoffs)await cleanup(()=>resource.close());
+    if(ownedHandoffs.some(resource=>resource.hasLiveChild()||resource.hasOwnershipReceipt()))throw new AggregateError([...(journeyFailure?[journeyFailure]:[]),...errors],"Preserve installed Windows fixtures while SCM handoff ownership is unresolved");
     if (serviceOwned) {
       await cleanup(async () => { ps("$s=Get-Service -Name TokenTimerAgent -ErrorAction SilentlyContinue; if ($s) { if ($s.Status -ne 'Stopped') { Stop-Service -Name TokenTimerAgent }; $s.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(20)) }"); });
       await cleanup(async () => { if (spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status === 0) { command("sc.exe", ["delete", "TokenTimerAgent"]); await waitUntil(() => spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status !== 0, 20000); } });
@@ -538,6 +543,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if (!journeyFailure && errors.length === 0) {
       require("./helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(publicIssuanceFacts);
       fs.writeFileSync(publicIssueProofPath,JSON.stringify(publicIssuanceFacts),{flag:"wx"});
+      require("./helpers/certops-windows-installed-handoff").verifyProof(installedHandoffProof);fs.writeFileSync(handoffProofPath,JSON.stringify(installedHandoffProof),{flag:"wx"});
     }
     if (errors.length) throw new AggregateError(journeyFailure ? [journeyFailure, ...errors] : errors, "Windows real journey owned cleanup failed", { cause: journeyFailure });
   }

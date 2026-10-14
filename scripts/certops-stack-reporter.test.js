@@ -23,6 +23,9 @@ test("Windows profile evidence binds public admission, recovery and output-priva
     );
   for (const file of [
     "tests/e2e/helpers/certops-windows-public-issuance.js",
+    "tests/e2e/helpers/certops-windows-installed-handoff.js",
+    "tests/e2e/helpers/certops-windows-registration-job.ps1",
+    ".github/workflows/certops-windows-e2e.yml",
     "tests/e2e/helpers/certops-api-fixture.js",
     "tests/e2e/helpers/certops-windows-reregistration.js",
     "tests/e2e/helpers/certops-windows-capability-refresh.js",

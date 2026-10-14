@@ -20,9 +20,12 @@ function verifyFault(value) {
   for (const field of ["snapshotSha256", "fingerprint"]) assert.match(value[field], /^[a-f0-9]{64}$/);
   assert.match(value.requestId, /^[1-9][0-9]{0,9}$/); assert.ok(Number(value.requestId) <= 0xffffffff); return true;
 }
-function startObserver({ workDir, configDir, root, spawnImpl = spawn, timeoutMs = 195000 }) {
+function startObserver({ workDir, configDir, root, spawnImpl = spawn, timeoutMs = 195000, phase = PHASE }) {
+  assert.ok([PHASE, "bound-before-complete"].includes(phase));
+  const bound = phase === "bound-before-complete";
+  const verifyEvidence = bound ? require("./certops-adcs-bound-install-recovery").verifyFault : verifyFault;
   const env = Object.fromEntries(["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATH", "PSModulePath", "CERTOPS_ADCS_DISPOSABLE_LAB"].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
-  const child = spawnImpl("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, "infra/certops-adcs/accepted-install-phase-fault.ps1"), "-OwnedDirectory", workDir, "-ConfigDirectory", configDir, "-RepositoryRoot", root, "-NodeExecutable", process.execPath], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const child = spawnImpl("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, bound ? "infra/certops-adcs/bound-install-phase-fault.ps1" : "infra/certops-adcs/accepted-install-phase-fault.ps1"), "-OwnedDirectory", workDir, "-ConfigDirectory", configDir, "-RepositoryRoot", root, "-NodeExecutable", process.execPath], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let output = "", overflow = false, closed = false, nativeDrainProven = false, readyResolve, readyReject, resolveResult, rejectResult, seenReady = false;
   const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; }); ready.catch(() => {});
   const result = new Promise((resolve, reject) => { resolveResult = resolve; rejectResult = reject; }); result.catch(() => {});
@@ -33,7 +36,7 @@ function startObserver({ workDir, configDir, root, spawnImpl = spawn, timeoutMs 
   child.once("close", code => {
     clearTimeout(timer); closed = true; closeResolve();
     if (!seenReady) readyReject(new Error("Accepted-install observer ownership prerequisite failed"));
-    try { assert.equal(code, 0); assert.equal(overflow, false); const evidence = JSON.parse(output.replace("CERTOPS_ACCEPTED_INSTALL_READY", "").trim()); verifyFault(evidence); nativeDrainProven = true; resolveResult(evidence); }
+    try { assert.equal(code, 0); assert.equal(overflow, false); const evidence = JSON.parse(output.replace("CERTOPS_ACCEPTED_INSTALL_READY", "").trim()); verifyEvidence(evidence); nativeDrainProven = true; resolveResult(evidence); }
     catch { rejectResult(new Error("Accepted-before-bind window/custody/process drainage was not proven")); }
   });
   return { ready, result,
@@ -59,13 +62,16 @@ function verifyReport(report, root = path.resolve(__dirname, "../../..")) {
   for (const file of REQUIRED_SOURCES) { const rows = report.fixtureSources.filter(row => row.file === file); assert.equal(rows.length, 1); assert.deepEqual(rows[0], { file, sha256: digest(file) }); }
   return true;
 }
-async function qualifyAcceptedInstallRecovery(context) {
+async function qualifyObservedInstallRecovery(context, phase = PHASE) {
+  assert.ok([PHASE, "bound-before-complete"].includes(phase));
+  const bound = phase === "bound-before-complete";
+  const variant = bound ? require("./certops-adcs-bound-install-recovery") : { FLAGS, REQUIRED_SOURCES, verifyReport };
   assert.equal(process.platform, "win32"); assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1"); assert.equal(context.serviceOwned, true);
   const { fixture, api, agentRowId, configDir, workDir, renewalFixture: owned, ps, command, until, jobFinished, tlsAuthority, ownedEnrollmentIds, ownedThumbprints, ownedPhaseObservers } = context;
   const root = path.resolve(__dirname, "../../.."), targetReceipt = path.join(workDir, "accepted-install-target.json");
   const reportPath = process.env.CERTOPS_ADCS_JOURNAL_PHASE_REPORT || "C:\\ttqualification\\journal-phase-experimental.json";
   const hash = file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") });
-  const report = { schemaVersion: 1, scope: "enterprise-adcs-journal-phase-experimental", phase: PHASE, qualificationStatus: "not-qualified", experimental: true, status: "running", candidateSha: process.env.GITHUB_SHA, fixtureSource: hash(REQUIRED_SOURCES[0]), fixtureSources: REQUIRED_SOURCES.map(hash) };
+  const report = { schemaVersion: 1, scope: "enterprise-adcs-journal-phase-experimental", phase, qualificationStatus: "not-qualified", experimental: true, status: "running", candidateSha: process.env.GITHUB_SHA, fixtureSource: hash(bound ? "tests/e2e/helpers/certops-adcs-bound-install-recovery.js" : REQUIRED_SOURCES[0]), fixtureSources: variant.REQUIRED_SOURCES.map(hash) };
   const query = (sql, args = []) => fixture.pool.query(sql, args);
   const job = async id => (await query("SELECT status,lease_expires_at,lease_renewed_at,needs_operator_reconciliation,NOW() AS measured_at FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
   const binding = { site: owned.site, port: owned.port, sniHost: owned.item.domain };
@@ -77,7 +83,16 @@ async function qualifyAcceptedInstallRecovery(context) {
     const originalPolicy = policy(), previous = await served(), beforeBinding = await nativeBinding(); assert.equal(beforeBinding.ok, true);
     assert.equal(previous.fingerprint256, owned.observed.fingerprint256);
     const previousThumb = previous.fingerprint.replace(/:/g, "").toUpperCase(); assert.equal(beforeBinding.thumbprint.toUpperCase(), previousThumb);
-    observer = startObserver({ workDir, configDir, root }); ownedPhaseObservers.push(observer); await observer.ready;
+    const retention = bound ? require("../../../packages/agent/src/windows-retention") : null;
+    const ledgerDir = path.join(configDir, "windows-retention");
+    const predecessorContainer = bound ? buildEnrollmentContainerName(owned.currentEnrollmentId) : null;
+    const keyIdentityFor = container => ps(`$k=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);try{if($k.KeyName -ne '${container}' -or !$k.IsMachineKey -or $k.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None){throw 'Protected key changed'};[Convert]::ToBase64String($k.Export([Security.Cryptography.CngKeyBlobFormat]::GenericPublicBlob))}finally{$k.Dispose()}`);
+    const predecessorKey = bound ? keyIdentityFor(predecessorContainer) : null;
+    if (bound) {
+      assert.equal(retention.readLedgerRow(ledgerDir, previousThumb), null, "Predecessor was already superseded before the observed new cutover");
+      assert.equal(ps(`$c=Get-Item 'Cert:\\LocalMachine\\My\\${previousThumb}';$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);$k.Key.KeyName}finally{if($k){$k.Dispose()};$c.Dispose()}`), predecessorContainer);
+    }
+    observer = startObserver({ workDir, configDir, root, phase }); ownedPhaseObservers.push(observer); await observer.ready;
     created = await fixture.request(`${api}/enrollments`, "POST", { issuerId: owned.issuerId, certificateId: owned.certificateId, agentId: agentRowId, target: { type: "windows-iis", reference: owned.item.domain, store: "My", binding }, authorizedDnsNames: [owned.item.domain], keyAlgorithm: "rsa", keySize: 2048 });
     assert.equal(created.status, 201); const id = created.body.enrollmentId; ownedEnrollmentIds.push(id);
     const container = buildEnrollmentContainerName(id);
@@ -90,11 +105,23 @@ async function qualifyAcceptedInstallRecovery(context) {
     assert.equal(crypto.createHash("sha256").update(leaf.publicKey.export({ type: "spki", format: "der" })).digest("hex"), initial.journal.csrSpkiSha256);
     const thumb = leaf.fingerprint.replace(/:/g, "").toUpperCase(); ownedThumbprints.add(thumb);
     const receiptBefore = readIssuedContainerRecord({ stateDir: configDir, containerName: container }); assert.equal(receiptBefore?.status, "enrolled_by_agent"); assert.equal(receiptBefore.acceptedThumbprint, thumb);
-    const keyIdentity = () => ps(`$k=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);try{if($k.KeyName -ne '${container}' -or !$k.IsMachineKey -or $k.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None){throw 'Protected key changed'};[Convert]::ToBase64String($k.Export([Security.Cryptography.CngKeyBlobFormat]::GenericPublicBlob))}finally{$k.Dispose()}`);
+    const keyIdentity = () => keyIdentityFor(container);
     const originalKey = keyIdentity(); assert.ok(originalKey.length < 2048);
     const observe = () => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, "infra/certops-adcs/owned-issued-request.ps1"), "-CommonName", owned.item.domain, "-FingerprintSha256", report.fault.fingerprint]));
     const ca = observe(); assert.equal(String(ca.requestId), report.fault.requestId); assert.equal(String(initial.journal.requestId), report.fault.requestId); report.caRequestsAtFault = ca.subjectRequestCount;
-    assert.deepEqual(await nativeBinding(), beforeBinding); assert.equal((await served()).fingerprint256, previous.fingerprint256);
+    let retentionAtFault = null;
+    const verifyRetention = (row, allowedJobIds) => {
+      assert.ok(row); assert.equal(row.oldThumbprint, previousThumb); assert.equal(row.replacementThumbprint, thumb);
+      assert.equal(row.cngKeyContainerId, predecessorContainer); assert.equal(row.ownershipProvenance, "tokentimer_installed"); assert.equal(row.store, "My"); assert.equal(row.lifecycleState, "pending_retention");
+      assert.equal(Date.parse(row.oldNotAfter), Date.parse(previous.validTo)); assert.ok(Number.isFinite(Date.parse(row.verifiedCutoverAt)) && Date.parse(row.verifiedCutoverAt) <= Date.now() + 1000);
+      assert.equal(row.jobOrRollbackJournalRefs.length, 1); assert.ok(allowedJobIds.includes(row.jobOrRollbackJournalRefs[0].ref)); assert.equal(row.jobOrRollbackJournalRefs[0].active, false);
+    };
+    if (bound) {
+      const currentBinding = await nativeBinding(); assert.equal(currentBinding.ok, true); assert.equal(currentBinding.thumbprint.toUpperCase(), thumb); assert.equal((await served()).fingerprint256, leaf.fingerprint256);
+      retentionAtFault = retention.readLedgerRow(ledgerDir, previousThumb);
+      if (retentionAtFault) verifyRetention(retentionAtFault, [created.body.jobId]);
+      report.retentionAtFault = retentionAtFault ? "matching-existing-row" : "absent"; report.preVerificationWindowClaimed = false;
+    } else { assert.deepEqual(await nativeBinding(), beforeBinding); assert.equal((await served()).fingerprint256, previous.fingerprint256); }
     const originalJob = await job(created.body.jobId); assert.ok(originalJob.lease_renewed_at); Object.assign(report, recoveryWaitBudget(originalJob.lease_expires_at, originalJob.measured_at)); const started = performance.now();
     const worker = await import(pathToFileURL(path.join(root, "apps/worker/src/certops-worker.js")).href);
     await until(async () => { const client = await fixture.pool.connect(); try { await worker.reapExpiredLeases({ client, hardGraceMs: 60000, offlineAfterMs: 60000, log: { debug() {}, info() {}, warn() {}, error() {} } }); } finally { client.release(); } const row = await job(created.body.jobId); return row.status === "orphaned_unknown_effect" && row.needs_operator_reconciliation === true; }, report.recoveryWaitBudgetMs);
@@ -109,10 +136,21 @@ async function qualifyAcceptedInstallRecovery(context) {
     assert.ok(Date.parse(receiptAfter.acceptedAt) >= Date.parse(receiptBefore.acceptedAt));
     const current = (await query("SELECT state,request_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0]; assert.equal(current.state, "installed"); assert.equal(String(current.request_id), report.fault.requestId);
     const afterBinding = await nativeBinding(); assert.equal(afterBinding.ok, true); assert.equal(afterBinding.thumbprint.toUpperCase(), thumb); assert.equal((await served()).fingerprint256, leaf.fingerprint256);
+    if (bound) {
+      const evidence = (await query("SELECT e.metadata FROM certificate_evidence e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.job_id WHERE e.workspace_id=$1 AND e.job_id=$2 AND e.claim_id=j.claim_id AND e.evidence_type='validation.passed' AND e.metadata->>'step'='verify'", [fixture.workspaceId, recovery.body.jobId])).rows;
+      assert.ok(evidence.some(row => String(row.metadata.fingerprintSha256).replace(/:/g, "").toLowerCase() === report.fault.fingerprint && Date.parse(row.metadata.validTo) === Date.parse(leaf.validTo)));
+      const completion = (await query("SELECT e.metadata FROM certificate_evidence e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.job_id WHERE e.workspace_id=$1 AND e.job_id=$2 AND e.claim_id=j.claim_id AND e.evidence_type='deployment.updated' AND e.metadata->>'step'='iis-bind'", [fixture.workspaceId, recovery.body.jobId])).rows;
+      assert.ok(completion.some(row => row.metadata.idempotentSkip === true && String(row.metadata.boundThumbprint).toUpperCase() === thumb), "Recovery must report the inspected existing cutover rather than a new native rebind");
+      const finalRetention = retention.readLedgerRow(ledgerDir, previousThumb); verifyRetention(finalRetention, [created.body.jobId, recovery.body.jobId]);
+      if (retentionAtFault) assert.deepEqual(finalRetention, retentionAtFault, "Idempotent completion must preserve the already observed retention row");
+      assert.equal(fs.readdirSync(ledgerDir).filter(name => name.toUpperCase() === `${previousThumb}.json`.toUpperCase()).length, 1);
+      assert.equal(keyIdentityFor(predecessorContainer), predecessorKey);
+      assert.equal(ps(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${previousThumb}')`), "True");
+    }
     const afterCa = observe(); assert.equal(String(afterCa.requestId), String(ca.requestId)); assert.equal(afterCa.subjectRequestCount, ca.subjectRequestCount); report.caRequestsAfterRecovery = afterCa.subjectRequestCount;
     const audits = (await query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='certops.enrollment.recovery_requested' AND metadata->>'enrollmentId'=$2", [fixture.workspaceId, id])).rows; assert.equal(audits.length, 1); assert.equal(audits[0].metadata.acknowledgeUnknownEffect, true);
     const orphan = await job(created.body.jobId); assert.equal(orphan.status, "orphaned_unknown_effect"); assert.equal(orphan.needs_operator_reconciliation, true); assert.equal(policy(), originalPolicy);
-    Object.assign(report, Object.fromEntries(FLAGS.map(field => [field, true]))); report.status = "passed"; verifyReport(report);
+    Object.assign(report, Object.fromEntries(variant.FLAGS.map(field => [field, true]))); report.status = "passed"; variant.verifyReport(report);
     owned.observed = leaf; owned.currentEnrollmentId = id;
   } catch (error) { primary = error; report.status = "failed"; }
   finally {
@@ -128,4 +166,5 @@ async function qualifyAcceptedInstallRecovery(context) {
   }
   if (primary) throw primary; return report;
 }
-module.exports = { qualifyAcceptedInstallRecovery, startObserver, verifyFault, verifyReport, PHASE, FLAGS, REQUIRED_SOURCES };
+const qualifyAcceptedInstallRecovery = context => qualifyObservedInstallRecovery(context, PHASE);
+module.exports = { qualifyAcceptedInstallRecovery, qualifyObservedInstallRecovery, startObserver, verifyFault, verifyReport, PHASE, FLAGS, REQUIRED_SOURCES };

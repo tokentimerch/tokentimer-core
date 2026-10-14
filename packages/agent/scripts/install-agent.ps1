@@ -529,6 +529,47 @@ function Copy-PackageTree {
         [Parameter(Mandatory = $true)][string]$Destination
     )
     $excludedDirNames = @("node_modules", ".git")
+    # Validate the whole candidate and any existing destination before creating
+    # or copying a single destination entry. A later activation guard cannot
+    # undo a staging copy that already followed a source/destination junction.
+    # Literal paths also keep brackets and other valid filename characters
+    # from becoming wildcard selectors during this safety preflight.
+    function Get-UnlinkedCopyItem {
+        param([string]$LiteralPath)
+        $item = $null
+        try { $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { return $null }
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'refusing linked package copy paths'
+        }
+        return $item
+    }
+    function Assert-UnlinkedCopyAncestors {
+        param([string]$LiteralPath)
+        if (-not [IO.Path]::IsPathRooted($LiteralPath)) { throw 'refusing relative package copy paths' }
+        $current = [IO.Path]::GetFullPath($LiteralPath)
+        while ($current) {
+            $null = Get-UnlinkedCopyItem -LiteralPath $current
+            $parent = [IO.Path]::GetDirectoryName($current)
+            if (!$parent -or $parent.Equals($current,[StringComparison]::OrdinalIgnoreCase)) { break }
+            $current = $parent
+        }
+    }
+    function Assert-UnlinkedCopyTree {
+        param([string]$LiteralPath,[bool]$Required,[bool]$SkipExcluded = $false)
+        $item = Get-UnlinkedCopyItem -LiteralPath $LiteralPath
+        if (!$item) { if ($Required) { throw 'required package source directory is missing' }; return }
+        if (!$item.PSIsContainer) { throw 'refusing non-directory package copy root' }
+        foreach ($entry in Get-ChildItem -LiteralPath $LiteralPath -Force -ErrorAction Stop) {
+            if ($SkipExcluded -and $entry.PSIsContainer -and $excludedDirNames -contains $entry.Name) { continue }
+            $null = Get-UnlinkedCopyItem -LiteralPath $entry.FullName
+            if ($entry.PSIsContainer) { Assert-UnlinkedCopyTree -LiteralPath $entry.FullName -Required $true -SkipExcluded $SkipExcluded }
+        }
+    }
+    Assert-UnlinkedCopyAncestors -LiteralPath $Source
+    Assert-UnlinkedCopyAncestors -LiteralPath $Destination
+    Assert-UnlinkedCopyTree -LiteralPath $Source -Required $true -SkipExcluded $true
+    Assert-UnlinkedCopyTree -LiteralPath $Destination -Required $false
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
         if ($_.PSIsContainer) {

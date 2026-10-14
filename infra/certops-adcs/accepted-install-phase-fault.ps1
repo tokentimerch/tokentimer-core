@@ -2,7 +2,7 @@
 BEFORE IIS cutover. This never edits a journal, a CA response or product code.
 A missed window fails. Exact native custody and old binding are independently
 checked after the complete owned process tree has drained. #>
-param([Parameter(Mandatory)][string]$OwnedDirectory,[Parameter(Mandatory)][string]$ConfigDirectory,[Parameter(Mandatory)][string]$RepositoryRoot,[Parameter(Mandatory)][string]$NodeExecutable)
+param([Parameter(Mandatory)][string]$OwnedDirectory,[Parameter(Mandatory)][string]$ConfigDirectory,[Parameter(Mandatory)][string]$RepositoryRoot,[Parameter(Mandatory)][string]$NodeExecutable,[ValidateSet('accepted-before-bind','bound-before-complete')][string]$Phase='accepted-before-bind')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1' -or (Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Owned disposable forest required'}
@@ -19,6 +19,7 @@ $nodes=@(Get-CimInstance Win32_Process|Where-Object {$_.ParentProcessId -eq $hos
 if($nodes.Count -ne 1 -or (Invoke-CimMethod -InputObject $nodes[0] -MethodName GetOwnerSid).Sid -ne 'S-1-5-18'){throw 'Exact SYSTEM native agent required'}
 $node=$nodes[0];$receipt=Join-Path $owned 'accepted-install-target.json'
 if(Test-Path -LiteralPath $receipt){throw 'Outstanding accepted-install receipt'}
+if($Phase -eq 'bound-before-complete'){Import-Module WebAdministration}
 Write-Output 'CERTOPS_ACCEPTED_INSTALL_READY'
 $deadline=[DateTime]::UtcNow.AddSeconds(180);$target=$null;$observed=$null;$journalPath=$null
 while([DateTime]::UtcNow -lt $deadline){
@@ -32,6 +33,20 @@ while([DateTime]::UtcNow -lt $deadline){
   try{$candidate=Get-Content -LiteralPath $journalPath -Raw|ConvertFrom-Json}catch{Start-Sleep -Milliseconds 5;continue}
   if($candidate.state -eq 'installing' -and $candidate.installStep -eq 'bind'){
    if($candidate.enrollmentId -ne $target.enrollmentId -or $candidate.jobId -ne $target.jobId -or $candidate.snapshotSha256 -ne $target.snapshotSha256 -or $candidate.containerName -ne $target.containerName){throw 'Foreign durable installing phase'}
+   if($Phase -eq 'bound-before-complete'){
+    # Do not interrupt at the earlier accepted-only bind intent. The real
+    # native binding must already select this actual journaled public leaf.
+    $path=Join-Path (Split-Path $journalPath) 'leaf.pem'
+    $body=[IO.File]::ReadAllText($path) -replace '-----BEGIN CERTIFICATE-----','' -replace '-----END CERTIFICATE-----','' -replace '\s',''
+    $candidateLeaf=New-Object Security.Cryptography.X509Certificates.X509Certificate2(,[Convert]::FromBase64String($body))
+    try{
+     $bindings=@(Get-WebBinding -Name $target.site -Protocol https|Where-Object bindingInformation -eq "*:$($target.port):$($target.domain)")
+     if($bindings.Count -ne 1){throw 'Owned native SNI binding missing or ambiguous'}
+     $hash=$bindings[0].certificateHash;if($hash -is [byte[]]){$hash=([BitConverter]::ToString($hash)).Replace('-','')}
+     $boundNow=[string]$hash -ieq $candidateLeaf.Thumbprint
+    }finally{$candidateLeaf.Dispose()}
+    if(!$boundNow){Start-Sleep -Milliseconds 5;continue}
+   }
    $observed=$candidate;break
   }
  }
@@ -93,6 +108,9 @@ try{
  if($bindings.Count -ne 1 -or [int]$bindings[0].sslFlags -ne 1){throw 'Owned SNI binding changed'}
  $hash=$bindings[0].certificateHash
  if($hash -is [byte[]]){$hash=([BitConverter]::ToString($hash)).Replace('-','')}
- if([string]$hash -ine $target.predecessorThumbprint){throw 'IIS cutover already happened; refuse pre-cutover qualification'}
- @{phase='accepted-before-bind';observedDurablePhase=$true;unchangedAfterTermination=$true;ownedServiceTree=$true;ownedNativeChildrenAbsent=$true;nativeIdentity='LocalSystem';acceptedExactLeafAndCng=$true;predecessorIisUnchanged=$true;enrollmentId=$target.enrollmentId;jobId=$target.jobId;snapshotSha256=$target.snapshotSha256;requestId=[string]$final.requestId;fingerprint=$leafFingerprint}|ConvertTo-Json -Compress
+ $expectedBinding=if($Phase -eq 'bound-before-complete'){$leaf.Thumbprint}else{$target.predecessorThumbprint}
+ if([string]$hash -ine $expectedBinding){throw 'Actual IIS cutover does not match the selected observed-window experiment'}
+ $facts=@{phase=$Phase;observedDurablePhase=$true;unchangedAfterTermination=$true;ownedServiceTree=$true;ownedNativeChildrenAbsent=$true;nativeIdentity='LocalSystem';acceptedExactLeafAndCng=$true;enrollmentId=$target.enrollmentId;jobId=$target.jobId;snapshotSha256=$target.snapshotSha256;requestId=[string]$final.requestId;fingerprint=$leafFingerprint}
+ if($Phase -eq 'bound-before-complete'){$facts.newIisLeafBound=$true}else{$facts.predecessorIisUnchanged=$true}
+ $facts|ConvertTo-Json -Compress
 }finally{if($public){$public.Dispose()};if($private){$private.Dispose()};if($cert){$cert.Dispose()};$leaf.Dispose();$sha.Dispose()}

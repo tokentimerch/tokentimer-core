@@ -7,6 +7,7 @@
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 function verify(report){
+  if(report?.phase==="bound-before-complete")return require("../tests/e2e/helpers/certops-adcs-bound-install-recovery").verifyReport(report);
   if(report?.phase==="accepted-before-bind")return require("../tests/e2e/helpers/certops-adcs-accepted-install-recovery").verifyReport(report);
   assert.equal(report.schemaVersion,1);assert.equal(report.scope,"enterprise-adcs-journal-phase-experimental");
   assert.equal(report.qualificationStatus,"not-qualified");assert.equal(report.status,"passed");

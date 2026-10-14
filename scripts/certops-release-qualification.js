@@ -196,6 +196,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const native = entries.filter(entry => entry.name === "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence");
           if (native.length !== 1 || native[0].type !== "test:pass") throw new Error("Actual Windows native journey evidence missing");
           require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(native[0].windowsPublicIssuance);
+          require("../tests/e2e/helpers/certops-windows-installed-handoff").verifyProof(native[0].nativeInstalledStateHandoff);
         }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);

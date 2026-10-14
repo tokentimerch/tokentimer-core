@@ -42,6 +42,11 @@ def key_usage_proof():
             "cases": [{"caseId": f"{profile}/{store}", "certificateUsageFlags": usage, "cngAllowedOperations": 0x00ffffff} for store in ("My", "WebHosting") for profile, usage in profiles.items()]}
 
 
+def installed_handoff_proof():
+    flags = ("retiredPredecessorCredentialFenced", "publicConflictBootstrapUnconsumed", "unusedConflictBootstrapRevoked", "publicReplacementBootstrapConsumed", "unmodifiedCliRegisteredReplacement", "registrationChildDrained", "sameInstalledServicePathAndSystemIdentity", "freshReplacementScmHeartbeat", "sourceStateBytesPreserved", "protectedCustodyAndJournalCopiesPreserved", "signingPinPreserved", "nativeCngBindingAndTrustedTlsPreserved", "predecessorJobsNotReplayed", "noBootstrapInServiceRegistry", "replacementRetiredAndServiceStopped", "originalRegistryRestored", "ownedStateRemoved")
+    return {"scope": "explicit-operator-protected-state-installed-scm-handoff-not-automatic-reregistration", **dict.fromkeys(flags, True)}
+
+
 def foreign_spki_proof():
     flags = ("sameRequesterNativeRetrieveSucceeded", "nativeCaIdentityMatched", "differentEnrollmentSpkiProved", "explicitCandidateRefused", "boundedSearchUnresolved", "originalJournalWatermarkPreserved", "originalNativeCustodyAndTlsPreserved", "noAdditionalCaRequest")
     return {"scope": "read-only-native-foreign-spki-candidate-not-public-uncertain-recovery", **dict.fromkeys(flags, True), "requestIds": ["17", "18"], "spkiFingerprints": ["a" * 64, "b" * 64]}
@@ -229,6 +234,29 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 project(None)
 
+    def test_installed_scm_handoff_projection_requires_explicit_operator_scope_and_cleanup(self):
+        scope = "real-agent-windows-acme-iis/rsa-2048"
+        proof = installed_handoff_proof()
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass"}
+        def project(value):
+            return collector.installed_handoff_fields({**event, "nativeInstalledStateHandoff": value})
+        self.assertEqual(project({**proof, "rawCredential": "private", "automaticMigrationQualified": True})["nativeInstalledStateHandoff"], proof)
+        for flag, fact in proof.items():
+            if fact is not True:
+                continue
+            for wrong in (False, None, 1, "true"):
+                with self.subTest(flag=flag, wrong=wrong), self.assertRaises(ValueError):
+                    project({**proof, flag: wrong})
+            missing = dict(proof)
+            del missing[flag]
+            with self.assertRaises(ValueError):
+                project(missing)
+        for wrong in (None, [], {}, {**proof, "scope": "automatic-in-place-reregistration"}):
+            with self.assertRaises(ValueError):
+                project(wrong)
+        self.assertEqual(collector.installed_handoff_fields({**event, "type": "test:fail"}), {})
+        self.assertEqual(collector.installed_handoff_fields({**event, "scope": "real-agent-acme-filesystem"}), {})
+
     def test_retention_atomic_proof_strips_native_paths_and_requires_all_facts(self):
         fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
         proof = dict.fromkeys(fields, True)
@@ -371,7 +399,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof()}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))

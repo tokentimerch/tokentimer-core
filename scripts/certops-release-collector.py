@@ -267,6 +267,18 @@ def acme_key_reuse_fields(event):
     return {"nativeAcmeKeyReuse": result}
 
 
+def installed_handoff_fields(event):
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    value = event.get("nativeInstalledStateHandoff")
+    flags = ("retiredPredecessorCredentialFenced", "publicConflictBootstrapUnconsumed", "unusedConflictBootstrapRevoked", "publicReplacementBootstrapConsumed", "unmodifiedCliRegisteredReplacement", "registrationChildDrained", "sameInstalledServicePathAndSystemIdentity", "freshReplacementScmHeartbeat", "sourceStateBytesPreserved", "protectedCustodyAndJournalCopiesPreserved", "signingPinPreserved", "nativeCngBindingAndTrustedTlsPreserved", "predecessorJobsNotReplayed", "noBootstrapInServiceRegistry", "replacementRetiredAndServiceStopped", "originalRegistryRestored", "ownedStateRemoved")
+    if (not isinstance(value, dict) or value.get("scope") != "explicit-operator-protected-state-installed-scm-handoff-not-automatic-reregistration"
+            or any(value.get(flag) is not True for flag in flags)):
+        raise ValueError("Missing explicit installed Windows service state handoff")
+    return {"nativeInstalledStateHandoff": {key: value[key] for key in ("scope", *flags)}}
+
+
 def _sanitized_report(value, suites, scopes, database_scopes=()):
     if isinstance(value, dict) and value.get("scope") in database_scopes:
         keys = ("scope", "candidateSha", "evidenceLevel", "qualificationEnvironment",
@@ -812,6 +824,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 "fixtureSource", "qualificationEnvironment", "artifactQualification", "qualificationStatus", "experimental")
         return [{**{key: event[key] for key in keys if key in event},
                  **acme_key_reuse_fields(event),
+                 **installed_handoff_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
                  **({"fixtureSources": supporting_sources(event["fixtureSources"])} if "fixtureSources" in event else {}),
                  "file": event.get("fixtureSource", {}).get("file", "")}
