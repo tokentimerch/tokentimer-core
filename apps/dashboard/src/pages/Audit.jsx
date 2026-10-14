@@ -117,6 +117,17 @@ const ALL_ACTION_TYPES = [
   // CertOps machine tokens, jobs, and inventory
   'CERTOPS_API_TOKEN_CREATED',
   'CERTOPS_API_TOKEN_REVOKED',
+  'CERTOPS_ISSUER_CREATED',
+  'CERTOPS_ISSUER_PREFLIGHT_DISPATCHED',
+  'CERTOPS_ISSUER_KEY_CONFIRMED',
+  'CERTOPS_ENROLLMENT_CREATED',
+  'CERTOPS_ENROLLMENT_RECONCILE_PROPOSED',
+  'CERTOPS_ENROLLMENT_CANCELLED',
+  'CERTOPS_ENROLLMENT_ABANDONED',
+  'CERTOPS_AGENT_LOG_REJECTED',
+  'CERTOPS_AGENT_ALERT_SETTINGS_UPDATED',
+  'CERTOPS_DIAGNOSTIC_AGENT_BOOTSTRAPPED',
+  'CERTOPS_RENEWAL_PROFILE_CREATED',
   'CERTOPS_JOB_CREATED_MANUAL',
   'CERTOPS_JOB_CREATED_AUTOMATIC',
   'CERTOPS_JOB_FAILED',
@@ -1570,8 +1581,61 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
+  function getRecentCertOpsMetadataEntries(ev) {
+    const action = String(ev?.action || '');
+    if (
+      action.startsWith('CERTOPS_ISSUER_') ||
+      action.startsWith('CERTOPS_ENROLLMENT_') ||
+      action === 'CERTOPS_AGENT_LOG_REJECTED' ||
+      action === 'CERTOPS_AGENT_ALERT_SETTINGS_UPDATED' ||
+      action === 'CERTOPS_DIAGNOSTIC_AGENT_BOOTSTRAPPED' ||
+      action === 'CERTOPS_RENEWAL_PROFILE_CREATED' ||
+      action.startsWith('certops.issuer.') ||
+      action.startsWith('certops.enrollment.') ||
+      action === 'certops.agent_log.rejected'
+    ) {
+      const md = ev?.metadata || {};
+      return [
+        ['Issuer', md.issuerId],
+        ['Kind', md.kind],
+        ['Version', md.version],
+        ['CA key SHA-256', md.caKeySha256],
+        ['Enrollment', md.enrollmentId],
+        ['Job', md.jobId],
+        ['Agent', md.agentId],
+        ['Request', md.requestId],
+        ['Claim', md.claimId],
+        ['Code', md.code],
+        ['Profile', md.profileId],
+        ['Profile name', md.profileName],
+        ['Command', md.commandRef],
+        ['Target', md.reference],
+        [
+          'Downtime alerts',
+          md.downtimeAlertsEnabled == null
+            ? null
+            : md.downtimeAlertsEnabled
+              ? 'enabled'
+              : 'disabled',
+        ],
+        ['Contact group', md.contactGroupId],
+        ['Credential prefix', md.credentialPrefix],
+        ['Signing key', md.signingKeyId],
+      ]
+        .filter(([, value]) => value !== undefined && value !== null)
+        .map(([label, value]) => ({ label, value: String(value) }));
+    }
+    return null;
+  }
+
   function formatMetadata(ev) {
     const action = String(ev?.action || '');
+    const certOpsEntries = getRecentCertOpsMetadataEntries(ev);
+    if (certOpsEntries) {
+      return certOpsEntries
+        .map(({ label, value }) => `${label}: ${value}`)
+        .join(' | ');
+    }
 
     // Workspace settings
     if (action === 'WORKSPACE_ALERT_SETTINGS_UPDATED')
@@ -1928,6 +1992,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   }
 
   function getMetadataEntries(ev) {
+    const certOpsEntries = getRecentCertOpsMetadataEntries(ev);
+    if (certOpsEntries?.length) return certOpsEntries;
     const formatted = formatMetadata(ev);
     if (!formatted) {
       return [{ label: 'Metadata', value: '-' }];

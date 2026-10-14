@@ -1,6 +1,6 @@
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
-const { writeAudit } = require("../services/audit");
+const { writeAudit, normalizeAuditAction, auditActionSql } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const { isValidEmail } = require("../utils/emailAddress");
@@ -1115,7 +1115,7 @@ router.get("/api/v1/audit", getApiLimiter(), requireAuth, async (req, res) => {
     if (!role)
       return res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
     const eventType = req.query.event_type
-      ? String(req.query.event_type)
+      ? normalizeAuditAction(String(req.query.event_type))
       : null;
     const limit = Math.max(
       1,
@@ -1123,11 +1123,11 @@ router.get("/api/v1/audit", getApiLimiter(), requireAuth, async (req, res) => {
     );
     const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
     const params = [workspaceId, limit, offset];
-    let sql = `SELECT id, occurred_at, actor_user_id, subject_user_id, action, target_type, target_id, channel, metadata
+    let sql = `SELECT id, occurred_at, actor_user_id, subject_user_id, ${auditActionSql("action")} AS action, target_type, target_id, channel, metadata
                FROM audit_events
                WHERE workspace_id = $1`;
     if (eventType) {
-      sql += " AND action = $4";
+      sql += ` AND ${auditActionSql("action")} = $4`;
       params.push(eventType);
     }
     sql += " ORDER BY occurred_at DESC LIMIT $2 OFFSET $3";

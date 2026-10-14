@@ -728,14 +728,13 @@ function InventoryRowActions({
             <Tooltip
               label={
                 token.__certificateLinkAmbiguous
-                  ? AMBIGUOUS_CERTIFICATE_LINK_MESSAGE
+                  ? 'Choose a certificate to revoke or decommission'
                   : 'Retire (revoke / decommission)'
               }
               shouldWrapChildren
             >
               <IconButton
                 {...actionButtonProps}
-                isDisabled={token.__certificateLinkAmbiguous}
                 aria-label={`Retire certificate ${token.name}`}
                 icon={<Archive size={16} />}
                 onClick={() => onDeleteToken(token.id)}
@@ -1068,10 +1067,9 @@ function AssetInventoryMobileCard({
               {token.__managedCert || token.__certificateLinkAmbiguous ? (
                 <Button
                   {...mobileActionButtonProps}
-                  isDisabled={token.__certificateLinkAmbiguous}
                   title={
                     token.__certificateLinkAmbiguous
-                      ? AMBIGUOUS_CERTIFICATE_LINK_MESSAGE
+                      ? 'Choose a certificate to revoke or decommission'
                       : undefined
                   }
                   leftIcon={<Archive size={14} />}

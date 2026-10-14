@@ -1,6 +1,6 @@
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
-const { writeAudit } = require("../services/audit");
+const { writeAudit, normalizeAuditAction, auditActionSql } = require("../services/audit");
 const { requireAuth } = require("../middleware/auth");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const {
@@ -103,7 +103,7 @@ async function loadOrganizationAuditRows({
           ae.actor_user_id,
           u.display_name AS actor_display_name,
           ae.subject_user_id,
-          ae.action,
+          ${auditActionSql("ae.action")} AS action,
           ae.target_type,
           ae.target_id,
           ae.channel,
@@ -146,13 +146,13 @@ async function loadOrganizationAuditRows({
   }
 
   if (actionFilter) {
-    query += ` AND ae.action = $${paramIndex}`;
+    query += ` AND ${auditActionSql("ae.action")} = $${paramIndex}`;
     params.push(actionFilter);
     paramIndex++;
   }
 
   if (searchQuery) {
-    query += ` AND (ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
+    query += ` AND (${auditActionSql("ae.action")} ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
     const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
     params.push(`%${escapedSearch}%`);
     paramIndex++;
@@ -564,7 +564,7 @@ router.get(
       );
       const { since, until } = parseAuditDateBounds(req.query);
       const actionFilter = req.query.action
-        ? String(req.query.action).trim()
+        ? normalizeAuditAction(String(req.query.action).trim())
         : null;
       const searchQuery = req.query.query
         ? String(req.query.query).trim()
@@ -641,13 +641,13 @@ router.get(
           paramIndex++;
         }
         if (actionFilter) {
-          whereClauses.push(`ae.action = $${paramIndex}`);
+          whereClauses.push(`${auditActionSql("ae.action")} = $${paramIndex}`);
           params.push(actionFilter);
           paramIndex++;
         }
         if (searchQuery) {
           whereClauses.push(
-            `(ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`,
+            `(${auditActionSql("ae.action")} ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`,
           );
           const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
           params.push(`%${escapedSearch}%`);
@@ -663,7 +663,7 @@ router.get(
                   ae.actor_user_id,
                   u.display_name AS actor_display_name,
                   ae.subject_user_id,
-                  ae.action,
+                  ${auditActionSql("ae.action")} AS action,
                   ae.target_type,
                   ae.target_id,
                   ae.channel,
@@ -696,13 +696,13 @@ router.get(
           paramIndex++;
         }
         if (actionFilter) {
-          whereClauses.push(`ae.action = $${paramIndex}`);
+          whereClauses.push(`${auditActionSql("ae.action")} = $${paramIndex}`);
           params.push(actionFilter);
           paramIndex++;
         }
         if (searchQuery) {
           whereClauses.push(
-            `(ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`,
+            `(${auditActionSql("ae.action")} ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`,
           );
           const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
           params.push(`%${escapedSearch}%`);
@@ -718,7 +718,7 @@ router.get(
                   ae.actor_user_id,
                   u.display_name AS actor_display_name,
                   ae.subject_user_id,
-                  ae.action,
+                  ${auditActionSql("ae.action")} AS action,
                   ae.target_type,
                   ae.target_id,
                   ae.channel,
@@ -1030,7 +1030,7 @@ router.get(
       );
       const scope = String(req.query.scope || "").toLowerCase();
       const actionFilter = req.query.action
-        ? String(req.query.action).trim()
+        ? normalizeAuditAction(String(req.query.action).trim())
         : null;
       const searchQuery = req.query.query
         ? String(req.query.query).trim()
@@ -1077,7 +1077,7 @@ router.get(
       }
 
       // Default: user-only view (backwards-compatible)
-      let query = `SELECT ae.id, ae.occurred_at, ae.actor_user_id, ae.subject_user_id, ae.action,
+      let query = `SELECT ae.id, ae.occurred_at, ae.actor_user_id, ae.subject_user_id, ${auditActionSql("ae.action")} AS action,
               ae.target_type, ae.target_id, ae.channel, ae.metadata,
               u.display_name AS actor_display_name,
               COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid) AS workspace_id,
@@ -1091,7 +1091,7 @@ router.get(
       let paramIndex = 4;
 
       if (actionFilter) {
-        query += ` AND ae.action = $${paramIndex}`;
+        query += ` AND ${auditActionSql("ae.action")} = $${paramIndex}`;
         params.push(actionFilter);
         paramIndex++;
       }
@@ -1109,7 +1109,7 @@ router.get(
       }
 
       if (searchQuery) {
-        query += ` AND (ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
+        query += ` AND (${auditActionSql("ae.action")} ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
         const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
         params.push(`%${escapedSearch}%`);
         paramIndex++;
@@ -1151,14 +1151,14 @@ router.get(
         Math.min(100000, parseInt(req.query.offset || "0", 10)),
       );
       const actionFilter = req.query.action
-        ? String(req.query.action).trim()
+        ? normalizeAuditAction(String(req.query.action).trim())
         : null;
       const searchQuery = req.query.query
         ? String(req.query.query).trim()
         : null;
       const { since, until } = parseAuditDateBounds(req.query);
 
-      let query = `SELECT ae.id, ae.occurred_at, ae.actor_user_id, ae.subject_user_id, ae.action,
+      let query = `SELECT ae.id, ae.occurred_at, ae.actor_user_id, ae.subject_user_id, ${auditActionSql("ae.action")} AS action,
               ae.target_type, ae.target_id, ae.channel, ae.metadata,
               u.display_name AS actor_display_name,
               COALESCE(ae.workspace_id, (ae.metadata->>'workspaceId')::uuid) AS workspace_id,
@@ -1172,7 +1172,7 @@ router.get(
       let paramIndex = 4;
 
       if (actionFilter) {
-        query += ` AND ae.action = $${paramIndex}`;
+        query += ` AND ${auditActionSql("ae.action")} = $${paramIndex}`;
         params.push(actionFilter);
         paramIndex++;
       }
@@ -1190,7 +1190,7 @@ router.get(
       }
 
       if (searchQuery) {
-        query += ` AND (ae.action ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
+        query += ` AND (${auditActionSql("ae.action")} ILIKE $${paramIndex} OR ae.metadata::text ILIKE $${paramIndex})`;
         const escapedSearch = searchQuery.replace(/[%_\\]/g, "\\$&");
         params.push(`%${escapedSearch}%`);
         paramIndex++;

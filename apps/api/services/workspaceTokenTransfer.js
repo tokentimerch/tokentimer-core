@@ -22,6 +22,9 @@ const RELOCATABLE_TABLES = new Set([
   "certificate_evidence",
   "certificate_executor_events",
   "certificate_controller_observations",
+  "certops_agent_log_job_state",
+  "certops_agent_log_stream",
+  "certops_agent_job_log",
 ]);
 
 function parseContactGroups(raw) {
@@ -434,6 +437,26 @@ async function transferTokenAssociations(
     fromWorkspaceId,
     toWorkspaceId,
   });
+  if (certIds.length > 0 || jobIds.length > 0) {
+    const activeEnrollment = await client.query(
+      `SELECT e.id FROM certificate_enrollments e
+        WHERE e.workspace_id = $1
+          AND (e.certificate_id = ANY($2::uuid[]) OR EXISTS (
+            SELECT 1 FROM certificate_jobs j WHERE j.workspace_id = $1
+              AND j.id = ANY($3::uuid[]) AND j.enrollment_id = e.id
+          ))
+          AND e.state NOT IN ('installed', 'denied', 'rejected_invalid',
+            'validation_expired', 'refused', 'abandoned', 'expired', 'cancelled')
+        LIMIT 1 FOR UPDATE OF e`,
+      [fromWorkspaceId, certIds, jobIds],
+    );
+    if (activeEnrollment.rows.length) {
+      throw new TransferAssociationConflictError(
+        "An AD CS enrollment must finish or be cancelled before transfer",
+        [{ enrollment_id: activeEnrollment.rows[0].id }],
+      );
+    }
+  }
   if (certIds.length > 0) {
     const observationClash = await client.query(
       `SELECT src.id
@@ -518,6 +541,18 @@ async function transferTokenAssociations(
           whereParams: [jobIds],
         });
 
+  // Lines reference streams, and streams/state reference the workspace-scoped
+  // job. Hold children before either the identity transfer or job update moves
+  // the parent, then restore them with their cursor and stream history intact.
+  const heldAgentLogs = [];
+  if (jobIds.length > 0) {
+    for (const table of ["certops_agent_job_log", "certops_agent_log_stream", "certops_agent_log_job_state"]) {
+      heldAgentLogs.push({ table, rows: await takeWorkspaceScopedRows(client, {
+        table, fromWorkspaceId, whereSql: "job_id = ANY($2::uuid[])", whereParams: [jobIds],
+      }) });
+    }
+  }
+
   const updateRes = await client.query(
     `UPDATE tokens
         SET workspace_id = $1, updated_at = NOW()
@@ -545,6 +580,16 @@ async function transferTokenAssociations(
   }
 
   let movedCertificates = 0;
+  if (jobIds.length > 0) {
+    // Completed enrollment history remains with its workspace-scoped issuer.
+    // Keep the immutable job payload, but release the cross-workspace FK before
+    // the identity transfer updates jobs associated with management periods.
+    await client.query(
+      `UPDATE certificate_jobs SET enrollment_id = NULL
+        WHERE workspace_id = $1 AND id = ANY($2::uuid[]) AND enrollment_id IS NOT NULL`,
+      [fromWorkspaceId, jobIds],
+    );
+  }
   if (certIds.length > 0) {
     const certRes = await client.query(
       `SELECT certops_transfer_management_sources($2::uuid, $1::uuid, $3::uuid[]) AS moved`,
@@ -598,6 +643,9 @@ async function transferTokenAssociations(
     rows: heldExecutorEvents,
     nullColumns: ["created_by_api_token_id"],
   });
+  for (const { table, rows } of heldAgentLogs.reverse()) {
+    await putWorkspaceScopedRows(client, { table, toWorkspaceId, rows });
+  }
 
   const { remapped, dropped } = remapJoinRows(
     membership.filter((row) => movedIdSet.has(Number(row.token_id))),

@@ -1,5 +1,5 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import {
   Alert,
   AlertDescription,
@@ -15,6 +15,7 @@ import {
   ModalOverlay,
   Radio,
   RadioGroup,
+  Select,
   Stack,
   Text,
   Textarea,
@@ -26,6 +27,7 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
+import { formatDate, sortCertificatesForToken } from './certopsFormat';
 
 const RETIRE_OPTIONS = [
   {
@@ -56,6 +58,7 @@ export default function RetireCertificateModal({
   onClose,
   token,
   certificate,
+  certificates,
   onRetire,
 }) {
   const {
@@ -73,6 +76,28 @@ export default function RetireCertificateModal({
   const [acknowledgeUncertainty, setAcknowledgeUncertainty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [selectedCertificateId, setSelectedCertificateId] = useState('');
+  const certificateSelectId = useId();
+  const choices = useMemo(() => {
+    const identities = new Map();
+    for (const item of sortCertificatesForToken(
+      certificate ? [certificate] : certificates
+    )) {
+      const fingerprint = String(item.fingerprintSha256 || '')
+        .replace(/:/g, '')
+        .trim()
+        .toLowerCase();
+      const key = /^[a-f0-9]{64}$/.test(fingerprint)
+        ? fingerprint
+        : `unidentified:${item.id}`;
+      if (!identities.has(key)) identities.set(key, item);
+    }
+    return [...identities.values()];
+  }, [certificate, certificates]);
+  const selectedCertificate =
+    choices.length === 1
+      ? choices[0]
+      : choices.find(item => String(item.id) === selectedCertificateId);
 
   useEffect(() => {
     if (isOpen) {
@@ -81,11 +106,16 @@ export default function RetireCertificateModal({
       setAcknowledgeUncertainty(false);
       setSubmitting(false);
       setError('');
+      setSelectedCertificateId('');
     }
-  }, [isOpen]);
+  }, [isOpen, certificate, certificates]);
 
   const handleConfirm = async () => {
     if (submitting) return;
+    if (!selectedCertificate?.id) {
+      setError('Choose the certificate to retire.');
+      return;
+    }
     if (!reason.trim()) {
       setError('Enter a reason for this lifecycle change.');
       return;
@@ -97,7 +127,12 @@ export default function RetireCertificateModal({
     setSubmitting(true);
     setError('');
     try {
-      await onRetire({ status, reason: reason.trim(), acknowledgeUncertainty });
+      await onRetire({
+        certificate: selectedCertificate,
+        status,
+        reason: reason.trim(),
+        acknowledgeUncertainty,
+      });
     } catch (err) {
       const code = err?.response?.status;
       if (code === 404) {
@@ -117,11 +152,11 @@ export default function RetireCertificateModal({
   const selected = RETIRE_OPTIONS.find(option => option.value === status);
   const subjectLabel =
     token?.name ||
-    certificate?.commonName ||
-    (Array.isArray(certificate?.subjectAltNames)
-      ? certificate.subjectAltNames[0]
+    selectedCertificate?.commonName ||
+    (Array.isArray(selectedCertificate?.subjectAltNames)
+      ? selectedCertificate.subjectAltNames[0]
       : null) ||
-    certificate?.id ||
+    selectedCertificate?.id ||
     null;
 
   return (
@@ -147,11 +182,53 @@ export default function RetireCertificateModal({
                 <Text as='span' fontWeight='semibold'>
                   {subjectLabel}
                 </Text>
-                {certificate?.status ? (
+                {selectedCertificate?.status ? (
                   <CertOpsBadge ml={2} colorScheme='gray'>
-                    {certificate.status}
+                    {selectedCertificate.status}
                   </CertOpsBadge>
                 ) : null}
+              </Text>
+            ) : null}
+
+            {choices.length > 1 ? (
+              <VStack align='stretch' spacing={2}>
+                <Text
+                  as='label'
+                  htmlFor={certificateSelectId}
+                  fontSize='sm'
+                  fontWeight='semibold'
+                >
+                  Certificate to retire
+                </Text>
+                <Text fontSize='sm'>
+                  This asset tracks several certificate identities. Choose the
+                  certificate for this lifecycle change; the others keep their
+                  status.
+                </Text>
+                <Select
+                  id={certificateSelectId}
+                  value={selectedCertificateId}
+                  isDisabled={submitting}
+                  placeholder='Choose a certificate'
+                  onChange={event => {
+                    setSelectedCertificateId(event.target.value);
+                    setError('');
+                  }}
+                >
+                  {choices.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {item.commonName || item.name || item.id} · Expires{' '}
+                      {formatDate(item.notAfter)} ·{' '}
+                      {item.fingerprintSha256?.replace(/:/g, '').slice(0, 12) ||
+                        'Fingerprint unavailable'}
+                    </option>
+                  ))}
+                </Select>
+              </VStack>
+            ) : null}
+            {selectedCertificate?.fingerprintSha256 ? (
+              <Text fontSize='xs' wordBreak='break-all'>
+                SHA-256: {selectedCertificate.fingerprintSha256}
               </Text>
             ) : null}
 

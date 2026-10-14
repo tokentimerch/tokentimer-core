@@ -348,6 +348,9 @@ function createIdentityStore() {
         return { rows: [row] };
       }
 
+      if (normalized.startsWith("UPDATE tokens")) {
+        return { rows: [] };
+      }
       throw new Error(`Unexpected query: ${normalized}`);
     },
   };

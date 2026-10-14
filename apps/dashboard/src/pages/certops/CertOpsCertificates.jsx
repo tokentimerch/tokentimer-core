@@ -645,7 +645,7 @@ export default function CertOpsCertificates() {
           inputBorder={inputBorder}
           placeholderColor={searchPlaceholderColor}
           searchIconColor={searchIconColor}
-          placeholder='Search certificates, fingerprints, issuers...'
+          placeholder='Search certificate IDs, names, SANs, serials, issuers...'
         />
         <Select
           size='sm'
@@ -675,31 +675,27 @@ export default function CertOpsCertificates() {
             </option>
           ))}
         </Select>
-        {retiredCount > 0 || showRetired ? (
-          <Checkbox
-            isChecked={showRetired}
-            onChange={event =>
-              setFilter('showRetired', event.target.checked ? 'true' : '')
-            }
-            size='sm'
-          >
-            Show retired{retiredCount > 0 ? ` (${retiredCount})` : ''}
-          </Checkbox>
-        ) : null}
-        {unmanagedCount > 0 || showUnmanaged ? (
-          <Checkbox
-            isChecked={showUnmanaged}
-            onChange={event =>
-              setFilter({
-                showUnmanaged: event.target.checked ? 'true' : '',
-                management: '',
-              })
-            }
-            size='sm'
-          >
-            Show unmanaged{unmanagedCount > 0 ? ` (${unmanagedCount})` : ''}
-          </Checkbox>
-        ) : null}
+        <Checkbox
+          isChecked={showRetired}
+          onChange={event =>
+            setFilter('showRetired', event.target.checked ? 'true' : '')
+          }
+          size='sm'
+        >
+          Show retired{retiredCount > 0 ? ` (${retiredCount})` : ''}
+        </Checkbox>
+        <Checkbox
+          isChecked={showUnmanaged}
+          onChange={event =>
+            setFilter({
+              showUnmanaged: event.target.checked ? 'true' : '',
+              management: '',
+            })
+          }
+          size='sm'
+        >
+          Show unmanaged{unmanagedCount > 0 ? ` (${unmanagedCount})` : ''}
+        </Checkbox>
       </HStack>
 
       {filters.q || visibleFilterLabels.length > 0 ? (
