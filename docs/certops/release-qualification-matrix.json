@@ -232,7 +232,9 @@
         "packages/agent/scripts/host/journal-read-refusal-fixture.js",
         "packages/agent/src/issuers/adcs-enrollment-journal.js",
         "packages/agent/src/keys/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host/orphan-journal-fixture.js",
+        "packages/agent/src/job-journal/index.js"
       ]
     },
     {
@@ -516,7 +518,9 @@
         "packages/agent/scripts/host/journal-read-refusal-fixture.js",
         "packages/agent/src/issuers/adcs-enrollment-journal.js",
         "packages/agent/src/keys/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host/orphan-journal-fixture.js",
+        "packages/agent/src/job-journal/index.js"
       ]
     },
     {

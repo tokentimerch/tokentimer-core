@@ -65,6 +65,10 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     gate.report.nativeStateReadRefusals = await stateReadFixture.qualifyStateReadRefusals({ gate, powershell, workDir });
     stateReadFixture.verifyProof(gate.report.nativeStateReadRefusals); gate.report.fixtureSources ||= [];
     for (const file of stateReadFixture.requiredSources) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+    const orphanJournalFixture = require("./orphan-journal-fixture");
+    gate.report.nativeOrphanJournalProtection = await orphanJournalFixture.qualifyOrphanJournals({ gate, powershell, run, workDir });
+    orphanJournalFixture.verifyProof(gate.report.nativeOrphanJournalProtection);
+    for (const file of orphanJournalFixture.requiredSources) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
     const journalReadFixture=require("./journal-read-refusal-fixture");
     gate.report.nativeJournalReadRefusals=await journalReadFixture.qualifyJournalReadRefusals({gate,powershell,workDir});
     journalReadFixture.verifyProof(gate.report.nativeJournalReadRefusals);
@@ -343,6 +347,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     }
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
+      require("./orphan-journal-fixture").assertCleanupSafe(workDir);
       require("./journal-read-refusal-fixture").assertCleanupSafe(workDir);
       require("./packaged-helper-runtime-fixture").assertCleanupSafe(workDir);
       const receipt = path.join(workDir, "discovery.receipt");
@@ -381,6 +386,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         }
       }
       require("./state-read-refusal-fixture").assertCleanupSafe(workDir);
+      require("./orphan-journal-fixture").assertCleanupSafe(workDir);
       require("./journal-read-refusal-fixture").assertCleanupSafe(workDir);
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");

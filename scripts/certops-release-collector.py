@@ -382,6 +382,17 @@ def browser_job_approval_fields(proof):
     return result
 
 
+def orphan_journal_fields(proof):
+    """Native local prerequisites only; never installed/CA/age qualification."""
+    flags = ['actualPreparedCngCsr', 'actualUnresolvedJobPrerequisites', 'unprotectedNativeOrphanRemoved', 'openJournalKeyPreserved', 'corruptJournalFailsClosed', 'exactJournalBytesRestored', 'untrackedNativeKeyPreserved', 'independentPrivateKeyPossession', 'actualGlobalStoreInventory', 'terminalFixtureClosureAllowsCleanup', 'ownedNativeKeysAndStateRemoved']
+    unsupported = ("installedServiceQualified", "caEnrollmentQualified", "orphanAgePolicyQualified")
+    if (not isinstance(proof, dict) or proof.get("scope") != 'native-cng-supporting-prepared-journal-orphan-protection'
+            or any(proof.get(key) is not False for key in unsupported)
+            or any(proof.get(key) is not True for key in flags)):
+        raise ValueError("Incomplete native orphan journal protection evidence")
+    return {"scope": proof["scope"], **dict.fromkeys(unsupported, False), **dict.fromkeys(flags, True)}
+
+
 def journal_acl_fields(proof):
     fields = ["genuinePreparedPublicCsr","twoActualNativeAccessDenials","journalUnreadableNotAbsent","globalProtectionScanDeferred","exactFileIdentitiesAndBytesPreserved","exactNativeAclsRestored","productionReadersRecovered","ownedTemporaryStateRemoved"]
     if (not isinstance(proof, dict) or proof.get("scope") != "native-temporary-adcs-journal-acl-refusals-not-installed-enrollment"
@@ -912,6 +923,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Incomplete native state read refusal evidence")
             result["nativeStateReadRefusals"] = {**dict.fromkeys(state_fields, True), "scope": state_scope, "installedServiceStartupQualified": False}
             result["nativeJournalReadRefusals"] = journal_acl_fields(value.get("nativeJournalReadRefusals"))
+            result["nativeOrphanJournalProtection"] = orphan_journal_fields(value.get("nativeOrphanJournalProtection"))
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):

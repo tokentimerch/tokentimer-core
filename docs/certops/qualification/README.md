@@ -149,3 +149,5 @@ The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separate
 - [ARM64 installed agent/API](windows/arm64-installed-agent-api.md): original canonical installer, real signed jobs, file-plan/discovery scope and explicit pinned x64-emulated PostgreSQL; native execution pending.
 
 The separate [default24h AD CS release contract](adcs/default24h-release-contract.md) requires a genuine same-VM day, original stale caches, production-deadline cleanup and fresh native renewal. Its timing-only and native-stage receipts cannot qualify the new slot; protected execution remains pending.
+
+- [Native orphan reconciliation and open enrollment protection](windows/native-orphan-journal-protection.md): supporting CNG/journal controls with explicit installed-service, CA and age-policy exclusions.

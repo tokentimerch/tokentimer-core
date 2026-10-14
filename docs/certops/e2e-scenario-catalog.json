@@ -833,8 +833,8 @@
       "requiredEnvironments": [
         "windows-2022-disposable-api-postgres-pebble"
       ],
-      "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Real installed-agent hard-crash journal key reconciliation covered in Windows journey; protected enrollment, foreign key and old orphan age cross-product remain."
+      "implementation": "tests/e2e/windows-real-journey.js; packages/agent/scripts/host/orphan-journal-fixture.js",
+      "remainingCoverage": "Installed-agent hard-crash reconciliation remains covered by the Windows journey. Mandatory supporting native source now creates real CNG CSRs with explicit local unresolved-job and prepared/open enrollment prerequisites, proves a separate tracked unaccepted orphan is removed, preserves the open enrollment key and an untracked owned control key, rejects a malformed enrollment journal, restores exact journal bytes/file identity and permits cleanup after explicit fixture closure. These local prerequisites do not claim a CA request, installed-service startup or orphan-age policy. Native execution of the new controls remains pending; real old-orphan age and broader concurrency/interruption combinations remain."
     },
     {
       "id": "windows-retention.multiple-cutovers",

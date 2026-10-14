@@ -44,7 +44,10 @@
       "windows-iis-client-revocation-policy-preservation": "real-host",
       "windows-packaged-chain-runtime-protocol-refusal": "real-host",
       "windows-adcs-v2-journal-native-read-denied": "real-host",
-      "windows-adcs-journal-root-native-list-denied": "real-host"
+      "windows-adcs-journal-root-native-list-denied": "real-host",
+      "windows-native-orphan-open-enrollment-protected": "real-host",
+      "windows-native-orphan-corrupt-journal-protected": "real-host",
+      "windows-native-orphan-closed-journal-and-untracked-key": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -1801,7 +1804,10 @@
       "windows-iis-client-revocation-policy-preservation",
       "windows-packaged-chain-runtime-protocol-refusal",
       "windows-adcs-v2-journal-native-read-denied",
-      "windows-adcs-journal-root-native-list-denied"
+      "windows-adcs-journal-root-native-list-denied",
+      "windows-native-orphan-open-enrollment-protected",
+      "windows-native-orphan-corrupt-journal-protected",
+      "windows-native-orphan-closed-journal-and-untracked-key"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
