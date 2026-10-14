@@ -659,7 +659,7 @@ export default function CertOpsCertificates() {
           onChange={event => setFilter('status', event.target.value)}
           aria-label='Filter by certificate status'
         >
-          <option value=''>All statuses</option>
+          <option value=''>Not retired</option>
           {MANAGED_CERTIFICATE_STATUSES.map(value => (
             <option key={value} value={value}>
               {statusLabel(value)}
