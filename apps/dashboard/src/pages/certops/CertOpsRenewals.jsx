@@ -3,27 +3,63 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Icon,
   SimpleGrid,
 } from '@chakra-ui/react';
+import { FiRefreshCw, FiServer } from 'react-icons/fi';
 import { useOutletContext } from 'react-router';
-import { DashboardPanel } from '../../components/DashboardPrimitives.jsx';
+import { SettingsIntegrationCard } from '../../components/SettingsIntegrationHub.jsx';
 import RenewalProfilesPanel from '../../components/certops/RenewalProfilesPanel.jsx';
-import UpcomingRenewalsPanel from '../../components/certops/UpcomingRenewalsPanel.jsx';
+import { DashboardPanel } from '../../components/DashboardPrimitives';
 import DistributionGroupsPanel from '../../components/certops/DistributionGroupsPanel.jsx';
+import CertOpsAdcs from './CertOpsAdcs.jsx';
+
+function ProfilesDisclosure() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <SettingsIntegrationCard
+      title='Renewal profiles'
+      description='Profiles decide how a certificate renews. ACME profiles appear after issuance. New AD CS profile uses a confirmed issuer, then attaches to a certificate already in inventory.'
+      icon={<Icon as={FiRefreshCw} boxSize={6} color='blue.500' />}
+      hideStatus
+      isOpen={open}
+      onToggle={() => setOpen(current => !current)}
+      panelId='certops-renewal-profiles'
+    >
+      <RenewalProfilesPanel />
+    </SettingsIntegrationCard>
+  );
+}
+
+function AdcsDisclosure() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <SettingsIntegrationCard
+      title='AD CS issuers'
+      description='Confirm a private CA here before New AD CS profile can select it. New issuer checks the CA, then you pin a CA certificate. Enrollment still runs only when an agent enrollment rule names that CA and template.'
+      icon={<Icon as={FiServer} boxSize={6} color='blue.500' />}
+      hideStatus
+      isOpen={open}
+      onToggle={() => setOpen(current => !current)}
+      unmountOnExit
+      panelId='certops-adcs-section'
+    >
+      <CertOpsAdcs />
+    </SettingsIntegrationCard>
+  );
+}
 
 /**
  * Renewals tab.
  *
- * Automatic renewal became live for every agent-issued certificate once profiles
- * started being derived from issuance. This tab is the control surface for that:
- * what is scheduled to renew, and whether each profile renews at all. Without it
- * renewal is automatic but only adjustable through the database.
+ * Renewal profiles are the shared list. ACME profiles appear after issuance.
+ * AD CS issuers, below, only prepares a private CA that New AD CS profile can
+ * select. When each certificate renews is still on that certificate.
  */
 export default function CertOpsRenewals() {
   const { certOpsPaused } = useOutletContext() || {};
-  // Switching a profile off changes what the schedule shows, so a successful
-  // write refreshes the schedule panel rather than leaving it stale.
-  const [scheduleRefreshSignal, setScheduleRefreshSignal] = useState(0);
 
   return (
     <SimpleGrid columns={{ base: 1 }} spacing={3}>
@@ -32,25 +68,18 @@ export default function CertOpsRenewals() {
       </DashboardPanel>
       {certOpsPaused ? (
         // A per-profile badge can only say whether that profile renews; it
-        // cannot say the whole workspace is paused, and the two look identical
-        // from the schedule alone.
+        // cannot say the whole workspace is paused.
         <Alert status='warning' variant='subtle' borderRadius='md'>
           <AlertIcon boxSize={4} />
           <AlertDescription fontSize='sm'>
             Certificate operations are paused for this workspace, so no renewal
-            job is being created regardless of what a profile below says. The
-            schedule still shows when each certificate would renew.
+            job is being created regardless of what a profile below says.
+            Renewal timing is on each certificate in the inventory.
           </AlertDescription>
         </Alert>
       ) : null}
-      <DashboardPanel>
-        <UpcomingRenewalsPanel refreshSignal={scheduleRefreshSignal} />
-      </DashboardPanel>
-      <DashboardPanel>
-        <RenewalProfilesPanel
-          onChanged={() => setScheduleRefreshSignal(tick => tick + 1)}
-        />
-      </DashboardPanel>
+      <ProfilesDisclosure />
+      <AdcsDisclosure />
     </SimpleGrid>
   );
 }

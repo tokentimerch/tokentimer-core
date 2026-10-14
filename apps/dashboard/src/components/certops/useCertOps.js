@@ -237,6 +237,38 @@ export function useCertOpsIsWorkspaceAdmin() {
 }
 
 /**
+ * Same admin check, plus whether the role request has finished.
+ * An empty role means the workspace lookup failed, not a viewer.
+ */
+export function useCertOpsWorkspaceAdminState() {
+  const { workspaceId } = useWorkspace();
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState({ status: 'loading', isAdmin: false });
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setState({ status: 'ready', isAdmin: false });
+      return undefined;
+    }
+    let cancelled = false;
+    setState(current => ({ status: 'loading', isAdmin: current.isAdmin }));
+    resolveWorkspaceRole(workspaceId).then(role => {
+      if (cancelled) return;
+      if (!role) setState({ status: 'error', isAdmin: false });
+      else setState({ status: 'ready', isAdmin: role === 'admin' });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, attempt]);
+
+  return {
+    ...state,
+    retry: () => setAttempt(value => value + 1),
+  };
+}
+
+/**
  * Loads and manages the workspace CertOps kill-switch and approval-policy
  * state.
  *

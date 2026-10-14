@@ -62,6 +62,18 @@ describe("mapAdcsDisposition", () => {
     );
   });
 
+  it("maps a CMC signer key mismatch to ADCS_CA_KEY_CHANGED", () => {
+    const m = mapAdcsDisposition({
+      phase: "submit",
+      responsePresent: true,
+      certificatePresent: true,
+      exitCode: 0,
+      cmc: { disposition: "unknown", error: "CMS signer key does not match caKeySha256" },
+    });
+    assert.equal(m.outcome, "rejected_invalid");
+    assert.equal(m.errorCode, "ADCS_CA_KEY_CHANGED");
+  });
+
   it("maps submit denied for any failed CMC", () => {
     const m = mapAdcsDisposition({
       phase: "submit",
@@ -235,7 +247,9 @@ describe("createAdcsIssuer", () => {
   });
 
   it("submit pending via CMC requestId", async () => {
+    const lines = [];
     const issuer = makeIssuer({
+      info: (message) => lines.push(message),
       execFileImpl: async (_bin, argv) => {
         assert.ok(argv.includes("-submit"));
         assert.ok(argv.includes(`CertificateTemplate:TTWebServer`));
@@ -252,6 +266,11 @@ describe("createAdcsIssuer", () => {
     assertIssuanceOutcome(outcome);
     assert.equal(outcome.outcome, "pending");
     assert.equal(outcome.requestId, 42);
+    assert.ok(lines.some((line) => line.includes("certreq -submit template=TTWebServer")));
+    assert.ok(
+      lines.some((line) => line.includes("certreq -submit result outcome=pending requestId=42")),
+    );
+    assert.equal(lines.some((line) => line.includes("BEGIN CERTIFICATE")), false);
   });
 
   it("submit issued returns PEM from CMC der", async () => {
@@ -357,6 +376,23 @@ describe("createAdcsIssuer", () => {
       () => makeIssuer({ jobId: "../escape" }),
       /jobId must match/,
     );
+  });
+
+  it("submit reports ADCS_CA_KEY_CHANGED when the CMC signer is a new key", async () => {
+    const issuer = makeIssuer({
+      execFileImpl: async (_bin, argv) => {
+        fs.writeFileSync(argv[argv.length - 1], "rsp");
+        return { stdout: "", stderr: "" };
+      },
+      decodeCmcImpl: async () => ({
+        ok: false,
+        error: "CMS signer key does not match caKeySha256",
+      }),
+    });
+    const outcome = await issuer.submit({ csrPem: CSR_PEM });
+    assert.equal(outcome.outcome, "rejected_invalid");
+    assert.equal(outcome.errorCode, "ADCS_CA_KEY_CHANGED");
+    assert.equal(outcome.detail, "CMS signer key does not match caKeySha256");
   });
 
   it("submit maps RPC unavailable with no rsp to not_submitted", async () => {

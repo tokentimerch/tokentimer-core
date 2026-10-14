@@ -161,9 +161,10 @@ async function listCertificateIdentities({
         : `display_status = $${params.length}`,
     );
   } else if (excludeRetired) {
-    conditions.push(
-      "(display_status NOT IN ('revoked', 'decommissioned') OR still_observed)",
-    );
+    // Still being observed does not keep a revoked or decommissioned
+    // certificate in the active inventory. The row stays available, with
+    // stillObserved set, when retired certificates are included.
+    conditions.push("display_status NOT IN ('revoked', 'decommissioned')");
   }
   if (normalizedSource) {
     params.push(normalizedSource);
@@ -807,6 +808,55 @@ async function retireCertificateIdentity({
   });
 }
 
+// Ends the open period (if any) and starts the replacement in one transaction,
+// so a failed start cannot leave the certificate unmanaged.
+async function replaceManagingSource({
+  workspaceId,
+  periodId = null,
+  managedCertificateId,
+  renewalProfileId,
+  automationEnabled,
+  actorUserId = null,
+  client = pool,
+}) {
+  return inTransaction(client, async (tx) => {
+    if (periodId) {
+      // Without this, a period id from another certificate would end that
+      // certificate's management while this request attaches a profile here.
+      if (!UUID_PATTERN.test(String(periodId)))
+        fail("CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND", "Management period not found");
+      await acquireManagedCertificateImportLock(tx, workspaceId);
+      const owner = await tx.query(
+        `SELECT managed_certificate_id FROM certops_management_periods
+          WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+        [workspaceId, periodId],
+      );
+      if (!owner.rows[0])
+        fail("CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND", "Management period not found");
+      if (
+        String(owner.rows[0].managed_certificate_id).toLowerCase() !==
+        String(managedCertificateId).toLowerCase()
+      )
+        fail(
+          "CERTOPS_MANAGEMENT_PERIOD_MISMATCH",
+          "That management period belongs to a different certificate source",
+        );
+    }
+    const stopped = periodId
+      ? await stopManagingSource({ workspaceId, periodId, actorUserId, client: tx })
+      : null;
+    const readded = await readdManagingSource({
+      workspaceId,
+      managedCertificateId,
+      renewalProfileId,
+      automationEnabled,
+      actorUserId,
+      client: tx,
+    });
+    return { stopped, readded };
+  });
+}
+
 async function stopManagingSource({
   workspaceId,
   periodId,
@@ -998,4 +1048,5 @@ module.exports = {
   retireCertificateIdentity,
   stopManagingSource,
   readdManagingSource,
+  replaceManagingSource,
 };

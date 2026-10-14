@@ -26,6 +26,8 @@ const {
   listCertificateJobs,
   updateCertificateJobStatus,
   validateJobPayloadForOperation,
+  validateRenewalProfileOnPayload,
+  _test: { validateExecutionFields },
 } = require(
   path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
 );
@@ -173,7 +175,7 @@ function createMemoryClient(options = {}) {
                 !terminal.has(row.status),
             )
             .map((row) => ({
-              ca_endpoint:
+              ca_bucket:
                 typeof row.payload?.caEndpoint === "string" &&
                 row.payload.caEndpoint.trim() !== ""
                   ? row.payload.caEndpoint.trim()
@@ -2198,6 +2200,54 @@ describe("CertOps jobs service", () => {
     );
   });
 
+  it("accepts an AD CS automation renew payload without an ACME profile", () => {
+    const payload = {
+      schemaVersion: 1,
+      certificateId: "cert-1",
+      keyMode: "os-store-managed",
+      target: {
+        type: "windows-iis",
+        reference: "www.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+    };
+    assert.equal(
+      validateRenewalProfileOnPayload(payload, "renew", { required: true }),
+      null,
+    );
+  });
+
+  it("refuses a manual renew when the certificate profile has an AD CS issuer", async () => {
+    const {
+      CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
+      manualRenewalJobCreator,
+    } = require(
+      path.resolve(__dirname, "../../apps/api/services/certops/jobs.js"),
+    );
+    const create = manualRenewalJobCreator({
+      certificateId: "af0a812e-3557-4694-b294-63e6e83f24c8",
+      loadCertificate: async () => ({
+        id: "af0a812e-3557-4694-b294-63e6e83f24c8",
+        profile_issuer_id: "485d46c4-4aac-4896-bc93-f8677a176c41",
+      }),
+      createJob: async () => {
+        throw new Error("manual renew must not create an ACME job");
+      },
+    });
+    await assert.rejects(
+      () =>
+        create({
+          client: {},
+          workspaceId: WORKSPACE_A,
+          payload: { reason: "test" },
+        }),
+      (error) =>
+        error?.code === CERTOPS_ADCS_RENEWAL_NOT_MANUAL &&
+        /Open Renewals/.test(error.message),
+    );
+  });
+
   it("enforces per-CA renew capacity across sequential creators for the same CA", async () => {
     const {
       CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
@@ -2404,6 +2454,18 @@ describe("CertOps trust-anchor operation and subject-type wiring (ADR-0012 decis
     assert.deepEqual(
       [...TRUST_ANCHOR_OPERATIONS].sort(),
       ["distribute-trust", "revoke-trust"],
+    );
+  });
+
+  it("accepts keyMode on a continue-enrollment payload and nothing else", () => {
+    assert.doesNotThrow(() =>
+      validateExecutionFields({ keyMode: "os-store-managed" }, "continue-enrollment"),
+    );
+    assert.throws(
+      () => validateExecutionFields({ caEndpoint: "https://ca.example.test" }, "continue-enrollment"),
+      (error) =>
+        error?.code === CERTOPS_JOB_EXECUTION_FIELD_INVALID &&
+        /caEndpoint is not valid for the continue-enrollment operation/.test(error.message),
     );
   });
 

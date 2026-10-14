@@ -69,6 +69,14 @@ const EVIDENCE_TYPE_LABELS = {
   'validation.passed': 'Validation passed',
   'validation.failed': 'Validation failed',
   'policy.checked': 'Policy checked',
+  'adcs-template-verdict': 'AD CS template verdict',
+  'adcs-submitted': 'AD CS submitted',
+  'adcs-pending': 'AD CS pending',
+  'adcs-issued': 'AD CS issued',
+  'adcs-denied': 'AD CS denied',
+  'adcs-uncertain': 'AD CS uncertain',
+  'adcs-validation-deferred': 'AD CS validation deferred',
+  'adcs-rejected-invalid': 'AD CS rejected',
 };
 
 const EVIDENCE_TYPE_SCHEMES = {
@@ -78,6 +86,14 @@ const EVIDENCE_TYPE_SCHEMES = {
   'validation.passed': 'green',
   'validation.failed': 'red',
   'policy.checked': 'gray',
+  'adcs-template-verdict': 'gray',
+  'adcs-submitted': 'blue',
+  'adcs-pending': 'blue',
+  'adcs-issued': 'green',
+  'adcs-denied': 'red',
+  'adcs-uncertain': 'gray',
+  'adcs-validation-deferred': 'gray',
+  'adcs-rejected-invalid': 'red',
 };
 
 const SUBJECT_TYPE_LABELS = {
@@ -121,10 +137,12 @@ const PENDING_REASON_LABELS = {
   agent_retired: 'Agent retired',
   compatibility_blocked: 'Agent incompatible',
   trust_anchor_deploy_capability_unavailable: 'No trust-anchor support',
+  adcs_enroll_capability_unavailable: 'No AD CS support',
   agent_offline: 'Agent offline',
   assigned_agent_missing: 'Assigned agent gone',
   awaiting_claim: 'Waiting for an agent',
   awaiting_progress: 'Waiting for progress',
+  target_selector_unsupported: 'Agent does not declare this name',
 };
 
 const STALE_REASON_LABELS = {

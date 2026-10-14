@@ -451,6 +451,8 @@ test("heartbeat: accepts and forwards declaredCapabilities, omits when absent", 
   const calls = stubFetch([
     { status: 200, json: { ok: true } },
     { status: 200, json: { ok: true } },
+    { status: 200, json: { ok: true } },
+    { status: 200, json: { ok: true } },
   ]);
 
   const client = createProtocolClient({
@@ -471,6 +473,18 @@ test("heartbeat: accepts and forwards declaredCapabilities, omits when absent", 
 
   await client.heartbeat({ agentVersion: "0.1.0" });
   assert.equal("declaredCapabilities" in calls[1].parsedBody.body, false);
+
+  await client.heartbeat({
+    agentVersion: "0.1.0",
+    declaredTargetSelectors: ["www.example.com"],
+  });
+  assert.deepEqual(calls[2].parsedBody.body.declaredTargetSelectors, ["www.example.com"]);
+
+  await client.heartbeat({
+    agentVersion: "0.1.0",
+    declaredTargetSelectors: [],
+  });
+  assert.equal("declaredTargetSelectors" in calls[3].parsedBody.body, false);
 });
 
 test("reportResult: sends correct envelope shape (messageType + resultBody fields)", async () => {
@@ -500,6 +514,37 @@ test("reportResult: sends correct envelope shape (messageType + resultBody field
   assert.equal(calls[0].parsedBody.body.status, "succeeded");
   assert.equal(calls[0].parsedBody.body.keyRotated, true);
   assert.equal(calls[0].parsedBody.body.rejectionReason, null);
+  assert.equal("preflightResult" in calls[0].parsedBody.body, false);
+  assert.equal("enrollmentResult" in calls[0].parsedBody.body, false);
+});
+
+test("reportResult: forwards preflight and enrollment results when provided", async () => {
+  const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+  });
+  const preflightResult = {
+    caConfig: "ca.example\\Issuing CA",
+    template: "WebServer",
+    templateCheck: { verdict: "safe", reasons: [] },
+    caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+    caCertificates: [],
+  };
+  const enrollmentResult = { state: "issued" };
+
+  await client.reportResult({
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    status: "succeeded",
+    preflightResult,
+    enrollmentResult,
+  });
+
+  assert.deepEqual(calls[0].parsedBody.body.preflightResult, preflightResult);
+  assert.deepEqual(calls[0].parsedBody.body.enrollmentResult, enrollmentResult);
 });
 
 test("reportResult: forwards claimId and nonce in the body when provided", async () => {
@@ -1449,5 +1494,48 @@ test("log batches omit sequence and do not block heartbeats", async () => {
     }),
   });
   const ack = await pendingLog;
+  assert.equal(ack.status, 200);
+});
+
+test("postJobLogs completes when client shutdown signal is already aborted", async () => {
+  const shutdown = new AbortController();
+  shutdown.abort();
+  const calls = [];
+  global.fetch = (url, init) => {
+    calls.push({ url: String(url), init });
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        ackThroughSeq: 0,
+        newlyStored: 0,
+        duplicateCount: 0,
+        serverDroppedCount: 0,
+        streamDisabled: false,
+      }),
+    });
+  };
+  const client = createProtocolClient({
+    serverUrl: "https://example.test",
+    agentId: "agent-1",
+    protocolVersion: "1.0.0",
+    getCredential: () => CREDENTIAL,
+    signal: shutdown.signal,
+  });
+  const ack = await client.postJobLogs({
+    jobId: "job-1",
+    body: {
+      jobId: "job-1",
+      claimId: "claim-1",
+      final: true,
+      lines: [],
+      droppedBefore: 0,
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/logs$/);
+  assert.equal(calls[0].init.signal.aborted, false);
+  assert.equal(ack.ok, true);
   assert.equal(ack.status, 200);
 });

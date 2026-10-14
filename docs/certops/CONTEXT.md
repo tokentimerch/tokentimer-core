@@ -1,6 +1,6 @@
-# CertOps domain context
+# Certificate Lifecycle Management (CLM) domain context
 
-Program-scoped domain language for the CertOps feature track. This file lives
+Domain language for Certificate Lifecycle Management (CLM), implemented by the existing CertOps architecture and `certops` technical namespace. Public CLM features therefore use the same API paths, configuration, and agent protocols described in the CertOps technical references. This file lives
 under `docs/certops/` so the whole CertOps doc bundle can be removed or folded
 into core-wide docs when the program graduates. Decisions that shape the code
 live in `docs/adr/`. When a term here and the code disagree, that is a bug in
@@ -237,8 +237,7 @@ the shared detector scans every outbound envelope.
   scheduled renewal, and trust-anchor distribute or revoke. Fail-closed: the
   per-job `requiresApproval` checkbox cannot override it, and an explicit
   `false` from a caller cannot override a true workspace column. Off by
-  default. Not an env var; workspace admins toggle it from the CertOps
-  Settings tab (**Job approval** panel). Turning it on or off is audited
+  default. Not an env var; workspace admins toggle it from the **Certificate Management → Settings** tab (**Job approval** panel). Turning it on or off is audited
   (`CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED` /
   `CERTOPS_WORKSPACE_APPROVAL_POLICY_DISABLED`), same as the pause/resume kill
   switch. A request that sets both this flag and `certOpsPaused` together
@@ -337,7 +336,7 @@ the shared detector scans every outbound envelope.
 
 ## Dashboard certificate visibility
 
-Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
+Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. AD CS issuers, CA preflight, pinning, enrollment status, and AD CS renewal profiles live under **Renewals**. Creating an issuer or a profile does not issue a certificate by itself. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
 
 ## Certificate removal
 
@@ -386,8 +385,7 @@ remains `certOpsActive = certOpsEnabled && !certOpsPaused`.
 `certOpsRequireApprovalAlways` is independent of pause: turning it on does
 not halt dispatch of already-approved jobs; it only forces every new job to
 start at `pending_approval`. It is fail-closed (the per-job checkbox cannot
-turn it off) and is not an env var; admins toggle it from the CertOps
-Settings tab. A request that sets both flags together applies them as one
+turn it off) and is not an env var; admins toggle it from the **Certificate Management → Settings** tab. A request that sets both flags together applies them as one
 transaction. The settings surface is human session-only: internal worker
 bearer credentials cannot read, pause, resume, or change Job approval.
 Private-key material remains rejected before the session-user and role
@@ -487,8 +485,10 @@ flows use this path when `certops.enabled` is on.
 
 ## Where things live
 
+- Current-state index (behavior, architecture, enrollment prerequisites):
+  [CURRENT_STATE.md](CURRENT_STATE.md).
 - Program docs: `docs/certops/` (this file; purgeable when CertOps graduates).
-- ADRs: `docs/adr/` (CertOps ADRs 0001-0011 today; see `docs/adr/README.md` for
+- ADRs: `docs/adr/` (CertOps ADRs 0001-0014 today; see `docs/adr/README.md` for
   the index and which records carry amendments).
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
 - Contracts: `packages/contracts/` (registered in `contracts.manifest.json`).

@@ -430,7 +430,7 @@ export default function DashboardShell({
           },
           {
             key: 'certops',
-            label: 'CertOps',
+            label: 'Certificate Management',
             icon: ShieldCheck,
             active: currentPath.startsWith('/certops'),
             to: '/certops/jobs',

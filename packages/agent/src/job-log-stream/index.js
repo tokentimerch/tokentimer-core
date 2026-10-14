@@ -378,7 +378,6 @@ async function drainJobLogSessions(timeoutMs = SHUTDOWN_DRAIN_MS) {
     Promise.allSettled([...pendingCloses]),
     new Promise((resolve) => {
       timer = setTimeout(resolve, timeoutMs);
-      timer.unref?.();
     }),
   ]);
   clearTimeout(timer);

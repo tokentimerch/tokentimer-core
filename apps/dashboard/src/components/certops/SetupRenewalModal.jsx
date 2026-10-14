@@ -35,6 +35,7 @@ import {
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import { setUpCertificateRenewal } from './certopsApi.js';
 import { listRenewalProfiles } from './certopsRenewalApi.js';
+import AgentShellConsole from './AgentShellConsole.jsx';
 
 /** A profile is only offerable as a preset when it carries all four fields
  * this modal needs; an incomplete or pre-derivation row would just hand the
@@ -144,6 +145,7 @@ export default function SetupRenewalModal({
   const [dnsProvider, setDnsProvider] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [createdJobId, setCreatedJobId] = useState(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -153,6 +155,7 @@ export default function SetupRenewalModal({
     setDnsProvider('');
     setSubmitting(false);
     setError('');
+    setCreatedJobId(null);
     setManualEntry(false);
     setSelectedPresetId('');
     setPresets([]);
@@ -290,6 +293,11 @@ export default function SetupRenewalModal({
         { payload: resolvedFields }
       );
       onSetUp?.(job);
+      if (job?.id) {
+        setCreatedJobId(job.id);
+        setSubmitting(false);
+        return;
+      }
       onClose();
     } catch (err) {
       setError(setupErrorMessage(err));
@@ -313,306 +321,337 @@ export default function SetupRenewalModal({
       scrollBehavior='inside'
     >
       <ModalOverlay {...overlayProps} />
-      <DashboardModalFrame maxW={{ base: 'calc(100vw - 24px)', md: '560px' }}>
+      <DashboardModalFrame
+        maxW={{
+          base: 'calc(100vw - 24px)',
+          md: createdJobId ? '720px' : '560px',
+        }}
+      >
         <ModalHeader {...headerProps}>
-          <DashboardModalTitle>Set up automatic renewal</DashboardModalTitle>
+          <DashboardModalTitle>
+            {createdJobId
+              ? 'Renewal job dispatched'
+              : 'Set up automatic renewal'}
+          </DashboardModalTitle>
           <DashboardModalDescription>
-            Sets up automatic renewal for{' '}
-            <Text as='span' fontWeight='semibold'>
-              {certName}
-            </Text>
-            . TokenTimer renews it once now, onto
-            {certificatePath ? (
-              <>
-                {' '}
-                <Text as='span' fontFamily='mono'>
-                  {certificatePath}
-                </Text>
-              </>
+            {createdJobId ? (
+              'Live agent execution. The console below streams agent output as it arrives. Automatic renewal is configured only if this job succeeds.'
             ) : (
-              ' the path TokenTimer already discovered'
+              <>
+                Sets up automatic renewal for{' '}
+                <Text as='span' fontWeight='semibold'>
+                  {certName}
+                </Text>
+                . TokenTimer renews it once now, onto
+                {certificatePath ? (
+                  <>
+                    {' '}
+                    <Text as='span' fontFamily='mono'>
+                      {certificatePath}
+                    </Text>
+                  </>
+                ) : (
+                  ' the path TokenTimer already discovered'
+                )}
+                , to prove the settings below actually work. If that renewal
+                succeeds, TokenTimer creates another renewal profile, scoped to
+                just this certificate, so future renewals happen without asking
+                again.
+              </>
             )}
-            , to prove the settings below actually work. If that renewal
-            succeeds, TokenTimer creates another renewal profile, scoped to just
-            this certificate, so future renewals happen without asking again.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
         <ModalBody {...bodyProps}>
-          <VStack align='stretch' spacing={4}>
-            {loadingPresets ? (
-              <HStack spacing={2} color={muted} py={4} justify='center'>
-                <Spinner size='sm' />
-                <Text fontSize='sm'>Checking existing renewal profiles...</Text>
-              </HStack>
-            ) : (
-              <>
-                {presets.length > 0 ? (
-                  <Flex justify='space-between' align='center'>
-                    <Text fontSize='sm' fontWeight='medium'>
-                      {usingPreset
-                        ? 'Use an existing profile'
-                        : 'Enter details manually'}
-                    </Text>
-                    <HStack spacing={2}>
-                      <Text fontSize='xs' color={muted}>
-                        Enter manually
+          {createdJobId ? (
+            <AgentShellConsole
+              workspaceId={workspaceId}
+              jobId={createdJobId}
+              title='Agent output'
+              maxHeight='360px'
+            />
+          ) : (
+            <VStack align='stretch' spacing={4}>
+              {loadingPresets ? (
+                <HStack spacing={2} color={muted} py={4} justify='center'>
+                  <Spinner size='sm' />
+                  <Text fontSize='sm'>
+                    Checking existing renewal profiles...
+                  </Text>
+                </HStack>
+              ) : (
+                <>
+                  {presets.length > 0 ? (
+                    <Flex justify='space-between' align='center'>
+                      <Text fontSize='sm' fontWeight='medium'>
+                        {usingPreset
+                          ? 'Use an existing profile'
+                          : 'Enter details manually'}
                       </Text>
-                      <Switch
-                        size='sm'
-                        isChecked={manualEntry}
-                        onChange={toggleManualEntry}
-                        aria-label='Enter renewal details manually'
-                      />
-                    </HStack>
-                  </Flex>
-                ) : null}
-
-                {usingPreset ? (
-                  <>
-                    <Text fontSize='sm' color={muted}>
-                      Picking a profile copies its command, CA endpoint, and DNS
-                      settings into this setup; it does{' '}
-                      <Text as='span' fontWeight='medium'>
-                        not
-                      </Text>{' '}
-                      attach{' '}
-                      <Text as='span' fontWeight='medium'>
-                        {selectedPreset?.name}
-                      </Text>{' '}
-                      itself, since this certificate always gets its own
-                      profile. Check each option's path below against this
-                      certificate's own path above before picking it.
-                    </Text>
-                    {presets.length > 0 ? (
-                      <Flex justify='space-between' align='center'>
+                      <HStack spacing={2}>
                         <Text fontSize='xs' color={muted}>
-                          {showAllProfiles
-                            ? `Showing all ${presets.length} profile${presets.length === 1 ? '' : 's'}`
-                            : `Showing ${matchingPresets.length} matching profile${matchingPresets.length === 1 ? '' : 's'}${nonMatchingCount > 0 ? ` (${nonMatchingCount} hidden)` : ''}`}
+                          Enter manually
                         </Text>
-                        <HStack spacing={2}>
+                        <Switch
+                          size='sm'
+                          isChecked={manualEntry}
+                          onChange={toggleManualEntry}
+                          aria-label='Enter renewal details manually'
+                        />
+                      </HStack>
+                    </Flex>
+                  ) : null}
+
+                  {usingPreset ? (
+                    <>
+                      <Text fontSize='sm' color={muted}>
+                        Picking a profile copies its command, CA endpoint, and
+                        DNS settings into this setup; it does{' '}
+                        <Text as='span' fontWeight='medium'>
+                          not
+                        </Text>{' '}
+                        attach{' '}
+                        <Text as='span' fontWeight='medium'>
+                          {selectedPreset?.name}
+                        </Text>{' '}
+                        itself, since this certificate always gets its own
+                        profile. Check each option's path below against this
+                        certificate's own path above before picking it.
+                      </Text>
+                      {presets.length > 0 ? (
+                        <Flex justify='space-between' align='center'>
                           <Text fontSize='xs' color={muted}>
-                            Show all profiles
+                            {showAllProfiles
+                              ? `Showing all ${presets.length} profile${presets.length === 1 ? '' : 's'}`
+                              : `Showing ${matchingPresets.length} matching profile${matchingPresets.length === 1 ? '' : 's'}${nonMatchingCount > 0 ? ` (${nonMatchingCount} hidden)` : ''}`}
                           </Text>
-                          <Switch
-                            size='sm'
-                            isChecked={showAllProfiles}
-                            onChange={toggleShowAllProfiles}
-                            aria-label='Show all profiles, including ones that do not match this certificate'
-                          />
-                        </HStack>
-                      </Flex>
-                    ) : null}
-                    {visiblePresets.length === 0 ? (
+                          <HStack spacing={2}>
+                            <Text fontSize='xs' color={muted}>
+                              Show all profiles
+                            </Text>
+                            <Switch
+                              size='sm'
+                              isChecked={showAllProfiles}
+                              onChange={toggleShowAllProfiles}
+                              aria-label='Show all profiles, including ones that do not match this certificate'
+                            />
+                          </HStack>
+                        </Flex>
+                      ) : null}
+                      {visiblePresets.length === 0 ? (
+                        <Alert status='info' variant='subtle' borderRadius='md'>
+                          <AlertIcon boxSize={4} />
+                          <AlertDescription fontSize='sm'>
+                            No profile matches this certificate's own path. Turn
+                            on "Show all profiles" above to pick from the
+                            {` ${presets.length} `}
+                            other profile{presets.length === 1 ? '' : 's'} in
+                            this workspace, or enter details manually.
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <RadioGroup
+                          value={selectedPresetId}
+                          onChange={setSelectedPresetId}
+                        >
+                          <Stack spacing={2}>
+                            {visiblePresets.map(preset => {
+                              const renewal = preset.renewalProfile || {};
+                              const certPath = presetCertPath(preset);
+                              const selected = preset.id === selectedPresetId;
+                              const matched = Boolean(
+                                certificatePath &&
+                                certPath &&
+                                certPath === certificatePath
+                              );
+                              const mismatched = Boolean(
+                                certificatePath &&
+                                certPath &&
+                                certPath !== certificatePath
+                              );
+                              return (
+                                <Box
+                                  key={preset.id}
+                                  as='label'
+                                  p={3}
+                                  borderWidth='1px'
+                                  borderRadius='md'
+                                  cursor='pointer'
+                                  borderColor={
+                                    selected
+                                      ? mismatched
+                                        ? mismatchedBorder
+                                        : matched
+                                          ? matchedBorder
+                                          : cardSelectedBorder
+                                      : cardBorder
+                                  }
+                                  bg={
+                                    selected
+                                      ? mismatched
+                                        ? mismatchedBg
+                                        : matched
+                                          ? matchedBg
+                                          : cardSelectedBg
+                                      : 'transparent'
+                                  }
+                                >
+                                  <Radio value={preset.id} size='sm'>
+                                    <Text fontSize='sm' fontWeight='medium'>
+                                      {preset.name}
+                                    </Text>
+                                  </Radio>
+                                  <Stack
+                                    pl={6}
+                                    mt={1}
+                                    spacing={0}
+                                    fontSize='xs'
+                                    color={muted}
+                                  >
+                                    <Text>
+                                      Command:{' '}
+                                      <Text as='span' fontFamily='mono'>
+                                        {renewal.acme?.commandRef}
+                                      </Text>
+                                    </Text>
+                                    <Text noOfLines={1}>
+                                      CA: {renewal.ca?.endpoint}
+                                    </Text>
+                                    <Text>
+                                      DNS: {renewal.dns?.provider} &middot;{' '}
+                                      {renewal.dns?.zone}
+                                    </Text>
+                                    <Text noOfLines={1}>
+                                      Path:{' '}
+                                      <Text
+                                        as='span'
+                                        fontFamily='mono'
+                                        color={
+                                          !certPath
+                                            ? dashboard.state.warning
+                                            : mismatched
+                                              ? mismatchedText
+                                              : matched
+                                                ? matchedText
+                                                : undefined
+                                        }
+                                        fontWeight={
+                                          mismatched || matched
+                                            ? 'semibold'
+                                            : undefined
+                                        }
+                                      >
+                                        {certPath ||
+                                          'Not recorded on this profile'}
+                                      </Text>
+                                    </Text>
+                                  </Stack>
+                                </Box>
+                              );
+                            })}
+                          </Stack>
+                        </RadioGroup>
+                      )}
+                      {pathMismatch ? (
+                        <Alert
+                          status='warning'
+                          variant='subtle'
+                          borderRadius='md'
+                        >
+                          <AlertIcon boxSize={4} />
+                          <AlertDescription fontSize='sm'>
+                            <Text as='span' fontWeight='semibold'>
+                              {selectedPreset?.name}
+                            </Text>{' '}
+                            deploys to{' '}
+                            <Text as='span' fontFamily='mono'>
+                              {selectedPresetPath}
+                            </Text>
+                            , not this certificate's own path (
+                            <Text as='span' fontFamily='mono'>
+                              {certificatePath}
+                            </Text>
+                            ). It looks like it belongs to a different
+                            certificate; double-check before continuing.
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
                       <Alert status='info' variant='subtle' borderRadius='md'>
                         <AlertIcon boxSize={4} />
                         <AlertDescription fontSize='sm'>
-                          No profile matches this certificate's own path. Turn
-                          on "Show all profiles" above to pick from the
-                          {` ${presets.length} `}
-                          other profile{presets.length === 1 ? '' : 's'} in this
-                          workspace, or enter details manually.
+                          This is the one time these settings need to be entered
+                          by hand: they become part of the renewal profile this
+                          creates, so every later renewal reuses them without
+                          asking again.
                         </AlertDescription>
                       </Alert>
-                    ) : (
-                      <RadioGroup
-                        value={selectedPresetId}
-                        onChange={setSelectedPresetId}
-                      >
-                        <Stack spacing={2}>
-                          {visiblePresets.map(preset => {
-                            const renewal = preset.renewalProfile || {};
-                            const certPath = presetCertPath(preset);
-                            const selected = preset.id === selectedPresetId;
-                            const matched = Boolean(
-                              certificatePath &&
-                              certPath &&
-                              certPath === certificatePath
-                            );
-                            const mismatched = Boolean(
-                              certificatePath &&
-                              certPath &&
-                              certPath !== certificatePath
-                            );
-                            return (
-                              <Box
-                                key={preset.id}
-                                as='label'
-                                p={3}
-                                borderWidth='1px'
-                                borderRadius='md'
-                                cursor='pointer'
-                                borderColor={
-                                  selected
-                                    ? mismatched
-                                      ? mismatchedBorder
-                                      : matched
-                                        ? matchedBorder
-                                        : cardSelectedBorder
-                                    : cardBorder
-                                }
-                                bg={
-                                  selected
-                                    ? mismatched
-                                      ? mismatchedBg
-                                      : matched
-                                        ? matchedBg
-                                        : cardSelectedBg
-                                    : 'transparent'
-                                }
-                              >
-                                <Radio value={preset.id} size='sm'>
-                                  <Text fontSize='sm' fontWeight='medium'>
-                                    {preset.name}
-                                  </Text>
-                                </Radio>
-                                <Stack
-                                  pl={6}
-                                  mt={1}
-                                  spacing={0}
-                                  fontSize='xs'
-                                  color={muted}
-                                >
-                                  <Text>
-                                    Command:{' '}
-                                    <Text as='span' fontFamily='mono'>
-                                      {renewal.acme?.commandRef}
-                                    </Text>
-                                  </Text>
-                                  <Text noOfLines={1}>
-                                    CA: {renewal.ca?.endpoint}
-                                  </Text>
-                                  <Text>
-                                    DNS: {renewal.dns?.provider} &middot;{' '}
-                                    {renewal.dns?.zone}
-                                  </Text>
-                                  <Text noOfLines={1}>
-                                    Path:{' '}
-                                    <Text
-                                      as='span'
-                                      fontFamily='mono'
-                                      color={
-                                        !certPath
-                                          ? dashboard.state.warning
-                                          : mismatched
-                                            ? mismatchedText
-                                            : matched
-                                              ? matchedText
-                                              : undefined
-                                      }
-                                      fontWeight={
-                                        mismatched || matched
-                                          ? 'semibold'
-                                          : undefined
-                                      }
-                                    >
-                                      {certPath ||
-                                        'Not recorded on this profile'}
-                                    </Text>
-                                  </Text>
-                                </Stack>
-                              </Box>
-                            );
-                          })}
-                        </Stack>
-                      </RadioGroup>
-                    )}
-                    {pathMismatch ? (
-                      <Alert
-                        status='warning'
-                        variant='subtle'
-                        borderRadius='md'
-                      >
-                        <AlertIcon boxSize={4} />
-                        <AlertDescription fontSize='sm'>
-                          <Text as='span' fontWeight='semibold'>
-                            {selectedPreset?.name}
-                          </Text>{' '}
-                          deploys to{' '}
-                          <Text as='span' fontFamily='mono'>
-                            {selectedPresetPath}
-                          </Text>
-                          , not this certificate's own path (
-                          <Text as='span' fontFamily='mono'>
-                            {certificatePath}
-                          </Text>
-                          ). It looks like it belongs to a different
-                          certificate; double-check before continuing.
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    <Alert status='info' variant='subtle' borderRadius='md'>
-                      <AlertIcon boxSize={4} />
-                      <AlertDescription fontSize='sm'>
-                        This is the one time these settings need to be entered
-                        by hand: they become part of the renewal profile this
-                        creates, so every later renewal reuses them without
-                        asking again.
-                      </AlertDescription>
-                    </Alert>
-                    <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                      <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+                        <FormControl isRequired>
+                          <FormLabel fontSize='sm'>
+                            ACME command profile
+                          </FormLabel>
+                          <Input
+                            size='sm'
+                            value={commandRef}
+                            onChange={event =>
+                              setCommandRef(event.target.value)
+                            }
+                            placeholder='e.g. certbot-csr'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                        <FormControl isRequired>
+                          <FormLabel fontSize='sm'>DNS provider</FormLabel>
+                          <Input
+                            size='sm'
+                            value={dnsProvider}
+                            onChange={event =>
+                              setDnsProvider(event.target.value)
+                            }
+                            placeholder='e.g. cloudflare'
+                            autoComplete='off'
+                          />
+                        </FormControl>
+                      </SimpleGrid>
                       <FormControl isRequired>
-                        <FormLabel fontSize='sm'>
-                          ACME command profile
-                        </FormLabel>
+                        <FormLabel fontSize='sm'>CA endpoint</FormLabel>
                         <Input
                           size='sm'
-                          value={commandRef}
-                          onChange={event => setCommandRef(event.target.value)}
-                          placeholder='e.g. certbot-csr'
+                          value={caEndpoint}
+                          onChange={event => setCaEndpoint(event.target.value)}
+                          placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
                           autoComplete='off'
                         />
                       </FormControl>
                       <FormControl isRequired>
-                        <FormLabel fontSize='sm'>DNS provider</FormLabel>
+                        <FormLabel fontSize='sm'>DNS zone</FormLabel>
                         <Input
                           size='sm'
-                          value={dnsProvider}
-                          onChange={event => setDnsProvider(event.target.value)}
-                          placeholder='e.g. cloudflare'
+                          value={dnsZone}
+                          onChange={event => setDnsZone(event.target.value)}
+                          placeholder='e.g. example.com'
                           autoComplete='off'
                         />
+                        <FormHelperText>
+                          The zone the DNS-01 challenge record is created in.
+                        </FormHelperText>
                       </FormControl>
-                    </SimpleGrid>
-                    <FormControl isRequired>
-                      <FormLabel fontSize='sm'>CA endpoint</FormLabel>
-                      <Input
-                        size='sm'
-                        value={caEndpoint}
-                        onChange={event => setCaEndpoint(event.target.value)}
-                        placeholder='e.g. https://acme-v02.api.letsencrypt.org/directory'
-                        autoComplete='off'
-                      />
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontSize='sm'>DNS zone</FormLabel>
-                      <Input
-                        size='sm'
-                        value={dnsZone}
-                        onChange={event => setDnsZone(event.target.value)}
-                        placeholder='e.g. example.com'
-                        autoComplete='off'
-                      />
-                      <FormHelperText>
-                        The zone the DNS-01 challenge record is created in.
-                      </FormHelperText>
-                    </FormControl>
-                  </>
-                )}
-              </>
-            )}
+                    </>
+                  )}
+                </>
+              )}
 
-            {error ? (
-              <Alert status='error' borderRadius='12px'>
-                <AlertIcon />
-                <AlertDescription fontSize='sm'>{error}</AlertDescription>
-              </Alert>
-            ) : null}
-          </VStack>
+              {error ? (
+                <Alert status='error' borderRadius='12px'>
+                  <AlertIcon />
+                  <AlertDescription fontSize='sm'>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+            </VStack>
+          )}
         </ModalBody>
         <ModalFooter {...footerProps}>
           <Flex
@@ -627,18 +666,20 @@ export default function SetupRenewalModal({
               minW={{ base: '100%', sm: '104px' }}
               {...outlineButtonProps}
             >
-              Cancel
+              {createdJobId ? 'Close' : 'Cancel'}
             </Button>
-            <Button
-              onClick={handleConfirm}
-              isDisabled={!canSubmit}
-              isLoading={submitting}
-              loadingText='Renewing'
-              minW={{ base: '100%', sm: '196px' }}
-              {...primaryButtonProps}
-            >
-              Renew and set up
-            </Button>
+            {createdJobId ? null : (
+              <Button
+                onClick={handleConfirm}
+                isDisabled={!canSubmit}
+                isLoading={submitting}
+                loadingText='Renewing'
+                minW={{ base: '100%', sm: '196px' }}
+                {...primaryButtonProps}
+              >
+                Renew and set up
+              </Button>
+            )}
           </Flex>
         </ModalFooter>
       </DashboardModalFrame>

@@ -372,12 +372,16 @@ describe("CertOps certificate renewal-state projection", () => {
       ],
     });
 
-    assert.equal(queries.length, 5);
+    assert.equal(queries.length, 6);
     assert.match(queries[0].sql, /LEFT JOIN certificate_profiles/);
-    assert.deepEqual(queries[0].params, [
-      "workspace-1",
-      ["cert-auto", "cert-observed"],
-    ]);
+    assert.match(queries[0].sql, /last_renew_job_status/);
+    assert.match(queries[0].sql, /has_active_renew_job/);
+    assert.match(queries[0].sql, /AS renews_from/);
+    assert.equal(queries[0].params[0], "workspace-1");
+    assert.deepEqual(queries[0].params[1], ["cert-auto", "cert-observed"]);
+    assert.equal(queries[0].params[2], "30");
+    assert.ok(Array.isArray(queries[0].params[3]));
+    assert.match(queries[5].sql, /AS in_flight/);
     assert.match(queries[1].sql, /FROM certops_outbox/);
     assert.deepEqual(queries[1].params, [
       "workspace-1",
@@ -394,6 +398,8 @@ describe("CertOps certificate renewal-state projection", () => {
 
     assert.equal(items[0].commonName, "app.example.com");
     assert.equal(items[0].renewal.state, "auto");
+    assert.equal(items[0].renewal.deferredReason, null);
+    assert.equal(items[0].renewal.lastRenewJobStatus, null);
     assert.equal(items[0].renewal.workspacePaused, false);
     assert.ok(items[0].renewalSetup);
     // Renewal-path health is a distinct axis, always present alongside the
@@ -493,5 +499,88 @@ describe("CertOps certificate renewal-state projection", () => {
     });
 
     assert.equal(item.renewal.state, "not-configured");
+    assert.equal("deferredReason" in item.renewal, false);
+    assert.equal("lastRenewJobStatus" in item.renewal, false);
+  });
+
+  it("reports ca_capacity and the latest renew job on an otherwise-auto certificate", async () => {
+    const db = {
+      async query(sql) {
+        if (/AS in_flight/.test(sql)) {
+          return {
+            rows: [
+              {
+                workspace_id: "workspace-1",
+                ca_bucket: "https://ca-a.example.com/acme",
+                in_flight: 5,
+              },
+            ],
+          };
+        }
+        if (/FROM workspaces/.test(sql)) {
+          return { rows: [{ certops_paused: false }] };
+        }
+        if (/last_renew_job_status/.test(sql)) {
+          return {
+            rows: [
+              certificateRow({
+                id: "cert-auto",
+                profile_status: "active",
+                certificate_ca_endpoint: "https://ca-a.example.com/acme",
+                profile_ca_endpoint: "https://ca-a.example.com/acme",
+                renews_from: new Date(Date.now() - 60 * 60 * 1000),
+                last_renew_job_status: "failed",
+                has_active_renew_job: false,
+              }),
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const [item] = await withRenewalState({
+      db,
+      env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+      workspaceId: "workspace-1",
+      certificates: [{ id: "cert-auto", status: "active" }],
+    });
+
+    assert.equal(item.renewal.state, "auto");
+    assert.equal(item.renewal.deferredReason, "ca_capacity");
+    assert.equal(item.renewal.lastRenewJobStatus, "failed");
+    assert.equal(item.renewal.profile_public_metadata, undefined);
+    assert.equal(item.profile_public_metadata, undefined);
+  });
+
+  it("omits schedule facts when the enrichment query fails", async () => {
+    const db = {
+      async query(sql) {
+        if (/last_renew_job_status/.test(sql)) {
+          throw new Error("schedule columns unavailable");
+        }
+        if (/AS in_flight/.test(sql)) {
+          throw new Error("in-flight lookup should not run");
+        }
+        if (/FROM workspaces/.test(sql)) {
+          return { rows: [{ certops_paused: false }] };
+        }
+        if (/LEFT JOIN certificate_profiles/.test(sql)) {
+          return { rows: [certificateRow({ id: "cert-auto" })] };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const [item] = await withRenewalState({
+      db,
+      env: { CERTOPS_RENEWAL_THRESHOLD_DAYS: "30" },
+      workspaceId: "workspace-1",
+      certificates: [{ id: "cert-auto", status: "active" }],
+    });
+
+    assert.equal(item.renewal.state, "auto");
+    assert.equal("deferredReason" in item.renewal, false);
+    assert.equal("lastRenewJobStatus" in item.renewal, false);
   });
 });

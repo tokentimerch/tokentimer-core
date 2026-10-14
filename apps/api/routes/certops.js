@@ -51,6 +51,7 @@ const {
   retireCertificateIdentity,
   stopManagingSource,
   readdManagingSource,
+  replaceManagingSource,
 } = require("../services/certops/certificateIdentity");
 const { CERTOPS_CERTIFICATE_TOO_LARGE } = require("../services/certops/parser");
 const {
@@ -128,14 +129,19 @@ const {
   isTrustAnchorOperation,
   listCertificateJobLog,
   listCertificateJobs,
+  CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
   manualRenewalJobCreator,
   preflightManualRenewalJob,
 } = require("../services/certops/jobs");
 const {
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   NON_RENEWABLE_CERTIFICATE_STATUSES,
+  RENEWAL_JOB_TERMINAL_STATUSES,
+  countInFlightRenewalJobsByCaEndpoint,
+  loadCertificateRenewalRows,
   resolveRenewalThresholdDays,
 } = require("../services/certops/renewalScheduler");
+const { resolveRenewalPerCaCap } = require("../services/certops/renewalCapacity");
 const {
   CERTOPS_RENEWAL_OVERRIDE_INVALID,
   CERTOPS_RENEWAL_PROFILE_INCOMPLETE,
@@ -148,9 +154,11 @@ const {
   CERTOPS_PROFILE_INVALID,
   CERTOPS_PROFILE_NOT_FOUND,
   CERTOPS_PROFILE_NO_CHANGES,
+  createAdcsRenewalProfile,
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,
+  resolveDeferredRenewalReason,
   updateRenewalProfile,
 } = require("../services/certops/renewalProfileAdmin");
 const {
@@ -441,7 +449,8 @@ function handleCertOpsError(res, err) {
   if (err?.code === "CERTOPS_VISIBILITY_ACK_REQUIRED") {
     return res.status(428).json({ error: err.message, code: err.code });
   }
-  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE") {
+  if (err?.code === "CERTOPS_MANAGEMENT_SOURCE_UNAVAILABLE" ||
+      err?.code === "CERTOPS_MANAGEMENT_PERIOD_MISMATCH") {
     return res.status(409).json({ error: err.message, code: err.code });
   }
   if (err?.code === "CERTOPS_MANAGEMENT_PERIOD_NOT_FOUND") {
@@ -485,6 +494,13 @@ function handleCertOpsError(res, err) {
       error: err.message,
       code: CERTOPS_PROFILE_INVALID,
       fields: err.details?.fields || [],
+    });
+  }
+
+  if (err?.code === "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE") {
+    return res.status(422).json({
+      error: err.message,
+      code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE",
     });
   }
 
@@ -772,6 +788,13 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: err.message || "Trust job result does not match the job",
       code: err.code,
+    });
+  }
+
+  if (err?.code === CERTOPS_ADCS_RENEWAL_NOT_MANUAL) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
     });
   }
 
@@ -3271,41 +3294,6 @@ function deriveCertificateRenewalState(
 }
 
 /**
- * Renewal inputs for the listed certificates, joined to their profile exactly
- * the way findCertificatesDueForRenewal joins it. Read here rather than in the
- * inventory projection so the public-only inventory record keeps its shape and
- * profile metadata never leaks into it verbatim.
- */
-async function loadCertificateRenewalRows({
-  db = pool,
-  workspaceId,
-  certificateIds,
-}) {
-  const result = await db.query(
-    `SELECT mc.id,
-            mc.status,
-            mc.key_mode,
-            mc.key_reference,
-            mc.not_after,
-            mc.common_name,
-            mc.subject_alt_names,
-            mc.profile_id,
-            cp.name AS profile_name,
-            cp.status AS profile_status,
-            cp.key_mode AS profile_key_mode,
-            cp.public_metadata AS profile_public_metadata,
-            cp.renew_before_days AS profile_renew_before_days
-       FROM managed_certificates mc
-       LEFT JOIN certificate_profiles cp
-         ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
-      WHERE mc.workspace_id = $1
-        AND mc.id = ANY($2::uuid[])`,
-    [workspaceId, certificateIds],
-  );
-  return result.rows;
-}
-
-/**
  * Snake_case view of an inventory record, used when the renewal join returned
  * no row for it (retired between the two reads). It carries no profile
  * metadata, so the fallback can only ever resolve to a non-auto state: the UI
@@ -3394,9 +3382,9 @@ async function withRenewalState({
     .map(String);
   if (certificateIds.length === 0) return items;
 
-  const [rows, setupIntentsById, preflightsById, workspaceRow, renewalPathById] =
+  const [renewalLoad, setupIntentsById, preflightsById, workspaceRow, renewalPathById] =
     await Promise.all([
-      loadCertificateRenewalRows({ db, workspaceId, certificateIds }),
+      loadCertificateRenewalRows({ db, env, workspaceId, certificateIds }),
       loadRenewalSetupIntents({ db, workspaceId, certificateIds }),
       includePreflight
         ? loadResumablePreflights({ db, workspaceId, certificateIds })
@@ -3426,33 +3414,86 @@ async function withRenewalState({
         env,
       }).catch(() => new Map()),
     ]);
+  const rows = renewalLoad?.rows || [];
   const rowsById = new Map(rows.map((row) => [String(row.id), row]));
   const workspacePaused = workspaceRow?.rows?.[0]?.certops_paused === true;
+  let scheduleFactsById = null;
+  if (renewalLoad?.scheduleFacts && rows.length > 0) {
+    try {
+      const perCaCap = resolveRenewalPerCaCap(env);
+      const inFlightByCa = await countInFlightRenewalJobsByCaEndpoint({
+        db,
+        terminalStatuses: RENEWAL_JOB_TERMINAL_STATUSES,
+        workspaceId,
+      });
+      const now = Date.now();
+      scheduleFactsById = new Map(
+        rows.map((row) => [
+          String(row.id),
+          {
+            deferredReason: resolveDeferredRenewalReason(row, {
+              workspaceId,
+              inFlightByCa,
+              perCaCap,
+              now,
+            }),
+            lastRenewJobStatus: row.last_renew_job_status || null,
+          },
+        ]),
+      );
+    } catch (err) {
+      // The job status is already on the row. Only the capacity lookup failed,
+      // so keep the attempt and leave deferredReason off rather than claiming
+      // the CA has room.
+      logger.warn("CertOps renewal schedule enrichment failed", {
+        error: err.message,
+        workspaceId,
+      });
+      scheduleFactsById = new Map(
+        rows.map((row) => [
+          String(row.id),
+          { lastRenewJobStatus: row.last_renew_job_status || null },
+        ]),
+      );
+    }
+  }
 
-  return items.map((certificate) => ({
-    ...certificate,
-    renewal: deriveCertificateRenewalState(
+  return items.map((certificate) => {
+    const scheduleFacts = scheduleFactsById?.get(String(certificate.id));
+    const renewal = deriveCertificateRenewalState(
       rowsById.get(String(certificate.id)) ||
         renewalRowFromInventoryRecord(certificate),
       { env, workspacePaused },
-    ),
-    renewalSetup: projectRenewalSetupState(
-      setupIntentsById.get(String(certificate.id)) || null,
-    ),
-    ...(renewalPathById.get(String(certificate.id)) || {
-      renewalPathState: null,
-      renewalPathReason: null,
-      renewalPathSummary: null,
-      dependencies: [],
-    }),
-    ...(includePreflight
-      ? {
-          renewalPreflight: projectRenewalPreflight(
-            preflightsById.get(String(certificate.id)) || null,
-          ),
-        }
-      : {}),
-  }));
+    );
+    return {
+      ...certificate,
+      renewal: scheduleFacts
+        ? {
+            ...renewal,
+            ...("deferredReason" in scheduleFacts
+              ? { deferredReason: scheduleFacts.deferredReason }
+              : {}),
+            lastRenewJobStatus: scheduleFacts.lastRenewJobStatus,
+          }
+        : renewal,
+      renewalSetup: projectRenewalSetupState(
+        setupIntentsById.get(String(certificate.id)) || null,
+      ),
+      ...(renewalPathById.get(String(certificate.id)) || {
+        renewalPathState: null,
+        renewalPathReason: null,
+        renewalPathSummary: null,
+        dependencies: [],
+      }),
+      ...(includePreflight
+        ? {
+            renewalPreflight: projectRenewalPreflight(
+              preflightsById.get(String(certificate.id)) || null,
+            ),
+          }
+        : {}),
+    };
+  });
 }
 
 router.get(
@@ -3535,6 +3576,28 @@ router.post(
     } catch (err) {
       return handleCertOpsError(res, err) || res.status(500).json({
         error: "Failed to stop managing source", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// One request for "end the current period and attach this profile", so the
+// wizard never leaves a certificate unmanaged between two calls.
+router.post(
+  "/api/v1/workspaces/:id/certops/sources/:managedCertificateId/replace-management",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsWriteRole,
+  async (req, res) => {
+    try {
+      return res.status(201).json(await replaceManagingSource({
+        workspaceId: req.workspace.id,
+        managedCertificateId: req.params.managedCertificateId,
+        periodId: req.body?.periodId || null,
+        renewalProfileId: req.body?.renewalProfileId,
+        automationEnabled: req.body?.automationEnabled,
+        actorUserId: req.user?.id || null,
+      }));
+    } catch (err) {
+      return handleCertOpsError(res, err) || res.status(500).json({
+        error: "Failed to replace management", code: "INTERNAL_ERROR" });
     }
   },
 );
@@ -3706,6 +3769,41 @@ router.get(
   },
 );
 
+router.post(
+  "/api/v1/workspaces/:id/certops/profiles",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireCertOpsEnabled,
+  requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"),
+  async (req, res) => {
+    try {
+      const profile = await createAdcsRenewalProfile({
+        workspaceId: req.workspace.id,
+        body: req.body,
+        actorUserId: req.user?.id || null,
+      });
+      return res.status(201).json(profile);
+    } catch (err) {
+      if (err?.code === "CERTOPS_PROFILE_ISSUER_NOT_FOUND") {
+        return res.status(404).json({ error: err.message, code: err.code });
+      }
+      const handled = handleCertOpsError(res, err);
+      if (handled) return handled;
+      logger.error("CertOps renewal profile create failed", {
+        error: err.message,
+        code: err.code || null,
+        workspaceId: req.workspace?.id,
+        userId: req.user?.id,
+      });
+      return res.status(500).json({
+        error: "Failed to create renewal profile",
+        code: "INTERNAL_ERROR",
+      });
+    }
+  },
+);
+
 router.get(
   "/api/v1/workspaces/:id/certops/profiles/:profileId",
   getApiLimiter(),
@@ -3766,6 +3864,7 @@ router.patch(
         renewBeforeDays: req.body?.renewBeforeDays,
         renewalProfile: req.body?.renewalProfile,
         description: req.body?.description,
+        issuerId: req.body?.issuerId,
         actorUserId: req.user?.id || null,
       });
       return res.json(profile);
@@ -3776,6 +3875,9 @@ router.patch(
       // something different ("the patch you sent would produce an unusable
       // profile"). Keeping the mapping local avoids changing the existing
       // contract for every other caller.
+      if (err?.code === "CERTOPS_PROFILE_ISSUER_NOT_FOUND") {
+        return res.status(404).json({ error: err.message, code: err.code });
+      }
       if (
         err?.code === CERTOPS_RENEWAL_PROFILE_INVALID ||
         err?.code === CERTOPS_RENEWAL_PROFILE_INCOMPLETE
@@ -4242,7 +4344,10 @@ router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuard
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,
   csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
-  csrRoute(async (req) => ({ versions: (await pool.query(`SELECT * FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,materialDistribution.normalizeDistributionId(req.params.groupId)])).rows })));
+  csrRoute(async (req) => ({ versions: (await pool.query(`SELECT id,workspace_id,group_id,management_period_id,
+    publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,
+    fingerprint_sha256,valid_to,published_at,created_at,allocation_released_at,allocation_release_reason
+    FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,materialDistribution.normalizeDistributionId(req.params.groupId)])).rows })));
 router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...distributionWriteGuards,
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.putBinding({ workspaceId:req.workspace.id,groupId:req.params.groupId,
@@ -4253,7 +4358,7 @@ router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollout
     groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,
     actorUserId:req.user?.id,idempotencyKey:req.get("Idempotency-Key") }) })));
 router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...distributionWriteGuards,
-  requireWorkspaceCertOpsActive,
+  (req, res, next) => req.body?.state === "deploying" ? requireWorkspaceCertOpsActive(req, res, next) : next(),
   csrRoute((req) => distribution.setRolloutState({ workspaceId:req.workspace.id,groupId:req.params.groupId,
     rolloutId:req.params.rolloutId,state:req.body?.state,actorUserId:req.user?.id })));
 

@@ -2,7 +2,9 @@
   <a href="https://tokentimer.ch"><img src="docs/assets/readme/logo.svg" alt="TokenTimer" width="120" /></a>
 </p>
 
-<h3 align="center">The open-source token, certificate, license, and secret expiration manager for teams.</h3>
+<h3 align="center">Know what expires. Control what happens next.</h3>
+
+<p align="center">Open-source visibility and expiration monitoring for machine credentials, certificates, secrets, tokens, licenses, and other expiring assets, with supported certificate lifecycle automation.</p>
 
 <p align="center">
   <a href="https://github.com/tokentimerch?tab=packages&repo_name=tokentimer-core"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftokentimerch%2Ftokentimer-core%2Fbadges%2Fdownloads.json&style=for-the-badge" alt="Package downloads (GHCR images and Helm chart)" /></a>
@@ -47,7 +49,13 @@
 
 Operational incidents caused by expired assets are still a recurring problem. Certificates expire, API keys get rotated, secrets are forgotten, and renewal ownership is often unclear. Most systems expose expiration data inconsistently, offer limited notification support, lack a centralized cross-provider view, and leave renewal as manual, error-prone work.
 
-TokenTimer is a security-first expiration manager that aggregates expiring assets across providers and environments into one place, and goes beyond visibility: with certificate operations (CertOps) enabled, it automates renewal, deployment, and verification end to end so certificates stop expiring in the first place. Alongside automation, teams get multi-channel alerting and collaboration workflows for everything else that expires: tokens, secrets, licenses, and subscriptions.
+TokenTimer is an open-source platform providing unified visibility, expiration monitoring, and lifecycle automation for machine credentials, certificates, secrets, tokens, and other expiring assets. Discover and monitor assets across your infrastructure, track ownership, and receive actionable alerts. Certificate Lifecycle Management (CLM) automates supported certificate renewals, deployment, and verification while customer certificate private keys stay outside the TokenTimer control plane.
+
+Three complementary pillars organize the platform:
+
+- **NHI Credential Visibility & Ownership:** inventory machine credentials and service accounts, track expiration and review dates, assign owners, and alert responsible teams. Credential rotation remains with your providers and tooling.
+- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, and coordinate cert-manager or external executors with approvals and audit evidence.
+- **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 
 <p align="center">
   <img src="docs/assets/control-center.png" alt="TokenTimer control center: what needs attention, inventory snapshot, scoped credentials, auto-sync health, and managed certificates in one view" width="888" />
@@ -55,7 +63,7 @@ TokenTimer is a security-first expiration manager that aggregates expiring asset
 
 ## What makes TokenTimer different?
 
-### End-to-end certificate automation (CertOps)
+### Certificate Lifecycle Management (CLM)
 
 An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), with approval gates, a kill switch, and renewal-failure alerts keeping humans in control. It also distributes and revokes internal CA trust anchors in machine trust stores on Windows, Debian/Ubuntu, and RHEL/Fedora. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material. [Watch the demo](https://www.youtube.com/watch?v=1BpcL9myKwc).
 
@@ -142,7 +150,7 @@ TokenTimer stores expiration metadata, ownership, and status information without
 | [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |
-| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate operations (CertOps) domain model and behavior |
+| [docs/certops/CONTEXT.md](docs/certops/CONTEXT.md) | Certificate Lifecycle Management domain model and behavior (`certops` technical namespace) |
 | [Agent overview](docs/certops/agent.md) | Installation, policy, and focused operator references |
 | [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration |
 | [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration |
@@ -187,4 +195,4 @@ This project is licensed under the [GNU Affero General Public License v3.0 (AGPL
 
 A commercial license without AGPL's source-disclosure obligations is available for organizations that want to embed or redistribute TokenTimer Core without those terms. Contact [support@tokentimer.ch](mailto:support@tokentimer.ch).
 
-"TokenTimer" is a trademark of Tokentimer Sàrl, Switzerland.
+"TokenTimer" is a trademark of Tokentimer SÃ rl, Switzerland.

@@ -21,6 +21,8 @@ const { validateAgentProtocolMessage } = require("./schemaValidation");
 
 const SCHEMA_VERSION = 1;
 const REQUEST_TIMEOUT_MS = 15_000;
+/** Log drain must finish inside job-log SHUTDOWN_DRAIN_MS (5000). */
+const JOB_LOG_POST_TIMEOUT_MS = 4000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_OUTBOUND_ENVELOPE_BYTES = 512 * 1024;
 
@@ -571,6 +573,15 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
   const routeUrl = (route) => `${baseUrl}${route}`;
   const send = (route, token, envelope) => postJson(routeUrl(route), { token, envelope, signal, requestTimeoutMs, fetchImpl, onServerDate });
   const sendPlain = (route, token, body) => postPlainJson(routeUrl(route), { token, body, signal, requestTimeoutMs, fetchImpl, onServerDate });
+  // Shutdown aborts the run-loop signal before log drain; log posts use timeout only.
+  const sendJobLogs = (route, token, envelope) => postJson(routeUrl(route), {
+    token,
+    envelope,
+    signal: undefined,
+    requestTimeoutMs: JOB_LOG_POST_TIMEOUT_MS,
+    fetchImpl,
+    onServerDate,
+  });
 
   // Per-agent monotonically increasing message counter, included as the
   // envelope's `sequence` field on every outbound message (register,
@@ -658,6 +669,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     clockOffsetMs = null,
     supportedDnsProviders = undefined,
     declaredCapabilities = undefined,
+    declaredTargetSelectors = undefined,
   } = {}) {
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>
@@ -677,6 +689,11 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
             : {}),
           ...(Array.isArray(declaredCapabilities)
             ? { declaredCapabilities }
+            : {}),
+          // A non-empty list replaces the stored selectors. Omitting an
+          // empty list leaves them unchanged, matching the server rule.
+          ...(Array.isArray(declaredTargetSelectors) && declaredTargetSelectors.length > 0
+            ? { declaredTargetSelectors }
             : {}),
         },
       })),
@@ -726,7 +743,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
     }
     const token = await resolveCredential(getCredential);
     const route = ROUTES.LOGS.replace("{jobId}", encodeURIComponent(jobId));
-    const { status, ok, json, retryAfterMs } = await send(route, token, buildEnvelope({
+    const { status, ok, json, retryAfterMs } = await sendJobLogs(route, token, buildEnvelope({
       agentId,
       protocolVersion,
       messageType: MESSAGE_TYPES.LOG,
@@ -788,7 +805,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
    * report stays schema-minimal (the results route falls back to attemptId
    * when claimId is absent).
    */
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null } = {}) {
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null } = {}) {
     const body = {
       jobId,
       attemptId,
@@ -798,11 +815,13 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       errorMessage,
       ...(claimId !== null ? { claimId } : {}),
       ...(nonce !== null ? { nonce } : {}),
-      // Only trust-anchor jobs set this; every other job family's body stays
-      // exactly as before (property omitted, not sent as null).
+      // Only the job family that produced each object sets it. Other result
+      // bodies stay byte-identical: the property is omitted, not sent as null.
       ...(trustResult !== null ? { trustResult } : {}),
       ...(publicationReceipt !== null ? { publicationReceipt, publicationCertificatePem } : {}),
       ...(deploymentReceipt !== null ? { deploymentReceipt } : {}),
+      ...(enrollmentResult !== null ? { enrollmentResult } : {}),
+      ...(preflightResult !== null ? { preflightResult } : {}),
     };
     const token = await resolveCredential(getCredential);
     const { status, ok, json } = await enqueueSequencedSend((sequence) =>

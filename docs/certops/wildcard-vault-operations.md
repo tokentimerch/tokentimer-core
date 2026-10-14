@@ -6,12 +6,16 @@ The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
 deploying to every consumer. The same certificate may be an ordinary, SAN, or
 wildcard certificate; sharing it is independent of its DNS names.
-Core adds distribution migrations 71–73 after AD CS vocabulary at 68, the
-agent console at 69 and enrollment records at 70. Cloud and Enterprise currently
-pin the separately validated Core commit `3e7201c7`, before enrollment records:
-Enterprise inherits its Core history through 72. Cloud applies distribution as
-87–89, retains AD CS vocabulary at 90 and preserves console storage at 86.
-Do not interchange these edition-specific migration histories.
+Core appends distribution migrations 73–75 after AD CS vocabulary at 68, the
+agent console at 69, enrollment records at 70, AD CS evidence at 71 and the
+workspace-scoped profile issuer relation at 72. Applied mainline definitions
+remain unchanged. A Core preview ledger that uses 71–72 for distribution is
+rejected; never rename applied ledger rows to force an upgrade.
+Cloud retains its independent migration history, including enrollment migration
+91, and appends the AD CS corrections. Enterprise's composition adapter selects
+the append-only sequence for its enrollment-first or distribution-first history.
+Do not interchange these edition-specific migration histories. Back up both the
+database and ledger before upgrading; test the same history in an isolated copy.
 
 Rejected/cancelled publications release their allocation only when the database
 proves zero execution attempts and no claim/start/lease evidence. The retained
@@ -45,6 +49,15 @@ result transport through a real API, the real DNS provider, production Vault
 authentication/rotation, the exact service configuration and host filesystem.
 Test agent and host crashes, token expiry, revoked agent credentials, Vault
 retention/deletion, each HA listener, key permission persistence and recovery.
+Record the Core source SHA, packed agent SHA-256, generated capability manifest,
+OS/service versions and public test evidence together. Qualify filesystem
+ownership, restrictive permissions, parent-directory and symlink defenses,
+crash/restart durability, uncertain writes and token replacement on the exact
+proposed artifact. The isolated API/Vault/ACME/NGINX/HAProxy lab is supporting
+evidence, not release qualification. Windows AD CS has its own real-host CA,
+template, CNG, pending-approval and continuation matrix; its `adcs-enroll-v1`
+capability also stays unqualified. Appliance HA and multi-listener configurations
+need explicit coverage before claiming support.
 
 ## Customer-local configuration
 
@@ -77,6 +90,13 @@ listing, including direct path-prefix probes. The server scanner must not reuse
 issuer or consumer credentials. Protect Vault backups as private keys.
 
 ## Public workflow
+
+Distribution administration is API-first. The Renewals dashboard presents
+groups and consumer status alongside renewal profiles and AD CS issuer
+management. Creating publication jobs, editing consumer bindings, requesting
+and approving rollouts, containment, retry and verification-only checks use the
+API below and the existing job approval endpoints. A complete distribution
+creation/editing wizard is outside this candidate's UI scope.
 
 1. Create an existing `issue` job with `assignedAgentId` set to the issuer's
    database row ID. Its payload includes the existing target/SANs/CA/DNS/key
@@ -127,6 +147,12 @@ An optional consumer whose authorization changed makes a completed rollout
 (resume), or `retired`. Pausing prevents new child work and lease reauthorization;
 an already executed external effect may still require reconciliation. Required
 failure pauses the rollout. Resume explicitly after remediation.
+Authenticated, authorized managers can pause or retire even when the workspace
+is paused, frozen or no longer entitled to execute. These actions enqueue no
+work. Resuming, starting a rollout, changing a binding and retrying still require
+current execution admission. Public version responses expose the documented
+identity, publication job, version, validity and allocation-release metadata;
+publishing claim IDs are never public, including for administrators.
 
 `POST /api/v1/workspaces/{id}/certops/distribution-jobs/{jobId}/retry` requeues the
 same failed/blocked/uncertain job, preserves approved payload/version/generation
@@ -208,12 +234,37 @@ and rollback. No automated deletion is introduced by this candidate.
 
 ## Coordinated release dependency
 
-Review and commit Core first. Cloud pins that exact candidate SHA, materializes
-manifest-mapped files, retains its quota/private-material/continuing-result
-policy and runs its own migrations 86–91. Its enrollment tables are appended
-after the existing distribution history. Enterprise preserves its applied
-Core migration history and appends enrollment tables at migration 73, retaining
-RBAC/SSO and base CertOps independently of licensed compliance reports. Candidate
-SHA compatibility and locally built images are not published release references.
-Only after full agent/customer qualification and real release gates should the
-three product releases advance their published Core pins and capability input.
+The integrated candidate targets the coordinated **0.18.0** train. Existing
+`v0.17.3` tags and published images keep their original source meaning. Review
+and commit Core first. Cloud's `compatibility.manifest.json` `core.testedCommit`
+and Enterprise's `core.lastSyncedCoreCommit` record the same exact integrated
+Core SHA; these fields, rather than an earlier preview SHA or a moving branch,
+are the source provenance for staged builds. The implementation report and
+final-head CI runs record all three candidate heads. Read the exact pin with
+`node -p "require('./compatibility.manifest.json').core.testedCommit"` in Cloud
+or `node -p "require('./compatibility.manifest.json').core.lastSyncedCoreCommit"`
+in Enterprise before materialization or image builds.
+
+Cloud materializes manifest-mapped files and retains tenancy, Pro/Team admission,
+quotas, freeze/pause, private-material rejection and signed continuation policy.
+Hosted AD CS control-plane APIs are supported on Pro/Team; credentials and CA
+execution remain customer-local. Advanced AD CS governance is outside scope.
+Enterprise retains RBAC, SSO, licensing and base CertOps independently of
+licensed compliance reports. Verify the actual staged API, worker and Renewals
+dashboard in both editions, including AD CS and distribution composition.
+
+Version, contract, chart and image-tag metadata are prepared for 0.18.0, but no
+tag, publication or deployment is performed by this candidate. A local image
+must be labelled with its actual source revision; a published 0.17.3 base image
+alone does not prove integrated source composition. Release maintainers must
+approve final acceptance, artifact hashes, security scans, production-host
+qualification and the coordinated Core → Cloud → Enterprise publication order.
+The tag-triggered release pipeline remains a separate post-merge gate; do not
+create a beta tag as a validation shortcut for this PR. Keep unqualified
+capabilities absent from production manifests until their own evidence passes.
+
+Schema rollback uses a tested backup/restore or a forward correction; downgrading
+the application across migrations 73–75 is not supported. Pause execution before
+an upgrade or restore, retain immutable history and customer-local artifacts,
+and reconcile uncertain effects before restarting. Never drop distribution or
+AD CS tables or edit ledger names to fit an older binary.

@@ -19,9 +19,12 @@ function assertSchema(validate, value, code) {
 }
 const { writeAudit } = require("../audit");
 const { createCertificateJob } = require("./jobs");
+const { adcsCaBucket } = require("./renewalCapacity");
+const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
 const {
   PREFLIGHT_PER_HOUR,
   UNREACHABLE_ERROR,
+  assertDirectTransition,
   assertForwardTransition,
   assertIssuerKind,
   attachEnrollmentDispatch,
@@ -100,6 +103,27 @@ async function createIssuer({ client, workspaceId, kind, name, actorUserId }) {
     metadata: { issuerId: row.id, kind },
   });
   return row;
+}
+
+async function discardUnconfiguredIssuer({ client, workspaceId, issuerId }) {
+  const deleted = await dbOf(client).query(
+    `DELETE FROM certificate_issuers
+      WHERE workspace_id = $1
+        AND id = $2
+        AND current_version = 0
+        AND NOT EXISTS (
+          SELECT 1
+            FROM certificate_enrollments e
+           WHERE e.workspace_id = certificate_issuers.workspace_id
+             AND e.issuer_id = certificate_issuers.id
+        )
+      RETURNING id`,
+    [workspaceId, issuerId],
+  );
+  if (!deleted.rows[0]) {
+    throw serviceError("issuer not found", "CERTOPS_ISSUER_NOT_FOUND");
+  }
+  return { issuerId: deleted.rows[0].id };
 }
 
 function dispatchPreflight({
@@ -271,6 +295,11 @@ function createEnrollment({
   authorizedDnsNames,
   keyAlgorithm,
   keySize,
+  profileId,
+  source = "api",
+  mode = "real",
+  env,
+  idempotencyKey,
   actorUserId,
   createJob = createCertificateJob,
   audit = writeAudit,
@@ -283,6 +312,42 @@ function createEnrollment({
   }
   const db = dbOf(client);
   return withTransaction(db, async (tx) => {
+    if (source === "automation") {
+      await lockWorkspaceForCertOpsSideEffect({
+        client: tx,
+        workspaceId,
+        env,
+      });
+    }
+    let resolvedIssuerId = issuerId;
+    if (profileId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(profileId))) {
+        throw serviceError("renewal profile not found", "CERTOPS_PROFILE_NOT_FOUND");
+      }
+      const profile = await tx.query(
+        `SELECT issuer_id
+           FROM certificate_profiles
+          WHERE workspace_id = $1 AND id = $2`,
+        [workspaceId, profileId],
+      );
+      if (!profile.rows[0]) {
+        throw serviceError("renewal profile not found", "CERTOPS_PROFILE_NOT_FOUND");
+      }
+      const profileIssuerId = profile.rows[0].issuer_id;
+      if (!profileIssuerId) {
+        throw serviceError(
+          "this profile uses ACME; select an AD CS issuer before enrolling",
+          "CERTOPS_PROFILE_ISSUER_NOT_SELECTED",
+        );
+      }
+      if (issuerId && issuerId !== profileIssuerId) {
+        throw serviceError(
+          "enrollment issuer does not match the renewal profile",
+          "CERTOPS_PROFILE_ISSUER_MISMATCH",
+        );
+      }
+      resolvedIssuerId = profileIssuerId;
+    }
     const version = await tx.query(
       `SELECT v.version, v.ca_config, v.template, v.ca_key_sha256, i.kind,
               i.revalidation_required
@@ -294,7 +359,7 @@ function createEnrollment({
           AND v.version = i.current_version
           AND v.ca_key_sha256 IS NOT NULL
         FOR UPDATE OF i`,
-      [workspaceId, issuerId],
+      [workspaceId, resolvedIssuerId],
     );
     const issuer = version.rows[0];
     if (!issuer) throw serviceError("confirmed issuer version not found", "CERTOPS_ISSUER_NOT_FOUND");
@@ -306,7 +371,7 @@ function createEnrollment({
     }
     assertIssuerKind(issuer.kind);
     const frozen = freezeSnapshot({
-      issuerId,
+      issuerId: resolvedIssuerId,
       issuerVersion: issuer.version,
       caConfig: issuer.ca_config,
       caKeySha256: issuer.ca_key_sha256,
@@ -324,7 +389,7 @@ function createEnrollment({
       [
         workspaceId,
         certificateId,
-        issuerId,
+        resolvedIssuerId,
         issuer.version,
         agentId,
         frozen.bytes,
@@ -334,16 +399,29 @@ function createEnrollment({
     );
     const enrollmentId = inserted.rows[0].id;
     const payload = storedAdcsPayload({ certificateId, target });
-    const job = await createJob({
+    const outcome = await createJob({
       client: tx,
       workspaceId,
       operation: "renew",
+      source,
+      mode,
+      idempotencyKey,
+      env,
       subjectType: "managed_certificate",
       subjectId: certificateId,
       assignedAgentId: agentId,
       payload,
       enrollmentId,
+      capacityBucket: resolvedIssuerId ? adcsCaBucket(resolvedIssuerId) : null,
+      returnOutcome: Boolean(idempotencyKey),
     });
+    const job = idempotencyKey ? outcome.job : outcome;
+    if (idempotencyKey && outcome.created === false) {
+      throw serviceError(
+        "an automatic renewal for this certificate expiry already exists",
+        "CERTOPS_ENROLLMENT_REPLAY",
+      );
+    }
     await tx.query(
       `UPDATE certificate_enrollments
           SET current_job_id = $3, updated_at = NOW()
@@ -357,22 +435,25 @@ function createEnrollment({
       action: "certops.enrollment.created",
       targetType: "certificate_enrollment",
       workspaceId,
-      metadata: { enrollmentId, issuerId, jobId: job.id },
+      metadata: { enrollmentId, issuerId: resolvedIssuerId, jobId: job.id },
     });
     return { enrollmentId, snapshotSha256: frozen.sha256, jobId: job.id };
   });
 }
 
-async function loadEnrollment(db, workspaceId, enrollmentId) {
+// lock: false | true (wait for the row) | "skip" (return null if another tx holds it).
+async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = {}) {
+  const lockClause = lock === "skip" ? "FOR UPDATE OF e SKIP LOCKED" : lock ? "FOR UPDATE OF e" : "";
   const result = await db.query(
-    `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
+    `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
             e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
             e.deploy_target, j.status AS job_status
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
          ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
-      WHERE e.workspace_id = $1 AND e.id = $2`,
+      WHERE e.workspace_id = $1 AND e.id = $2
+      ${lockClause}`,
     [workspaceId, enrollmentId],
   );
   return result.rows[0] || null;
@@ -435,7 +516,13 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
   if (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR) {
     nextAt = nextPollAt(new Date(), pollSeconds);
   }
-  if (enrollmentResult.state === "submission_uncertain") nextAt = null;
+  // A poll date left over from an earlier pending attempt must not survive a
+  // terminal result, or every maintenance sweep keeps selecting the row.
+  const keepsPolling =
+    enrollmentResult.state === "pending_issuance" ||
+    enrollmentResult.state === "validation_deferred" ||
+    (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR);
+  if (!keepsPolling) nextAt = null;
   await db.query(
     `UPDATE certificate_enrollments
         SET state = $3,
@@ -591,6 +678,66 @@ async function proposeReconcileRequestId({
   });
 }
 
+const RUNNING_JOB = new Set(["claimed", "running"]);
+const UNSTARTED_JOB = new Set(["pending", "pending_approval", "approved"]);
+
+async function cancelEnrollment({
+  client,
+  workspaceId,
+  enrollmentId,
+  actorUserId,
+  audit = writeAudit,
+}) {
+  const db = dbOf(client);
+  // Lock the enrollment, then its current job, so a concurrent claim or
+  // scheduler tick either finishes first (and cancel sees its job) or waits.
+  await withTransaction(db, async (tx) => {
+    const row = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+    if (row.current_job_id) {
+      const job = await tx.query(
+        `SELECT status FROM certificate_jobs
+          WHERE workspace_id = $1 AND id = $2
+          FOR UPDATE`,
+        [workspaceId, row.current_job_id],
+      );
+      row.job_status = job.rows[0]?.status ?? row.job_status;
+    }
+    if (RUNNING_JOB.has(row.job_status)) {
+      throw serviceError(
+        "an attempt is still running on the agent",
+        "CERTOPS_ENROLLMENT_JOB_ACTIVE",
+      );
+    }
+    assertDirectTransition(row.state, "cancelled");
+    const beforeCa = row.state === "requested" || row.state === "prepared";
+    await tx.query(
+      `UPDATE certificate_enrollments
+          SET state = 'cancelled', next_poll_at = $3, updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2`,
+      [workspaceId, enrollmentId, beforeCa ? null : new Date()],
+    );
+    if (row.current_job_id && UNSTARTED_JOB.has(row.job_status)) {
+      await tx.query(
+        `UPDATE certificate_jobs
+            SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2
+            AND status IN ('pending', 'pending_approval', 'approved')`,
+        [workspaceId, row.current_job_id],
+      );
+    }
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "certops.enrollment.cancelled",
+      targetType: "certificate_enrollment",
+      workspaceId,
+      metadata: { enrollmentId },
+    });
+  });
+}
+
 async function abandonEnrollment({
   client,
   workspaceId,
@@ -601,7 +748,7 @@ async function abandonEnrollment({
   const db = dbOf(client);
   const row = await loadEnrollment(db, workspaceId, enrollmentId);
   if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
-  assertForwardTransition(row.state, "abandoned");
+  assertDirectTransition(row.state, "abandoned");
   await db.query(
     `UPDATE certificate_enrollments
         SET state = 'abandoned', next_poll_at = NOW(), updated_at = NOW()
@@ -660,36 +807,37 @@ async function claimDueEnrollment(db, workspaceId, enrollmentId, now) {
 async function scheduleDueEnrollments({ client, now = new Date(), createJob = createCertificateJob }) {
   const db = dbOf(client);
   const due = await db.query(
-    `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
-            e.operator_request_id, e.pending_since, e.next_poll_at, e.last_error_code,
-            e.certificate_id, e.agent_id, e.current_job_id, e.deploy_target,
-            j.status AS job_status
+    `SELECT e.workspace_id, e.id
        FROM certificate_enrollments e
-       LEFT JOIN certificate_jobs j
-         ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
-      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1
-      FOR UPDATE OF e SKIP LOCKED`,
+      WHERE e.next_poll_at IS NOT NULL AND e.next_poll_at <= $1`,
     [now],
   );
   const created = [];
-  for (const row of due.rows) {
-    const view = enrollmentView(row);
-    const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
-    const decision = decideContinuation(view, snapshot, now);
-    if (!decision) continue;
-    if (!decision.dispatch && decision.state !== "expired") continue;
-    const target = row.deploy_target;
-    if (!target || target.type !== "windows-iis") {
-      throw serviceError(
-        "enrollment is missing its IIS deployment target",
-        "CERTOPS_SNAPSHOT_INVALID",
-      );
-    }
-    const dispatched = await inTransaction(db, async () => {
-      const claimed = await claimDueEnrollment(db, row.workspace_id, row.id, now);
+  // The candidate list is only a hint. Each row is locked and re-decided
+  // inside its own transaction, so a cancel or claim that committed after the
+  // list was read wins.
+  for (const candidate of due.rows) {
+    const dispatched = await withTransaction(db, async (tx) => {
+      const row = await loadEnrollment(tx, candidate.workspace_id, candidate.id, {
+        lock: "skip",
+      });
+      if (!row) return null;
+      const view = enrollmentView(row);
+      const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
+      const decision = decideContinuation(view, snapshot, now);
+      if (!decision) return null;
+      if (!decision.dispatch && decision.state !== "expired") return null;
+      const target = row.deploy_target;
+      if (!target || target.type !== "windows-iis") {
+        throw serviceError(
+          "enrollment is missing its IIS deployment target",
+          "CERTOPS_SNAPSHOT_INVALID",
+        );
+      }
+      const claimed = await claimDueEnrollment(tx, row.workspace_id, row.id, now);
       if (!claimed) return null;
       if (decision.state === "expired") {
-        await db.query(
+        await tx.query(
           `UPDATE certificate_enrollments
               SET state = 'expired', updated_at = NOW()
             WHERE workspace_id = $1 AND id = $2`,
@@ -708,7 +856,7 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         metadata: reconcileMetadata,
       });
       const job = await createJob({
-        client: db,
+        client: tx,
         workspaceId: row.workspace_id,
         operation: "continue-enrollment",
         allowEnrollmentContinuation: true,
@@ -718,7 +866,7 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         payload,
         enrollmentId: row.id,
       });
-      await db.query(
+      await tx.query(
         `UPDATE certificate_enrollments
             SET attempt = $3, current_job_id = $4, updated_at = NOW()
           WHERE workspace_id = $1 AND id = $2`,
@@ -731,14 +879,172 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
   return created;
 }
 
+function clampPage(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
+function readLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return 50;
+  return Math.min(100, Math.max(1, parsed));
+}
+
+function publicPreflight(value) {
+  if (!value || typeof value !== "object") return null;
+  const certs = Array.isArray(value.caCertificates) ? value.caCertificates : [];
+  return {
+    caConfig: value.caConfig || null,
+    template: value.template || null,
+    templateCheck: value.templateCheck || null,
+    caCheck: value.caCheck || null,
+    caCertificates: certs.slice(0, 8).map((cert) => ({
+      keySha256: cert?.keySha256 || null,
+      thumbprintSha1: cert?.thumbprintSha1 || null,
+      notBefore: cert?.notBefore || null,
+      notAfter: cert?.notAfter || null,
+    })),
+  };
+}
+
+function snapshotFields(bytes) {
+  try {
+    const snapshot = JSON.parse(Buffer.from(bytes).toString("utf8"));
+    return {
+      caConfig: snapshot.caConfig || null,
+      template: snapshot.template || null,
+      caKeySha256: snapshot.caKeySha256 || null,
+      authorizedDnsNames: Array.isArray(snapshot.authorizedDnsNames)
+        ? snapshot.authorizedDnsNames
+        : [],
+    };
+  } catch (_error) {
+    return { caConfig: null, template: null, caKeySha256: null, authorizedDnsNames: [] };
+  }
+}
+
+async function listIssuers({
+  client,
+  workspaceId,
+  limit = 50,
+  offset = 0,
+  includeUnconfigured = false,
+}) {
+  const db = dbOf(client);
+  const pageSize = readLimit(limit);
+  const pageOffset = clampPage(offset, 0);
+  const configuredOnly = includeUnconfigured
+    ? ""
+    : "AND (i.kind <> 'adcs' OR i.current_version > 0)";
+  const [rows, total] = await Promise.all([
+    db.query(
+      `SELECT i.id, i.kind, i.name, i.current_version, i.revalidation_required,
+              i.last_preflight, i.updated_at, v.ca_key_sha256 AS confirmed_key_sha256,
+              v.ca_config, v.template
+         FROM certificate_issuers i
+         LEFT JOIN certificate_issuer_versions v
+           ON v.workspace_id = i.workspace_id
+          AND v.issuer_id = i.id
+          AND v.version = i.current_version
+        WHERE i.workspace_id = $1
+          ${configuredOnly}
+        ORDER BY i.name ASC, i.id ASC
+        LIMIT $2 OFFSET $3`,
+      [workspaceId, pageSize, pageOffset],
+    ),
+    db.query(
+      `SELECT count(*)::int AS n
+         FROM certificate_issuers i
+        WHERE i.workspace_id = $1
+          ${configuredOnly}`,
+      [workspaceId],
+    ),
+  ]);
+  return {
+    items: rows.rows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      name: row.name,
+      currentVersion: row.current_version,
+      revalidationRequired: row.revalidation_required === true,
+      confirmedKeySha256: row.confirmed_key_sha256 || null,
+      caConfig: row.ca_config || null,
+      template: row.template || null,
+      lastPreflight: publicPreflight(row.last_preflight),
+      updatedAt: row.updated_at,
+    })),
+    pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
+  };
+}
+
+async function listEnrollments({ client, workspaceId, limit = 50, offset = 0 }) {
+  const db = dbOf(client);
+  const pageSize = readLimit(limit);
+  const pageOffset = clampPage(offset, 0);
+  const [rows, total] = await Promise.all([
+    db.query(
+      `SELECT e.id, e.state, e.attempt, e.snapshot_bytes, e.operator_request_id,
+              e.request_id, e.last_error_code, e.issuer_id, e.issuer_version,
+              e.certificate_id, e.updated_at, i.name AS issuer_name,
+              i.revalidation_required, i.current_version,
+              j.status AS job_status, j.error_code AS job_error_code,
+              left(j.error_message, 180) AS job_error_message
+         FROM certificate_enrollments e
+         JOIN certificate_issuers i
+           ON i.workspace_id = e.workspace_id AND i.id = e.issuer_id
+         LEFT JOIN certificate_jobs j
+           ON j.workspace_id = e.workspace_id AND j.id = e.current_job_id
+        WHERE e.workspace_id = $1
+        ORDER BY e.updated_at DESC, e.id ASC
+        LIMIT $2 OFFSET $3`,
+      [workspaceId, pageSize, pageOffset],
+    ),
+    db.query(
+      `SELECT count(*)::int AS n FROM certificate_enrollments WHERE workspace_id = $1`,
+      [workspaceId],
+    ),
+  ]);
+  return {
+    items: rows.rows.map((row) => {
+      const snapshot = snapshotFields(row.snapshot_bytes);
+      return {
+        id: row.id,
+        state: row.state,
+        attempt: row.attempt,
+        requestId: parseRequestId(row.request_id),
+        operatorRequestId: parseRequestId(row.operator_request_id),
+        lastErrorCode: row.last_error_code,
+        issuerId: row.issuer_id,
+        issuerName: row.issuer_name,
+        issuerVersion: row.issuer_version,
+        issuerCurrentVersion: row.current_version,
+        snapshotStale: Number(row.issuer_version) !== Number(row.current_version),
+        revalidationRequired: row.revalidation_required === true,
+        certificateId: row.certificate_id,
+        updatedAt: row.updated_at,
+        jobStatus: row.job_status || null,
+        jobErrorCode: row.job_error_code || null,
+        jobErrorMessage: row.job_error_message || null,
+        ...snapshot,
+      };
+    }),
+    pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },
+  };
+}
+
 module.exports = {
   abandonEnrollment,
+  cancelEnrollment,
   attachEnrollmentDispatch,
   confirmIssuerKey,
   countInstalledEnrollments,
   createEnrollment,
   createIssuer,
+  discardUnconfiguredIssuer,
   dispatchPreflight,
+  listEnrollments,
+  listIssuers,
   loadDispatchEnrollment,
   proposeReconcileRequestId,
   recordEnrollmentResult,

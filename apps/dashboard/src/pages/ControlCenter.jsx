@@ -1664,7 +1664,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                       </ControlCenterPanel>
 
                       <ControlCenterPanel
-                        title='Certificate operations'
+                        title='Certificate Management'
                         description='Managed certificates linked to your token inventory'
                       >
                         {!certOpsReady ? (
@@ -1756,7 +1756,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
                         ) : (
                           <InsightPanelBody>
                             <CompactEmptyState>
-                              Certificate operations is not enabled for this
+                              Certificate operations are not enabled for this
                               workspace yet.
                             </CompactEmptyState>
                           </InsightPanelBody>

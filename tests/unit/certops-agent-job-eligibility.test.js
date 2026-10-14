@@ -8,6 +8,7 @@ const service = (name) =>
   path.resolve(__dirname, "../../apps/api/services/certops", name);
 const {
   evaluateAgentJobEligibility,
+  explainAgentJobEligibility,
   resolveAgentJobRoutingRequirements,
 } = require(service("agentJobEligibility.js"));
 const { computeAgentCompatibility } = require(service("agentRegistry.js"));
@@ -235,6 +236,83 @@ describe("shared agent-job eligibility", () => {
     });
     assert.equal(outcome.eligible, false);
     assert.equal(outcome.reason, "claim_bound_evidence_unavailable");
+  });
+
+  it("refuses AD CS enrollment and continuation jobs without a declared adcs-enroll-v1", () => {
+    for (const operation of ["renew", "continue-enrollment"]) {
+      const candidate = agent({
+        supportedOperations: [operation],
+        declaredCapabilities: [],
+      });
+      const outcome = evaluateAgentJobEligibility({
+        agent: candidate,
+        job: { operation, executorKind: "agent", issuerKind: "adcs" },
+        compatibility: computeAgentCompatibility(candidate, {}),
+        env: {},
+        now: NOW,
+      });
+      assert.equal(outcome.eligible, false, `${operation}: eligible`);
+      assert.equal(outcome.reason, "adcs_enroll_capability_unavailable");
+    }
+  });
+
+  it("refuses AD CS jobs when the adcs-enroll-v1 declaration is past the capability epoch", () => {
+    const candidate = agent({
+      supportedOperations: ["continue-enrollment"],
+      declaredCapabilities: ["adcs-enroll-v1"],
+      capabilitiesUpdatedAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
+    });
+    const outcome = evaluateAgentJobEligibility({
+      agent: candidate,
+      job: { operation: "continue-enrollment", executorKind: "agent", issuerKind: "adcs" },
+      compatibility: computeAgentCompatibility(candidate, {}),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(outcome.eligible, false);
+    assert.equal(outcome.reason, "adcs_enroll_capability_unavailable");
+  });
+
+  it("offers AD CS enrollment and continuation jobs under a fresh adcs-enroll-v1 declaration", () => {
+    for (const operation of ["renew", "continue-enrollment"]) {
+      const candidate = agent({
+        supportedOperations: [operation],
+        declaredCapabilities: ["adcs-enroll-v1"],
+        capabilitiesUpdatedAt: new Date(NOW - 30_000).toISOString(),
+      });
+      const outcome = evaluateAgentJobEligibility({
+        agent: candidate,
+        job: { operation, executorKind: "agent", issuerKind: "adcs" },
+        compatibility: computeAgentCompatibility(candidate, {}),
+        env: {},
+        now: NOW,
+      });
+      assert.equal(outcome.eligible, true, `${operation}: eligible`);
+    }
+  });
+
+  it("explains an AD CS refusal as the gate only when the gate is the sole blocker", () => {
+    const job = { operation: "renew", executorKind: "agent", issuerKind: "adcs" };
+    const gateOnly = agent({ declaredCapabilities: [] });
+    const gateOutcome = explainAgentJobEligibility({
+      agent: gateOnly,
+      job,
+      compatibility: computeAgentCompatibility(gateOnly, {}),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(gateOutcome.reason, "adcs_enroll_capability_unavailable");
+
+    const masked = agent({ declaredCapabilities: [], targetSelectors: ["host/other"] });
+    const maskedOutcome = explainAgentJobEligibility({
+      agent: masked,
+      job: { ...job, requiredTargetSelector: "host/web" },
+      compatibility: computeAgentCompatibility(masked, {}),
+      env: {},
+      now: NOW,
+    });
+    assert.equal(maskedOutcome.eligible, false);
+    assert.equal(maskedOutcome.reason, "target_selector_unsupported");
   });
 
   it("counts only truly eligible agents as redundant renewal paths", () => {

@@ -4,7 +4,7 @@ The agent runs on the host that holds certificate keys. TokenTimer plans and aud
 
 ## Start here
 
-1. Enable CertOps on the control plane and prepare a workspace bootstrap token.
+1. Enable CLM on the control plane and prepare a workspace bootstrap token.
 2. Follow [Install on Linux](agent/install-linux.md) or [Install on Windows](agent/install-windows.md).
 3. Prepare [local policy and configuration](agent/configuration.md), verify a signed dry-run, then opt into real execution.
 
@@ -13,6 +13,7 @@ An agent with `execution.enabled: false` registers, heartbeats, and can report c
 ## Task guides
 
 - [DNS and ACME](agent/dns-and-acme.md): provider credentials, zone routing, DNS-01, and the external HTTP-01 workflow.
+- [Microsoft AD CS](agent/adcs.md): domain-joined Windows enrollment from an enterprise CA. The agent contacts a CA only when a local enrollment rule names that CA and template. Linux and non-domain hosts do not enroll over DCOM. Use a domain-joined Windows agent, or an ACME gateway.
 - [Trust and signing-key rotation](agent/trust-and-key-rotation.md): CA distribution/revocation and signing-key changes.
 - [Operations](agent/operations.md): upgrades, troubleshooting, compatibility, and retirement.
 

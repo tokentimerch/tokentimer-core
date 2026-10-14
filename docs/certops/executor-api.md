@@ -1,4 +1,8 @@
-# CertOps machine APIs (executor and cert-manager controller)
+<a id="certops-machine-apis-executor-and-cert-manager-controller"></a>
+
+# Certificate Lifecycle Management (CLM) machine APIs (executor and cert-manager controller)
+
+Certificate Lifecycle Management (CLM) uses the existing CertOps machine API. In code and API references, `certops` paths, `certops:*` token scopes, and `CERTOPS_*` configuration names refer to this same certificate lifecycle capability; use those technical identifiers as documented.
 
 Reference for external systems that report certificate lifecycle events and
 for the customer-side cert-manager controller. These machine transports are separate from the native
@@ -70,7 +74,7 @@ the token's own workspace (403 `CERTOPS_EXECUTOR_WORKSPACE_MISMATCH`).
 A job must already exist before an executor can report against it.
 **TokenTimer creates jobs, not the executor** (there is no public "create
 job" API for executors); jobs come from the workspace's existing
-CertOps flows. Posting to an unknown `jobId` returns 404
+CLM flows. Posting to an unknown `jobId` returns 404
 `CERTOPS_JOB_NOT_FOUND`.
 
 Body (verified in `tests/integration/certops-docs-fixtures.test.js`):
@@ -236,7 +240,7 @@ resetting per route.
 | 422 | `PRIVATE_KEY_MATERIAL_REJECTED` | Payload matched a known private-key pattern; rejected before persistence, after applicable authentication. |
 | 413 | `CERTOPS_EVIDENCE_OUTPUT_TOO_LARGE` | Evidence `output` exceeds the 64 KB pre-redaction size cap. |
 | 429 | `CERTOPS_MACHINE_RATE_LIMITED` | Token exceeded its shared rate-limit bucket (see section 4). |
-| 404 | `NOT_FOUND` | CertOps is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
+| 404 | `NOT_FOUND` | CLM is disabled for the workspace (`certops.enabled` fail-closed) or the route does not exist; identical response either way. |
 | 403 | `CERTOPS_CONTROLLER_OBSERVATION_CLUSTER_MISMATCH` | An observation does not match the token's immutable cluster binding. |
 | 403 | `CERTOPS_CONTROLLER_PROVISIONING_CLUSTER_MISMATCH` | A provisioning command does not match the token's immutable cluster binding. |
 | 409 | `CERTOPS_WORKSPACE_PAUSED` | New provision intent or provisioning command delivery is paused; passive observation/event/evidence reporting remains available. |

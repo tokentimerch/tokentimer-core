@@ -345,12 +345,12 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
             title={
               hasActiveFilters
                 ? 'No jobs match these filters'
-                : 'No executor-reported certificate jobs yet'
+                : 'No certificate jobs yet'
             }
             description={
               hasActiveFilters
                 ? 'Clear the filters above to see every job this workspace has recorded.'
-                : 'Jobs appear here once an external executor reports lifecycle events through the CertOps executor API.'
+                : 'Create a manual job, configure automatic renewal, or use your own executor to report certificate lifecycle work.'
             }
             py={6}
           />

@@ -39,6 +39,7 @@ import { FiActivity, FiExternalLink } from 'react-icons/fi';
 import { AccessibleSpinner } from './Accessibility';
 import TruncatedText from './TruncatedText';
 import {
+  isRetiredCertificate,
   isRetiredStatus,
   certificateLifecycleDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
@@ -81,9 +82,12 @@ function effectiveStatusMeta(token, getStatusMeta) {
       label: 'Retired',
     };
   }
-  if (managed && isRetiredStatus(managed.status)) {
+  if (managed && isRetiredCertificate(managed)) {
+    const retiredStatus = isRetiredStatus(managed.lifecycleStatus)
+      ? managed.lifecycleStatus
+      : managed.status;
     return (
-      RETIRED_STATUS_META[String(managed.status).toLowerCase()] ||
+      RETIRED_STATUS_META[String(retiredStatus || '').toLowerCase()] ||
       RETIRED_STATUS_META.decommissioned
     );
   }

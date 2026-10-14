@@ -5,9 +5,7 @@
  * Holds acquireEnrollmentLock across CNG keygen, certreq submit/retrieve,
  * and (on issued) the deploy tail.
  *
- * Executable selection remains gated off in IMPLEMENTED_ISSUER_KINDS until
- * durable journal recovery and continuation scheduling land; decision-6
- * validation runs on the dormant path before accept.
+ * Decision-6 validation runs before accept.
  */
 
 const path = require("node:path");
@@ -174,6 +172,19 @@ function resultForAdcsOutcome(issuance, { enrollmentId, attempt }, options = {})
       errorMessage: boundErrorMessage(issuance.detail || "ADCS_CA_UNREACHABLE"),
       enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "submitting", {
         errorCode: "ADCS_CA_UNREACHABLE",
+      }),
+    };
+  }
+  if (issuance.outcome === "rejected_invalid") {
+    return {
+      status: "failed",
+      keyRotated: null,
+      errorMessage: boundErrorMessage(issuance.detail || "CMS signer key does not match caKeySha256"),
+      enrollmentResult: enrollmentResultFor(enrollmentId, attempt, "rejected_invalid", {
+        errorCode: "ADCS_CA_KEY_CHANGED",
+        ...(Number.isInteger(options.knownRequestId) && options.knownRequestId >= 1
+          ? { requestId: options.knownRequestId }
+          : {}),
       }),
     };
   }
@@ -595,6 +606,29 @@ function createAdcsWindowsIisExecutors(deps) {
     isValidCertificateId,
   } = deps;
 
+  function logAdcs(jobId, message) {
+    if (typeof emitInfo !== "function") return;
+    const text = String(message || "").replace(/\s+/g, " ").trim();
+    if (!text) return;
+    emitInfo(`job ${jobId}: ${text}`);
+  }
+
+  function logValidation(jobId, validation) {
+    if (!validation || typeof validation !== "object") return;
+    const parts = [
+      `AD CS certificate validation ${validation.ok === true ? "passed" : "failed"}`,
+    ];
+    if (typeof validation.state === "string" && validation.state) parts.push(`state=${validation.state}`);
+    if (typeof validation.errorCode === "string" && validation.errorCode) {
+      parts.push(`code=${validation.errorCode}`);
+    }
+    if (validation.revocationBestEffort === true) parts.push("revocation=best-effort");
+    if (typeof validation.detail === "string" && validation.detail.trim()) {
+      parts.push(validation.detail.replace(/\s+/g, " ").trim().slice(0, 180));
+    }
+    logAdcs(jobId, parts.join(" "));
+  }
+
   function reconcileSearchFromForSubmit(stateDir, caConfig, journal) {
     if (Number.isInteger(journal?.reconcileSearchFrom) && journal.reconcileSearchFrom >= 1) {
       return journal.reconcileSearchFrom;
@@ -850,6 +884,13 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
     const csrCommonName = commonName;
+    logAdcs(
+      jobId,
+      `AD CS renew enrollment ${decoded.enrollmentId} attempt ${decoded.attempt} CN ${commonName} ` +
+        `template ${snapshot.template} CA ${snapshot.caConfig} key ${keyMapped.algorithm} ` +
+        `site ${windowsTarget.binding.site}:${windowsTarget.binding.port} store ${windowsTarget.store} ` +
+        `names=${domains.length}`,
+    );
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
@@ -1008,6 +1049,10 @@ function createAdcsWindowsIisExecutors(deps) {
           template: snapshot.template,
         });
         preparedJournalCommitted = true;
+        logAdcs(
+          jobId,
+          `AD CS CSR stored for enrollment ${decoded.enrollmentId} templateOid ${templateOid}`,
+        );
       } catch (err) {
         return {
           status: "failed",
@@ -1106,6 +1151,10 @@ function createAdcsWindowsIisExecutors(deps) {
         );
       } catch (err) {
         issuanceOutcome = "uncertain";
+        logAdcs(
+          jobId,
+          `AD CS submit interrupted for enrollment ${decoded.enrollmentId}: ${String(err && err.message ? err.message : err).slice(0, 180)}`,
+        );
         try {
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "submission_uncertain",
@@ -1207,6 +1256,17 @@ function createAdcsWindowsIisExecutors(deps) {
         await reportIssuanceEvidence(client, jobId, issuance);
         return resultForAdcsOutcome(issuance, decoded);
       }
+      if (issuance.outcome === "rejected_invalid") {
+        issuanceOutcome = "rejected_invalid";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "rejected_invalid",
+          ...journalTrustFields,
+          errorCode: "ADCS_CA_KEY_CHANGED",
+        });
+        if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+        await reportIssuanceEvidence(client, jobId, issuance);
+        return resultForAdcsOutcome(issuance, decoded);
+      }
       if (issuance.outcome === "uncertain") {
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "submission_uncertain",
@@ -1265,6 +1325,7 @@ function createAdcsWindowsIisExecutors(deps) {
         templateOid,
         windowsTarget,
       });
+      logValidation(jobId, validation);
       if (!validation.ok) {
         if (validation.retryable === true) {
           return {
@@ -1338,6 +1399,11 @@ function createAdcsWindowsIisExecutors(deps) {
       // rewind the journal to accept, or the next resume looks like certreq
       // -accept never ran.
       let currentInstallStep = "accept";
+      logAdcs(
+        jobId,
+        `AD CS install starting for enrollment ${decoded.enrollmentId} store ${windowsTarget.store} ` +
+          `site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+      );
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -1590,6 +1656,11 @@ function createAdcsWindowsIisExecutors(deps) {
       });
       continueOutcomeRef.value = "issued";
 
+      logAdcs(
+        jobId,
+        `AD CS install resuming for enrollment ${decoded.enrollmentId} step ${currentInstallStep} ` +
+          `store ${windowsTarget.store} site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+      );
       const deployResult = await runWindowsIisDeployTail({
         jobId,
         client,
@@ -1677,6 +1748,7 @@ function createAdcsWindowsIisExecutors(deps) {
       templateOid: journal.templateOid,
       windowsTarget,
     });
+    logValidation(jobId, validation);
     if (!validation.ok) {
       if (validation.retryable === true) {
         return {
@@ -1719,6 +1791,11 @@ function createAdcsWindowsIisExecutors(deps) {
     });
 
     let currentInstallStep = "accept";
+    logAdcs(
+      jobId,
+      `AD CS install starting for enrollment ${decoded.enrollmentId} store ${windowsTarget.store} ` +
+        `site ${windowsTarget.binding.site}:${windowsTarget.binding.port}`,
+    );
     const deployResult = await runWindowsIisDeployTail({
       jobId,
       client,
@@ -1864,6 +1941,12 @@ function createAdcsWindowsIisExecutors(deps) {
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
       enrollmentLock.assertHeld();
+      logAdcs(
+        jobId,
+        `AD CS continue enrollment ${decoded.enrollmentId} journal=${journal.state}` +
+          (Number.isInteger(journal.requestId) ? ` requestId=${journal.requestId}` : "") +
+          ` template ${snapshot.template} CA ${snapshot.caConfig}`,
+      );
 
       // Terminal receipts: return recorded outcome without repeating CA contact.
       if (journal.state === "installed") {
@@ -1983,6 +2066,10 @@ function createAdcsWindowsIisExecutors(deps) {
           templateOid: templateOidResolved.templateOid,
         };
         artifacts = { ...artifacts, csrPem: csrResult.csrPem };
+        logAdcs(
+          jobId,
+          `AD CS CSR stored on keygen resume for enrollment ${decoded.enrollmentId} templateOid ${templateOidResolved.templateOid}`,
+        );
         try {
           recordIssuedContainer({
             stateDir,
@@ -2135,6 +2222,25 @@ function createAdcsWindowsIisExecutors(deps) {
             csrPem: artifacts.csrPem,
           });
           await recordHighestRequestId(stateDir, snapshot.caConfig, issuance.requestId);
+          if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
+          await reportIssuanceEvidence(client, jobId, issuance);
+          return resultForAdcsOutcome(issuance, decoded);
+        }
+        if (issuance.outcome === "rejected_invalid") {
+          continueOutcomeRef.value = "rejected_invalid";
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            state: "rejected_invalid",
+            attempt: decoded.attempt,
+            containerName,
+            snapshotSha256: decoded.snapshotSha256,
+            jobId,
+            csrSha256: journal.csrSha256,
+            csrSpkiSha256: journal.csrSpkiSha256,
+            templateOid: journal.templateOid,
+            caConfig: snapshot.caConfig,
+            template: snapshot.template,
+            errorCode: "ADCS_CA_KEY_CHANGED",
+          });
           if (typeof onBeforeMutation === "function") onBeforeMutation("report-issuance-evidence");
           await reportIssuanceEvidence(client, jobId, issuance);
           return resultForAdcsOutcome(issuance, decoded);
@@ -2339,6 +2445,7 @@ function createAdcsWindowsIisExecutors(deps) {
             templateOid: journal.templateOid,
             windowsTarget,
           });
+          logValidation(jobId, retryValidation);
           if (retryValidation.ok) {
             return attachIssuedCandidate(
               artifacts.leafPem,
@@ -2486,6 +2593,7 @@ function createAdcsWindowsIisExecutors(deps) {
           templateOid: journal.templateOid,
           windowsTarget,
         });
+        logValidation(jobId, candidateValidation);
         if (!candidateValidation.ok) {
           if (candidateValidation.retryable === true) {
             return {
@@ -2602,6 +2710,26 @@ function createAdcsWindowsIisExecutors(deps) {
       await reportIssuanceEvidence(client, jobId, issuance);
 
       if (issuance.outcome === "pending") {
+        return resultForAdcsOutcome(issuance, decoded, {
+          knownRequestId: journal.requestId,
+        });
+      }
+      if (issuance.outcome === "rejected_invalid") {
+        continueOutcomeRef.value = "rejected_invalid";
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+          state: "rejected_invalid",
+          attempt: decoded.attempt,
+          containerName,
+          snapshotSha256: decoded.snapshotSha256,
+          jobId,
+          csrSha256: journal.csrSha256,
+          csrSpkiSha256: journal.csrSpkiSha256,
+          templateOid: journal.templateOid,
+          caConfig: snapshot.caConfig,
+          template: snapshot.template,
+          requestId: journal.requestId,
+          errorCode: "ADCS_CA_KEY_CHANGED",
+        });
         return resultForAdcsOutcome(issuance, decoded, {
           knownRequestId: journal.requestId,
         });

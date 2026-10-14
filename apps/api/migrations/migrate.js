@@ -4755,18 +4755,52 @@ const migrations = [
   },
   {
     version: 71,
-    name: "certops_material_distribution",
-    sql: fs.readFileSync(require("path").join(__dirname, "071-certops-material-distribution.sql"), "utf8"),
+    name: "certops_adcs_evidence_types",
+    sql: `
+      ALTER TABLE certificate_evidence
+        DROP CONSTRAINT IF EXISTS certificate_evidence_evidence_type_check;
+      ALTER TABLE certificate_evidence
+        ADD CONSTRAINT certificate_evidence_evidence_type_check CHECK (
+          evidence_type IN (
+            'certificate.observed', 'deployment.checked', 'deployment.updated',
+            'validation.passed', 'validation.failed', 'policy.checked',
+            'trust.distributed', 'trust.revoked',
+            'adcs-template-verdict', 'adcs-submitted', 'adcs-pending',
+            'adcs-issued', 'adcs-denied', 'adcs-uncertain',
+            'adcs-validation-deferred', 'adcs-rejected-invalid'
+          )
+        );
+    `,
   },
   {
     version: 72,
-    name: "certops_distribution_review",
-    sql: fs.readFileSync(require("path").join(__dirname, "072-certops-distribution-review.sql"), "utf8"),
+    name: "certops_profile_issuer",
+    sql: `
+      ALTER TABLE certificate_profiles
+        ADD COLUMN IF NOT EXISTS issuer_id UUID NULL;
+      ALTER TABLE certificate_profiles
+        DROP CONSTRAINT IF EXISTS fk_certificate_profiles_issuer;
+      ALTER TABLE certificate_profiles
+        ADD CONSTRAINT fk_certificate_profiles_issuer
+          FOREIGN KEY (workspace_id, issuer_id)
+          REFERENCES certificate_issuers(workspace_id, id)
+          ON DELETE SET NULL (issuer_id);
+    `,
   },
   {
     version: 73,
+    name: "certops_material_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "073-certops-material-distribution.sql"), "utf8"),
+  },
+  {
+    version: 74,
+    name: "certops_distribution_review",
+    sql: fs.readFileSync(require("path").join(__dirname, "074-certops-distribution-review.sql"), "utf8"),
+  },
+  {
+    version: 75,
     name: "certops_distribution_transfer",
-    sql: fs.readFileSync(require("path").join(__dirname, "073-certops-distribution-transfer.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "075-certops-distribution-transfer.sql"), "utf8"),
   },
 ];
 
@@ -4788,6 +4822,9 @@ function validateMigrationHistory(rows) {
     const current = migrations.find(
       (migration) => migration.version === version,
     );
+    if (!current) {
+      throw new Error(`Migration ${version} is not supported by this build`);
+    }
     if (
       current &&
       name !== current.name &&

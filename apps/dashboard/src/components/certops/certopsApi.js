@@ -311,6 +311,19 @@ export async function stopManagingSource(workspaceId, periodId) {
   return res.data;
 }
 
+export async function replaceManagingSource(
+  workspaceId,
+  managedCertificateId,
+  { periodId = null, renewalProfileId, automationEnabled = false } = {}
+) {
+  const res = await apiClient.post(
+    `${workspaceBase(workspaceId)}/sources/${encodeURIComponent(managedCertificateId)}/replace-management`,
+    { periodId, renewalProfileId, automationEnabled }
+  );
+  invalidateCertOpsInventoryCache(workspaceId);
+  return res.data;
+}
+
 export async function readdManagingSource(
   workspaceId,
   managedCertificateId,

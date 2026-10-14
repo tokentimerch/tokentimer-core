@@ -23,7 +23,10 @@ const {
 const {
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
-const { attachJobPendingReasons } = require("./jobPendingReason");
+const {
+  attachJobPendingReasons,
+  markAdcsJob,
+} = require("./jobPendingReason");
 const { attachUserDisplayNames } = require("./userDisplayNames");
 const { normalizeCertificateSearchQuery } = require("./certificateIdentity");
 
@@ -54,7 +57,7 @@ const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
 // Job execution mode. Persisted on certificate_jobs.mode and included in the
 // signed dispatch payload. Required at creation; immutable afterwards.
-// "dry_run" must NEVER terminate as "succeeded" — use "dry_run_complete".
+// "dry_run" must NEVER terminate as "succeeded"; use "dry_run_complete".
 // See COORDINATION-B4.md at the worktree root.
 const JOB_MODES = Object.freeze(["real", "dry_run"]);
 const JOB_MODE_SET = new Set(JOB_MODES);
@@ -233,7 +236,7 @@ const JOB_SOURCES = Object.freeze([
 const JOB_SOURCE_SET = new Set(JOB_SOURCES);
 
 // Immutable at insert: agent claim path only sees 'agent'; controller
-// provisioning delivery only sees 'controller' (B2).
+// provisioning delivery only sees 'controller'.
 const JOB_EXECUTOR_KINDS = Object.freeze(["agent", "controller"]);
 const JOB_EXECUTOR_KIND_SET = new Set(JOB_EXECUTOR_KINDS);
 const CONTROLLER_PROVISIONING_JOB_SOURCE = "controller_provisioning";
@@ -315,7 +318,8 @@ const SAFE_JOB_SELECT_FIELDS = `
   queued_at,
   started_at,
   completed_at,
-  canceled_at
+  canceled_at,
+  enrollment_id
 `;
 
 const SAFE_JOB_LOG_SELECT_FIELDS = `
@@ -785,6 +789,9 @@ const EXECUTION_FIELDS_BY_OPERATION = Object.freeze({
   ]),
   reload: new Set(["reloadService", "verifyHost", "verifyPort"]),
   revoke: new Set(),
+  // AD CS continuation carries the same Windows key custody marker as the
+  // original renew. The scheduler copies that payload forward.
+  "continue-enrollment": new Set(["keyMode"]),
   noop: new Set(),
   // Adds nothing certificate-shaped (packages/contracts/certops/
   // protocol-smoke-payload.schema.json): a smoke job can never be mistaken
@@ -953,6 +960,15 @@ function validateRenewalProfileOnPayload(
   const hasProfile =
     payload &&
     Object.prototype.hasOwnProperty.call(payload, "renewalProfile");
+  // AD CS renewals bind the CA and template on the enrollment snapshot.
+  // They do not carry the ACME renewalProfile contract.
+  if (
+    !hasProfile &&
+    payload?.keyMode === "os-store-managed" &&
+    payload?.target?.type === "windows-iis"
+  ) {
+    return null;
+  }
   if (!hasProfile && !required) return null;
   try {
     return validateRenewalProfile(payload?.renewalProfile);
@@ -1163,7 +1179,7 @@ function normalizeSubject(options, operation) {
 }
 
 /**
- * Resolve the immutable executor lane and the optional B5 routing selectors
+ * Resolve the immutable executor lane and the optional routing selectors
  * for a new job. Controller provisioning source always forces the controller
  * lane; any other source defaults to agent unless the caller overrides.
  */
@@ -1460,6 +1476,7 @@ async function resolveManagedCertificateJobDefaults({
 }
 
 const CERTOPS_CERTIFICATE_NOT_FOUND = "CERTOPS_CERTIFICATE_NOT_FOUND";
+const CERTOPS_ADCS_RENEWAL_NOT_MANUAL = "CERTOPS_ADCS_RENEWAL_NOT_MANUAL";
 
 // buildRenewalJobPayload requires a reason; "manual" distinguishes this
 // path in the job log/audit trail from the scheduler's "expiry-threshold".
@@ -1483,6 +1500,7 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
             mc.profile_id,
             cp.name AS profile_name,
             cp.key_mode AS profile_key_mode,
+            cp.issuer_id AS profile_issuer_id,
             cp.public_metadata AS profile_public_metadata
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
@@ -1515,6 +1533,14 @@ async function materializeManualRenewalPayload({
   });
   if (!certificate) {
     throw serviceError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
+  }
+  if (certificate.profile_issuer_id) {
+    throw serviceError(
+      "This certificate uses an AD CS renewal profile. Create manual job " +
+        "cannot renew it. Open Renewals. The renewal sweep creates the " +
+        "enrollment from that profile.",
+      CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
+    );
   }
   return buildManualRenewalJobPayload({
     certificate,
@@ -1621,7 +1647,7 @@ async function preflightManualRenewalJob({
 
 function jobFromRow(row) {
   if (!row) return null;
-  return {
+  const job = {
     id: row.id,
     workspaceId: row.workspace_id,
     operation: row.operation,
@@ -1667,6 +1693,10 @@ function jobFromRow(row) {
     completedAt: dateToIso(row.completed_at),
     cancelledAt: dateToIso(row.canceled_at),
   };
+  // Optional same-object AD CS mark; attachJobPendingReasons also loads
+  // enrollment_id by job id so clones still evaluate the AD CS gate.
+  if (row.enrollment_id) markAdcsJob(job);
+  return job;
 }
 
 function canonicalizeJson(value) {
@@ -2062,6 +2092,7 @@ async function createCertificateJob(options) {
       terminalStatuses: [...TERMINAL_JOB_STATUSES],
       env: options.env || process.env,
       perCaCap: options.perCaCap,
+      capacityBucket: options.capacityBucket || null,
     });
   }
 
@@ -2706,6 +2737,7 @@ module.exports = {
   CERTOPS_JOB_INVALID,
   CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE,
   CERTOPS_CERTIFICATE_NOT_FOUND,
+  CERTOPS_ADCS_RENEWAL_NOT_MANUAL,
   CERTOPS_RENEWAL_AUTO_RENEW_DISABLED,
   CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
   CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,

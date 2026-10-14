@@ -30,10 +30,8 @@ describe("resolveJobIssuerKind", () => {
     assert.deepEqual(resolveJobIssuerKind({ issuerKind: "acme" }), { kind: "acme" });
   });
 
-  it("keeps adcs non-executable until validation and continuation land", () => {
-    const resolved = resolveJobIssuerKind({ issuerKind: "adcs" });
-    assert.equal(resolved.kind, undefined);
-    assert.match(resolved.error, /which this agent does not implement/);
+  it("accepts an explicit adcs kind", () => {
+    assert.deepEqual(resolveJobIssuerKind({ issuerKind: "adcs" }), { kind: "adcs" });
   });
 
   it("refuses unknown kinds rather than falling back to ACME", () => {
@@ -58,6 +56,11 @@ describe("assertIssuanceOutcome", () => {
     failed: { outcome: "failed", detail: "acme step failed with exit code 1" },
     not_submitted: { outcome: "not_submitted", detail: "RPC server unavailable, no output" },
     uncertain: { outcome: "uncertain", detail: "connection reset after the request was sent" },
+    rejected_invalid: {
+      outcome: "rejected_invalid",
+      errorCode: "ADCS_CA_KEY_CHANGED",
+      detail: "CMS signer key does not match caKeySha256",
+    },
   };
 
   it("has a well-formed example for every outcome in the vocabulary", () => {
@@ -96,6 +99,22 @@ describe("assertIssuanceOutcome", () => {
     assert.doesNotThrow(() => assertIssuanceOutcome({ outcome: "pending", requestId: 1 }));
     assert.doesNotThrow(() =>
       assertIssuanceOutcome({ outcome: "pending", requestId: 4294967295 }),
+    );
+  });
+
+  it("requires ADCS_CA_KEY_CHANGED on a rejected_invalid outcome", () => {
+    assert.throws(
+      () => assertIssuanceOutcome({ outcome: "rejected_invalid", detail: "new key" }),
+      /errorCode must be ADCS_CA_KEY_CHANGED/,
+    );
+    assert.throws(
+      () =>
+        assertIssuanceOutcome({
+          outcome: "rejected_invalid",
+          errorCode: "ADCS_CA_KEY_CHANGED",
+          detail: "",
+        }),
+      /detail is required/,
     );
   });
 

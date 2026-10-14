@@ -34,13 +34,15 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 68).name, "certops_adcs_awaiting_issuer_and_continue_enrollment");
     assert.equal(migrations.find((entry) => entry.version === 69).name, "certops_agent_job_logs");
     assert.equal(migrations.find((entry) => entry.version === 70).name, "certops_certificate_enrollments");
-    assert.equal(migrations.find((entry) => entry.version === 71).name, "certops_material_distribution");
-    assert.equal(migrations.find((entry) => entry.version === 72).name, "certops_distribution_review");
-    assert.equal(migrations.at(-1).version, 73);
+    assert.equal(migrations.find((entry) => entry.version === 73).name, "certops_material_distribution");
+    assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_distribution_review");
+    assert.equal(migrations.at(-1).version, 75);
     assert.equal(migrations.at(-1).name, "certops_distribution_transfer");
+    assert.equal(migrations.find(entry => entry.version === 71).name, "certops_adcs_evidence_types");
+    assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 73 }, (_, index) => index + 1),
+      Array.from({ length: 75 }, (_, index) => index + 1),
     );
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
@@ -120,6 +122,16 @@ describe("operational notifications migration", () => {
       () => validateMigrationHistory([{ version: 45, name: "unrecognized_migration" }]),
       /Migration 45 has unexpected name/,
     );
+  });
+
+  it("rejects distribution candidate numbers that collide with applied AD CS migrations", () => {
+    for (const row of [
+      {version:71,name:"certops_material_distribution"},
+      {version:72,name:"certops_distribution_review"},
+      {version:73,name:"certops_distribution_transfer"},
+    ]) assert.throws(() => validateMigrationHistory([row]), /unexpected name/);
+    assert.throws(() => validateMigrationHistory([{version:76,name:"future_migration"}]), /not supported/);
+    assert.doesNotThrow(() => validateMigrationHistory(migrations.map(({version,name}) => ({version,name}))));
   });
 });
 const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
@@ -1464,9 +1476,9 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
   });
 });
 
-describe("migration 71 distribution operation compatibility", () => {
+describe("migration 73 distribution operation compatibility", () => {
   it("adds deploy-from-store while retaining AD CS continuation and preflight", () => {
-    const migration = migrations.find(entry => entry.version === 71);
+    const migration = migrations.find(entry => entry.version === 73);
     const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
     assert.ok(declared);
     const values = declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, ""));
@@ -1866,7 +1878,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 73);
+    assert.equal(sorted[sorted.length - 1], 75);
   });
 });
 

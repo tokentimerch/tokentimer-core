@@ -133,6 +133,7 @@ const { executeAdcsPreflight } = require("./issuers/adcs-preflight");
 const {
   deployCertificate,
   deployCertificateAndKey,
+  resolveAgentCustodyKey,
   discardDeployBackups,
   removeDeployedArtifacts,
   getDeployMetrics,
@@ -278,6 +279,46 @@ function emitInfo(message, details) {
   mirrorToJobConsole("info", message, details);
 }
 
+/**
+ * One console line for the end of a claim. The shell shows the message
+ * only, so status, enrollment state, and the error have to live in the text.
+ */
+function formatExecutionFinishLine(jobId, outcome) {
+  const status =
+    outcome && typeof outcome.status === "string" && outcome.status.length > 0
+      ? outcome.status
+      : "unknown";
+  const parts = [`job ${jobId}: execution finished with status ${status}`];
+  if (typeof outcome?.rejectionReason === "string" && outcome.rejectionReason.length > 0) {
+    parts.push(`reason=${outcome.rejectionReason}`);
+  }
+  const enrollment = outcome?.enrollmentResult;
+  if (enrollment && typeof enrollment.state === "string" && enrollment.state.length > 0) {
+    parts.push(`enrollment=${enrollment.state}`);
+  }
+  if (enrollment && Number.isInteger(enrollment.requestId)) {
+    parts.push(`requestId=${enrollment.requestId}`);
+  }
+  if (enrollment && typeof enrollment.caHresult === "string" && enrollment.caHresult.length > 0) {
+    parts.push(`hresult=${enrollment.caHresult}`);
+  }
+  const preflight = outcome?.preflightResult;
+  if (preflight?.templateCheck && typeof preflight.templateCheck.verdict === "string") {
+    parts.push(`template=${preflight.templateCheck.verdict}`);
+  }
+  if (preflight?.caCheck && typeof preflight.caCheck.verdict === "string") {
+    parts.push(`ca=${preflight.caCheck.verdict}`);
+  }
+  let line = parts.join(" ");
+  const quiet = status === "succeeded" || status === "dry_run_complete";
+  const detail =
+    !quiet && typeof outcome?.errorMessage === "string"
+      ? outcome.errorMessage.replace(/\s+/g, " ").trim()
+      : "";
+  if (detail) line = `${line}: ${detail}`;
+  return line.length > 900 ? `${line.slice(0, 897)}...` : line;
+}
+
 function localAttemptId(jobId) {
   return `local-${jobId}-${Date.now()}`;
 }
@@ -363,6 +404,8 @@ const EXECUTABLE_JOB_ACTIONS = Object.freeze([
  */
 const AGENT_TRUST_STORE_PREREQUISITES = resolveTrustStorePrerequisites();
 
+const ADCS_ENROLL_CAPABILITY = "adcs-enroll-v1";
+
 const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
   isWindows()
     ? [
@@ -371,6 +414,7 @@ const AGENT_CANDIDATE_CAPABILITIES = Object.freeze(
         "windows-cert-store-v1",
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
+        ADCS_ENROLL_CAPABILITY,
       ]
     : AGENT_TRUST_STORE_PREREQUISITES.candidate
       ? ["evidence-claim-binding-v1", "job-log-stream-v1", "trust-anchor-deploy-v1"]
@@ -1066,6 +1110,20 @@ async function reportIssuanceEvidence(client, jobId, issuance) {
 function resolveJobCertPath(job) {
   if (isAbsolutePathLike(job?.certPath)) return job.certPath;
   if (isAbsolutePathLike(job?.target?.reference)) return job.target.reference;
+  return null;
+}
+
+function readDeployedCertificatePem(deployTargets) {
+  const targets = Array.isArray(deployTargets) ? deployTargets : [];
+  for (const target of targets) {
+    if (typeof target.certPath !== "string" || target.certPath.length === 0) continue;
+    try {
+      const pem = fs.readFileSync(target.certPath, "utf8");
+      if (typeof pem === "string" && pem.includes("BEGIN CERTIFICATE")) return pem;
+    } catch (err) {
+      if (!err || err.code !== "ENOENT") return { unreadable: true };
+    }
+  }
   return null;
 }
 
@@ -2074,7 +2132,7 @@ async function handleSignedJob({
           }
         : undefined;
     withJobConsole(jobLogSession, () => emitInfo(
-      `job ${jobId}: execution finished with status ${outcome?.status || "unknown"}`,
+      formatExecutionFinishLine(jobId, outcome),
       finishDetails,
     ));
 
@@ -2320,9 +2378,12 @@ async function executeJob({
   if (action === "adcs-preflight") {
     return executeAdcsPreflight({
       job,
+      jobId,
       rules: executionContext.adcsEnrollmentRules,
       probe: executionContext.adcsPreflightImpl,
       execFileImpl: executionContext.windowsExecFileImpl,
+      info: emitInfo,
+      stateDir,
     });
   }
 
@@ -2437,6 +2498,17 @@ async function executeJob({
     resolvedIssuerKind = resolveJobIssuerKind(job);
     if (resolvedIssuerKind.error) {
       return { status: "blocked", errorMessage: boundErrorMessage(resolvedIssuerKind.error) };
+    }
+    // Refused here, not only by the claim filter: a job that reaches the
+    // agent anyway must not run AD CS on a build that has not qualified it.
+    if (
+      resolvedIssuerKind.kind === "adcs" &&
+      !AGENT_DECLARED_CAPABILITIES.includes(ADCS_ENROLL_CAPABILITY)
+    ) {
+      return {
+        status: "blocked",
+        errorMessage: `this build has not qualified ${ADCS_ENROLL_CAPABILITY}; AD CS jobs are refused`,
+      };
     }
   }
 
@@ -2975,11 +3047,39 @@ async function executeRenewJob({
   emitInfo(`job ${jobId}: generating/reusing private key for CN ${csrCommonName}`);
   fs.mkdirSync(execution.keysDir, { recursive: true });
   const keyPath = path.join(execution.keysDir, `${job.certificateId}.key.pem`);
+  const deployedCertificatePem = readDeployedCertificatePem(deployTargets);
+  if (deployedCertificatePem && deployedCertificatePem.unreadable) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "deployed certificate could not be read to verify the agent custody key",
+      ),
+      keyRotated: false,
+    };
+  }
+  const custodyChoice = resolveAgentCustodyKey(
+    execution.keysDir,
+    job.certificateId,
+    fs,
+    deployedCertificatePem ? { certificatePem: deployedCertificatePem } : {},
+  );
+  if (custodyChoice.quarantined && !custodyChoice.path) {
+    return {
+      status: "failed",
+      errorMessage: boundErrorMessage(
+        "agent custody key is quarantined after a failed promotion and no rotation staging key remains",
+      ),
+      keyRotated: false,
+    };
+  }
   const forceRotation = job.keyRotation === true;
-  const keyExisted = fs.existsSync(keyPath);
-  const keyRotated = forceRotation || !keyExisted;
+  let keyExisted = fs.existsSync(keyPath) && !custodyChoice.quarantined;
+  let keyRotated = forceRotation || !keyExisted;
   let stagedKeyPath = keyPath;
-  if (keyRotated) {
+  if (custodyChoice.quarantined && custodyChoice.path) {
+    stagedKeyPath = custodyChoice.path;
+    keyRotated = true;
+  } else if (keyRotated) {
     const generateOpts = {
       keyPath,
       overwrite: forceRotation,
@@ -4876,6 +4976,12 @@ async function rollbackAfterFailedTail({
   if (!restored) {
     emitLog(log, `rollback restore failed for job ${jobId} at stage ${restore.stage}`);
   }
+  if (restore.custodyPromotionFailed === true) {
+    const custodyWarnMsg =
+      `job ${jobId}: restored certificate is installed but the agent custody key was not updated and must not be reused`;
+    defaultAgentLogger.warn(custodyWarnMsg);
+    mirrorToJobConsole("warn", custodyWarnMsg);
+  }
 
   // Best-effort re-reload so the service serves the restored content again.
   let reloadNote = "not requested";
@@ -5621,6 +5727,12 @@ async function runDeployReloadVerify({
       ? `job ${jobId}: deploy skipped, destination already up to date`
       : `job ${jobId}: deploy succeeded at ${certPath}`,
   );
+  if (deployResult.custodyPromotionFailed === true) {
+    const custodyWarnMsg =
+      `job ${jobId}: production certificate install succeeded but the agent custody key was not updated and must not be reused`;
+    defaultAgentLogger.warn(custodyWarnMsg);
+    mirrorToJobConsole("warn", custodyWarnMsg);
+  }
   await reportStepEvidence(client, jobId, [
     buildEvidenceItem({
       eventType: "deployment.updated",
@@ -5957,9 +6069,19 @@ async function executeDeployJob({
     keysDir.length > 0 &&
     isValidCertificateId(job.certificateId)
   ) {
-    const candidate = path.join(keysDir, `${job.certificateId}.key.pem`);
-    if (fs.existsSync(candidate)) {
-      keyPath = candidate;
+    const custodyChoice = resolveAgentCustodyKey(keysDir, job.certificateId, fs, {
+      certificatePem: job.certificatePem,
+    });
+    if (custodyChoice.quarantined && !custodyChoice.path) {
+      return {
+        status: "failed",
+        errorMessage: boundErrorMessage(
+          "PRIVATE_KEY_MISMATCH: the agent custody key does not match this certificate",
+        ),
+      };
+    }
+    if (custodyChoice.path) {
+      keyPath = custodyChoice.path;
     }
   }
 
@@ -6799,6 +6921,12 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // never returns an empty set, only the base set or the base set plus
         // agent-id-binding-v1.
         declaredCapabilities: resolveDeclaredCapabilities(config.requireSignedAgentId),
+        // Publishes DNS names added to config.json. An empty list is omitted
+        // so a restart cannot wipe the stored selectors.
+        ...(Array.isArray(config.declaredTargetSelectors) &&
+        config.declaredTargetSelectors.length > 0
+          ? { declaredTargetSelectors: config.declaredTargetSelectors }
+          : {}),
         // With execution enabled, report the measured clock offset and the
         // pinned signing key id so the control plane can spot drift and
         // key-rotation lag. in observe-only bootstrap mode these stay null.
@@ -6987,6 +7115,7 @@ module.exports = {
   handleClaimedJob,
   UNVERIFIED_JOB_ID_PLACEHOLDER,
   executeJob,
+  formatExecutionFinishLine,
   executeDeployJob,
   executeRenewJob,
   executeWindowsIisRenewJob,

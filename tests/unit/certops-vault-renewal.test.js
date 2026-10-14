@@ -120,7 +120,7 @@ test("manual renewal versions differ across requests and remain stable on replay
     createJob: async (options) => options.payload,
   });
   const run = (key) =>
-    creator({ client: {}, workspaceId: W, idempotencyKey: key, payload: {} });
+    creator({ client: {query:async () => ({rows:[]})}, workspaceId: W, idempotencyKey: key, payload: {} });
   const first = await run("rejected"),
     corrected = await run("corrected"),
     replay = await run("corrected");

@@ -223,7 +223,7 @@ export function renewalDescriptor(renewal) {
         state,
         label: 'Auto-renew on (workspace paused)',
         scheme: 'yellow',
-        help: 'Automatic renewal is configured for this certificate, but CertOps is paused for this workspace, so no renewal will run until it is resumed.',
+        help: 'Automatic renewal is configured, but new renewal work is paused for this workspace. Already-leased jobs can finish.',
         isWarning: true,
       };
     }
@@ -343,6 +343,22 @@ export function renewalPathDescriptor(certificate) {
       isWarning: true,
     };
   }
+  // Reported as unavailable on the wire; the reason separates "nothing can
+  // run" from "a CA check must run first", which operators act on differently.
+  if (
+    state === 'unavailable' &&
+    certificate?.renewalPathReason === 'waiting_for_fresh_preflight'
+  ) {
+    return {
+      state,
+      label: 'Waiting for CA check',
+      scheme: 'yellow',
+      help:
+        summary ||
+        'The renewal is waiting for an agent to run a fresh CA check before it can start.',
+      isWarning: true,
+    };
+  }
   if (state === 'unavailable') {
     return {
       state,
@@ -440,6 +456,17 @@ export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
 }
 
+/** A certificate object is retired when either status field says so. */
+export function isRetiredCertificate(certificate) {
+  if (!certificate || typeof certificate !== 'object') {
+    return isRetiredStatus(certificate);
+  }
+  return (
+    isRetiredStatus(certificate.status) ||
+    isRetiredStatus(certificate.lifecycleStatus)
+  );
+}
+
 /**
  * Partitions the workspace CertOps inventory for the Control Center summary.
  *
@@ -475,7 +502,7 @@ export function summarizeManagedCertificates(certificates, options = {}) {
     ? options.highlightLimit
     : 5;
   const items = Array.isArray(certificates) ? certificates : [];
-  const active = items.filter(cert => !isRetiredStatus(cert?.status));
+  const active = items.filter(cert => !isRetiredCertificate(cert));
 
   const linked = active.filter(cert => cert?.tokenId != null);
   const unlinked = active.filter(cert => cert?.tokenId == null);
@@ -519,8 +546,8 @@ export function sortCertificatesForToken(certificates) {
     return Number.isFinite(time) ? time : 0;
   };
   return items.sort((a, b) => {
-    const aRetired = isRetiredStatus(a?.status) ? 1 : 0;
-    const bRetired = isRetiredStatus(b?.status) ? 1 : 0;
+    const aRetired = isRetiredCertificate(a) ? 1 : 0;
+    const bRetired = isRetiredCertificate(b) ? 1 : 0;
     if (aRetired !== bRetired) return aRetired - bRetired;
     const diff = ts(b) - ts(a);
     if (diff !== 0) return diff;
@@ -539,7 +566,7 @@ export function pickPrimaryCertificate(certificates) {
 }
 
 export const AMBIGUOUS_CERTIFICATE_LINK_MESSAGE =
-  'This asset is linked to multiple certificate identities. Choose a certificate in CertOps to view its details or change its lifecycle.';
+  'This asset is linked to multiple certificate identities. Choose a certificate in Certificate Management to view its details or change its lifecycle.';
 
 /** A token link alone cannot identify a certificate across rotation or imports. */
 export function resolveTokenCertificate(certificates) {
@@ -563,7 +590,7 @@ export function resolveTokenCertificate(certificates) {
     // Ambiguity must never make a linked token eligible for hard deletion.
     hasManagedLinks: items.length > 0,
     allRetired:
-      items.length > 0 && items.every(item => isRetiredStatus(item.status)),
+      items.length > 0 && items.every(item => isRetiredCertificate(item)),
   };
 }
 
@@ -571,7 +598,7 @@ export function resolveTokenCertificate(certificates) {
 export const KEY_REFERENCE_MAX_LENGTH = 256;
 
 /** Separator between location block and shared technical reference in keyReference. */
-const KEY_REFERENCE_TECH_SEP = ' — ';
+const KEY_REFERENCE_TECH_SEP = ' · ';
 
 /**
  * Split user-entered location text into distinct labels (one per line or comma).

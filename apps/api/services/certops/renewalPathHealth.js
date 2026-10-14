@@ -27,8 +27,18 @@ const {
   validateRenewalProfile,
 } = require("./renewalProfile");
 const { computeAgentCompatibility } = require("./agentRegistry");
+const { validateAdcsRenewalProfile } = require("./adcsRenewalRules");
 const {
-  evaluateAgentJobEligibility,
+  ADCS_PREFLIGHT_MAX_AGE_MS,
+  ADCS_PREFLIGHT_WAITING_REASON,
+  loadCurrentAdcsIssuerVersion,
+  loadQualifyingAdcsAgents,
+} = require("./adcsPreflightGate");
+
+const ADCS_PREFLIGHT_WINDOW_HOURS = Math.round(ADCS_PREFLIGHT_MAX_AGE_MS / 3_600_000);
+const {
+  ADCS_ENROLL_CAPABILITY_REASON,
+  explainAgentJobEligibility,
   persistedTextArray,
   resolveAgentJobRoutingRequirements,
 } = require("./agentJobEligibility");
@@ -66,6 +76,12 @@ const RENEWAL_PATH_REASONS = Object.freeze({
   // operator is told an agent IS pinned and why it can't claim the job, rather
   // than being told none is associated at all.
   ASSIGNED_AGENT_INELIGIBLE: "assigned_agent_ineligible",
+  // AD CS renewal with no fresh adcs-enroll-v1 declaration on any candidate
+  // agent. Dispatch refuses the job, so the path is blocked, not healthy.
+  ADCS_ENROLL_CAPABILITY_UNAVAILABLE: "adcs_enroll_capability_unavailable",
+  // AD CS renewal waits until an agent runs adcs-preflight for its CA. The
+  // scheduler starts nothing before then, so the path is not healthy yet.
+  WAITING_FOR_FRESH_PREFLIGHT: ADCS_PREFLIGHT_WAITING_REASON,
   // Not in the product spec's suggested list, but needed so a certificate
   // that is not currently expected to auto-renew never gets shown next to
   // "Renewal path unavailable" -- rule: "auto-renew disabled should not
@@ -275,11 +291,12 @@ function resolveRequiredExecutors({
   // the shared dispatch predicate below.
   let eligibilityIndeterminate = false;
   let liveEligibilityIndeterminate = false;
+  let adcsEnrollBlocked = false;
   let pinnedAgentIneligibleReason = null;
   let pinnedAgentDeclaredOperations = null;
   const matching = jobRequirements
     ? agentIndex.all.filter((agent) => {
-        const evaluation = evaluateAgentJobEligibility({
+        const evaluation = explainAgentJobEligibility({
           agent,
           job: {
             ...jobRequirements,
@@ -294,6 +311,8 @@ function resolveRequiredExecutors({
           if (isAgentOnline(agent, { offlineAfterMs, now })) {
             liveEligibilityIndeterminate = true;
           }
+        } else if (evaluation.reason === ADCS_ENROLL_CAPABILITY_REASON) {
+          adcsEnrollBlocked = true;
         } else if (
           assignedAgentId &&
           agent.id === assignedAgentId &&
@@ -322,6 +341,7 @@ function resolveRequiredExecutors({
     targetReference,
     eligibilityIndeterminate,
     liveEligibilityIndeterminate,
+    adcsEnrollBlocked,
     agents: matching.map((agent) =>
       agentDependencyView(agent, {
         required: Boolean(assignedAgentId) || matching.length === 1,
@@ -387,6 +407,8 @@ function classifyExecutors({
   pinnedButRetired = false,
   pinnedAgentIneligibleReason = null,
   pinnedAgentDeclaredOperations = null,
+  adcsEnrollBlocked = false,
+  awaitingFreshPreflight = false,
 }) {
   if (pinnedButRetired) {
     return {
@@ -417,6 +439,14 @@ function classifyExecutors({
   const total = agents.length;
   const onlineCount = agents.filter((a) => a.online).length;
 
+  if (total === 0 && adcsEnrollBlocked) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+      renewalPathSummary:
+        "No agent that renews this AD CS certificate has declared adcs-enroll-v1 recently. Dispatch will not offer the renewal until an agent running a build that supports AD CS enrollment declares that capability and heartbeats.",
+    };
+  }
   if (total === 0) {
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
@@ -424,6 +454,13 @@ function classifyExecutors({
       renewalPathSummary: targetReference
         ? `No registered agent currently declares support for deployment target "${targetReference}".`
         : "No agent is currently associated with this certificate's renewal.",
+    };
+  }
+  if (awaitingFreshPreflight) {
+    return {
+      renewalPathState: RENEWAL_PATH_STATES.UNAVAILABLE,
+      renewalPathReason: RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
+      renewalPathSummary: `The AD CS renewal for this certificate is waiting for a fresh CA check. No agent that renews it has run adcs-preflight against its CA in the last ${ADCS_PREFLIGHT_WINDOW_HOURS} hours, so the renewal starts once an agent passes the check.`,
     };
   }
   if (onlineCount === total) {
@@ -511,11 +548,48 @@ function resolvePinProblemWithoutProfile({
   };
 }
 
+// Routes the job the scheduler would create. Throws on an incomplete profile,
+// which the caller reports as Unknown.
+function adcsRenewalRequirements(renewalProfile, certificateRow) {
+  const profile = validateAdcsRenewalProfile(renewalProfile);
+  return {
+    operation: "renew",
+    ...resolveAgentJobRoutingRequirements({
+      executorKind: "agent",
+      payload: {
+        target: { type: profile.target.type, reference: profile.target.reference },
+      },
+    }),
+    subjectIsProvisioning: certificateRow.status === "provisioning",
+    issuerKind: "adcs",
+  };
+}
+
+function acmeRenewalRequirements(renewalProfile, certificateRow) {
+  const profile = validateRenewalProfile(renewalProfile);
+  const payload = executionFieldsFromRenewalProfile(profile);
+  return {
+    operation: "renew",
+    ...resolveAgentJobRoutingRequirements({
+      executorKind: "agent",
+      payload,
+    }),
+    subjectIsProvisioning: certificateRow.status === "provisioning",
+    payload: profile.publicationDestination ? { publication: profile.publicationDestination } : payload,
+  };
+}
+
 /**
  * Full renewal-path projection for one certificate row (as returned by the
  * SELECT in loadCertificateRowsForRenewalPath).
  */
-function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.env, now = Date.now() }) {
+function resolveRenewalPathForRow({
+  certificateRow,
+  agentIndex,
+  env = process.env,
+  now = Date.now(),
+  adcsPreflightIndex = null,
+}) {
   const offlineAfterMs = resolveAgentOfflineAfterMs(env);
 
   if (
@@ -569,19 +643,15 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
   }
 
   const profileMetadata = parseMetadata(certificateRow.profile_public_metadata);
+  const renewalProfile = profileMetadata.renewalProfile;
   let jobRequirements;
   try {
-    const profile = validateRenewalProfile(profileMetadata.renewalProfile);
-    const payload = executionFieldsFromRenewalProfile(profile);
-    jobRequirements = {
-      operation: "renew",
-      ...resolveAgentJobRoutingRequirements({
-        executorKind: "agent",
-        payload,
-      }),
-      subjectIsProvisioning: certificateRow.status === "provisioning",
-      payload: profile.publicationDestination ? { publication: profile.publicationDestination } : payload,
-    };
+    // The issuer decides the rules, as it does for the scheduler. An ACME-shaped
+    // profile switched to AD CS keeps its ACME fields, so shape cannot decide.
+    jobRequirements =
+      certificateRow.profile_issuer_kind === "adcs"
+        ? adcsRenewalRequirements(renewalProfile, certificateRow)
+        : acmeRenewalRequirements(renewalProfile, certificateRow);
   } catch (_error) {
     return {
       renewalPathState: RENEWAL_PATH_STATES.UNKNOWN,
@@ -601,6 +671,7 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     pinnedAgentDeclaredOperations,
     eligibilityIndeterminate,
     liveEligibilityIndeterminate,
+    adcsEnrollBlocked,
   } = resolveRequiredExecutors({
     certificateRow,
     profileMetadata,
@@ -626,6 +697,19 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
   const hasResolvableTopology =
     agents.length > 0 || Boolean(targetReference) || pinned || pinnedButRetired;
 
+  // A fresh, safe preflight on a declaring agent is what lets the scheduler
+  // start an AD CS renewal at all. Without one, the path is waiting.
+  const freshAgentIds =
+    adcsPreflightIndex?.get(
+      adcsPreflightKey(
+        certificateRow.profile_issuer_id,
+        adcsReferenceFromProfile(profileMetadata),
+      ),
+    ) ?? new Set();
+  const awaitingFreshPreflight =
+    jobRequirements.issuerKind === "adcs" &&
+    !agents.some((agent) => freshAgentIds.has(agent.agentRowId));
+
   const classification = classifyExecutors({
     agents,
     targetReference,
@@ -633,6 +717,8 @@ function resolveRenewalPathForRow({ certificateRow, agentIndex, env = process.en
     pinnedButRetired,
     pinnedAgentIneligibleReason,
     pinnedAgentDeclaredOperations,
+    adcsEnrollBlocked,
+    awaitingFreshPreflight,
   });
 
   return {
@@ -653,17 +739,69 @@ const CERTIFICATE_ROW_SELECT = `
          mc.public_metadata->'controllerObservation'->>'agentId' AS discovery_agent_id,
          mc.public_metadata AS certificate_public_metadata,
          cp.status AS profile_status,
+         cp.issuer_id AS profile_issuer_id,
+         ci.kind AS profile_issuer_kind,
          cp.public_metadata AS profile_public_metadata,
          dg.issuer_agent_id AS distribution_issuer_agent_id
     FROM managed_certificates mc
     LEFT JOIN certificate_profiles cp
       ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+    LEFT JOIN certificate_issuers ci
+      ON ci.workspace_id=cp.workspace_id AND ci.id=cp.issuer_id
     LEFT JOIN certops_management_periods mp
       ON mp.workspace_id=mc.workspace_id AND mp.managed_certificate_id=mc.id AND mp.ended_at IS NULL
     LEFT JOIN certops_distribution_groups dg
       ON dg.workspace_id=mp.workspace_id AND dg.managed_certificate_id=mp.managed_certificate_id
      AND dg.management_period_id=mp.id AND dg.state='active'
 `;
+
+function adcsReferenceFromProfile(profileMetadata) {
+  const reference = profileMetadata?.renewalProfile?.target?.reference;
+  return typeof reference === "string" ? reference : null;
+}
+
+function adcsPreflightKey(issuerId, reference) {
+  return `${issuerId}\u0000${reference}`;
+}
+
+// Loads qualifying agents once per issuer and target in the batch, using the
+// same gate the scheduler calls, so health and scheduling read one answer.
+async function loadAdcsPreflightIndex({ db, workspaceId, certificateRows, nowMs }) {
+  const wanted = new Map();
+  for (const row of certificateRows) {
+    if (row.profile_issuer_kind !== "adcs" || !row.profile_issuer_id) continue;
+    const reference = adcsReferenceFromProfile(parseMetadata(row.profile_public_metadata));
+    if (reference == null) continue;
+    wanted.set(adcsPreflightKey(row.profile_issuer_id, reference), {
+      issuerId: String(row.profile_issuer_id),
+      reference,
+    });
+  }
+  const issuerIds = [...new Set([...wanted.values()].map((entry) => entry.issuerId))];
+  const versions = new Map(
+    await Promise.all(
+      issuerIds.map(async (issuerId) => [
+        issuerId,
+        await loadCurrentAdcsIssuerVersion({ db, workspaceId, issuerId }),
+      ]),
+    ),
+  );
+  const index = new Map();
+  await Promise.all(
+    [...wanted].map(async ([key, { issuerId, reference }]) => {
+      const agents = await loadQualifyingAdcsAgents({
+        db,
+        workspaceId,
+        issuerId,
+        reference,
+        version: versions.get(issuerId),
+        nowMs,
+      });
+      index.set(key, new Set(agents.map((agent) => String(agent.id))));
+    }),
+  );
+  return index;
+}
 
 async function resolveRenewalPathForCertificate({
   db = pool,
@@ -680,7 +818,14 @@ async function resolveRenewalPathForCertificate({
   ]);
   const certificateRow = certResult.rows[0];
   if (!certificateRow) return null;
-  return resolveRenewalPathForRow({ certificateRow, agentIndex, env });
+  const now = Date.now();
+  const adcsPreflightIndex = await loadAdcsPreflightIndex({
+    db,
+    workspaceId,
+    certificateRows: [certificateRow],
+    nowMs: now,
+  });
+  return resolveRenewalPathForRow({ certificateRow, agentIndex, env, now, adcsPreflightIndex });
 }
 
 /**
@@ -705,10 +850,16 @@ async function resolveRenewalPathsForWorkspace({
     loadWorkspaceAgentIndex({ db, workspaceId }),
   ]);
   const now = Date.now();
+  const adcsPreflightIndex = await loadAdcsPreflightIndex({
+    db,
+    workspaceId,
+    certificateRows: certResult.rows,
+    nowMs: now,
+  });
   return certResult.rows.map((certificateRow) => ({
     certificateId: String(certificateRow.id),
     commonName: certificateRow.common_name || null,
-    ...resolveRenewalPathForRow({ certificateRow, agentIndex, env, now }),
+    ...resolveRenewalPathForRow({ certificateRow, agentIndex, env, now, adcsPreflightIndex }),
   }));
 }
 
@@ -741,11 +892,17 @@ async function resolveRenewalPathsForCertificateIds({
     loadWorkspaceAgentIndex({ db, workspaceId }),
   ]);
   const now = Date.now();
+  const adcsPreflightIndex = await loadAdcsPreflightIndex({
+    db,
+    workspaceId,
+    certificateRows: certResult.rows,
+    nowMs: now,
+  });
   const result = new Map();
   for (const certificateRow of certResult.rows) {
     result.set(
       String(certificateRow.id),
-      resolveRenewalPathForRow({ certificateRow, agentIndex, env, now }),
+      resolveRenewalPathForRow({ certificateRow, agentIndex, env, now, adcsPreflightIndex }),
     );
   }
   return result;
@@ -815,6 +972,8 @@ module.exports = {
     classifyExecutors,
     targetReferenceFromProfile,
     loadWorkspaceAgentIndex,
+    loadAdcsPreflightIndex,
+    adcsPreflightKey,
     NO_CAPABILITY_DECLARED_SUMMARY,
   },
 };

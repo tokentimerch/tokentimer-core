@@ -172,6 +172,7 @@ describe("CertOps route hardening", () => {
       "GET /api/v1/workspaces/:id/certops/trust-anchors/:anchorId/installations",
       "PATCH /api/v1/workspaces/:id/certops/agents/:agentId/alert-settings",
       "PATCH /api/v1/workspaces/:id/certops/profiles/:profileId",
+      "POST /api/v1/workspaces/:id/certops/profiles",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens",
       "POST /api/v1/workspaces/:id/certops/agent-bootstrap-tokens/:tokenId/revoke",
       "POST /api/v1/workspaces/:id/certops/agents/:agentId/retire",
@@ -194,6 +195,7 @@ describe("CertOps route hardening", () => {
       "POST /api/v1/workspaces/:id/certops/provision-intents",
       "POST /api/v1/workspaces/:id/certops/renewal-setup-intents/:outboxId/retry",
       "POST /api/v1/workspaces/:id/certops/sources/:managedCertificateId/readd",
+      "POST /api/v1/workspaces/:id/certops/sources/:managedCertificateId/replace-management",
       "POST /api/v1/workspaces/:id/certops/tokens",
       "POST /api/v1/workspaces/:id/certops/tokens/:tokenId/revoke",
       "POST /api/v1/workspaces/:id/certops/trust-anchors",
@@ -230,6 +232,55 @@ describe("CertOps route hardening", () => {
         `${routePath} must check the rollout gate before manager authorization`,
       );
     }
+  });
+
+  it("documents AD CS issuer drafts, discard, profile create, and cancel", () => {
+    const list = openApiOperationBlock(
+      "/api/v1/workspaces/{id}/certops/issuers",
+      "get",
+    );
+    assert.match(list, /includeUnconfigured/);
+    assert.match(list, /current version 0/);
+
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/issuers/{issuerId}",
+      "DELETE",
+    );
+    const discard = openApiOperationBlock(
+      "/api/v1/workspaces/{id}/certops/issuers/{issuerId}",
+      "delete",
+    );
+    assert.match(discard, /operationId: discardCertOpsIssuer/);
+    assert.match(discard, /current version is still 0/);
+
+    assertOpenApiRoute("/api/v1/workspaces/{id}/certops/profiles", "POST");
+    const create = routeBlock("post", "/api/v1/workspaces/:id/certops/profiles");
+    assert.match(create, /createAdcsRenewalProfile/);
+    assert.match(create, /authorize\("certops\.renewal_profile\.manage"\)/);
+    assert.match(create, /requireCertOpsSessionUser/);
+    const createDoc = openApiOperationBlock(
+      "/api/v1/workspaces/{id}/certops/profiles",
+      "post",
+    );
+    assert.match(createDoc, /operationId: createCertOpsAdcsRenewalProfile/);
+    assert.match(createDoc, /does not create an ACME profile/);
+
+    const enrollmentsSource = fs.readFileSync(
+      path.resolve(__dirname, "../../apps/api/routes/certops-enrollments.js"),
+      "utf8",
+    );
+    assert.match(
+      enrollmentsSource,
+      /router\.delete\(\s+"\/api\/v1\/workspaces\/:id\/certops\/issuers\/:issuerId"/,
+    );
+    assert.match(
+      enrollmentsSource,
+      /includeUnconfigured: req\.query\.includeUnconfigured === "true"/,
+    );
+    assertOpenApiRoute(
+      "/api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/cancel",
+      "POST",
+    );
   });
 
   it("gates renewal-profile editing on admin role and a human session", () => {

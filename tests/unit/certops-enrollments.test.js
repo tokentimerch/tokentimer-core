@@ -14,20 +14,34 @@ const {
 } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const {
   abandonEnrollment,
+  cancelEnrollment,
   confirmIssuerKey,
   createEnrollment,
   dispatchPreflight,
   proposeReconcileRequestId,
   recordEnrollmentResult,
   recordPreflightResult,
+  discardUnconfiguredIssuer,
+  listEnrollments,
+  listIssuers,
   scheduleDueEnrollments,
 } = require("../../apps/api/services/certops/certificateEnrollments");
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
 const { migrations } = require("../../apps/api/migrations/migrate");
+const { claimJobs } = require("../../apps/api/services/certops/agentDispatch");
+const Ajv = require("ajv");
+const addFormats = require("ajv-formats");
+const jobPayloadSchema = require("../../packages/contracts/certops/job-payload.schema.json");
+const signedDispatchPayloadSchema = require("../../packages/contracts/certops/signed-dispatch-payload.schema.json");
+const signedDispatchWireV1Schema = require("../../packages/contracts/certops/signed-dispatch-wire-v1.schema.json");
+const signedDispatchWireV2Schema = require("../../packages/contracts/certops/signed-dispatch-wire-v2.schema.json");
+const enrollmentSnapshotSchema = require("../../packages/contracts/certops/enrollment-snapshot.schema.json");
 
 const ISSUER = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const ENROLLMENT = "5f0c2a8e-3b1d-4c6e-9a7f-1e2d3c4b5a69";
+const JOB_ID = "6a1f0d2e-7c3b-4e8a-9f1d-2b3c4d5e6f70";
+const CLAIM_ID = "0b7c2f7e-1d2a-4c3b-8e4f-5a6b7c8d9e0f";
 
 function snapshotInput() {
   return {
@@ -133,6 +147,37 @@ describe("AD CS enrollment lifecycle", () => {
     );
   });
 
+  it("does not dispatch a blind resubmit for submission_uncertain without a RequestId", () => {
+    const now = new Date("2026-10-11T12:00:00.000Z");
+    const snapshot = { pollInterval: 900, pendingTimeout: 3600 };
+    assert.equal(
+      decideContinuation(
+        {
+          state: "submission_uncertain",
+          operatorRequestId: null,
+          nextPollAt: now,
+          activeJob: false,
+        },
+        snapshot,
+        now,
+      ),
+      null,
+    );
+    assert.deepEqual(
+      decideContinuation(
+        {
+          state: "submission_uncertain",
+          operatorRequestId: 77,
+          nextPollAt: now,
+          activeJob: false,
+        },
+        snapshot,
+        now,
+      ),
+      { dispatch: true, reason: "reconcile" },
+    );
+  });
+
   it("confirms only a key from a safe preflight", () => {
     const key = "cd".repeat(32);
     const safe = {
@@ -169,6 +214,36 @@ const WEBHOSTING = {
   store: "WebHosting",
   binding: { site: "Shop", port: 443, sniHost: "app.example.com" },
 };
+
+function profileEnrollmentDb(versionRow) {
+  return {
+    async query(sql) {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+      if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: ISSUER }] };
+      if (sql.includes("FROM certificate_issuer_versions")) {
+        return { rows: versionRow ? [versionRow] : [] };
+      }
+      throw new Error(sql);
+    },
+  };
+}
+
+function enrollThroughProfile(db) {
+  return createEnrollment({
+    client: db,
+    workspaceId: WORKSPACE,
+    issuerId: ISSUER,
+    profileId: "33333333-3333-4333-8333-333333333333",
+    certificateId: "33333333-3333-4333-8333-333333333333",
+    agentId: "22222222-2222-4222-8222-222222222222",
+    target: WEBHOSTING,
+    authorizedDnsNames: ["app.example.com"],
+    keyAlgorithm: "rsa",
+    keySize: 2048,
+    audit: async () => {},
+    createJob: async () => ({ id: "job-should-not-exist" }),
+  });
+}
 
 function rowDb() {
   const enrollments = new Map();
@@ -229,12 +304,16 @@ function rowDb() {
       if (text.includes("operation = 'adcs-preflight'") && text.includes("count")) {
         return { rows: [{ n: preflightCount }] };
       }
-      if (text.includes("FROM certificate_enrollments e") && text.includes("FOR UPDATE OF e SKIP LOCKED")) {
+      if (text.includes("SELECT e.workspace_id, e.id") && text.includes("e.next_poll_at <= $1")) {
         const now = params[0];
-        const rows = [...enrollments.values()].filter(
-          (row) => row.next_poll_at && row.next_poll_at.getTime() <= now.getTime(),
-        );
+        const rows = [...enrollments.values()]
+          .filter((row) => row.next_poll_at && row.next_poll_at.getTime() <= now.getTime())
+          .map((row) => ({ workspace_id: row.workspace_id, id: row.id }));
         return { rows };
+      }
+      if (text.startsWith("SELECT status FROM certificate_jobs")) {
+        const row = [...enrollments.values()].find((r) => r.current_job_id === params[1]);
+        return { rows: row ? [{ status: row.job_status }] : [] };
       }
       if (text.includes("FROM certificate_enrollments e")) {
         const row = enrollments.get(params[1]);
@@ -333,6 +412,13 @@ function rowDb() {
         row.next_poll_at = new Date();
         return { rows: [] };
       }
+      if (text.includes("SET state = 'cancelled'")) {
+        const row = enrollments.get(params[1]);
+        row.state = "cancelled";
+        row.next_poll_at = params[2];
+        return { rows: [] };
+      }
+      if (text.includes("UPDATE certificate_jobs")) return { rows: [] };
       if (text.includes("INSERT INTO certificate_issuer_versions")) {
         const issuer = issuers.get(params[1]);
         issuer.confirmed = {
@@ -410,6 +496,27 @@ describe("enrollment rows", () => {
     assert.ok(db.enrollments.get(deferredId).next_poll_at instanceof Date);
   });
 
+  it("clears a leftover poll date when a pending attempt ends in a terminal result", async () => {
+    const db = rowDb();
+    const id = ENROLLMENT;
+    const row = storedEnrollment(id, "pending_issuance");
+    row.next_poll_at = new Date(Date.now() + 60_000);
+    db.putEnrollment(row);
+    await recordEnrollmentResult(db, {
+      workspaceId: WORKSPACE,
+      job: { enrollment_id: id },
+      enrollmentResult: {
+        enrollmentId: id,
+        attempt: 1,
+        state: "denied",
+        requestId: 42,
+        caHresult: "0x80094012",
+      },
+    });
+    assert.equal(db.enrollments.get(id).state, "denied");
+    assert.equal(db.enrollments.get(id).next_poll_at, null);
+  });
+
   it("keeps the original IIS target on the first continuation", async () => {
     const db = rowDb();
     const id = ENROLLMENT;
@@ -432,6 +539,143 @@ describe("enrollment rows", () => {
     assert.equal(jobs[0].target.store, "WebHosting");
     assert.equal(jobs[0].target.binding.site, "Shop");
     assert.equal(jobs[0].issuerKind, undefined);
+  });
+
+  it("dispatches a scheduled AD CS continuation with issuer fields attached and a schema-valid payload", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "pending_issuance", {
+      attempt: 1,
+      pending_since: new Date("2026-10-11T11:00:00.000Z"),
+      next_poll_at: new Date("2026-10-11T12:00:00.000Z"),
+    }));
+    const scheduled = [];
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now: new Date("2026-10-11T12:05:00.000Z"),
+      createJob: async (args) => {
+        scheduled.push(args);
+        return { id: JOB_ID };
+      },
+    });
+    assert.equal(created.length, 1);
+    const [request] = scheduled;
+    assert.equal(request.operation, "continue-enrollment");
+    assert.equal(request.payload.issuerKind, undefined, "stored payload must not carry issuerKind");
+    assert.equal(request.payload.enrollment, undefined, "stored payload must not carry enrollment");
+
+    const stored = db.enrollments.get(ENROLLMENT);
+    const agent = {
+      id: "agent-row-1",
+      workspaceId: WORKSPACE,
+      agentId: "agent-01",
+      name: "Windows agent",
+      status: "active",
+      protocolVersion: "1.0.0",
+      agentVersion: "0.1.0",
+      pinnedSigningKeyId: null,
+      lastSeenAt: null,
+      retiredAt: null,
+    };
+    const claimRow = {
+      id: JOB_ID,
+      workspace_id: WORKSPACE,
+      status: "claimed",
+      claim_id: CLAIM_ID,
+      lease_expires_at: new Date(Date.now() + 15 * 60 * 1000),
+      attempt_count: 1,
+      operation: "continue-enrollment",
+      subject_type: "managed_certificate",
+      subject_id: request.subjectId,
+      payload: request.payload,
+      mode: "real",
+      executor_kind: "agent",
+      assigned_agent_id: agent.id,
+      enrollment_id: ENROLLMENT,
+      subject_is_provisioning: false,
+      created_at: new Date("2026-10-11T12:05:00.000Z"),
+    };
+    const claimDb = {
+      async connect() {
+        return this;
+      },
+      release() {},
+      async query(text, params = []) {
+        const sql = text.replace(/\s+/g, " ").trim();
+        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+        if (sql.includes("SAVEPOINT") || sql.includes("RELEASE SAVEPOINT")) return { rows: [] };
+        if (sql.includes("FROM certificate_enrollments e")) return db.query(text, params);
+        if (sql.includes("SELECT last_sequence")) return { rows: [{ last_sequence: 0 }] };
+        if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+        if (sql.includes("SELECT declared_target_selectors")) {
+          return {
+            rows: [{
+              declared_target_selectors: [],
+              declared_command_profile_names: [],
+              supported_dns_providers: [],
+              declared_capabilities: ["adcs-enroll-v1"],
+              capabilities_updated_at: new Date().toISOString(),
+            }],
+          };
+        }
+        if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: [claimRow] };
+        if (sql.includes("SET status = 'claimed'")) return { rows: [claimRow] };
+        throw new Error(`unexpected claim query: ${sql}`);
+      },
+    };
+    const result = await claimJobs({
+      dbPool: claimDb,
+      agent,
+      body: { maxJobs: 1, supportedActions: ["continue-enrollment"] },
+      envelope: {},
+      env: {},
+      deps: {
+        lockWorkspaceForCertOpsSideEffect: async () => ({ locked: true }),
+        enforceAgentSequence: async () => {},
+        invalidateApprovalForClaim: async () => {},
+        signJobForDispatch: async ({ job }) => ({
+          ...job,
+          nonce: require("node:crypto").randomBytes(24).toString("base64url"),
+          issuedAt: "2026-10-11T12:05:00.000Z",
+          expiresAt: "2026-10-11T12:10:00.000Z",
+          signingKeyId: "key-1",
+          signature: require("node:crypto").randomBytes(64).toString("base64"),
+        }),
+      },
+    });
+
+    assert.equal(result.jobs.length, 1);
+    const job = result.jobs[0];
+    assert.equal(job.action, "continue-enrollment");
+    assert.equal(job.issuerKind, "adcs");
+    assert.equal(job.enrollment.enrollmentId, ENROLLMENT);
+    assert.equal(job.enrollment.attempt, 2);
+    assert.equal(job.enrollment.snapshotSha256, stored.snapshot_sha256);
+    assert.equal(
+      require("node:crypto").createHash("sha256")
+        .update(Buffer.from(job.enrollment.snapshotB64, "base64"))
+        .digest("hex"),
+      stored.snapshot_sha256,
+    );
+    for (const key of [
+      "commandRef", "caEndpoint", "acmeKind", "eabRef", "accountRef", "preferredChain",
+      "dnsZone", "dnsProvider", "keyRotation", "keyAlgorithm", "keySize", "sans",
+      "certificatePem", "certificatePemSha256", "renewalProfile", "deploymentTargets",
+    ]) {
+      assert.equal(job[key], undefined, `ACME-only field ${key} must be absent`);
+    }
+
+    const ajv = new Ajv({ allErrors: true, strict: false });
+    addFormats(ajv);
+    for (const schema of [
+      signedDispatchPayloadSchema,
+      signedDispatchWireV1Schema,
+      signedDispatchWireV2Schema,
+      enrollmentSnapshotSchema,
+    ]) {
+      ajv.addSchema(schema);
+    }
+    const validate = ajv.compile(jobPayloadSchema);
+    assert.equal(validate(job), true, JSON.stringify(validate.errors));
   });
 
   it("dispatches a continuation after an uncertain RequestId is proposed", async () => {
@@ -679,6 +923,148 @@ describe("enrollment rows", () => {
     assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at, null);
   });
 
+  it("refuses to abandon an enrollment that has not reached an uncertain submission", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "pending_issuance", { attempt: 1 }));
+    await assert.rejects(
+      abandonEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        audit,
+      }),
+      (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).state, "pending_issuance");
+    for (const state of ["requested", "prepared", "submitting"]) {
+      const early = rowDb();
+      early.putEnrollment(storedEnrollment(ENROLLMENT, state, { attempt: 1 }));
+      await assert.rejects(
+        abandonEnrollment({
+          client: early,
+          workspaceId: WORKSPACE,
+          enrollmentId: ENROLLMENT,
+          audit,
+        }),
+        (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+      );
+      assert.equal(early.enrollments.get(ENROLLMENT).state, state);
+    }
+  });
+
+  it("cancels an enrollment that never reached the CA without scheduling key cleanup", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "requested", {
+      attempt: 1,
+      job_status: "failed",
+      current_job_id: "job-1",
+    }));
+    await cancelEnrollment({
+      client: db,
+      workspaceId: WORKSPACE,
+      enrollmentId: ENROLLMENT,
+      audit,
+    });
+    const row = db.enrollments.get(ENROLLMENT);
+    assert.equal(row.state, "cancelled");
+    assert.equal(row.next_poll_at, null);
+  });
+
+  it("refuses to cancel an enrollment while the agent is still running the attempt", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "requested", {
+      attempt: 1,
+      job_status: "running",
+    }));
+    await assert.rejects(
+      cancelEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        audit,
+      }),
+      (error) => error.code === "CERTOPS_ENROLLMENT_JOB_ACTIVE",
+    );
+  });
+
+  it("refuses a profile enrollment while that issuer requires revalidation", async () => {
+    const db = profileEnrollmentDb({
+      version: 1,
+      ca_config: "ca01.corp.example.com\\Corp Issuing CA 01",
+      template: "TokenTimerWebServer",
+      ca_key_sha256: "ab".repeat(32),
+      kind: "adcs",
+      revalidation_required: true,
+    });
+    await assert.rejects(
+      enrollThroughProfile(db),
+      (error) => error.code === "CERTOPS_ISSUER_REVALIDATION_REQUIRED",
+    );
+  });
+
+  it("refuses a profile enrollment when the issuer key is not confirmed", async () => {
+    const db = profileEnrollmentDb(null);
+    await assert.rejects(
+      enrollThroughProfile(db),
+      (error) => error.code === "CERTOPS_ISSUER_NOT_FOUND",
+    );
+  });
+
+  it("keeps ACME profiles off the AD CS enrollment path", async () => {
+    const db = {
+      async query(sql) {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+        if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: null }] };
+        throw new Error(sql);
+      },
+    };
+    await assert.rejects(
+      createEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        profileId: "33333333-3333-4333-8333-333333333333",
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        audit,
+        createJob: async () => ({ id: "job-should-not-exist" }),
+      }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_NOT_SELECTED",
+    );
+  });
+
+  it("refuses an enrollment whose issuer does not match the profile", async () => {
+    const other = "99999999-9999-4999-8999-999999999999";
+    const db = {
+      async query(sql) {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+        if (sql.includes("FROM certificate_profiles")) return { rows: [{ issuer_id: other }] };
+        throw new Error(sql);
+      },
+    };
+    await assert.rejects(
+      createEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        issuerId: ISSUER,
+        profileId: "33333333-3333-4333-8333-333333333333",
+        certificateId: "33333333-3333-4333-8333-333333333333",
+        agentId: "22222222-2222-4222-8222-222222222222",
+        target: WEBHOSTING,
+        authorizedDnsNames: ["app.example.com"],
+        keyAlgorithm: "rsa",
+        keySize: 2048,
+        audit,
+        createJob: async () => ({ id: "job-should-not-exist" }),
+      }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_MISMATCH",
+    );
+  });
+
   it("rolls back an issuer version when confirmation audit fails", async () => {
     const db = rowDb();
     const key = "cd".repeat(32);
@@ -806,5 +1192,142 @@ describe("enrollment rows", () => {
     );
     assert.equal(stored.last.template, template);
     assert.equal(stored.last.caConfig, caConfig);
+  });
+
+  it("lists issuers without certificate bytes and marks a stale enrollment snapshot", async () => {
+    const frozen = freezeSnapshot(snapshotInput());
+    const db = {
+      async query(sql) {
+        if (sql.includes("ORDER BY i.name")) {
+          return {
+            rows: [{
+              id: ISSUER,
+              kind: "adcs",
+              name: "Issuing CA",
+              current_version: 2,
+              revalidation_required: true,
+              last_preflight: {
+                caConfig: "ca01.corp.example.com\\Corp Issuing CA 01",
+                template: "TokenTimerWebServer",
+                templateCheck: { verdict: "safe", reasons: [] },
+                caCheck: { verdict: "safe", reasons: [], operatorAttested: false },
+                caCertificates: [{
+                  keySha256: "ab".repeat(32),
+                  certificateB64: "MIIB",
+                  thumbprintSha1: "AABBCCDDEEFF00112233445566778899AABBCCDD",
+                  notBefore: "2026-01-01T00:00:00.000Z",
+                  notAfter: "2031-01-01T00:00:00.000Z",
+                }],
+              },
+              updated_at: new Date("2026-10-11T12:00:00.000Z"),
+            }],
+          };
+        }
+        if (sql.includes("FROM certificate_enrollments e")) {
+          return {
+            rows: [{
+              id: ENROLLMENT,
+              state: "pending_issuance",
+              attempt: 1,
+              snapshot_bytes: frozen.bytes,
+              operator_request_id: "77",
+              request_id: "42",
+              last_error_code: "ADCS_CA_KEY_CHANGED",
+              issuer_id: ISSUER,
+              issuer_version: 1,
+              certificate_id: null,
+              updated_at: new Date("2026-10-11T12:00:00.000Z"),
+              issuer_name: "Issuing CA",
+              revalidation_required: true,
+              current_version: 2,
+            }],
+          };
+        }
+        if (sql.includes("count(*)")) return { rows: [{ n: 1 }] };
+        throw new Error(sql);
+      },
+    };
+    const issuers = await listIssuers({ client: db, workspaceId: WORKSPACE });
+    assert.equal(issuers.items[0].revalidationRequired, true);
+    assert.equal(issuers.items[0].lastPreflight.caCertificates[0].certificateB64, undefined);
+    assert.equal(issuers.items[0].lastPreflight.caCertificates[0].keySha256, "ab".repeat(32));
+    const enrollments = await listEnrollments({ client: db, workspaceId: WORKSPACE });
+    assert.equal(enrollments.items[0].state, "pending_issuance");
+    assert.equal(enrollments.items[0].requestId, 42);
+    assert.equal(enrollments.items[0].operatorRequestId, 77);
+    assert.equal(enrollments.items[0].snapshotStale, true);
+    assert.equal(enrollments.items[0].template, "TokenTimerWebServer");
+  });
+
+  it("normalizes a negative list limit to 1", async () => {
+    const db = {
+      async query(sql, params) {
+        if (sql.includes("ORDER BY i.name")) {
+          assert.equal(params[1], 1);
+          return { rows: [] };
+        }
+        if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };
+        throw new Error(sql);
+      },
+    };
+    const page = await listIssuers({ client: db, workspaceId: WORKSPACE, limit: -5 });
+    assert.equal(page.pagination.limit, 1);
+  });
+
+  it("hides unconfigured AD CS issuers unless the caller asks for drafts", async () => {
+    const seen = [];
+    const db = {
+      async query(sql) {
+        seen.push(sql);
+        if (sql.includes("count(*)")) return { rows: [{ n: 0 }] };
+        return { rows: [] };
+      },
+    };
+    await listIssuers({ client: db, workspaceId: WORKSPACE });
+    assert.ok(
+      seen.some((sql) => sql.includes("i.kind <> 'adcs' OR i.current_version > 0")),
+    );
+    seen.length = 0;
+    await listIssuers({
+      client: db,
+      workspaceId: WORKSPACE,
+      includeUnconfigured: true,
+    });
+    assert.equal(
+      seen.some((sql) => sql.includes("current_version > 0")),
+      false,
+    );
+  });
+
+  it("discards only a version-0 issuer that has no enrollments", async () => {
+    const db = {
+      async query(sql) {
+        assert.match(sql, /current_version = 0/);
+        assert.match(sql, /NOT EXISTS/);
+        assert.match(sql, /certificate_enrollments/);
+        return { rows: [{ id: ISSUER }] };
+      },
+    };
+    const discarded = await discardUnconfiguredIssuer({
+      client: db,
+      workspaceId: WORKSPACE,
+      issuerId: ISSUER,
+    });
+    assert.equal(discarded.issuerId, ISSUER);
+
+    const missing = {
+      async query() {
+        return { rows: [] };
+      },
+    };
+    await assert.rejects(
+      () =>
+        discardUnconfiguredIssuer({
+          client: missing,
+          workspaceId: WORKSPACE,
+          issuerId: ISSUER,
+        }),
+      (error) => error?.code === "CERTOPS_ISSUER_NOT_FOUND",
+    );
   });
 });

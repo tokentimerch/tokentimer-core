@@ -14,6 +14,8 @@ const {
   createJobMock,
   createControllerProvisionIntentMock,
   listAgentJobLogMock,
+  getCertificateMock,
+  getRenewalProfileMock,
 } = vi.hoisted(() => ({
   useWorkspaceMock: vi.fn(),
   useCertOpsAgentsMock: vi.fn(),
@@ -22,6 +24,8 @@ const {
   createJobMock: vi.fn(),
   createControllerProvisionIntentMock: vi.fn(),
   listAgentJobLogMock: vi.fn(),
+  getCertificateMock: vi.fn(),
+  getRenewalProfileMock: vi.fn(),
 }));
 
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
@@ -61,8 +65,13 @@ vi.mock('../../src/components/certops/certopsApi.js', async () => {
   return {
     ...actual,
     createControllerProvisionIntent: createControllerProvisionIntentMock,
+    getCertificate: getCertificateMock,
   };
 });
+
+vi.mock('../../src/components/certops/certopsRenewalApi.js', () => ({
+  getRenewalProfile: getRenewalProfileMock,
+}));
 
 function renderModal(props = {}) {
   return render(
@@ -95,6 +104,10 @@ beforeEach(() => {
   createJobMock.mockReset();
   createControllerProvisionIntentMock.mockReset();
   listAgentJobLogMock.mockReset();
+  getCertificateMock.mockReset();
+  getRenewalProfileMock.mockReset();
+  getCertificateMock.mockResolvedValue({ certificate: {} });
+  getRenewalProfileMock.mockResolvedValue({});
   listAgentJobLogMock.mockResolvedValue({
     items: [],
     nextCursor: null,
@@ -731,5 +744,58 @@ describe('CreateManualJobModal trustOp mode', () => {
     await waitFor(() => {
       expect(createJobMock).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('CreateManualJobModal operation and subject pairing', () => {
+  it('offers only jobs an operator can create, and never a trust-anchor subject', () => {
+    renderModal();
+    const operation = screen.getByLabelText(/^Operation/);
+    const values = Array.from(operation.querySelectorAll('option')).map(
+      option => option.value
+    );
+    expect(values).toEqual([
+      '',
+      'issue',
+      'renew',
+      'deploy',
+      'reload',
+      'revoke',
+      'noop',
+    ]);
+    selectOperation('renew');
+    const subject = screen.getByLabelText(/^Subject type/);
+    const subjectValues = Array.from(subject.querySelectorAll('option')).map(
+      option => option.value
+    );
+    expect(subjectValues).not.toContain('trust_anchor');
+    expect(subjectValues).not.toContain('token');
+    expect(
+      screen.getByText(/An AD CS profile does not renew through this form/)
+    ).toBeInTheDocument();
+    selectOperation('issue');
+    expect(
+      screen.getByText(/Active Directory Certificate Services is not/)
+    ).toBeInTheDocument();
+  });
+
+  it('refuses renew when the certificate uses an AD CS profile', async () => {
+    getCertificateMock.mockResolvedValue({
+      certificate: { profileId: 'profile-1' },
+    });
+    getRenewalProfileMock.mockResolvedValue({ issuerId: 'issuer-1' });
+    renderModal();
+    selectOperation('renew');
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: 'af0a812e-3557-4694-b294-63e6e83f24c8' },
+    });
+    expect(await screen.findByText(/Open Renewals/)).toBeInTheDocument();
+    const create = screen.getByRole('button', { name: 'Create job' });
+    expect(create).toBeDisabled();
+    fireEvent.click(create);
+    expect(createJobMock).not.toHaveBeenCalled();
   });
 });

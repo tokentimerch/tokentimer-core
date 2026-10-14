@@ -84,6 +84,8 @@ describe("AD CS renew evidence ordering", () => {
     assert.match(tier2Src, /validation_deferred/);
     assert.match(tier2Src, /reconcileSearchFrom:\s*reconciled\.nextSearchFrom/);
     assert.doesNotMatch(tier2Src, /requestId \+ 1/);
+    // submission_uncertain may only reconcile / retrieve; never call submit again.
+    assert.doesNotMatch(tier2Src, /issuer\.submit/);
     const candidateValidation = tier2Src.indexOf("const candidateValidation");
     assert.ok(candidateValidation >= 0);
     const attachAfterValidate = tier2Src.indexOf(
@@ -186,6 +188,22 @@ describe("resultForAdcsOutcome", () => {
       ENROLLMENT,
     );
     assert.equal(result.enrollmentResult.state, "submission_uncertain");
+  });
+
+  it("maps a new CA key to rejected_invalid", () => {
+    const result = resultForAdcsOutcome(
+      {
+        outcome: "rejected_invalid",
+        errorCode: "ADCS_CA_KEY_CHANGED",
+        detail: "CMS signer key does not match caKeySha256",
+      },
+      ENROLLMENT,
+      { knownRequestId: 4242 },
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.enrollmentResult.state, "rejected_invalid");
+    assert.equal(result.enrollmentResult.errorCode, "ADCS_CA_KEY_CHANGED");
+    assert.equal(result.enrollmentResult.requestId, 4242);
   });
 
   it("maps submit uncertain to submission_uncertain", () => {

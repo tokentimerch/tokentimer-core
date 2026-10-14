@@ -9,17 +9,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+The coordinated candidate targets 0.18.0; existing 0.17.3 tags remain immutable.
+
 ### Added
 
-- **CertOps agent output console.** Agents stream a curated, secret-filtered execution console for each job attempt, shown live on the job timeline and from the agent fleet. Managers and admins see the lines; viewers see only whether output is running, complete, or incomplete. The console is best effort: a slow or failing log endpoint never delays or changes a job result. Database migration 69 adds the storage. See [agent output console settings](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
+- **Shared certificate distribution through customer Vault.** An assigned native issuer publishes one immutable certificate version for explicitly assigned Linux consumers. Ordinary, SAN and wildcard certificates use the same workflow. Private keys, Vault credentials and DNS credentials remain customer-local. Distribution management is API-first, with group/consumer status on Renewals. Distribution and AD CS agent capabilities remain gated pending independent real-host release qualification.
+
+- **CertOps agent output console.** Agents stream a curated, secret-filtered execution console for each job attempt, shown live on the job timeline, from the agent fleet, and in the Set up automatic renewal modal after that proving job is dispatched. Managers and admins see the lines; viewers see only whether output is running, complete, or incomplete. An abandoned log stream does not badge a succeeded job as failed. Shutdown can still post the final log batch after the run loop aborts. If a rotated key is installed but the agent custody copy cannot be updated, the job still succeeds, the staging key is kept, and the stale custody file is moved aside. If that move fails, a quarantine marker blocks later jobs from reusing the old custody filename; they use the kept staging key instead. If the marker cannot be written either, the old custody file is wiped in place. An unreadable marker fails closed. A later job reuses a custody key only when that key matches the deployed certificate, so a stale file left after a failed wipe is not selected. The console is best effort: a slow or failing log endpoint never delays or changes a job result. Database migration 69 adds the storage. See [agent output console settings](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
   - **Operator action:** upgrade the API, worker and agents in any order; agents stream only once both sides support it. Keep the `certops` worker scheduled: its new agent-log sweeps close streams for cancelled or requeued jobs and enforce retention.
   - `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`) sets retention. `0` turns storage off and the next sweep deletes stored lines. `CERTOPS_AGENT_LOG_DAILY_BYTES` caps stored bytes per workspace per UTC day (`0`, the default, means no cap); a present but invalid value fails closed at API boot so the quota cannot silently become unlimited. `TT_AGENT_LOG_STREAM=off` stops one agent from sending. Compose forwards retention to `api` and `worker-certops` and the byte cap to `api`; Helm uses `config.certopsAgentLogRetentionDays` / `config.certopsAgentLogDailyBytes`.
 
 ### Changed
 
+- Revoked and decommissioned certificates stay out of the active certificate inventory even when they are still observed. The Including retired view still shows that a retired certificate is deployed.
+- The renewal schedule section is gone. Certificate rows show a CA capacity wait separately from the last renewal attempt, which is a job-status badge.
+- Renewal profiles list the issuer in its own column. Issuer and lead time both use an outline Change button, and profile details uses the same icon as the certificate inventory. AD CS issuers sit on the Renewals tab in the system settings card.
+- **AD CS enrollment on the Windows agent.** Jobs with issuer kind `adcs` enroll and renew IIS certificates from an enterprise CA. A succeeded preflight is stored on the issuer and lists the CA certificates an operator can confirm. The agent contacts a CA only when a local enrollment rule names that CA and template, and only when it has declared `adcs-enroll-v1`. Creating an issuer or profile does not issue a certificate by itself. **Operator guidance:** upgrade API and Windows agents together so a preflight verdict is saved, not only the job status.
 - An IIS renewal on Windows now fails with `UNSUPPORTED_BINDING_SETTINGS` and leaves the binding untouched when the binding has a setting the agent cannot carry over to the new certificate, such as one this host's `netsh` cannot set. The error detail names the setting. Earlier versions dropped such settings on renewal. **Operator guidance:** remove the named setting, or rebind that certificate manually.
 
 ### Fixed
+
+- Preserve mainline AD CS migrations 70–72 and append distribution at 73–75. Reject conflicting preview ledgers rather than changing applied migration meanings.
+- Keep publishing claim IDs out of public material-version responses, including administrator responses. Authorized rollout pause and retirement remain available when execution admission is blocked; resuming remains gated.
 
 - Control Center perpetual-asset and scoped-credential lists now show the rows already returned in `/control-center/stats` on first paint. The list hook could keep an empty seed after stats loaded, so the summary counts were right while the lists looked empty.
 - Opening a managed certificate from a job subject link now shows that certificate's Job history. The detail modal dropped the managed-certificate id on that deep-link path, so the history section never mounted.

@@ -89,7 +89,9 @@ async function setRolloutState({ workspaceId, groupId, rolloutId, state, actorUs
   rolloutId = material.normalizeDistributionId(rolloutId);
   return transaction(async (client) => {
     if(state==="deploying")await lockWorkspaceForCertOpsSideEffect({client,workspaceId});
-    await material.lockGroup(client,workspaceId,groupId);
+    // Containment must remain possible after a source is disabled or retired.
+    // Only resuming can enqueue execution and requires current admission.
+    await material.lockGroup(client,workspaceId,groupId,{allowInactive:state!=="deploying"});
     const row = (await client.query(`UPDATE certops_distribution_rollouts SET state=$4
       WHERE workspace_id=$1 AND group_id=$2 AND id=$3 AND state<>'retired' RETURNING *`, [workspaceId,groupId,rolloutId,state])).rows[0];
     if (!row) fail("CERTOPS_ROLLOUT_NOT_FOUND",404);

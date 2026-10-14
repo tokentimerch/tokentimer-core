@@ -224,6 +224,29 @@ describe('AgentShellConsole', () => {
     ).toBe('No agent output recorded');
   });
 
+  it('badges abandoned stream with succeeded job as Incomplete, not Failed', async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      items: [line(1, 'renew complete')],
+      nextCursor: 'c1',
+      hasMore: false,
+      logsComplete: true,
+      jobStatus: 'succeeded',
+      streams: [
+        {
+          claimId: 'claim-old',
+          attempt: 1,
+          status: 'abandoned',
+          streamingEnabled: true,
+        },
+      ],
+      storageEnabled: true,
+    });
+    renderConsole(fetcher);
+    await screen.findByText('Incomplete');
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Succeeded')).not.toBeInTheDocument();
+  });
+
   it('badges failed jobs as Failed even when the log stream is final', () => {
     const fetcher = vi.fn().mockResolvedValue({
       items: [line(1, 'deploy failed')],

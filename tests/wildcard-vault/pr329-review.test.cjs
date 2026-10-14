@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { createRequire } = require("node:module");
 // Dedicated synthetic database only; never load the workstation's .env.
 assert.equal(process.env.DB_HOST, "127.0.0.1");
-assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : process.env.DB_NAME === "pr329_review_readiness_test" ? "61432" : "59470");
+assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : process.env.DB_NAME === "pr329_review_consistency_test" ? "61532" : process.env.DB_NAME === "pr329_review_readiness_test" ? "61432" : "59470");
 assert.match(process.env.DB_NAME || "", /^pr329_review/);
 process.env.NODE_ENV = "test";
 process.env.CERTOPS_ENABLED = "true";
@@ -278,6 +278,50 @@ async function deploymentFixture(f) {
     fingerprintSha256: version.fingerprint_sha256, validTo: new Date(version.valid_to).toISOString(), observedAt: new Date().toISOString() };
   return { snapshot, child, receipt };
 }
+
+test("public material versions never expose publishing claims to administrators or managers", async () => {
+  const f = await fixture();
+  const endpoint = `${f.base}/distribution-groups/${f.groupId}/versions`;
+  const fields = ["id","workspace_id","group_id","management_period_id","publishing_job_id","profile_revision","state",
+    "certificate_identity_id","provider_version","fingerprint_sha256","valid_to","published_at","created_at",
+    "allocation_released_at","allocation_release_reason"].sort();
+  for (const actor of [f.actor,f.manager]) {
+    const response = await request(f.app).get(endpoint).set("X-Test-Session",String(actor));
+    assert.equal(response.status,200);
+    assert.equal(response.body.versions.length,1);
+    assert.equal(response.body.versions[0].id,f.materialVersionId);
+    assert.deepEqual(Object.keys(response.body.versions[0]).sort(),fields);
+    assert.equal(JSON.stringify(response.body).includes("publishing_claim_id"),false);
+  }
+  assert.equal((await request(f.app).get(endpoint).set("X-Test-Session",String(f.viewer))).status,403);
+  assert.equal((await request(f.app).get(endpoint).set("X-Test-Session",String(f.outsider))).status,403);
+});
+
+test("paused workspaces allow authorized rollout containment without admitting execution", async () => {
+  const f = await fixture();
+  const approval = await f.approved();
+  const snapshot = await operations.transaction(client => material.createRolloutSnapshot({
+    client,...f,approvalJobId:approval.id,approvedIntentHash:material.hashIntent(approval.payload.distributionRollout),
+  }));
+  const endpoint = `${f.base}/distribution-groups/${f.groupId}/rollouts/${snapshot.rolloutId}/state`;
+  const {setWorkspaceCertOpsPauseState} = apiRequire("./services/certops/workspaceKillSwitch");
+  await setWorkspaceCertOpsPauseState({workspaceId:f.workspaceId,certOpsPaused:true,actorUserId:f.actor});
+  const before = (await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows;
+  for (const state of ["paused","retired"]) {
+    assert.equal((await request(f.app).post(endpoint).set("X-Test-Session",String(f.viewer)).send({state})).status,403);
+    assert.equal((await request(f.app).post(endpoint).set("X-Test-Session",String(f.outsider)).send({state})).status,403);
+    assert.equal((await request(f.app).post(endpoint).auth("pr329-test-worker-only",{type:"bearer"}).send({state})).status,403);
+    const response = await request(f.app).post(endpoint).set("X-Test-Session",String(f.manager)).send({state});
+    assert.equal(response.status,200,JSON.stringify(response.body));
+    assert.equal(response.body.state,state);
+    assert.equal((await request(f.app).post(endpoint).set("X-Test-Session",String(f.actor)).send({state:"deploying"})).status,409);
+    await assert.rejects(operations.setRolloutState({...f,rolloutId:snapshot.rolloutId,state:"deploying",actorUserId:f.actor}),{code:"CERTOPS_WORKSPACE_PAUSED"});
+  }
+  assert.equal((await request(f.app).post(endpoint).set("X-Test-Session",String(f.actor)).send({state:"unknown"})).status,422);
+  assert.deepEqual((await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 ORDER BY id",[f.workspaceId])).rows,before);
+  const events = (await pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ROLLOUT_STATE_CHANGED' ORDER BY id",[f.workspaceId])).rows;
+  assert.deepEqual(events.map(row => row.metadata.state),["paused","retired"]);
+});
 
 test("optional authorization changes concurrent with successful receipts yield a degraded rollout and retain audit proof", async (t) => {
   for (const bindingFirst of [false, true]) await t.test(bindingFirst ? "binding commits first" : "receipt commits first", async () => {

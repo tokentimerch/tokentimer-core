@@ -223,7 +223,7 @@ describe('CertificateDetailsModal', () => {
       )
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'Choose a certificate in CertOps' })
+      screen.getByRole('link', { name: 'Choose a certificate in Certificate Management' })
     ).toHaveAttribute('href', '/certops/certificates?workspace=ws-shared');
     expect(screen.getByText('token-serial')).toBeInTheDocument();
     expect(screen.queryByText('unrelated-B-serial')).not.toBeInTheDocument();

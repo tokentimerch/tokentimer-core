@@ -5,7 +5,7 @@
 export const CERTOPS_SCOPE_META = {
   'certops:read': {
     short: 'read',
-    description: 'read certificates and jobs',
+    description: 'reserved for future read APIs',
   },
   'certops:events:write': {
     short: 'events:write',
@@ -13,7 +13,7 @@ export const CERTOPS_SCOPE_META = {
   },
   'certops:jobs:read': {
     short: 'jobs:read',
-    description: 'poll job status',
+    description: 'reserved for future job-status polling',
   },
   'certops:evidence:write': {
     short: 'evidence:write',

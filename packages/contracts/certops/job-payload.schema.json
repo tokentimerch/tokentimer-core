@@ -74,13 +74,21 @@
     },
     "issuerKind": {
       "type": "string",
-      "enum": ["acme", "adcs"],
+      "enum": [
+        "acme",
+        "adcs"
+      ],
       "description": "Issuer kind the job runs against (ADR-0014 decision 1). Absent means acme, so jobs that predate issuer kinds validate unchanged. Not named issuer because job payloads and results already use issuer for a certificate's issuer name. The adcs configuration (CA, template, transport) travels only inside the signed enrollment snapshot, never as separate fields that could disagree with it. Attached by the control plane at signed dispatch; a job request that supplies it is refused."
     },
     "enrollment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enrollmentId", "attempt", "snapshotB64", "snapshotSha256"],
+      "required": [
+        "enrollmentId",
+        "attempt",
+        "snapshotB64",
+        "snapshotSha256"
+      ],
       "description": "Binds the job to one durable enrollment and its frozen issuer configuration (ADR-0014 decisions 2 and 3). The agent hashes the decoded snapshotB64 bytes itself and compares the result with snapshotSha256 and with the hash it journaled for the enrollment; it never re-canonicalizes the snapshot JSON. The decoded bytes are an enrollment-snapshot.schema.json document. Attached by the control plane at signed dispatch; a job request that supplies it is refused.",
       "properties": {
         "enrollmentId": {
@@ -603,51 +611,165 @@
   "allOf": [
     {
       "if": {
-        "required": ["action"],
-        "properties": { "action": { "const": "continue-enrollment" } }
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "continue-enrollment"
+          }
+        }
       },
-      "then": { "required": ["issuerKind", "enrollment"] }
+      "then": {
+        "required": [
+          "issuerKind",
+          "enrollment"
+        ]
+      }
     },
     {
-      "if": { "required": ["enrollment"] },
+      "if": {
+        "required": [
+          "enrollment"
+        ]
+      },
       "then": {
-        "required": ["issuerKind"],
-        "properties": { "issuerKind": { "const": "adcs" } }
+        "required": [
+          "issuerKind"
+        ],
+        "properties": {
+          "issuerKind": {
+            "const": "adcs"
+          }
+        }
       }
     },
     {
       "description": "An adcs job runs only as the first step or a continuation of an enrollment, against one windows-iis target on the Windows CNG path. It carries none of the fields the snapshot supersedes (ACME, DNS-01, key and SAN selection, the ACME-shaped renewal profile, attached PEM) and no multi-target list.",
       "if": {
-        "required": ["issuerKind"],
-        "properties": { "issuerKind": { "const": "adcs" } }
+        "required": [
+          "issuerKind"
+        ],
+        "properties": {
+          "issuerKind": {
+            "const": "adcs"
+          }
+        }
       },
       "then": {
-        "required": ["enrollment"],
+        "required": [
+          "enrollment"
+        ],
         "properties": {
-          "action": { "enum": ["renew", "continue-enrollment"] },
-          "keyMode": { "const": "os-store-managed" },
-          "target": { "properties": { "type": { "const": "windows-iis" } } }
+          "action": {
+            "enum": [
+              "renew",
+              "continue-enrollment"
+            ]
+          },
+          "keyMode": {
+            "const": "os-store-managed"
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            }
+          }
         },
         "not": {
           "anyOf": [
-            { "required": ["commandRef"] },
-            { "required": ["caEndpoint"] },
-            { "required": ["acmeKind"] },
-            { "required": ["eabRef"] },
-            { "required": ["accountRef"] },
-            { "required": ["preferredChain"] },
-            { "required": ["dnsZone"] },
-            { "required": ["dnsProvider"] },
-            { "required": ["keyRotation"] },
-            { "required": ["keyAlgorithm"] },
-            { "required": ["keySize"] },
-            { "required": ["sans"] },
-            { "required": ["certificatePem"] },
-            { "required": ["certificatePemSha256"] },
-            { "required": ["renewalProfile"] },
-             { "required": ["deploymentTargets"] },
-             { "required": ["publication"] },
-             { "required": ["materialDeployment"] }
+            {
+              "required": [
+                "commandRef"
+              ]
+            },
+            {
+              "required": [
+                "caEndpoint"
+              ]
+            },
+            {
+              "required": [
+                "acmeKind"
+              ]
+            },
+            {
+              "required": [
+                "eabRef"
+              ]
+            },
+            {
+              "required": [
+                "accountRef"
+              ]
+            },
+            {
+              "required": [
+                "preferredChain"
+              ]
+            },
+            {
+              "required": [
+                "dnsZone"
+              ]
+            },
+            {
+              "required": [
+                "dnsProvider"
+              ]
+            },
+            {
+              "required": [
+                "keyRotation"
+              ]
+            },
+            {
+              "required": [
+                "keyAlgorithm"
+              ]
+            },
+            {
+              "required": [
+                "keySize"
+              ]
+            },
+            {
+              "required": [
+                "sans"
+              ]
+            },
+            {
+              "required": [
+                "certificatePem"
+              ]
+            },
+            {
+              "required": [
+                "certificatePemSha256"
+              ]
+            },
+            {
+              "required": [
+                "renewalProfile"
+              ]
+            },
+            {
+              "required": [
+                "deploymentTargets"
+              ]
+            },
+            {
+              "required": [
+                "publication"
+              ]
+            },
+            {
+              "required": [
+                "materialDeployment"
+              ]
+            }
           ]
         }
       }

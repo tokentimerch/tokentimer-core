@@ -19,6 +19,8 @@
  *   failed         no certificate, and nothing at the CA to come back for.
  *   not_submitted  the transport proves the request never reached the CA.
  *   uncertain      the request may have reached the CA. Never resubmit it.
+ *   rejected_invalid  the CA answered, and the answer fails a trust check
+ *                  (a new CA key). Do not install it and do not resubmit it.
  *
  * Any outcome may carry `evidence` items, which the executor reports before
  * acting on the outcome. An issuer that can return pending must implement
@@ -39,12 +41,13 @@ const ISSUANCE_OUTCOMES = Object.freeze([
   "failed",
   "not_submitted",
   "uncertain",
+  "rejected_invalid",
 ]);
 
-// AD CS executor + decision-6 validation may land incrementally, but
-// executable selection stays off until durable enrollment journal recovery
-// and control-plane continuation scheduling are integrated.
-const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme"]);
+// Registered here, but dispatch refuses adcs jobs unless adcs-enroll-v1 is
+// qualified in the build manifest (see index.js). A CA that no local
+// enrollment rule names is still refused.
+const IMPLEMENTED_ISSUER_KINDS = Object.freeze(["acme", "adcs"]);
 
 // AD CS RequestIds are 32-bit unsigned (enrollment-result contract).
 const MAX_REQUEST_ID = 0xffffffff;
@@ -84,6 +87,11 @@ function findOutcomeProblem(value) {
         : "requestId must be an integer from 1 to 4294967295";
     case "refused":
       if (!isNonEmptyString(value.rejectionReason)) return "rejectionReason is required";
+      return isNonEmptyString(value.detail) ? null : "detail is required";
+    case "rejected_invalid":
+      if (value.errorCode !== "ADCS_CA_KEY_CHANGED") {
+        return "errorCode must be ADCS_CA_KEY_CHANGED";
+      }
       return isNonEmptyString(value.detail) ? null : "detail is required";
     default:
       return isNonEmptyString(value.detail) ? null : "detail is required";

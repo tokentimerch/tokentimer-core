@@ -262,6 +262,14 @@ test("EVENT_TYPES mirrors the schema enum exactly", () => {
     "policy.checked",
     "trust.distributed",
     "trust.revoked",
+    "adcs-template-verdict",
+    "adcs-submitted",
+    "adcs-pending",
+    "adcs-issued",
+    "adcs-denied",
+    "adcs-uncertain",
+    "adcs-validation-deferred",
+    "adcs-rejected-invalid",
   ]);
 });
 

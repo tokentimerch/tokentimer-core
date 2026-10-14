@@ -114,6 +114,30 @@ async function runCertreq(execFileImpl, argv, timeoutMs) {
  * @param {"submit"|"retrieve"} phase
  * @returns {Promise<string>}
  */
+function describeAdcsOutcome(outcome) {
+  if (!outcome || typeof outcome !== "object") return "outcome=unknown";
+  const parts = [`outcome=${typeof outcome.outcome === "string" ? outcome.outcome : "unknown"}`];
+  if (Number.isInteger(outcome.requestId)) parts.push(`requestId=${outcome.requestId}`);
+  if (typeof outcome.caHresult === "string" && /^0x[0-9A-Fa-f]{1,8}$/.test(outcome.caHresult)) {
+    parts.push(`hresult=${outcome.caHresult}`);
+  }
+  if (
+    typeof outcome.rejectionReason === "string" &&
+    /^[a-z0-9_]{1,64}$/.test(outcome.rejectionReason)
+  ) {
+    parts.push(`reason=${outcome.rejectionReason}`);
+  }
+  if (typeof outcome.detail === "string" && outcome.detail.trim()) {
+    parts.push(outcome.detail.replace(/\s+/g, " ").trim().slice(0, 160));
+  }
+  return parts.join(" ");
+}
+
+function logAdcsResult(info, jobId, phase, outcome) {
+  if (typeof info !== "function") return;
+  info(`job ${jobId}: AD CS certreq -${phase} result ${describeAdcsOutcome(outcome)}`);
+}
+
 async function createInvocationWorkDir(scratchDir, jobId, phase) {
   // jobId may contain `:`; Windows paths cannot. Keep prior evidence dirs.
   // mkdtemp does not create missing parents; ensure the scratch root exists.
@@ -241,6 +265,7 @@ function createAdcsIssuer({
     return {
       outcome: mapped.outcome,
       detail: mapped.detail,
+      ...(typeof mapped.errorCode === "string" ? { errorCode: mapped.errorCode } : {}),
       ...(caHresult ? { caHresult } : {}),
     };
   }
@@ -248,11 +273,13 @@ function createAdcsIssuer({
   async function submit({ csrPem }) {
     return withEnrollmentLock(enrollmentId, async () => {
       if (typeof csrPem !== "string" || !csrPem.includes("BEGIN CERTIFICATE REQUEST")) {
-        return {
+        const refused = {
           outcome: "refused",
           rejectionReason: "invalid_csr",
           detail: "submit requires a PEM certificate request",
         };
+        logAdcsResult(info, jobId, "submit", refused);
+        return refused;
       }
 
       const workDir = await createInvocationWorkDir(scratchDir, jobId, "submit");
@@ -276,7 +303,7 @@ function createAdcsIssuer({
         rspPath,
       ];
       const ran = await runCertreq(execFileImpl, argv, timeoutMs);
-      return classifyAfterCertreq({
+      const submitted = await classifyAfterCertreq({
         phase: "submit",
         cerPath,
         chainPath,
@@ -284,17 +311,21 @@ function createAdcsIssuer({
         exitCode: ran.exitCode,
         killed: ran.killed,
       });
+      logAdcsResult(info, jobId, "submit", submitted);
+      return submitted;
     });
   }
 
   async function retrieve(requestId) {
     return withEnrollmentLock(enrollmentId, async () => {
       if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0xffffffff) {
-        return {
+        const refused = {
           outcome: "refused",
           rejectionReason: "invalid_request_id",
           detail: "retrieve requires a 32-bit unsigned RequestId",
         };
+        logAdcsResult(info, jobId, "retrieve", refused);
+        return refused;
       }
 
       const workDir = await createInvocationWorkDir(scratchDir, jobId, "retrieve");
@@ -325,11 +356,14 @@ function createAdcsIssuer({
       });
       // Pend token on retrieve must match the journaled RequestId.
       if (outcome.outcome === "pending" && outcome.requestId !== requestId) {
-        return {
+        const mismatched = {
           outcome: "uncertain",
           detail: `retrieve pend token ${outcome.requestId} differs from journaled RequestId ${requestId}`,
         };
+        logAdcsResult(info, jobId, "retrieve", mismatched);
+        return mismatched;
       }
+      logAdcsResult(info, jobId, "retrieve", outcome);
       return outcome;
     });
   }
@@ -344,6 +378,7 @@ function createAdcsIssuer({
 
 module.exports = {
   createAdcsIssuer,
+  describeAdcsOutcome,
   derB64ToPem,
   certificateFileToPem,
   certreqExitCode,

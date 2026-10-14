@@ -80,12 +80,12 @@ describe('ApiTokenModal', () => {
       target: { value: 'certbot-prod-hook' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i })
+      screen.getByRole('checkbox', { name: /read.*reserved for future read APIs/i })
     );
     expect(createButton).not.toBeDisabled();
 
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i })
+      screen.getByRole('checkbox', { name: /read.*reserved for future read APIs/i })
     );
     expect(createButton).toBeDisabled();
   });
@@ -167,7 +167,7 @@ describe('ApiTokenModal', () => {
       target: { value: 'certbot-prod-hook' },
     });
     fireEvent.click(
-      screen.getByRole('checkbox', { name: /read.*read certificates and jobs/i })
+      screen.getByRole('checkbox', { name: /read.*reserved for future read APIs/i })
     );
     fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
 

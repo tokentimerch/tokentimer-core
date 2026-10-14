@@ -1,11 +1,9 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-12 for shared certificate distribution in PR #329.
-Dropped the optional already-expired-import
+Last reviewed: 2026-10-14 for the integrated AD CS and distribution candidate. Dropped the optional already-expired-import
 notification ask ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
-quiet historical imports stay the default without a toggle. AD CS durable
-journal recovery remains in draft [#343](https://github.com/tokentimerch/tokentimer-core/pull/343)
-(gated; `adcs` still not executable).
+quiet historical imports stay the default without a toggle. The AD CS
+issuer and enrollment surface target **0.18.0**.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -21,13 +19,13 @@ compatible upgrades.
 Review this page in each release PR; move shipped outcomes into the
 changelog.
 
-CertOps keeps zero control-plane private-key custody (CI-enforced) and does
+Certificate Lifecycle Management (CLM) keeps zero control-plane private-key custody (CI-enforced) and does
 not change the role model. Inventory, executor reporting, the Kubernetes
 controller, agent renewal, signed dispatch, Windows/IIS execution, and
-trust-anchor reconciliation have shipped. CertOps 0.17.0 groups
+trust-anchor reconciliation have shipped. CLM 0.17.0 groups
 certificates by fingerprint and separates lifecycle, management periods and
 observed locations; see [CHANGELOG.md](CHANGELOG.md)
-and `docs/adr/`. Remaining Core CertOps work is listed under Before v1.0.0,
+and `docs/adr/`. Remaining Core CLM work is listed under Before v1.0.0,
 except the AD CS issuer, which does not gate v1.0.0.
 Airgap operator packages, proxy-agents, appliance connectors, and
 compliance reporting are not deliverables of this repository.
@@ -39,7 +37,7 @@ compliance reporting are not deliverables of this repository.
 These are the remaining pilot asks. They ship in 0.x. v1.0.0 is not
 called stable while they are open.
 
-- **CertOps destinations: store issued material and distribute it**
+- **CLM destinations: store issued material and distribute it**
   ([#248](https://github.com/tokentimerch/tokentimer-core/issues/248)).
   Name filesystem, IIS, or customer Vault locations on a certificate.
   One issuance can deploy to those destinations. The control plane
@@ -53,7 +51,7 @@ called stable while they are open.
   Wire offline mode and outbound allowlists into API and worker egress.
   Independent of the already-shipped integration redirect and pagination
   checks. Issuer CA/ACME/DNS egress in #246 must reuse this policy.
-- **CertOps issuer connectors and revocation jobs**
+- **CLM issuer connectors and revocation jobs**
   ([#246](https://github.com/tokentimerch/tokentimer-core/issues/246)).
   Core ACME, step-ca, and webhook issuers. CA-backed revoke,
   replace-compromised, decommission, and verify-revocation. Encrypted
@@ -81,11 +79,14 @@ called stable while it is open.
   inert executor wiring ([#339](https://github.com/tokentimerch/tokentimer-core/pull/339)),
   and issued-certificate validation before accept
   ([#342](https://github.com/tokentimerch/tokentimer-core/pull/342)) are on `main`.
-  Durable enrollment journal recovery is implemented on the agent in draft
-  [#343](https://github.com/tokentimerch/tokentimer-core/pull/343) and stays
-  inert. `adcs` remains out of the executable issuer kinds until
-  control-plane enrollment records and continuation scheduling land, and
-  the ADR-0014 release gate passes on real hosts.
+  Durable enrollment journal recovery
+  ([#343](https://github.com/tokentimerch/tokentimer-core/pull/343)) and
+  control-plane enrollment records, continuation scheduling, and issuer
+  preflight ([#345](https://github.com/tokentimerch/tokentimer-core/pull/345))
+  are on `main`. Operator UI and enrollment completion target **0.18.0**
+  (`feat/adcs-dashboard`). The agent contacts a CA only when a local
+  enrollment rule names that CA and template, and only when it has
+  declared `adcs-enroll-v1`.
 
 ---
 
@@ -131,6 +132,6 @@ targeted dashboard and test maintainability
 ([#238](https://github.com/tokentimerch/tokentimer-core/issues/238)).
 TanStack Query v5; incremental type checking on changed security-critical
 services and the shared config package; internationalization; an API v2
-compatibility policy before any v2 paths. CertOps follow-ons such as CT
+compatibility policy before any v2 paths. CLM follow-ons such as CT
 log discovery and orphaned-certificate detection need a scoped issue and
 a concrete operator need before they are scheduled.

@@ -33,6 +33,14 @@ function hexHresult(code) {
   return `0x${u.toString(16).toUpperCase().padStart(8, "0")}`;
 }
 
+// Exact text from tokentimer-adcs-cmc. A new CA key fails here, before leaf
+// validation, because the CMC signer is not the pinned key.
+const CA_KEY_CHANGED_DETAIL = "CMS signer key does not match caKeySha256";
+
+function isCaKeyChanged(cmc) {
+  return Boolean(cmc) && cmc.error === CA_KEY_CHANGED_DETAIL;
+}
+
 /**
  * @param {object} params
  * @param {AdcsPhase} params.phase
@@ -77,6 +85,17 @@ function mapAdcsDisposition({
     return {
       outcome: "uncertain",
       detail: `CA RPC failure (${hrText}) but a response/certificate/chain artefact was written`,
+      hresult: hr,
+    };
+  }
+
+  // The CA answered, but with a key other than the pin. That is a trust
+  // change, not an unknown submission.
+  if (isCaKeyChanged(cmc)) {
+    return {
+      outcome: "rejected_invalid",
+      errorCode: "ADCS_CA_KEY_CHANGED",
+      detail: CA_KEY_CHANGED_DETAIL,
       hresult: hr,
     };
   }
@@ -168,6 +187,7 @@ function mapAdcsDisposition({
 
 module.exports = {
   HRESULT,
+  CA_KEY_CHANGED_DETAIL,
   mapAdcsDisposition,
   toUint32,
   hexHresult,

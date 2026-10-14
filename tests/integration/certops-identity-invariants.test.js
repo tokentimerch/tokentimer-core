@@ -14,6 +14,7 @@ const {
   retireCertificateIdentity,
   stopManagingSource,
   readdManagingSource,
+  replaceManagingSource,
 } = require("../../apps/api/services/certops/certificateIdentity");
 const {
   countActiveManagedCertificatesWithClient,
@@ -652,6 +653,46 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       );
     }
   });
+  it("replace-management refuses another certificate's period and leaves both sources managed", async () => {
+    const ws = await workspace(),
+      mcA = await source(ws, A),
+      mcB = await source(ws, B),
+      periodA = await period(mcA);
+    await assert.rejects(
+      replaceManagingSource({
+        workspaceId: ws,
+        periodId: periodA.id,
+        managedCertificateId: mcB.id,
+        renewalProfileId: null,
+        automationEnabled: false,
+        client: db,
+      }),
+      { code: "CERTOPS_MANAGEMENT_PERIOD_MISMATCH" },
+    );
+    assert.equal((await period(mcA)).id, periodA.id);
+    assert.equal((await period(mcA)).ended_at, null);
+    assert.equal((await period(mcB)).ended_at, null);
+  });
+
+  it("replace-management rolls back the stop when the re-attach is refused", async () => {
+    const ws = await workspace(),
+      mc = await source(ws, A),
+      open = await period(mc);
+    await assert.rejects(
+      replaceManagingSource({
+        workspaceId: ws,
+        periodId: open.id,
+        managedCertificateId: mc.id,
+        renewalProfileId: null,
+        automationEnabled: true,
+        client: db,
+      }),
+      { code: "CERTOPS_MANAGEMENT_CONFIG_REQUIRED" },
+    );
+    assert.equal((await period(mc)).id, open.id);
+    assert.equal((await period(mc)).ended_at, null);
+  });
+
   it("a re-added provisional source reports its actual new management start time", async () => {
     const ws = await workspace(1),
       mc = await source(ws, null);
@@ -807,15 +848,24 @@ describe("CertOps identity invariants on PostgreSQL", function () {
         await (observationFirst ? capture : lifecycle).query("COMMIT");
         await (observationFirst ? lifecycle : capture).query("COMMIT");
       });
-      const listing = await listCertificateIdentities({
+      const hidden = await listCertificateIdentities({
         client: db,
         workspaceId: ws,
         excludeRetired: true,
       });
+      assert.equal(
+        hidden.items.find((item) => item.identityId === id.id),
+        undefined,
+      );
+      const listing = await listCertificateIdentities({
+        client: db,
+        workspaceId: ws,
+      });
       const row = listing.items.find((item) => item.identityId === id.id);
-      assert(row, "Retired certificate with fresh use remains visible");
+      assert(row, "Retired certificate stays visible when retired rows are included");
       assert.equal(row.lifecycleStatus, "decommissioned");
       assert.equal(row.stillObserved, true);
+      assert.match(String(row.lifecycleDisplay), /Still observed/);
     });
   }
   it("retirement skips a contended source while preserving authoritative lifecycle and token state", async () => {

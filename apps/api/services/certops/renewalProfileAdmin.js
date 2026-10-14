@@ -54,9 +54,21 @@ const { resolveRenewalPerCaCap, caCapKey } = require("./renewalCapacity");
 const { isAgentRenewableKeyMode } = require("./jobs");
 const { OPERATOR_OWNED_METADATA_KEY } = require("./renewalProfileDerivation");
 const { resolveListSort } = require("./listSorting");
+const {
+  ADCS_ECDSA_SIZES,
+  ADCS_RSA_SIZES,
+  ADCS_SITE_PATTERN,
+  ADCS_STORE_PATTERN,
+  CERTOPS_PROFILE_INVALID,
+  CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+  adcsHost,
+  adcsTargetComplete,
+  profileError,
+  validateAdcsRenewalPolicy,
+  validateAdcsRenewalProfile,
+} = require("./adcsRenewalRules");
 
 const CERTOPS_PROFILE_NOT_FOUND = "CERTOPS_PROFILE_NOT_FOUND";
-const CERTOPS_PROFILE_INVALID = "CERTOPS_PROFILE_INVALID";
 const CERTOPS_PROFILE_FIELD_IMMUTABLE = "CERTOPS_PROFILE_FIELD_IMMUTABLE";
 const CERTOPS_PROFILE_NO_CHANGES = "CERTOPS_PROFILE_NO_CHANGES";
 
@@ -99,6 +111,34 @@ const EDITABLE_PROFILE_FIELDS = Object.freeze([
   "preferredChain",
 ]);
 
+// The AD CS scheduler reads only these from a profile; the ACME-only fields
+// would be saved and then ignored.
+const ADCS_EDITABLE_PROFILE_FIELDS = Object.freeze([
+  "sanPolicy",
+  "keyAlgorithm",
+  "keySize",
+]);
+
+// AD CS profiles have no schemaVersion, so the ACME validator would refuse them.
+function isAdcsRenewalProfile(renewalProfile) {
+  return (
+    !!renewalProfile &&
+    typeof renewalProfile === "object" &&
+    renewalProfile.schemaVersion === undefined &&
+    renewalProfile.target?.type === "windows-iis"
+  );
+}
+
+// The issuer decides which rules apply: the scheduler renews through the
+// issuer's path and ignores fields that path does not read. A profile that was
+// ACME-shaped and then moved to an AD CS issuer keeps schemaVersion, so shape
+// alone would apply the wrong rules. Shape is only the fallback when the issuer
+// is not known.
+function usesAdcsRules(renewalProfile, issuerKind) {
+  if (issuerKind !== undefined) return issuerKind === "adcs";
+  return isAdcsRenewalProfile(renewalProfile);
+}
+
 /**
  * Immutable paths, listed only so a request that tries to set one gets a
  * specific 422 naming the field instead of a silent no-op. Silence would be
@@ -114,13 +154,6 @@ const IMMUTABLE_PROFILE_FIELDS = Object.freeze([
   "schemaVersion",
   "profileId",
 ]);
-
-function profileError(message, code = CERTOPS_PROFILE_INVALID, details = null) {
-  const error = new Error(message);
-  error.code = code;
-  if (details) error.details = details;
-  return error;
-}
 
 function normalizeLimit(value) {
   const parsed = Number.parseInt(value, 10);
@@ -148,6 +181,26 @@ function parseMetadata(value) {
   }
   if (typeof value === "object" && !Array.isArray(value)) return value;
   return {};
+}
+
+function certificateSummaries(value) {
+  let rows = value;
+  if (typeof value === "string") {
+    try {
+      rows = JSON.parse(value);
+    } catch {
+      rows = [];
+    }
+  }
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if (!row || typeof row.id !== "string" || row.id.length === 0) return [];
+    const commonName =
+      typeof row.commonName === "string" && row.commonName.trim()
+        ? row.commonName.trim()
+        : row.id;
+    return [{ id: row.id, commonName }];
+  });
 }
 
 /**
@@ -182,13 +235,19 @@ function profileRecord(row) {
     renewBeforeDays:
       row.renew_before_days == null ? null : Number(row.renew_before_days),
     keyMode: row.key_mode || null,
+    issuerId: row.issuer_id || null,
     renewalProfile,
     // Machine-derived profiles are the norm now, so say so explicitly rather
     // than making an operator infer it from the name prefix.
     derived: Boolean(derivedFrom),
     derivedFrom,
     certificateCount: Number(row.certificate_count || 0),
-    editableFields: [...EDITABLE_PROFILE_FIELDS],
+    certificates: certificateSummaries(row.certificate_names),
+    editableFields: [
+      ...(usesAdcsRules(renewalProfile, row.issuer_kind)
+        ? ADCS_EDITABLE_PROFILE_FIELDS
+        : EDITABLE_PROFILE_FIELDS),
+    ],
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
@@ -202,6 +261,13 @@ const PROFILE_SELECT = `
          cp.source,
          cp.renew_before_days,
          cp.key_mode,
+         cp.issuer_id,
+         (
+           SELECT ci.kind
+             FROM certificate_issuers ci
+            WHERE ci.workspace_id = cp.workspace_id
+              AND ci.id = cp.issuer_id
+         ) AS issuer_kind,
          cp.public_metadata,
          cp.created_at,
          cp.updated_at,
@@ -210,7 +276,22 @@ const PROFILE_SELECT = `
              FROM managed_certificates mc
             WHERE mc.workspace_id = cp.workspace_id
               AND mc.profile_id = cp.id
-         ) AS certificate_count
+         ) AS certificate_count,
+         (
+           SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                    'id', named.id,
+                    'commonName', named.common_name
+                  ) ORDER BY named.common_name), '[]'::jsonb)
+             FROM (
+               SELECT mc.id::text AS id,
+                      COALESCE(NULLIF(TRIM(mc.common_name), ''), mc.id::text) AS common_name
+                 FROM managed_certificates mc
+                WHERE mc.workspace_id = cp.workspace_id
+                  AND mc.profile_id = cp.id
+                ORDER BY 2
+                LIMIT 8
+             ) named
+         ) AS certificate_names
     FROM certificate_profiles cp
 `;
 
@@ -319,7 +400,7 @@ function normalizeRenewBeforeDays(value) {
  * produce a combination that individually-valid fields would allow but the
  * schema forbids (for example requireMatch true with no verification host).
  */
-function applyRenewalProfilePatch(storedProfile, patch) {
+function applyRenewalProfilePatch(storedProfile, patch, { issuerKind } = {}) {
   if (!storedProfile || typeof storedProfile !== "object") {
     throw profileError(
       "This profile has no renewal configuration to edit",
@@ -341,9 +422,9 @@ function applyRenewalProfilePatch(storedProfile, patch) {
     );
   }
 
-  const unknown = Object.keys(patch).filter(
-    (key) => !EDITABLE_PROFILE_FIELDS.includes(key),
-  );
+  const adcs = usesAdcsRules(storedProfile, issuerKind);
+  const editable = adcs ? ADCS_EDITABLE_PROFILE_FIELDS : EDITABLE_PROFILE_FIELDS;
+  const unknown = Object.keys(patch).filter((key) => !editable.includes(key));
   if (unknown.length > 0) {
     throw profileError(
       `Unknown renewal-profile fields: ${unknown.join(", ")}`,
@@ -353,14 +434,14 @@ function applyRenewalProfilePatch(storedProfile, patch) {
   }
 
   const merged = { ...storedProfile };
-  for (const field of EDITABLE_PROFILE_FIELDS) {
+  for (const field of editable) {
     if (Object.prototype.hasOwnProperty.call(patch, field)) {
       merged[field] = patch[field];
     }
   }
 
   // Whole-object validation through the scheduler's own gate.
-  return validateRenewalProfile(merged);
+  return adcs ? validateAdcsRenewalPolicy(merged) : validateRenewalProfile(merged);
 }
 
 /**
@@ -370,6 +451,65 @@ function applyRenewalProfilePatch(storedProfile, patch) {
  * setWorkspaceCertOpsPauseState: a profile change that alters what runs on a
  * host must not be able to commit without its audit record.
  */
+async function assertIssuerCompatibleWithProfile(client, { workspaceId, issuerId, renewalProfile }) {
+  const result = await client.query(
+    `SELECT i.kind, i.revalidation_required, v.ca_key_sha256
+       FROM certificate_issuers i
+       LEFT JOIN certificate_issuer_versions v
+         ON v.workspace_id = i.workspace_id
+        AND v.issuer_id = i.id
+        AND v.version = i.current_version
+      WHERE i.workspace_id = $1 AND i.id = $2::uuid
+      FOR SHARE OF i`,
+    [workspaceId, issuerId],
+  );
+  const issuer = result.rows[0];
+  if (!issuer || issuer.kind !== "adcs") return;
+  if (!adcsTargetComplete(renewalProfile?.target)) {
+    throw profileError(
+      "This profile has no complete Windows/IIS deployment target, so AD CS cannot renew it. Create an AD CS renewal profile instead.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+  // Switching an ACME-shaped profile onto AD CS must meet AD CS policy too,
+  // not only the target shape above.
+  try {
+    validateAdcsRenewalPolicy(renewalProfile);
+  } catch (error) {
+    throw profileError(
+      `This profile cannot be renewed through AD CS: ${error.message}`,
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+  if (issuer.revalidation_required === true || !issuer.ca_key_sha256) {
+    throw profileError(
+      "Confirm a CA certificate on this AD CS issuer before automatic renewal can use it.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+}
+
+// Reverse of the check above. AD CS profiles never carry ca, acme, dns, or
+// deploymentTargets, and this API cannot add them (they are immutable here),
+// so clearing the issuer would leave a profile the scheduler refuses on its
+// next due renewal.
+function assertProfileRunsAcme(renewalProfile) {
+  const runnable =
+    typeof renewalProfile?.ca?.endpoint === "string" &&
+    typeof renewalProfile?.acme?.commandRef === "string" &&
+    typeof renewalProfile?.acme?.kind === "string" &&
+    typeof renewalProfile?.dns?.provider === "string" &&
+    typeof renewalProfile?.dns?.zone === "string" &&
+    Array.isArray(renewalProfile?.deploymentTargets) &&
+    renewalProfile.deploymentTargets.length > 0;
+  if (!runnable) {
+    throw profileError(
+      "This profile has no ACME CA, command, or DNS settings, so it cannot switch to ACME. Create an ACME renewal profile instead.",
+      CERTOPS_PROFILE_ISSUER_INCOMPATIBLE,
+    );
+  }
+}
+
 async function updateRenewalProfile({
   dbPool = pool,
   workspaceId,
@@ -378,6 +518,7 @@ async function updateRenewalProfile({
   renewBeforeDays,
   renewalProfile,
   description,
+  issuerId,
   actorUserId = null,
   auditWriter = writeAudit,
 } = {}) {
@@ -388,7 +529,7 @@ async function updateRenewalProfile({
     transactionStarted = true;
 
     const existing = await client.query(
-      `SELECT id, name, status, renew_before_days, description, public_metadata
+      `SELECT id, name, status, renew_before_days, description, public_metadata, issuer_id
          FROM certificate_profiles
         WHERE workspace_id = $1 AND id = $2::uuid
         FOR UPDATE`,
@@ -432,16 +573,6 @@ async function updateRenewalProfile({
       }
     }
 
-    let nextMetadata = metadata;
-    if (renewalProfile !== undefined) {
-      const validated = applyRenewalProfilePatch(
-        metadata.renewalProfile,
-        renewalProfile,
-      );
-      nextMetadata = { ...metadata, renewalProfile: validated };
-      changes.renewalProfileFields = Object.keys(renewalProfile);
-    }
-
     let nextDescription = row.description;
     if (description !== undefined) {
       if (description !== null && typeof description !== "string") {
@@ -452,11 +583,71 @@ async function updateRenewalProfile({
       if (nextDescription !== row.description) changes.description = true;
     }
 
+    let nextIssuerId = row.issuer_id || null;
+    if (issuerId !== undefined) {
+      if (issuerId === null) {
+        nextIssuerId = null;
+      } else if (
+        typeof issuerId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(issuerId)
+      ) {
+        throw profileError("issuerId must be a uuid or null");
+      } else {
+        const found = await client.query(
+          `SELECT id FROM certificate_issuers WHERE workspace_id = $1 AND id = $2::uuid`,
+          [workspaceId, issuerId],
+        );
+        if (found.rows.length === 0) {
+          throw profileError(
+            "Issuer was not found in this workspace",
+            "CERTOPS_PROFILE_ISSUER_NOT_FOUND",
+          );
+        }
+        nextIssuerId = issuerId;
+      }
+      if (nextIssuerId !== (row.issuer_id || null)) {
+        changes.issuerId = { from: row.issuer_id || null, to: nextIssuerId };
+      }
+    }
+
+    // The patch rules follow the issuer this profile will use, so it runs
+    // after the issuer is resolved.
+    let nextMetadata = metadata;
+    if (renewalProfile !== undefined) {
+      let issuerKind = null;
+      if (nextIssuerId) {
+        const kindResult = await client.query(
+          `SELECT i.kind FROM certificate_issuers i
+            WHERE i.workspace_id = $1 AND i.id = $2::uuid`,
+          [workspaceId, nextIssuerId],
+        );
+        issuerKind = kindResult.rows[0]?.kind ?? null;
+      }
+      const validated = applyRenewalProfilePatch(
+        metadata.renewalProfile,
+        renewalProfile,
+        { issuerKind },
+      );
+      nextMetadata = { ...metadata, renewalProfile: validated };
+      changes.renewalProfileFields = Object.keys(renewalProfile);
+    }
+
     if (Object.keys(changes).length === 0) {
       throw profileError(
         "No supported changes were requested",
         CERTOPS_PROFILE_NO_CHANGES,
       );
+    }
+
+    if (nextIssuerId && (changes.issuerId || changes.renewalProfileFields)) {
+      await assertIssuerCompatibleWithProfile(client, {
+        workspaceId,
+        issuerId: nextIssuerId,
+        renewalProfile: nextMetadata.renewalProfile,
+      });
+    }
+    if (nextIssuerId === null && changes.issuerId) {
+      assertProfileRunsAcme(nextMetadata.renewalProfile);
     }
 
     // The first successful edit takes ownership, which is what makes the edit
@@ -476,6 +667,7 @@ async function updateRenewalProfile({
               renew_before_days = $4,
               description = $5,
               public_metadata = $6::jsonb,
+              issuer_id = $7,
               updated_at = NOW()
         WHERE workspace_id = $1 AND id = $2::uuid
         RETURNING id`,
@@ -486,6 +678,7 @@ async function updateRenewalProfile({
         nextRenewBeforeDays,
         nextDescription,
         JSON.stringify(nextMetadata),
+        nextIssuerId,
       ],
     );
 
@@ -515,6 +708,191 @@ async function updateRenewalProfile({
       } catch (_) {
         // Preserve the primary failure for the caller.
       }
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function normalizeAdcsProfileInput(body) {
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!name || name.length > 128) {
+    throw profileError("name must be 1 to 128 characters");
+  }
+  const description =
+    body?.description == null || body.description === ""
+      ? null
+      : String(body.description).trim();
+  if (description && description.length > 500) {
+    throw profileError("description must be 500 characters or fewer");
+  }
+  const issuerId = String(body?.issuerId || "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(issuerId)) {
+    throw profileError("issuerId must be a confirmed AD CS issuer");
+  }
+  const target = body?.target;
+  const binding = target?.binding;
+  const reference = adcsHost(target?.reference, "certificate name");
+  if (!target || target.type !== "windows-iis") {
+    throw profileError("target must be a windows-iis binding");
+  }
+  if (typeof target.store !== "string" || !ADCS_STORE_PATTERN.test(target.store.trim())) {
+    throw profileError("store must name a Windows certificate store, usually My");
+  }
+  if (
+    !binding ||
+    typeof binding.site !== "string" ||
+    !ADCS_SITE_PATTERN.test(binding.site.trim())
+  ) {
+    throw profileError("IIS site name is invalid");
+  }
+  const port = Number(binding.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw profileError("IIS port must be an integer from 1 to 65535");
+  }
+  const sniHost =
+    binding.sniHost == null || binding.sniHost === ""
+      ? null
+      : adcsHost(binding.sniHost, "SNI hostname");
+  const extraNames = Array.isArray(body?.dnsNames) ? body.dnsNames : [];
+  const dnsNames = [];
+  for (const entry of [reference, ...extraNames]) {
+    const host = adcsHost(entry, "DNS name");
+    if (!dnsNames.includes(host)) dnsNames.push(host);
+  }
+  if (dnsNames.length > 16) {
+    throw profileError("a renewal profile accepts at most 16 DNS names");
+  }
+  const keyAlgorithm = body?.keyAlgorithm;
+  if (keyAlgorithm !== "rsa" && keyAlgorithm !== "ecdsa") {
+    throw profileError("keyAlgorithm must be rsa or ecdsa");
+  }
+  const keySize = Number(body?.keySize);
+  const allowed = keyAlgorithm === "rsa" ? ADCS_RSA_SIZES : ADCS_ECDSA_SIZES;
+  if (!allowed.has(keySize)) {
+    throw profileError(`keySize is invalid for ${keyAlgorithm}`);
+  }
+  return {
+    name,
+    description,
+    issuerId,
+    renewBeforeDays: normalizeRenewBeforeDays(body?.renewBeforeDays ?? 30),
+    renewalProfile: {
+      target: {
+        type: "windows-iis",
+        reference,
+        store: target.store.trim(),
+        binding: {
+          site: binding.site.trim(),
+          port,
+          ...(sniHost ? { sniHost } : {}),
+        },
+      },
+      sanPolicy: { sans: dnsNames },
+      keyAlgorithm,
+      keySize,
+    },
+  };
+}
+
+async function createAdcsRenewalProfile({
+  dbPool = pool,
+  workspaceId,
+  body,
+  actorUserId = null,
+  auditWriter = writeAudit,
+} = {}) {
+  const input = normalizeAdcsProfileInput(body);
+  const client = await dbPool.connect();
+  let started = false;
+  try {
+    await client.query("BEGIN");
+    started = true;
+    const issuer = await client.query(
+      `SELECT i.kind, i.revalidation_required, i.current_version, v.ca_key_sha256
+         FROM certificate_issuers i
+         LEFT JOIN certificate_issuer_versions v
+           ON v.workspace_id = i.workspace_id
+          AND v.issuer_id = i.id
+          AND v.version = i.current_version
+        WHERE i.workspace_id = $1 AND i.id = $2
+        FOR UPDATE OF i`,
+      [workspaceId, input.issuerId],
+    );
+    const row = issuer.rows[0];
+    if (!row || row.kind !== "adcs") {
+      throw profileError("issuerId must be a confirmed AD CS issuer", "CERTOPS_PROFILE_ISSUER_NOT_FOUND");
+    }
+    if (row.revalidation_required === true || !row.ca_key_sha256) {
+      throw profileError(
+        "Confirm a CA certificate on this issuer before creating a renewal profile",
+      );
+    }
+    const inserted = await client.query(
+      `INSERT INTO certificate_profiles (
+         workspace_id, name, description, status, source, source_ref,
+         issuer_id, renew_before_days, key_mode, public_metadata, created_by
+       ) VALUES (
+         $1, $2, $3, 'active', 'manual', $4, $5, $6, 'os-store-managed', $7::jsonb, $8
+       )
+       RETURNING id`,
+      [
+        workspaceId,
+        input.name,
+        input.description,
+        `adcs-profile:${input.renewalProfile.target.reference}`,
+        input.issuerId,
+        input.renewBeforeDays,
+        JSON.stringify({
+          [OPERATOR_OWNED_METADATA_KEY]: true,
+          renewalProfile: input.renewalProfile,
+        }),
+        Number.isInteger(actorUserId) ? actorUserId : null,
+      ],
+    );
+    const profileId = inserted.rows[0].id;
+    const agent = await client.query(
+      `SELECT id
+         FROM certops_agents
+        WHERE workspace_id = $1
+          AND status = 'active'
+          AND declared_target_selectors @> jsonb_build_array($2::text)
+        LIMIT 1`,
+      [workspaceId, input.renewalProfile.target.reference],
+    );
+    await auditWriter({
+      client,
+      actorUserId,
+      subjectUserId: actorUserId,
+      action: "CERTOPS_RENEWAL_PROFILE_CREATED",
+      targetType: "certificate_profile",
+      targetId: String(profileId),
+      workspaceId,
+      metadata: {
+        profileId: String(profileId),
+        profileName: input.name,
+        issuerId: input.issuerId,
+        reference: input.renewalProfile.target.reference,
+      },
+    });
+    await client.query("COMMIT");
+    started = false;
+    const profile = await getRenewalProfile({ db: dbPool, workspaceId, profileId });
+    return {
+      ...profile,
+      agentDeclaresName: Boolean(agent.rows[0]),
+    };
+  } catch (error) {
+    if (started) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackError) {
+        // Keep the original failure.
+      }
+    }
+    if (error?.code === "23505") {
+      throw profileError("A renewal profile with this name already exists");
     }
     throw error;
   } finally {
@@ -578,6 +956,29 @@ function classifyRenewalBlock(row) {
     }
     throw error;
   }
+}
+
+/**
+ * Capacity deferral for one certificate, using the same guards as the sweep.
+ *
+ * Only a certificate the scheduler would otherwise act on this pass (no block,
+ * due, and no active renew job) can be waiting on the per-CA in-flight cap.
+ * A real block is never rewritten into a capacity wait.
+ *
+ * @returns {"ca_capacity"|null}
+ */
+function resolveDeferredRenewalReason(
+  row,
+  { workspaceId, inFlightByCa, perCaCap, now = Date.now() } = {},
+) {
+  if (classifyRenewalBlock(row) != null) return null;
+  if (row?.renews_from == null) return null;
+  const dueAt = new Date(row.renews_from).getTime();
+  // NaN is not due. A future window is not due either.
+  if (!(dueAt <= now) || row.has_active_renew_job) return null;
+  const capKey = caCapKey(workspaceId, certificateCaBucket(row));
+  const inFlight = inFlightByCa.get(capKey) || 0;
+  return inFlight >= perCaCap ? "ca_capacity" : null;
 }
 
 /**
@@ -687,10 +1088,14 @@ async function listUpcomingRenewals({
                 )
               ),
               ''
-            ) AS profile_ca_endpoint
+            ) AS profile_ca_endpoint,
+            cp.issuer_id AS profile_issuer_id,
+            ci.kind AS profile_issuer_kind
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+       LEFT JOIN certificate_issuers ci
+         ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.workspace_id = $1
         AND mc.status NOT IN (${renewableStatusFilter})
       ORDER BY ${orderBy}
@@ -727,25 +1132,12 @@ async function listUpcomingRenewals({
     items: result.rows.map((row) => {
       const blockedReason = classifyRenewalBlock(row);
       const autoRenewEnabled = blockedReason == null;
-
-      // Deferral is a separate, independent fact from blockedReason: only a
-      // certificate the scheduler would otherwise act on this pass (covered,
-      // due, and not already jobbed) can be "waiting", so none of these
-      // guards ever downgrade a real block into a capacity wait. Whether a
-      // job already exists is has_active_renew_job (any non-terminal job for
-      // the certificate), matching the sweep's own EXISTS check, not just the
-      // most recent job's status.
-      let deferredReason = null;
-      if (
-        autoRenewEnabled &&
-        row.renews_from != null &&
-        new Date(row.renews_from).getTime() <= now &&
-        !row.has_active_renew_job
-      ) {
-        const capKey = caCapKey(workspaceId, certificateCaBucket(row));
-        const inFlight = inFlightByCa.get(capKey) || 0;
-        deferredReason = inFlight >= perCaCap ? "ca_capacity" : null;
-      }
+      const deferredReason = resolveDeferredRenewalReason(row, {
+        workspaceId,
+        inFlightByCa,
+        perCaCap,
+        now,
+      });
 
       return {
         certificateId: String(row.id),
@@ -797,9 +1189,12 @@ module.exports = {
   SETTABLE_PROFILE_STATUSES,
   applyRenewalProfilePatch,
   classifyRenewalBlock,
+  resolveDeferredRenewalReason,
+  createAdcsRenewalProfile,
   getRenewalProfile,
   listRenewalProfiles,
   listUpcomingRenewals,
   normalizeRenewBeforeDays,
   updateRenewalProfile,
+  validateAdcsRenewalProfile,
 };

@@ -1347,13 +1347,13 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     assert.equal(fs.existsSync(path.join(workDir, "deployed")), false);
   });
 
-  it("blocks dry-run continue-enrollment while adcs remains non-executable", async () => {
+  it("blocks dry-run continue-enrollment for an issuer kind this agent does not implement", async () => {
     const client = createRecordingClient();
     const executionContext = makeExecutionContext({ dryRun: false });
-    const job = makeSignedJob({
+      const job = makeSignedJob({
       action: "continue-enrollment",
       mode: "dry_run",
-      issuerKind: "adcs",
+      issuerKind: "venafi",
       keyMode: "os-store-managed",
       target: {
         type: "windows-iis",
@@ -1387,7 +1387,7 @@ describe("signed-job dispatch chain (handleClaimedJob with executionContext)", (
     // reported result body still carries the issuer-kind refusal text.
     assert.match(
       client.calls.reportResult[0].errorMessage,
-      /issuer kind "adcs", which this agent does not implement/,
+      /issuer kind "venafi", which this agent does not implement/,
     );
   });
 
@@ -3984,15 +3984,27 @@ describe("renew chain deployment", () => {
     seedLiveKey();
     for (const mode of ["real", "dry_run"]) {
       const acmeExecFileImpl = makeCertbotStub();
-      const job = makeJob({ issuerKind: "adcs", mode });
+      const job = makeJob({ issuerKind: "venafi", mode });
       const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
 
       assert.equal(outcome.status, "blocked", mode);
-      assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+      assert.match(outcome.errorMessage, /issuer kind "venafi", which this agent does not implement/);
       assert.equal(acmeExecFileImpl.calls.length, 0);
       assert.equal(client.calls.reportEvidence.length, 0);
       assert.deepEqual(stagingLeftovers(), []);
     }
+  });
+
+  it("refuses an adcs renew job while adcs-enroll-v1 is not qualified in the release manifest", async () => {
+    seedLiveKey();
+    const acmeExecFileImpl = makeCertbotStub();
+    const job = makeJob({ issuerKind: "adcs" });
+    const { outcome, client } = await runRenew({ job, acmeExecFileImpl });
+
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.errorMessage, /has not qualified adcs-enroll-v1/);
+    assert.equal(acmeExecFileImpl.calls.length, 0);
+    assert.equal(client.calls.reportEvidence.length, 0);
   });
 });
 
@@ -4582,11 +4594,11 @@ describe("windows-iis renew job (os-store-managed)", () => {
   });
 
   it("blocks a renew job naming an issuer kind this agent does not implement, before any Windows process runs", async () => {
-    const job = makeJob({ issuerKind: "adcs" });
+    const job = makeJob({ issuerKind: "venafi" });
     const { outcome, windowsExecFileImpl } = await runIisRenew({ job });
 
     assert.equal(outcome.status, "blocked");
-    assert.match(outcome.errorMessage, /issuer kind "adcs", which this agent does not implement/);
+    assert.match(outcome.errorMessage, /issuer kind "venafi", which this agent does not implement/);
     assert.equal(windowsExecFileImpl.calls.length, 0);
   });
 

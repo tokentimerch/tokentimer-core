@@ -30,17 +30,15 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
-import {
-  CERTOPS_JOB_OPERATIONS,
-  CERTOPS_SUBJECT_TYPES,
-  createJob,
-} from './certopsJobsApi.js';
+import { CERTOPS_SUBJECT_TYPES, createJob } from './certopsJobsApi.js';
 import {
   createControllerProvisionIntent,
+  getCertificate,
   listCertificates,
   listCertificateTargets,
   listWorkspaceCertificateInstances,
 } from './certopsApi.js';
+import { getRenewalProfile } from './certopsRenewalApi.js';
 import {
   jobOperationLabel,
   subjectTypeLabel,
@@ -107,6 +105,34 @@ const MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID =
 const MANUAL_JOB_SUBJECT_TYPES = CERTOPS_SUBJECT_TYPES.filter(
   type => type !== 'token'
 );
+
+// Operations a person can create from this form. The others exist, but
+// another service creates them and this form cannot supply their payload:
+// continue-enrollment and adcs-preflight (enrollment scheduler and issuer
+// check), protocol_smoke (diagnostic bootstrap), distribute-trust and
+// revoke-trust (the trust-anchor panel, which pins subject type trust_anchor).
+const MANUAL_FORM_OPERATIONS = [
+  'issue',
+  'renew',
+  'deploy',
+  'reload',
+  'revoke',
+  'noop',
+];
+
+// trust_anchor is valid only for distribute-trust and revoke-trust.
+const MANUAL_FORM_SUBJECT_TYPES = MANUAL_JOB_SUBJECT_TYPES.filter(
+  type => type !== 'trust_anchor'
+);
+
+const MANAGED_CERTIFICATE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ADCS_RENEW_REFUSAL =
+  'This certificate uses an AD CS renewal profile. Create job cannot renew it. Open Renewals. The renewal sweep creates the enrollment from that profile.';
+
+const ADCS_RENEW_LOOKUP_REFUSAL =
+  'This form could not confirm the renewal profile, so it will not submit a renew. Retry, or open Renewals if this certificate uses AD CS.';
 
 // Per-subject-type hint for the free-text Subject ID input; shown for every
 // subject type, whether or not a live suggestion list is available below.
@@ -301,7 +327,7 @@ function createJobErrorMessage(err) {
     return 'This provisioning request is invalid. Check the cluster, namespace, certificate/secret names, issuer reference, and DNS names.';
   }
   if (code === 'CERTOPS_WORKSPACE_PAUSED') {
-    return 'CertOps is paused for this workspace, so no new job can be created.';
+    return 'Certificate operations are paused for this workspace, so no new job can be created.';
   }
   return err?.response?.data?.error || err?.message || 'Could not create job.';
 }
@@ -345,6 +371,7 @@ export default function CreateManualJobModal({
   const [executor, setExecutor] = useState('agent');
   const [subjectType, setSubjectType] = useState('');
   const [subjectId, setSubjectId] = useState('');
+  const [adcsRenewalState, setAdcsRenewalState] = useState('idle');
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [assignedAgentId, setAssignedAgentId] = useState('');
   const [payloadMode, setPayloadMode] = useState('fields');
@@ -440,6 +467,13 @@ export default function CreateManualJobModal({
   useEffect(() => {
     if (hidesAgentField) setAssignedAgentId('');
   }, [hidesAgentField]);
+
+  useEffect(() => {
+    if (subjectType && !MANUAL_FORM_SUBJECT_TYPES.includes(subjectType)) {
+      setSubjectType('');
+      setSubjectId('');
+    }
+  }, [subjectType]);
 
   // Distinct owner strings across every installation the panel handed in
   // for this anchor (any agent/store), for the "existing owner" picker on
@@ -625,6 +659,41 @@ export default function CreateManualJobModal({
     };
   }, [isOpen, subjectType, workspaceId]);
 
+  useEffect(() => {
+    const certificateId = subjectId.trim();
+    const shouldCheck =
+      isOpen &&
+      isRenew &&
+      subjectType === 'managed_certificate' &&
+      MANAGED_CERTIFICATE_ID_PATTERN.test(certificateId);
+    if (!shouldCheck) {
+      setAdcsRenewalState('idle');
+      return undefined;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    setAdcsRenewalState('checking');
+    getCertificate(workspaceId, certificateId, { signal: controller.signal })
+      .then(async data => {
+        const profileId = data?.certificate?.profileId;
+        if (!profileId) return false;
+        const profile = await getRenewalProfile(workspaceId, profileId, {
+          signal: controller.signal,
+        });
+        return Boolean(profile?.issuerId);
+      })
+      .then(blocked => {
+        if (!cancelled) setAdcsRenewalState(blocked ? 'blocked' : 'allowed');
+      })
+      .catch(() => {
+        if (!cancelled) setAdcsRenewalState('unavailable');
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [isOpen, isRenew, subjectType, subjectId, workspaceId]);
+
   const subjectPairComplete =
     (!subjectType || Boolean(subjectId.trim())) &&
     (!subjectId.trim() || Boolean(subjectType)) &&
@@ -671,6 +740,9 @@ export default function CreateManualJobModal({
     : Boolean(operation) &&
       Boolean(workspaceId) &&
       !submitting &&
+      adcsRenewalState !== 'checking' &&
+      adcsRenewalState !== 'blocked' &&
+      adcsRenewalState !== 'unavailable' &&
       fieldsRequiredForIssueMet &&
       controllerFieldsMet &&
       (isIssue
@@ -857,7 +929,7 @@ export default function CreateManualJobModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>
             {createdJobId
-              ? 'Job dispatched'
+              ? 'Job created'
               : isTrustOp
                 ? // jobOperationLabel already ends in "trust" (e.g. "Distribute
                   // trust"), so appending the full "trust anchor" would stutter.
@@ -866,14 +938,14 @@ export default function CreateManualJobModal({
           </DashboardModalTitle>
           <DashboardModalDescription>
             {createdJobId
-              ? 'Live agent execution. The console below streams agent output as it arrives.'
+              ? 'Agent output appears here when an agent executes this job. Jobs requiring approval must be approved first.'
               : isTrustOp
                 ? `${trustOp.anchorName || 'Trust anchor'}${
                     trustOp.anchorFingerprint
                       ? ` (${truncateId(trustOp.anchorFingerprint, { head: 12, tail: 6 })})`
                       : ''
                   }. The job is recorded with source "api".`
-                : 'Manual job creation is an exception path for driving certificate operations before automated scheduling ships.'}
+                : 'Create a certificate job manually when you need an action outside the automatic renewal schedule.'}
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} isDisabled={submitting} />
@@ -1108,9 +1180,7 @@ export default function CreateManualJobModal({
                   value={operation}
                   onChange={handleOperationChange}
                 >
-                  {CERTOPS_JOB_OPERATIONS.filter(
-                    op => op !== 'adcs-preflight'
-                  ).map(op => (
+                  {MANUAL_FORM_OPERATIONS.map(op => (
                     <option key={op} value={op}>
                       {jobOperationLabel(op)}
                     </option>
@@ -1118,9 +1188,12 @@ export default function CreateManualJobModal({
                 </Select>
                 {isIssue ? (
                   <FormHelperText>
-                    Issue creates a new managed certificate; TokenTimer assigns
-                    its ID once the request is accepted, so subject fields below
-                    are hidden.
+                    Issue creates a new managed certificate through ACME, or
+                    through a cert-manager controller. TokenTimer assigns its ID
+                    once the request is accepted, so subject fields below are
+                    hidden. Active Directory Certificate Services is not created
+                    here: on Renewals, confirm an issuer, then New AD CS
+                    profile. That profile creates the enrollment.
                   </FormHelperText>
                 ) : null}
               </FormControl>
@@ -1287,7 +1360,7 @@ export default function CreateManualJobModal({
                         setSubjectId('');
                       }}
                     >
-                      {MANUAL_JOB_SUBJECT_TYPES.map(type => (
+                      {MANUAL_FORM_SUBJECT_TYPES.map(type => (
                         <option key={type} value={type}>
                           {subjectTypeLabel(type)}
                         </option>
@@ -1326,6 +1399,17 @@ export default function CreateManualJobModal({
                         ? 'Required for this operation, together with subject type.'
                         : 'Required together with subject type, or leave both empty.'}
                     </FormHelperText>
+                    {adcsRenewalState === 'blocked' ||
+                    adcsRenewalState === 'unavailable' ? (
+                      <Alert status='warning' mt={2} borderRadius='md'>
+                        <AlertIcon />
+                        <AlertDescription fontSize='sm'>
+                          {adcsRenewalState === 'blocked'
+                            ? ADCS_RENEW_REFUSAL
+                            : ADCS_RENEW_LOOKUP_REFUSAL}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
                     {subjectSuggestions.length ? (
                       <datalist id={MANUAL_JOB_SUBJECT_SUGGESTIONS_LIST_ID}>
                         {subjectSuggestions.map(item => (
@@ -1442,7 +1526,9 @@ export default function CreateManualJobModal({
                           target, SANs, ACME command, CA, DNS-01 zone/provider,
                           and deploy path always come from the
                           certificate&apos;s stored renewal profile and cannot
-                          be set here.
+                          be set here. An AD CS profile does not renew through
+                          this form. The renewal sweep creates that enrollment
+                          from the profile on Renewals.
                         </FormHelperText>
                       </VStack>
                     ) : (

@@ -9,12 +9,14 @@ const {
   RENEWAL_PATH_REASONS,
   resolveRenewalPathForCertificate,
   resolveRenewalPathsForWorkspace,
+  resolveRenewalPathsForCertificateIds,
   listCertificatesDependentOnAgent,
   _test: {
     resolveRenewalPathForRow,
     resolveRequiredExecutors,
     classifyExecutors,
     targetReferenceFromProfile,
+    adcsPreflightKey,
     NO_CAPABILITY_DECLARED_SUMMARY,
   },
 } = require(
@@ -150,6 +152,7 @@ function certRow(overrides = {}) {
     deployed_agent_id: null,
     discovery_agent_id: null,
     profile_status: "active",
+    profile_issuer_id: "issuer-1",
     profile_public_metadata: {
       renewalProfile: executableRenewalProfile(),
     },
@@ -762,6 +765,303 @@ describe("renewalPathHealth: resolveRenewalPathForRow (end to end classification
   });
 });
 
+// A profile as the AD CS create path stores it: no ACME schemaVersion, a
+// Windows/IIS target, and DNS names only.
+function nativeAdcsProfile(overrides = {}) {
+  return {
+    target: {
+      type: "windows-iis",
+      reference: "app.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+    },
+    sanPolicy: { sans: ["app.example.com"] },
+    keyAlgorithm: "rsa",
+    keySize: 2048,
+    ...overrides,
+  };
+}
+
+function nativeAdcsIndex({ declaredCapabilities = [], updatedAtMs = NOW } = {}) {
+  const agentIndex = buildAgentIndex([
+    onlineAgentRow({ id: "agent-a", targetSelectors: ["app.example.com"] }),
+  ]);
+  const candidate = agentIndex.byRowId.get("agent-a");
+  candidate.declaredCapabilities = declaredCapabilities;
+  candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
+  return agentIndex;
+}
+
+// The index loadAdcsPreflightIndex builds: agents holding a fresh, safe
+// adcs-preflight for issuer-1 against the native profile's target.
+function freshPreflightIndex(agentRowIds = ["agent-a"]) {
+  return new Map([
+    [adcsPreflightKey("issuer-1", "app.example.com"), new Set(agentRowIds)],
+  ]);
+}
+
+describe("renewalPathHealth: native AD CS profiles", () => {
+  const nativeRow = (overrides = {}) =>
+    certRow({
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: { renewalProfile: nativeAdcsProfile() },
+      ...overrides,
+    });
+
+  it("valid native profile with a fresh adcs-enroll-v1 declaration reports its normal state, not unknown", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: nativeRow(),
+      agentIndex: nativeAdcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 30_000,
+      }),
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(),
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+
+  it("valid native profile without adcs-enroll-v1 reports unavailable naming the capability", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: nativeRow(),
+      agentIndex: nativeAdcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("native profile missing its IIS binding is unknown, judged by AD CS rules rather than ACME fields", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        profile_public_metadata: {
+          renewalProfile: nativeAdcsProfile({
+            target: { type: "windows-iis", reference: "app.example.com", store: "My" },
+          }),
+        },
+      }),
+      agentIndex: nativeAdcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 30_000,
+      }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNKNOWN);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.TOPOLOGY_UNKNOWN);
+  });
+
+  it("ACME profile with no adcs-enroll-v1 declaration is unchanged (healthy)", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "acme" }),
+      agentIndex: buildAgentIndex([onlineAgentRow({ id: "agent-a" })]),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+});
+
+describe("renewalPathHealth: AD CS renewals gated on adcs-enroll-v1", () => {
+  // An ACME-shaped profile moved onto an AD CS issuer: it keeps schemaVersion
+  // and the ACME fields, and gains the Windows/IIS target AD CS requires.
+  const switchedAdcsProfile = () => ({
+    ...executableRenewalProfile(),
+    target: {
+      type: "windows-iis",
+      reference: "app.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+    },
+    deploymentTargets: [
+      {
+        type: "windows-iis",
+        reference: "app.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+    ],
+    sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+  });
+  const switchedRow = (overrides = {}) =>
+    certRow({
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: { renewalProfile: switchedAdcsProfile() },
+      ...overrides,
+    });
+
+  function adcsIndex({ id = "agent-a", declaredCapabilities = [], updatedAtMs = NOW } = {}) {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id, targetSelectors: ["app.example.com"] }),
+    ]);
+    const candidate = agentIndex.byRowId.get(id);
+    candidate.declaredCapabilities = declaredCapabilities;
+    candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
+    return agentIndex;
+  }
+
+  it("missing declaration -> Renewal path unavailable naming adcs-enroll-v1, not healthy", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: switchedRow(),
+      agentIndex: adcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+    assert.match(result.renewalPathSummary, /adcs-enroll-v1/);
+    assert.deepEqual(result.dependencies, []);
+  });
+
+  it("stale declaration past the capability epoch -> blocked with the same reason", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: switchedRow(),
+      agentIndex: adcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 60 * 60 * 1000,
+      }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("fresh declaration -> Healthy with the declaring agent as the dependency", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: switchedRow(),
+      agentIndex: adcsIndex({
+        declaredCapabilities: ["adcs-enroll-v1"],
+        updatedAtMs: NOW - 30_000,
+      }),
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(),
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.dependencies.length, 1);
+    assert.equal(result.dependencies[0].agentRowId, "agent-a");
+  });
+
+  it("an undeclared agent does not count as a redundant AD CS path", () => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", targetSelectors: ["app.example.com"] }),
+      onlineAgentRow({ id: "agent-b", targetSelectors: ["app.example.com"] }),
+    ]);
+    const declaring = agentIndex.byRowId.get("agent-b");
+    declaring.declaredCapabilities = ["adcs-enroll-v1"];
+    declaring.capabilitiesUpdatedAt = new Date(NOW - 30_000).toISOString();
+    const result = resolveRenewalPathForRow({
+      certificateRow: switchedRow(),
+      agentIndex,
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(["agent-b"]),
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.deepEqual(
+      result.dependencies.map((dependency) => dependency.agentRowId),
+      ["agent-b"],
+    );
+  });
+
+  it("ACME renewal without any adcs-enroll-v1 declaration is unchanged (healthy)", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({ profile_issuer_kind: "acme" }),
+      agentIndex: buildAgentIndex([onlineAgentRow({ id: "agent-a" })]),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+
+  it("pinned AD CS renewal without declaration names the capability", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: switchedRow({ discovery_agent_id: "agent-a" }),
+      agentIndex: adcsIndex({ declaredCapabilities: [] }),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("a second blocker on the pinned agent is reported instead of the missing declaration", () => {
+    const agentIndex = adcsIndex({ declaredCapabilities: [] });
+    agentIndex.byRowId.get("agent-a").supportedOperations = ["issue"];
+    const result = resolveRenewalPathForRow({
+      certificateRow: switchedRow({ discovery_agent_id: "agent-a" }),
+      agentIndex,
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ASSIGNED_AGENT_INELIGIBLE,
+    );
+  });
+});
+
+describe("renewalPathHealth: switched profiles follow the AD CS rules", () => {
+  const switchedProfile = () => ({
+    ...executableRenewalProfile(),
+    target: {
+      type: "windows-iis",
+      reference: "app.example.com",
+      store: "My",
+      binding: { site: "Default Web Site", port: 443 },
+    },
+    sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+  });
+  const indexWith = (declaredCapabilities, updatedAtMs) => {
+    const agentIndex = buildAgentIndex([
+      onlineAgentRow({ id: "agent-a", targetSelectors: ["app.example.com"] }),
+    ]);
+    const candidate = agentIndex.byRowId.get("agent-a");
+    candidate.declaredCapabilities = declaredCapabilities;
+    candidate.capabilitiesUpdatedAt = new Date(updatedAtMs).toISOString();
+    return agentIndex;
+  };
+
+  it("ACME-shaped profile switched to AD CS with no adcs-enroll-v1 is unavailable, not healthy", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        profile_public_metadata: { renewalProfile: switchedProfile() },
+      }),
+      agentIndex: indexWith([], NOW),
+      now: NOW,
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.ADCS_ENROLL_CAPABILITY_UNAVAILABLE,
+    );
+  });
+
+  it("ACME-shaped profile switched to AD CS with a fresh adcs-enroll-v1 reports its normal state", () => {
+    const result = resolveRenewalPathForRow({
+      certificateRow: certRow({
+        profile_issuer_kind: "adcs",
+        profile_public_metadata: { renewalProfile: switchedProfile() },
+      }),
+      agentIndex: indexWith(["adcs-enroll-v1"], NOW - 30_000),
+      now: NOW,
+      adcsPreflightIndex: freshPreflightIndex(),
+    });
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+});
+
 describe("renewalPathHealth: resolveRenewalPathForCertificate (DB-facing)", () => {
   function fakeDb({ certRows, agentRows }) {
     return {
@@ -820,6 +1120,110 @@ describe("renewalPathHealth: resolveRenewalPathForCertificate (DB-facing)", () =
       certificateId: "cert-1",
     });
     assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+  });
+});
+
+describe("renewalPathHealth: AD CS preflight freshness", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const CA = "ca01.corp.example.com\\Corp Issuing CA 01";
+  const KEY = "a".repeat(64);
+  const TEMPLATE = "TokenTimerWebServer";
+
+  const issuerVersion = () => ({
+    ca_config: CA,
+    template: TEMPLATE,
+    ca_key_sha256: KEY,
+    confirmed_at: new Date(Date.now() - 7 * DAY_MS),
+  });
+
+  // The latest adcs-preflight an agent holds, as the gate loads it.
+  const preflightRow = (createdAgoMs) => ({
+    id: "agent-a",
+    last_seen_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    status: "succeeded",
+    result_metadata: {
+      preflightVerdict: {
+        templateCheck: "safe",
+        caCheck: "safe",
+        caConfig: CA,
+        template: TEMPLATE,
+        caKeySha256s: [KEY],
+      },
+    },
+    created_at: new Date(Date.now() - createdAgoMs),
+  });
+
+  // Answers only the SQL the batch loads. The freshness decision runs on the
+  // evidence rows, through the same gate the scheduler uses.
+  function dbWithEvidence(evidenceRows) {
+    const agent = {
+      ...onlineAgentRow({
+        id: "agent-a",
+        targetSelectors: ["app.example.com"],
+        lastSeenAt: new Date(Date.now() - 60 * 1000).toISOString(),
+      }),
+      declared_capabilities: ["adcs-enroll-v1"],
+      capabilities_updated_at: new Date(Date.now() - 30 * 1000).toISOString(),
+    };
+    const certificate = certRow({
+      profile_issuer_kind: "adcs",
+      profile_public_metadata: { renewalProfile: nativeAdcsProfile() },
+    });
+    return {
+      async query(sql) {
+        const normalized = String(sql).replace(/\s+/g, " ").trim();
+        if (normalized.startsWith("SELECT mc.id")) return { rows: [certificate] };
+        if (normalized.startsWith("SELECT id, agent_id, name, hostname")) {
+          return { rows: [agent] };
+        }
+        if (normalized.includes("FROM certificate_issuers i")) {
+          return { rows: [issuerVersion()] };
+        }
+        if (normalized.includes("LEFT JOIN LATERAL")) return { rows: evidenceRows };
+        return { rows: [] };
+      },
+    };
+  }
+
+  async function healthWithEvidence(evidenceRows) {
+    const result = await resolveRenewalPathsForCertificateIds({
+      db: dbWithEvidence(evidenceRows),
+      workspaceId: "ws-1",
+      certificateIds: ["cert-1"],
+    });
+    return result.get("cert-1");
+  }
+
+  it("waits when no agent has run adcs-preflight for the CA", async () => {
+    const result = await healthWithEvidence([]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
+    );
+    assert.match(result.renewalPathSummary, /fresh CA check/);
+  });
+
+  it("reports the normal state once an agent holds a fresh, safe preflight", async () => {
+    const result = await healthWithEvidence([preflightRow(60 * 60 * 1000)]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
+  });
+
+  it("waits when the only preflight is older than the freshness bound", async () => {
+    const result = await healthWithEvidence([preflightRow(25 * 60 * 60 * 1000)]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.UNAVAILABLE);
+    assert.equal(
+      result.renewalPathReason,
+      RENEWAL_PATH_REASONS.WAITING_FOR_FRESH_PREFLIGHT,
+    );
+    assert.match(result.renewalPathSummary, /last 24 hours/);
+  });
+
+  it("reports healthy when the same agent holds a 23h-old qualifying preflight", async () => {
+    const result = await healthWithEvidence([preflightRow(23 * 60 * 60 * 1000)]);
+    assert.equal(result.renewalPathState, RENEWAL_PATH_STATES.HEALTHY);
+    assert.equal(result.renewalPathReason, RENEWAL_PATH_REASONS.ALL_PATHS_AVAILABLE);
   });
 });
 

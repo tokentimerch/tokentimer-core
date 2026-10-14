@@ -17,8 +17,12 @@ export function SettingsIntegrationCard({
   description,
   icon,
   configured = false,
+  status,
+  hideStatus = false,
   isOpen = false,
   onToggle,
+  unmountOnExit = false,
+  panelId,
   children,
   tourTarget,
 }) {
@@ -37,6 +41,8 @@ export function SettingsIntegrationCard({
         align='center'
         gap={5}
         onClick={onToggle}
+        aria-expanded={isOpen}
+        aria-controls={panelId}
         _hover={{ bg: hoverBg }}
         transition='background 0.15s ease'
       >
@@ -57,7 +63,11 @@ export function SettingsIntegrationCard({
             <Text fontWeight='bold' fontSize='md'>
               {title}
             </Text>
-            {configured ? (
+            {hideStatus ? null : status ? (
+              <Badge colorScheme={status.scheme || 'gray'}>
+                {status.label}
+              </Badge>
+            ) : configured ? (
               <Badge
                 colorScheme='green'
                 display='flex'
@@ -90,8 +100,9 @@ export function SettingsIntegrationCard({
           flexShrink={0}
         />
       </Flex>
-      <Collapse in={isOpen} animateOpacity>
+      <Collapse in={isOpen} animateOpacity unmountOnExit={unmountOnExit}>
         <Box
+          id={panelId}
           px={SETTINGS_PANEL_PADDING}
           pb={SETTINGS_PANEL_PADDING}
           pt={SETTINGS_PANEL_PADDING}

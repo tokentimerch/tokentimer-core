@@ -48,6 +48,29 @@ describe('RenewalPathBadge', () => {
     ).toBeInTheDocument();
   });
 
+  it('labels the waiting_for_fresh_preflight reason as a CA check, not a dead path', () => {
+    renderBadge({
+      renewalPathState: 'unavailable',
+      renewalPathReason: 'waiting_for_fresh_preflight',
+      renewalPathSummary: 'The AD CS renewal for this certificate is waiting for a fresh CA check.',
+    });
+
+    expect(screen.getByText('Waiting for CA check')).toBeInTheDocument();
+    expect(screen.queryByText('Renewal path unavailable')).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/waiting for a fresh CA check/)
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the generic unavailable label for other unavailable reasons', () => {
+    renderBadge({
+      renewalPathState: 'unavailable',
+      renewalPathReason: 'assigned_agent_retired',
+    });
+
+    expect(screen.getByText('Renewal path unavailable')).toBeInTheDocument();
+  });
+
   it('renders a neutral Unknown badge distinct from the failure states', () => {
     renderBadge({ renewalPathState: 'unknown' });
 

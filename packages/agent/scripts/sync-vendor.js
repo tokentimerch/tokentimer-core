@@ -55,6 +55,20 @@ const VENDOR_MAP = [
     ].join("\n"),
   },
   {
+    from: path.join(repoRoot, "packages", "contracts", "certops", "adcs-preflight-freshness.cjs"),
+    to: path.join(packageRoot, "vendor", "contracts", "adcs-preflight-freshness.cjs"),
+    attribution: [
+      "/*",
+      " * VENDORED COPY for self-contained agent distribution.",
+      " * Source of truth: packages/contracts/certops/adcs-preflight-freshness.cjs (@tokentimer/contracts).",
+      " * Refresh with: node packages/agent/scripts/sync-vendor.js",
+      " * Keep the value identical to upstream so the agent cache and the scheduler",
+      " * agree on how long a preflight is usable.",
+      " */",
+      "",
+    ].join("\n"),
+  },
+  {
     // JSON schemas cannot carry a JS attribution header; copy byte-identical
     // and keep the contracts package file as the single editable source.
     from: path.join(

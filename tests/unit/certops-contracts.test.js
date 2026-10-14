@@ -146,11 +146,11 @@ const PLAN_JOB_STATUSES = [
   "failed",
   "blocked",
   "cancelled",
-  // Terminal outcome for mode === "dry_run" only (B4).
+  // Terminal outcome for mode === "dry_run" only.
   "dry_run_complete",
   // Terminal outcome when a lease was renewed but the agent never reported
   // a result: side effects are unknown and require operator reconciliation
-  // instead of a silent retry (B6/H12).
+  // instead of a silent retry.
   "orphaned_unknown_effect",
   // Terminal for this job while enrollment waits on the issuer (ADR-0014).
   "awaiting_issuer",
@@ -1576,9 +1576,9 @@ describe("CertOps contract skeletons", () => {
   });
 });
 
-// C6: keyReference has one unified maximum length everywhere it is
+// keyReference has one unified maximum length everywhere it is
 // validated.
-describe("keyReference maxLength parity (C6)", () => {
+describe("keyReference maxLength parity", () => {
   const {
     KEY_REFERENCE_MAX_LENGTH,
   } = require("../../apps/api/services/certops/inventory");
@@ -1597,14 +1597,16 @@ describe("keyReference maxLength parity (C6)", () => {
 
 describe("CertOps OpenAPI response parity", () => {
   it("documents every renewalPathReason emitted by the runtime resolver", () => {
+    const {
+      RENEWAL_PATH_REASONS,
+    } = require("../../apps/api/services/certops/renewalPathHealth");
     const managedCertificate = openApiComponentSchema(
       "CertOpsManagedCertificate",
     );
-    assert.ok(
-      managedCertificate.properties.renewalPathReason.enum.includes(
-        "assigned_agent_retired",
-      ),
-    );
+    const documented = managedCertificate.properties.renewalPathReason.enum;
+    for (const reason of Object.values(RENEWAL_PATH_REASONS)) {
+      assert.ok(documented.includes(reason), `openapi enum is missing ${reason}`);
+    }
   });
 
   it("accepts the nested target object returned by toInstanceRecord and rejects undeclared target fields", () => {

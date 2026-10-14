@@ -13,9 +13,9 @@ const {
   runMigrations,
 } = require("../../apps/api/migrations/migrate");
 
-test("an installation at main's enrollment migration 70 upgrades to distribution without changing its history", async () => {
+test("an installation at main's AD CS migration 72 upgrades to distribution without changing its history", async () => {
   const pending = migrations.splice(
-    migrations.findIndex((entry) => entry.version === 71),
+    migrations.findIndex((entry) => entry.version === 73),
   );
   try {
     assert.equal(
@@ -28,15 +28,20 @@ test("an installation at main's enrollment migration 70 upgrades to distribution
       "Use a fresh database for the two-step upgrade reproduction",
     );
     await runMigrations();
+    const originalLedger = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
     const before = await pool.query(
-      "SELECT version, name FROM migrations WHERE version=70",
+      "SELECT version, name FROM migrations WHERE version=72",
     );
     assert.equal(
       before.rows[0].name,
-      "certops_certificate_enrollments",
+      "certops_profile_issuer",
     );
     migrations.push(...pending);
     await runMigrations();
+    assert.deepEqual((await pool.query("SELECT * FROM migrations WHERE version<=72 ORDER BY version")).rows, originalLedger);
+    const upgradedLedger = (await pool.query("SELECT * FROM migrations ORDER BY version")).rows;
+    await runMigrations();
+    assert.deepEqual((await pool.query("SELECT * FROM migrations ORDER BY version")).rows, upgradedLedger);
     const after = await pool.query(
       "SELECT version, name FROM migrations WHERE version>=68 ORDER BY version",
     );
@@ -47,9 +52,11 @@ test("an installation at main's enrollment migration 70 upgrades to distribution
       },
       { version: 69, name: "certops_agent_job_logs" },
       { version: 70, name: "certops_certificate_enrollments" },
-      { version: 71, name: "certops_material_distribution" },
-      { version: 72, name: "certops_distribution_review" },
-      { version: 73, name: "certops_distribution_transfer" },
+      { version: 71, name: "certops_adcs_evidence_types" },
+      { version: 72, name: "certops_profile_issuer" },
+      { version: 73, name: "certops_material_distribution" },
+      { version: 74, name: "certops_distribution_review" },
+      { version: 75, name: "certops_distribution_transfer" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
@@ -84,7 +91,7 @@ test("an installation at main's enrollment migration 70 upgrades to distribution
       "certops_distribution_groups",
     );
   } finally {
-    if (migrations.at(-1).version === 70) migrations.push(...pending);
+    if (migrations.at(-1).version === 72) migrations.push(...pending);
     await pool.end();
   }
 });

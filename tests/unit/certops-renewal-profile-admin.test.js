@@ -300,6 +300,8 @@ function createUpdatePool({
   row,
   auditFails = false,
   captured = {},
+  issuers = [],
+  issuerRow = null,
 } = {}) {
   captured.queries = [];
   captured.audits = [];
@@ -314,6 +316,12 @@ function createUpdatePool({
       }
       if (normalized.startsWith("UPDATE certificate_profiles")) {
         return { rows: [{ id: row.id }] };
+      }
+      if (normalized.startsWith("SELECT id FROM certificate_issuers")) {
+        return { rows: issuers.includes(params[1]) ? [{ id: params[1] }] : [] };
+      }
+      if (normalized.startsWith("SELECT i.kind")) {
+        return { rows: issuerRow ? [issuerRow] : [] };
       }
       return { rows: [] };
     },
@@ -407,6 +415,94 @@ describe("CertOps renewal-profile update transaction", () => {
     assert.equal(metadata[OPERATOR_OWNED_METADATA_KEY], true);
     assert.ok(metadata.renewalProfile, "the edited body must be preserved");
     assert.equal(pool.captured.audits[0].metadata.changes.operatorOwned, true);
+  });
+
+  it("stores a workspace issuer and can clear it back to ACME", async () => {
+    const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const pool = createUpdatePool({ row: profileRow(), issuers: [issuerId] });
+    await updateRenewalProfile({
+      dbPool: pool,
+      workspaceId: "ws-1",
+      profileId: "11111111-0000-4000-8000-000000000001",
+      issuerId,
+      auditWriter: pool.auditWriter,
+    });
+    const update = pool.captured.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_profiles"),
+    );
+    assert.equal(update.params[6], issuerId);
+    assert.equal(pool.captured.audits[0].metadata.changes.issuerId.to, issuerId);
+
+    const clearing = createUpdatePool({
+      row: profileRow({ issuer_id: issuerId }),
+      issuers: [issuerId],
+    });
+    await updateRenewalProfile({
+      dbPool: clearing,
+      workspaceId: "ws-1",
+      profileId: "11111111-0000-4000-8000-000000000001",
+      issuerId: null,
+      auditWriter: clearing.auditWriter,
+    });
+    const cleared = clearing.captured.queries.find((q) =>
+      q.sql.startsWith("UPDATE certificate_profiles"),
+    );
+    assert.equal(cleared.params[6], null);
+  });
+
+  it("refuses to clear the issuer of an AD CS profile that has no ACME settings", async () => {
+    const issuerId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const adcsProfile = {
+      target: {
+        type: "windows-iis",
+        reference: "app.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      sanPolicy: { sans: ["app.example.com"] },
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+    };
+    const pool = createUpdatePool({
+      row: profileRow({
+        issuer_id: issuerId,
+        public_metadata: { renewalProfile: adcsProfile },
+      }),
+      issuers: [issuerId],
+    });
+
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: "11111111-0000-4000-8000-000000000001",
+        issuerId: null,
+        auditWriter: pool.auditWriter,
+      }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE",
+    );
+    assert.equal(
+      pool.captured.queries.some((q) =>
+        q.sql.startsWith("UPDATE certificate_profiles"),
+      ),
+      false,
+    );
+    assert.equal(pool.captured.audits.length, 0);
+  });
+
+  it("refuses an issuer that is not in the workspace", async () => {
+    const pool = createUpdatePool({ row: profileRow(), issuers: [] });
+    await assert.rejects(
+      () =>
+        updateRenewalProfile({
+          dbPool: pool,
+          workspaceId: "ws-1",
+          profileId: "11111111-0000-4000-8000-000000000001",
+          issuerId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          auditWriter: pool.auditWriter,
+        }),
+      (error) => error.code === "CERTOPS_PROFILE_ISSUER_NOT_FOUND",
+    );
   });
 
   it("does not take ownership through a patch that changes nothing", async () => {
@@ -882,7 +978,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -904,7 +1000,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 4,
           },
         ],
@@ -925,7 +1021,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -947,7 +1043,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -977,7 +1073,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -998,7 +1094,7 @@ describe("CertOps upcoming renewals coverage", () => {
         inFlightRows: [
           {
             workspace_id: "ws-1",
-            ca_endpoint: "https://ca-a.example.com/acme",
+            ca_bucket: "https://ca-a.example.com/acme",
             in_flight: 5,
           },
         ],
@@ -1029,11 +1125,196 @@ describe("CertOps upcoming renewals coverage", () => {
       },
       {
         inFlightRows: [
-          { workspace_id: "ws-1", ca_endpoint: null, in_flight: 5 },
+          { workspace_id: "ws-1", ca_bucket: null, in_flight: 5 },
         ],
       },
     );
 
     assert.equal(item.deferredReason, "ca_capacity");
+  });
+});
+
+describe("CertOps renewal-profile AD CS issuer compatibility", () => {
+  const ISSUER_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const PROFILE_ID = "11111111-0000-4000-8000-000000000001";
+  const adcsIssuer = { kind: "adcs", revalidation_required: false, ca_key_sha256: "ab".repeat(32) };
+  // The certificate name must also be in the SAN list, so the reference is a DNS name.
+  const adcsTarget = {
+    type: "windows-iis",
+    reference: "app.example.com",
+    store: "WebHosting",
+    binding: { site: "Shop", port: 443 },
+  };
+
+  it("refuses to move an ACME-shaped profile onto an AD CS issuer", async () => {
+    const pool = createUpdatePool({
+      row: profileRow(),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        issuerId: ISSUER_ID,
+        actorUserId: 7,
+        auditWriter: pool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE" },
+    );
+    assert.equal(
+      pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")),
+      false,
+      "a refused issuer change must not reach the write",
+    );
+  });
+
+  it("accepts an AD CS issuer when the profile carries a Windows/IIS target", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: { renewalProfile: storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] }) },
+      }),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await updateRenewalProfile({
+      dbPool: pool,
+      workspaceId: "ws-1",
+      profileId: PROFILE_ID,
+      issuerId: ISSUER_ID,
+      actorUserId: 7,
+      auditWriter: pool.auditWriter,
+    });
+    assert.ok(pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")));
+  });
+
+  it("refuses an AD CS switch when the certificate name is not in the SAN list", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: {
+          renewalProfile: storedProfile({
+            target: { ...adcsTarget, reference: "iis-01/webhosting" },
+            deploymentTargets: [adcsTarget],
+          }),
+        },
+      }),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        issuerId: ISSUER_ID,
+        actorUserId: 7,
+        auditWriter: pool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE", message: /DNS names must include the certificate name/ },
+    );
+    assert.equal(
+      pool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")),
+      false,
+    );
+  });
+
+  // Regression: an ACME-shaped profile moved to AD CS kept ACME edit rules,
+  // so ACME-only settings were accepted after the switch.
+  it("edits an ACME-shaped Windows/IIS profile under AD CS rules once it is on an AD CS issuer", async () => {
+    const acmeShaped = storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] });
+    const switchPool = createUpdatePool({
+      row: profileRow({ public_metadata: { renewalProfile: acmeShaped } }),
+      issuers: [ISSUER_ID],
+      issuerRow: adcsIssuer,
+    });
+    await updateRenewalProfile({
+      dbPool: switchPool,
+      workspaceId: "ws-1",
+      profileId: PROFILE_ID,
+      issuerId: ISSUER_ID,
+      actorUserId: 7,
+      auditWriter: switchPool.auditWriter,
+    });
+    assert.ok(switchPool.captured.queries.some((q) => q.sql.startsWith("UPDATE certificate_profiles")));
+
+    // The stored row after the switch: same ACME-shaped JSON, now bound to AD CS.
+    const editPool = () =>
+      createUpdatePool({
+        row: profileRow({ issuer_id: ISSUER_ID, public_metadata: { renewalProfile: acmeShaped } }),
+        issuers: [ISSUER_ID],
+        issuerRow: adcsIssuer,
+      });
+    const acmeOnlyPool = editPool();
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: acmeOnlyPool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        renewalProfile: {
+          verification: { host: "app.example.com", port: 443, requireMatch: true },
+        },
+        actorUserId: 7,
+        auditWriter: acmeOnlyPool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_INVALID" },
+    );
+
+    const adcsPool = editPool();
+    await updateRenewalProfile({
+      dbPool: adcsPool,
+      workspaceId: "ws-1",
+      profileId: PROFILE_ID,
+      renewalProfile: { keyAlgorithm: "rsa", keySize: 2048 },
+      actorUserId: 7,
+      auditWriter: adcsPool.auditWriter,
+    });
+    const write = adcsPool.captured.queries.find((q) => q.sql.startsWith("UPDATE certificate_profiles"));
+    const written = JSON.parse(write.params[5]).renewalProfile;
+    assert.equal(written.keyAlgorithm, "rsa");
+    assert.equal(written.keySize, 2048);
+    assert.equal(written.target.reference, "app.example.com");
+  });
+
+  it("advertises edit fields by the issuer kind, not only the stored shape", async () => {
+    const acmeShaped = storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] });
+    const readWithKind = (issuerKind) =>
+      admin.getRenewalProfile({
+        db: {
+          async query() {
+            return {
+              rows: [profileRow({ issuer_id: issuerKind ? ISSUER_ID : null, issuer_kind: issuerKind, public_metadata: { renewalProfile: acmeShaped } })],
+            };
+          },
+        },
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+      });
+
+    const onAdcs = await readWithKind("adcs");
+    assert.deepEqual(onAdcs.editableFields, ["sanPolicy", "keyAlgorithm", "keySize"]);
+    const onAcme = await readWithKind(null);
+    assert.deepEqual(onAcme.editableFields, [...EDITABLE_PROFILE_FIELDS]);
+  });
+
+  it("refuses an AD CS issuer that still needs revalidation", async () => {
+    const pool = createUpdatePool({
+      row: profileRow({
+        public_metadata: { renewalProfile: storedProfile({ target: adcsTarget, deploymentTargets: [adcsTarget] }) },
+      }),
+      issuers: [ISSUER_ID],
+      issuerRow: { ...adcsIssuer, revalidation_required: true },
+    });
+    await assert.rejects(
+      updateRenewalProfile({
+        dbPool: pool,
+        workspaceId: "ws-1",
+        profileId: PROFILE_ID,
+        issuerId: ISSUER_ID,
+        actorUserId: 7,
+        auditWriter: pool.auditWriter,
+      }),
+      { code: "CERTOPS_PROFILE_ISSUER_INCOMPATIBLE" },
+    );
   });
 });

@@ -14,6 +14,10 @@ const EVIDENCE_CLAIM_BINDING_CAPABILITY = "evidence-claim-binding-v1";
 // higher-stakes surface than an ordinary certificate deploy, so it requires
 // the same "declared AND fresh" proof evidence-claim-binding requires.
 const TRUST_ANCHOR_DEPLOY_CAPABILITY = "trust-anchor-deploy-v1";
+// Gates AD CS enrollment and continuation jobs (issuerKind adcs). Stays
+// undeclared in released agents until qualified; the agent refuses them too.
+const ADCS_ENROLL_CAPABILITY = "adcs-enroll-v1";
+const ADCS_ENROLL_CAPABILITY_REASON = "adcs_enroll_capability_unavailable";
 // Duplicated locally rather than imported from jobs.js's
 // isTrustAnchorOperation: jobs.js requires this module, so importing back
 // would be circular. Kept in sync by hand.
@@ -175,6 +179,21 @@ function evaluateAgentJobEligibility({
     return result(false, "trust_anchor_deploy_capability_unavailable");
   }
 
+  // Same declared-and-fresh proof as the trust-anchor gate, applied to both
+  // initial enrollment and continue-enrollment.
+  if (
+    job.issuerKind === "adcs" &&
+    !hasFreshCapability({
+      declaredCapabilities: agent.declaredCapabilities,
+      capabilitiesUpdatedAt: agent.capabilitiesUpdatedAt,
+      capability: ADCS_ENROLL_CAPABILITY,
+      env,
+      now,
+    })
+  ) {
+    return result(false, ADCS_ENROLL_CAPABILITY_REASON);
+  }
+
   if (
     routing.requiredTargetSelector
   ) {
@@ -219,10 +238,28 @@ function evaluateAgentJobEligibility({
   return result(true, "eligible");
 }
 
+/**
+ * Same verdict as evaluateAgentJobEligibility, for explanation surfaces. When
+ * the only blocker is the AD CS gate, the reason names it; any other blocker
+ * is reported instead, so the explanation never hides a second problem.
+ */
+function explainAgentJobEligibility(args = {}) {
+  const evaluation = evaluateAgentJobEligibility(args);
+  if (evaluation.reason !== ADCS_ENROLL_CAPABILITY_REASON) return evaluation;
+  const withoutGate = evaluateAgentJobEligibility({
+    ...args,
+    job: { ...args.job, issuerKind: null },
+  });
+  return withoutGate.eligible ? evaluation : withoutGate;
+}
+
 module.exports = {
+  ADCS_ENROLL_CAPABILITY,
+  ADCS_ENROLL_CAPABILITY_REASON,
   EVIDENCE_CLAIM_BINDING_CAPABILITY,
   TRUST_ANCHOR_DEPLOY_CAPABILITY,
   evaluateAgentJobEligibility,
+  explainAgentJobEligibility,
   hasFreshCapability,
   persistedTextArray,
   resolveAgentJobRoutingRequirements,
