@@ -92,8 +92,8 @@ describe("pendingReasonForJob", () => {
   });
 
   describe("AD CS jobs", () => {
-    const adcsJob = () =>
-      job({ operation: "renew", issuerKind: "adcs" });
+    const adcsJob = (overrides = {}) =>
+      job({ operation: "renew", issuerKind: "adcs", ...overrides });
     const adcsAgent = (overrides = {}) =>
       agent({
         supportedOperations: ["renew"],
@@ -137,7 +137,17 @@ describe("pendingReasonForJob", () => {
       assert.equal(reason.code, "awaiting_claim");
     });
 
-    it("reads the AD CS marker from the job list path, not from the job payload", async () => {
+    it("does not hide a second eligibility blocker behind the AD CS gate", () => {
+      const reason = pendingReasonForJob(
+        adcsJob({ requiredTargetSelector: "host/web" }),
+        adcsAgent({ targetSelectors: ["host/other"] }),
+      );
+      assert.equal(reason.code, "target_selector_unsupported");
+      assert.notEqual(reason.code, "adcs_enroll_capability_unavailable");
+    });
+
+    it("reads AD CS enrollment from the workspace job row, not from the job payload", async () => {
+      const jobId = "22222222-2222-4222-8222-222222222222";
       const liveAgentRow = (declaredCapabilities) => ({
         id: "11111111-1111-4111-8111-111111111111",
         agent_id: "agent-one",
@@ -155,9 +165,18 @@ describe("pendingReasonForJob", () => {
         declared_command_profile_names: [],
         supported_dns_providers: [],
       });
-      const db = (rows) => ({ query: async () => ({ rows }) });
+      const db = ({ agentRows, enrollmentJobIds = [] }) => ({
+        query: async (sql) => {
+          if (String(sql).includes("enrollment_id IS NOT NULL")) {
+            return {
+              rows: enrollmentJobIds.map((id) => ({ id })),
+            };
+          }
+          return { rows: agentRows };
+        },
+      });
       const jobRow = () => ({
-        id: "job-1",
+        id: jobId,
         workspaceId: "ws-1",
         status: "pending",
         operation: "renew",
@@ -166,25 +185,61 @@ describe("pendingReasonForJob", () => {
         payload: {},
       });
 
+      // Authoritative path: enrollment_id on the workspace-scoped job row.
+      const enrolled = jobRow();
+      const [blocked] = await attachJobPendingReasons({
+        db: db({
+          agentRows: [liveAgentRow([])],
+          enrollmentJobIds: [jobId],
+        }),
+        workspaceId: "ws-1",
+        jobs: [enrolled],
+        env: {},
+      });
+      assert.equal(blocked.pendingReason.code, "adcs_enroll_capability_unavailable");
+      assert.match(blocked.pendingReason.message, /adcs-enroll-v1/);
+      assert.equal("issuerKind" in blocked, false);
+      const serialized = JSON.parse(JSON.stringify(blocked));
+      assert.equal("issuerKind" in serialized, false);
+
+      // Optional same-object mark still works when the row lookup is empty.
       const marked = jobRow();
       markAdcsJob(marked);
-      const [blocked] = await attachJobPendingReasons({
-        db: db([liveAgentRow([])]),
+      const [markedBlocked] = await attachJobPendingReasons({
+        db: db({ agentRows: [liveAgentRow([])], enrollmentJobIds: [] }),
         workspaceId: "ws-1",
         jobs: [marked],
         env: {},
       });
-      assert.equal(blocked.pendingReason.code, "adcs_enroll_capability_unavailable");
+      assert.equal(
+        markedBlocked.pendingReason.code,
+        "adcs_enroll_capability_unavailable",
+      );
 
+      // Non-enrollment jobs must not get issuerKind injected.
       const unmarked = jobRow();
       const [plain] = await attachJobPendingReasons({
-        db: db([liveAgentRow([])]),
+        db: db({ agentRows: [liveAgentRow([])], enrollmentJobIds: [] }),
         workspaceId: "ws-1",
         jobs: [unmarked],
         env: {},
       });
       assert.equal(plain.pendingReason.code, "awaiting_claim");
       assert.equal("issuerKind" in plain, false);
+
+      // Clones still evaluate AD CS because enrollment_id is loaded by job id.
+      const clone = { ...jobRow() };
+      const [kept] = await attachJobPendingReasons({
+        db: db({
+          agentRows: [liveAgentRow([])],
+          enrollmentJobIds: [jobId],
+        }),
+        workspaceId: "ws-1",
+        jobs: [clone],
+        env: {},
+      });
+      assert.equal(kept.pendingReason.code, "adcs_enroll_capability_unavailable");
+      assert.equal("issuerKind" in kept, false);
     });
   });
 });

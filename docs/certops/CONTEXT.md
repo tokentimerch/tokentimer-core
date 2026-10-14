@@ -336,7 +336,7 @@ the shared detector scans every outbound envelope.
 
 ## Dashboard certificate visibility
 
-Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, AD CS, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. The AD CS tab is for issuer preflight and enrollment status. It does not enable AD CS enrollment. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
+Token surfaces retain linked expiry and metadata. Certificate operations has Jobs, Certificates, Renewals, Agents, and Settings tabs; `/certops/operations` redirects to `/certops/jobs`. AD CS issuers, CA preflight, pinning, enrollment status, and AD CS renewal profiles live under **Renewals**. Creating an issuer or a profile does not issue a certificate by itself. Manager/admin users can create manual jobs and decide pending approvals, and workspace admins control pause, approval policy, and renewal-profile edits. The fleet and settings pages expose show-once bootstrap/machine tokens and evidence timelines.
 
 ## Certificate removal
 
@@ -478,8 +478,10 @@ flows use this path when `certops.enabled` is on.
 
 ## Where things live
 
+- Current-state index (behavior, architecture, enrollment prerequisites):
+  [CURRENT_STATE.md](CURRENT_STATE.md).
 - Program docs: `docs/certops/` (this file; purgeable when CertOps graduates).
-- ADRs: `docs/adr/` (CertOps ADRs 0001-0011 today; see `docs/adr/README.md` for
+- ADRs: `docs/adr/` (CertOps ADRs 0001-0014 today; see `docs/adr/README.md` for
   the index and which records carry amendments).
 - API: `apps/api/` (core), `apps/saas/` (cloud), `src/api/` (enterprise).
 - Contracts: `packages/contracts/` (registered in `contracts.manifest.json`).

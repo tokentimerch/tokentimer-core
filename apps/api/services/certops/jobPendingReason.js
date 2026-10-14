@@ -141,12 +141,25 @@ function pendingReasonForJob(job, agent) {
   };
 }
 
-// Job objects carry no issuer kind and must not expose one. jobFromRow marks
-// AD CS rows (enrollment_id set) by object identity instead.
-const adcsJobs = new WeakSet();
+// Optional same-object mark from jobFromRow. Authoritative AD CS detection for
+// list/get is the workspace-scoped enrollment_id lookup in
+// loadAdcsEnrollmentJobIds (survives clones, no cross-request shared Set).
+// The Symbol is omitted by JSON.stringify and dropped by object spread on the
+// returned job, so API responses never gain issuerKind or enrollment id here.
+const ADCS_JOB_MARK = Symbol("tokentimer.certops.adcsJob");
 
 function markAdcsJob(job) {
-  adcsJobs.add(job);
+  if (!job || typeof job !== "object") return;
+  Object.defineProperty(job, ADCS_JOB_MARK, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+    writable: false,
+  });
+}
+
+function isMarkedAdcsJob(job) {
+  return Boolean(job && job[ADCS_JOB_MARK]);
 }
 
 function collectAgentIds(jobs) {
@@ -163,22 +176,52 @@ function collectAgentIds(jobs) {
   return ids;
 }
 
+function collectAwaitingJobIds(jobs) {
+  const ids = [];
+  for (const job of jobs) {
+    if (!AWAITING_EXECUTION_STATUSES.has(job.status)) continue;
+    if (typeof job?.id === "string" && UUID_RE.test(job.id)) {
+      ids.push(job.id);
+    }
+  }
+  return ids;
+}
+
+async function loadAdcsEnrollmentJobIds({ db, workspaceId, jobs }) {
+  const ids = collectAwaitingJobIds(jobs);
+  if (ids.length === 0) return new Set();
+  const result = await db.query(
+    `SELECT id
+       FROM certificate_jobs
+      WHERE workspace_id = $1
+        AND id = ANY($2::uuid[])
+        AND enrollment_id IS NOT NULL`,
+    [workspaceId, ids],
+  );
+  return new Set(result.rows.map((row) => String(row.id)));
+}
+
 async function attachJobPendingReasons({ db, workspaceId, jobs, env }) {
   if (!Array.isArray(jobs) || jobs.length === 0) return jobs || [];
   const ids = collectAgentIds(jobs);
-  const agentsById =
+  const [agentsById, adcsJobIds] = await Promise.all([
     ids.length === 0
-      ? new Map()
-      : await getAgentsByIds({
+      ? Promise.resolve(new Map())
+      : getAgentsByIds({
           client: db,
           workspaceId,
           ids,
           env,
-        });
+        }),
+    loadAdcsEnrollmentJobIds({ db, workspaceId, jobs }),
+  ]);
   return jobs.map((job) => {
     const agentId = job.assignedAgentId || job.claimedByAgentId || null;
     const agent = agentId ? agentsById.get(String(agentId)) || null : null;
-    const issuerKind = adcsJobs.has(job) ? "adcs" : null;
+    // issuerKind stays on the temporary eligibility input only; the returned
+    // job must not gain a public issuerKind field (spread also drops the Symbol).
+    const issuerKind =
+      isMarkedAdcsJob(job) || adcsJobIds.has(String(job.id)) ? "adcs" : null;
     return {
       ...job,
       pendingReason: pendingReasonForJob({ ...job, issuerKind }, agent),

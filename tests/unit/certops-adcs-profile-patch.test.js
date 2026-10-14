@@ -137,4 +137,73 @@ describe("CertOps AD CS renewal-profile edits", () => {
       CERTOPS_RENEWAL_PROFILE_INVALID,
     );
   });
+
+  // ACME-shaped profiles keep schemaVersion after an issuer switch. Shape alone
+  // would keep the ACME validator; issuerKind must select AD CS rules instead.
+  function acmeShapedWindowsIis() {
+    return {
+      schemaVersion: 1,
+      sanPolicy: { mode: "exact", sans: ["app.example.com"], allowWildcards: false },
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+      keyRotationPolicy: { rotateOnRenew: true },
+      preferredChain: null,
+      ca: { endpoint: "https://acme-v02.api.letsencrypt.org/directory", accountRef: "le-prod", eabRef: null },
+      acme: { kind: "certbot", commandRef: "issue.dns" },
+      dns: { provider: "cloudflare", zone: "example.com" },
+      deploymentTargets: [
+        {
+          type: "windows-iis",
+          reference: "app.example.com",
+          store: "My",
+          binding: { site: "Default Web Site", port: 443 },
+        },
+      ],
+      target: {
+        type: "windows-iis",
+        reference: "app.example.com",
+        store: "My",
+        binding: { site: "Default Web Site", port: 443 },
+      },
+      verification: { host: null, port: null, requireMatch: false },
+    };
+  }
+
+  it("routes an ACME-shaped profile switched to AD CS through AD CS editable fields", () => {
+    const result = applyRenewalProfilePatch(
+      acmeShapedWindowsIis(),
+      { sanPolicy: { sans: ["app.example.com", "www.example.com"] }, keySize: 3072 },
+      { issuerKind: "adcs" },
+    );
+    assert.deepEqual(result.sanPolicy, { sans: ["app.example.com", "www.example.com"] });
+    assert.equal(result.keySize, 3072);
+    expectCode(
+      () =>
+        applyRenewalProfilePatch(
+          acmeShapedWindowsIis(),
+          { preferredChain: "lets-encrypt" },
+          { issuerKind: "adcs" },
+        ),
+      CERTOPS_PROFILE_INVALID,
+    );
+  });
+
+  it("keeps an ACME-shaped profile on the ACME validator when the issuer is still ACME", () => {
+    const result = applyRenewalProfilePatch(
+      acmeShapedWindowsIis(),
+      { preferredChain: "lets-encrypt" },
+      { issuerKind: "acme" },
+    );
+    assert.equal(result.preferredChain, "lets-encrypt");
+    expectCode(
+      () =>
+        applyRenewalProfilePatch(
+          acmeShapedWindowsIis(),
+          { keyAlgorithm: "ecdsa", keySize: 2048 },
+          { issuerKind: "acme" },
+        ),
+      CERTOPS_RENEWAL_PROFILE_INVALID,
+    );
+  });
+
 });

@@ -1622,6 +1622,8 @@ function jobFromRow(row) {
     completedAt: dateToIso(row.completed_at),
     cancelledAt: dateToIso(row.canceled_at),
   };
+  // Optional same-object AD CS mark; attachJobPendingReasons also loads
+  // enrollment_id by job id so clones still evaluate the AD CS gate.
   if (row.enrollment_id) markAdcsJob(job);
   return job;
 }
