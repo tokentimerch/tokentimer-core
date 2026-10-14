@@ -346,6 +346,19 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields)):
                 raise ValueError("Incomplete two-generation native renewal evidence")
             result["nativeTwoRenewals"] = {**dict.fromkeys(fields, True), "successfulAutomationCycles": 2, "expiryCleanupQualified": False, "scope": scope}
+        if value.get("suite") == "browser-agent-console":
+            proof = value.get("completedConsolePrivacy")
+            fields = ('finalStreamDoesNotCompleteJob', 'claimBoundResultCompletesNoop', 'completedViewerTextWithdrawn', 'restoredHistoryWithoutDuplicates', 'removedMemberTextWithdrawn', 'sameConsoleRemainedMounted', 'authoritativeTerminalStatePreserved', 'foregroundRevalidationWithinThirtySeconds', 'noNativeExecutionClaim')
+            if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
+                raise ValueError("Incomplete completed-console privacy evidence")
+            result["completedConsolePrivacy"] = dict.fromkeys(fields, True)
+        if value.get("suite") == "windows-canonical-root-lifecycle":
+            proof = value.get("nativeCanonicalRoot")
+            fields = ('initialRootAbsent', 'initialServiceAbsent', 'ownershipRecordedBeforeInstall', 'originalInstallerBytesUnchanged', 'canonicalInstalledHostVerified', 'localSystemServiceVerified', 'authenticatedRegistration', 'bootstrapRegistryScrubbed', 'restartChangedServicePid', 'freshHeartbeatAfterRestart', 'candidateReapplicationSucceeded', 'configurationCredentialAndPinPreserved', 'freshHeartbeatAfterReapplication', 'unmodifiedUninstallerSucceeded', 'serviceAndAppRemoved', 'uninstallPreservedState', 'exactOwnedRootRemoved')
+            scope = "unmodified-candidate-cli-canonical-root-same-version-reapplication"
+            if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
+                raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
+            result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
         if value.get("suite") == "windows-host":
             survivor_fields = ("differentCertificateCrossStoreProtected", "sameCertificateCrossStoreProtected", "originalKeyPreserved", "replacementTrustedTlsPreserved", "ownedCrossStoreCopiesRemoved")
             survivors = value.get("nativeKeySurvivors")

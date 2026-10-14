@@ -960,7 +960,10 @@
       "browser-console-offline-reconnect": "e2e",
       "browser-console-viewer-status-only": "e2e",
       "browser-console-authority-withdrawal": "e2e",
-      "browser-console-owned-cleanup": "e2e"
+      "browser-console-owned-cleanup": "e2e",
+      "browser-console-completed-stream-job": "e2e",
+      "browser-console-completed-viewer-withdrawal": "e2e",
+      "browser-console-completed-membership-withdrawal": "e2e"
     },
     "csr-provisional-api": {
       "csr-provisional-shared-public-import": "integration",
@@ -1087,6 +1090,15 @@
       "renewal-key-facts-public-leaf-restores": "integration",
       "renewal-key-facts-result-replay-preserves": "integration",
       "renewal-key-facts-owned-cleanup": "integration"
+    },
+    "windows-canonical-root-lifecycle": {
+      "windows-canonical-root-owned": "e2e",
+      "windows-canonical-unmodified-install": "e2e",
+      "windows-canonical-authenticated-registration": "e2e",
+      "windows-canonical-service-restart": "e2e",
+      "windows-canonical-candidate-reapplication": "e2e",
+      "windows-canonical-unmodified-uninstall": "e2e",
+      "windows-canonical-owned-cleanup": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1539,6 +1551,12 @@
       "api",
       "postgres",
       "openssl"
+    ],
+    "windows-canonical-root-lifecycle": [
+      "windows",
+      "system",
+      "disposableHost",
+      "api"
     ]
   },
   "suites": {
@@ -2501,6 +2519,9 @@
       "browser-console-offline-reconnect",
       "browser-console-viewer-status-only",
       "browser-console-authority-withdrawal",
+      "browser-console-completed-stream-job",
+      "browser-console-completed-viewer-withdrawal",
+      "browser-console-completed-membership-withdrawal",
       "browser-console-owned-cleanup"
     ],
     "csr-provisional-api": [
@@ -2623,6 +2644,15 @@
       "renewal-key-facts-public-leaf-restores",
       "renewal-key-facts-result-replay-preserves",
       "renewal-key-facts-owned-cleanup"
+    ],
+    "windows-canonical-root-lifecycle": [
+      "windows-canonical-root-owned",
+      "windows-canonical-unmodified-install",
+      "windows-canonical-authenticated-registration",
+      "windows-canonical-service-restart",
+      "windows-canonical-candidate-reapplication",
+      "windows-canonical-unmodified-uninstall",
+      "windows-canonical-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2716,6 +2746,7 @@
     "windows-activation-second-rename": "e2e",
     "browser-certificate-audit": "e2e",
     "windows-two-unattended-renewals": "e2e",
-    "renewal-key-facts-api": "integration"
+    "renewal-key-facts-api": "integration",
+    "windows-canonical-root-lifecycle": "e2e"
   }
 }

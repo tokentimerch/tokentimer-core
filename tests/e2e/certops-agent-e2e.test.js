@@ -436,6 +436,12 @@ describe("CertOps agent surface E2E", () => {
       await require("./linux-systemd-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
     });
   }
+  if (process.env.CERTOPS_REAL_WINDOWS_FIXED_ROOT_REQUIRED === "1") {
+    it("real Windows canonical root: unmodified installer registers restarts reapplies and uninstalls", { timeout: 600000 }, async () => {
+      assert.equal(dbAvailable, true, "Canonical Windows lifecycle requires migrated PostgreSQL");
+      await require("./helpers/certops-windows-fixed-root").qualifyFixedRoot({ pool, baseUrl, workspaceId: seeded.workspaceId, createBootstrap, repoRoot });
+    });
+  }
   if (process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") {
     it("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", { timeout: 1080000 }, async () => {
       assert.equal(dbAvailable, true, "Windows journey requires migrated PostgreSQL");

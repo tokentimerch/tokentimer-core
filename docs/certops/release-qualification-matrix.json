@@ -2053,7 +2053,16 @@
       "source": "scripts/certops-browser-console.js",
       "environment": {
         "osFamily": "linux"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-browser-console.js",
+        "apps/dashboard/src/components/certops/AgentShellConsole.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/api/routes/certops.js",
+        "apps/api/services/certops/agentJobLogs.js",
+        "tests/e2e/helpers/certops-registered-agent.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
+      ]
     },
     {
       "id": "api-csr-provisional",
@@ -2791,6 +2800,48 @@
         "apps/api/services/certops/inventory.js",
         "apps/api/services/certops/parser.js"
       ]
+    },
+    {
+      "id": "windows-canonical-root-2022",
+      "kind": "host",
+      "suite": "windows-canonical-root-lifecycle",
+      "source": "tests/e2e/helpers/certops-windows-fixed-root.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-fixed-root.js",
+        "tests/e2e/certops-agent-e2e.test.js",
+        "packages/agent/scripts/install-agent.ps1",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/scripts/build-windows-service-host.js",
+        "scripts/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root-cleanup.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem"
+      }
+    },
+    {
+      "id": "windows-canonical-root-2025",
+      "kind": "host",
+      "suite": "windows-canonical-root-lifecycle",
+      "source": "tests/e2e/helpers/certops-windows-fixed-root.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-fixed-root.js",
+        "tests/e2e/certops-agent-e2e.test.js",
+        "packages/agent/scripts/install-agent.ps1",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/scripts/build-windows-service-host.js",
+        "scripts/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root-cleanup.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem"
+      }
     }
   ]
 }

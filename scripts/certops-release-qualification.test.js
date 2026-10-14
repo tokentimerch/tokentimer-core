@@ -380,3 +380,31 @@ test("second-rename evidence cannot claim full CLI rollback or omit native owner
 function elapsedRetentionProof() {
  return {mode:"real-clock-two-cutover-expiry-grace",successfulCutovers:2,predecessorCertificatesRemoved:2,predecessorKeysRemoved:2,lineageRowsFinalized:2,immediateDeferralPreservedCustody:true,immutableHistoryPreserved:true,replacementTrustedBoundCustodyUnchanged:true,interruptedNativeDeleteRecovered:true,configuredRetentionHours:24,fullRetentionWindowQualified:false,waitedMonotonicMs:420000};
 }
+
+
+test("canonical Windows CLI and completed-console facts are mandatory and source-bound", () => {
+  const canonical = require("../tests/e2e/helpers/certops-windows-fixed-root");
+  const cases = [
+    [canonical.suite, "nativeCanonicalRoot", canonical.fields, { scope: "unmodified-candidate-cli-canonical-root-same-version-reapplication" }],
+    ["browser-agent-console", "completedConsolePrivacy", require("./certops-completed-console-proof").FIELDS, {}],
+  ];
+  for (const [suite, key, fields, extra] of cases) {
+    const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === suite);
+    assert.equal(slots.length, suite === canonical.suite ? 2 : 1);
+    for (const slot of slots) {
+      const proof = { ...Object.fromEntries(fields.map(field => [field, true])), ...extra };
+      const value = suiteArtifact(suite, slot.source, { [key]: proof });
+      value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+      value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+      const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+      assert.deepEqual(verifyMatrix([value], options), []);
+      for (const field of fields) for (const invalid of [false, 1, null, "true"]) {
+        const bad = structuredClone(value); bad.report[key][field] = invalid; assert.ok(verifyMatrix([bad], options).length, field);
+      }
+      const missing = structuredClone(value); delete missing.report[key]; assert.ok(verifyMatrix([missing], options).length);
+      const unbounded = structuredClone(value); unbounded.report[key].rawSecret = "sentinel"; assert.ok(verifyMatrix([unbounded], options).length);
+      for (const file of slot.requiredSources) { const stale = structuredClone(value); stale.report.fixtureSources.find(row => row.file === file).sha256 = "0".repeat(64); assert.ok(verifyMatrix([stale], options).length, file); }
+      if (suite === canonical.suite) { const overclaim = structuredClone(value); overclaim.report[key].scope = "published-upgrade"; assert.ok(verifyMatrix([overclaim], options).length); }
+    }
+  }
+});

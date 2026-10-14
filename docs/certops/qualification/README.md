@@ -42,6 +42,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native CNG export refusal and operational key custody](windows/cng-export-refusal-qualification.md)
 - [IIS SNI isolation between sites sharing one port](windows/shared-port-sni-qualification.md)
 - [Native store and HTTP.sys discovery selectors](windows/native-discovery-qualification.md)
+- [Canonical-root unmodified Windows installer lifecycle](windows/canonical-root-lifecycle.md)
 - [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
 - [Installer first-rename refusal and preserved service](windows/installer-first-rename-refusal.md)
@@ -91,3 +92,5 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Certificate release qualification](reporting/release-qualification.md)
 - [Skip qualification ownership](reporting/skip-qualification.md)
 - [Supporting CertOps integration qualification](reporting/supporting-integration-qualification.md)
+
+- [Completed-console authority withdrawal](api/browser-completed-console.md)

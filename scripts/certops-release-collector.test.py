@@ -34,6 +34,28 @@ def elapsed_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_canonical_installer_and_completed_console_keep_only_bounded_facts(self):
+        cases = [
+            ("windows-canonical-root-lifecycle", "nativeCanonicalRoot", ("initialRootAbsent", "initialServiceAbsent", "ownershipRecordedBeforeInstall", "originalInstallerBytesUnchanged", "canonicalInstalledHostVerified", "localSystemServiceVerified", "authenticatedRegistration", "bootstrapRegistryScrubbed", "restartChangedServicePid", "freshHeartbeatAfterRestart", "candidateReapplicationSucceeded", "configurationCredentialAndPinPreserved", "freshHeartbeatAfterReapplication", "unmodifiedUninstallerSucceeded", "serviceAndAppRemoved", "uninstallPreservedState", "exactOwnedRootRemoved"), {"scope": "unmodified-candidate-cli-canonical-root-same-version-reapplication"}),
+            ("browser-agent-console", "completedConsolePrivacy", ("finalStreamDoesNotCompleteJob", "claimBoundResultCompletesNoop", "completedViewerTextWithdrawn", "restoredHistoryWithoutDuplicates", "removedMemberTextWithdrawn", "sameConsoleRemainedMounted", "authoritativeTerminalStatePreserved", "foregroundRevalidationWithinThirtySeconds", "noNativeExecutionClaim"), {}),
+        ]
+        for suite, key, fields, extra in cases:
+            proof = {**dict.fromkeys(fields, True), **extra}
+            report = {"suite": suite, key: {**proof, "privatePath": "sentinel", "credential": "sentinel", "consoleText": "sentinel"}}
+            result = collector.sanitized_report(report, {suite}, set())
+            self.assertEqual(result[key], proof)
+            self.assertNotIn("sentinel", json.dumps(result))
+            for field in fields:
+                for invalid in (False, 1, None, "true"):
+                    with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, key: {**proof, field: invalid}}, {suite}, set())
+                missing = {**proof}
+                del missing[field]
+                with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, key: missing}, {suite}, set())
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite}, {suite}, set())
+            if extra:
+                with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, key: {**proof, "scope": "published-upgrade"}}, {suite}, set())
+
+
     def test_renewal_key_facts_keep_only_committed_sources_not_public_leaf_or_claim_bodies(self):
         suite = "renewal-key-facts-api"
         matrix = json.loads((collector.ROOT / "docs/certops/release-qualification-matrix.json").read_text())
