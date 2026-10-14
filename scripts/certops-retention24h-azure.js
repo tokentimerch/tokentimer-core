@@ -1,6 +1,7 @@
 "use strict";
 /** Trusted hosted-controller adapter. All cloud mutations target one verified
- * disposable group. GitHub workflow concurrency serializes participating writers;
+ * disposable group. Cleanup writers share a GitHub concurrency queue; preparation
+ * has a separate bounded phase that ends before the original lease can expire.
  * compare/readback is deliberately not described as an Azure atomic transaction.
  * Guest strings never become local shell commands or arbitrary file paths.
  */

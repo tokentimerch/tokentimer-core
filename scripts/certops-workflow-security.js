@@ -6,7 +6,7 @@ const fs=require("node:fs"),path=require("node:path");
 // Every other provisioner still needs unconditional owned teardown.
 function retainedDayProtocol(workflow,id,job){
  if(id!=="prepare"||JSON.stringify(Object.keys(workflow.jobs||{}))!==JSON.stringify(["prepare"])||JSON.stringify(Object.keys(workflow.on||{}))!==JSON.stringify(["workflow_dispatch"])||job.environment!=="certops-adcs-lab")return false;
- if(workflow.concurrency?.group!=="certops-retention24h-owned-azure-lifecycle"||workflow.concurrency?.["cancel-in-progress"]!==false)return false;
+ if(workflow.concurrency?.group!=="certops-retention24h-prepare-${{ github.run_id }}-${{ github.run_attempt }}"||workflow.concurrency?.["cancel-in-progress"]!==false)return false;
  const steps=job.steps||[];
  const locate=predicate=>{const found=steps.map((step,index)=>predicate(step)?index:-1).filter(index=>index>=0);return found.length===1?found[0]:-1;};
  const success=step=>step.if===undefined||step.if==="success()";
@@ -57,7 +57,7 @@ function validateWorkflow(workflow,name="workflow"){
     const retainedDay=name==="certops-retention24h-prepare.yml"&&retainedDayProtocol(workflow,id,job);
     if(name==="certops-retention24h-prepare.yml"&&!retainedDay)fail(`${id} retention handoff requires its complete original-artifact-first owned lifecycle`);
     if(["certops-retention24h-finalize.yml","certops-retention24h-janitor.yml"].includes(name)&&job.environment!=="certops-adcs-cleanup")fail(`${id} retention cleanup requires its dedicated unattended environment`);
-    if(["certops-retention24h-prepare.yml","certops-retention24h-finalize.yml","certops-retention24h-janitor.yml"].includes(name)&&(workflow.concurrency?.group!=="certops-retention24h-owned-azure-lifecycle"||workflow.concurrency?.["cancel-in-progress"]!==false))fail(`${id} retention lifecycle requires fixed non-cancelling serialization`);
+    if(["certops-retention24h-finalize.yml","certops-retention24h-janitor.yml"].includes(name)&&(workflow.concurrency?.group!=="certops-retention24h-owned-azure-lifecycle"||workflow.concurrency?.["cancel-in-progress"]!==false))fail(`${id} retention lifecycle requires fixed non-cancelling serialization`);
 
     for(const step of steps){
       if(step.uses&&!/^[-A-Za-z0-9_./]+@[a-f0-9]{40}$/.test(step.uses))fail(`${id} action must use an immutable commit`);

@@ -53,3 +53,15 @@ test("unsupported ARM full-host notice exception admits only exact credential-fr
  assert.ok(validateWorkflow(baseline,"certops-other.yml").length);
  for(const change of [w=>w.permissions.contents="read",w=>w.permissions["id-token"]="write",w=>w.on.push={branches:["main"]},w=>w.jobs["unsupported-full-host"].if="github.ref == 'refs/heads/main'",w=>w.jobs["unsupported-full-host"]["runs-on"]="windows-11-arm",w=>w.jobs["unsupported-full-host"].steps.push({uses:"actions/checkout@"+"a".repeat(40)}),w=>w.jobs["unsupported-full-host"].steps[0].run="echo ignored\nexit 0\n",w=>w.jobs["unsupported-full-host"].steps[0].shell="pwsh",w=>w.env={TOKEN:"secret"},w=>w.jobs["unsupported-full-host"].steps[0].env={TOKEN:"secret"}]){const w=structuredClone(baseline);change(w);assert.ok(validateWorkflow(w,name).length);}
 });
+
+test("approval-pending retention prepare never occupies cleanup queue and cannot outlive initial lease",()=>{
+ const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module"),yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
+ const read=name=>yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));
+ const name="certops-retention24h-prepare.yml",value=read(name),initial=require("./certops-retention24h-contract").INITIAL;
+ assert.deepEqual(validateWorkflow(value,name),[]);
+ assert.equal(value.jobs.prepare["timeout-minutes"],180);
+ assert.ok(value.jobs.prepare["timeout-minutes"]*60000+5*60000<initial,"Whole job plus cancellation grace must end before earliest provision-start lease expiry");
+ for(const queue of ["certops-retention24h-owned-azure-lifecycle","certops-retention24h-prepare-${{ github.run_id }}","certops-retention24h-prepare-${{ github.run_attempt }}","foreign"]){const altered=structuredClone(value);altered.concurrency.group=queue;assert.ok(validateWorkflow(altered,name).length);}
+ for(const timeout of [181,240,"180",null]){const altered=structuredClone(value);altered.jobs.prepare["timeout-minutes"]=timeout;assert.ok(validateWorkflow(altered,name).length);}
+ for(const other of ["certops-retention24h-finalize.yml","certops-retention24h-janitor.yml","certops-adcs-lab-janitor.yml"]){const cleanup=read(other);assert.equal(cleanup.concurrency.group,"certops-retention24h-owned-azure-lifecycle");assert.equal(cleanup.concurrency["cancel-in-progress"],false);assert.notEqual(cleanup.concurrency.group,value.concurrency.group);for(const job of Object.values(cleanup.jobs))assert.equal(job.environment,"certops-adcs-cleanup");}
+});

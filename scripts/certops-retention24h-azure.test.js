@@ -676,7 +676,7 @@ test("prepare workflows seal original artifact before extension and keep indepen
       path.join(root, `.github/workflows/certops-${name}.yml`),
       "utf8",
     );
-    assert.match(text, /group: certops-retention24h-owned-azure-lifecycle/);
+    assert.ok(text.includes(name === "retention24h-prepare" ? "group: certops-retention24h-prepare-${{ github.run_id }}-${{ github.run_attempt }}" : "group: certops-retention24h-owned-azure-lifecycle"));
     assert.match(text, /cancel-in-progress: false/);
   }
   for (const name of ["finalize", "janitor"]) {

@@ -2,9 +2,10 @@
 name: "CertOps / Prepare real native24h retention"
 on:
   workflow_dispatch:
-# Participating Azure lease writers share one queue; external Azure actors do not.
+# Approval must never occupy the independent cleanup queue. No resources exist
+# before approval; the entire 180-minute job ends before its four-hour lease.
 concurrency:
-  group: certops-retention24h-owned-azure-lifecycle
+  group: certops-retention24h-prepare-${{ github.run_id }}-${{ github.run_attempt }}
   cancel-in-progress: false
 permissions:
   contents: read
