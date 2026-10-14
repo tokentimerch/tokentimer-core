@@ -32,6 +32,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The Windows installer treats paths containing literal brackets as exact paths during installation, upgrade, rollback and removal, preserving similarly named sibling directories.
+
 - Workspace membership invitations can no longer downgrade an existing workspace admin or override an owner’s implicit admin access.
 
 - Windows retention follows verified replacements after repeated IIS rotations, so older superseded certificates can become eligible for cleanup. Agent cutover, rollback and retention checks share the store lock through deletion and ledger updates. Cleanup preserves a machine key referenced by a certificate in another machine store, including an identical certificate mirrored there.
