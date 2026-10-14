@@ -8,8 +8,23 @@
 const assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path"),
-  crypto = require("node:crypto"),
-  { spawn } = require("node:child_process");
+  crypto = require("node:crypto");
+const contained = require("../../../../tests/e2e/helpers/certops-windows-contained-process");
+const active = new Set(),
+  guardName = ".preserve-enrollment-contention.json";
+function assertCleanupSafe(workDir) {
+  assert.equal(
+    active.has(path.resolve(workDir)),
+    false,
+    "Enrollment contention ownership unresolved",
+  );
+  assert.equal(
+    fs.existsSync(path.join(workDir, guardName)),
+    false,
+    "Preserve unresolved contention receipt",
+  );
+  contained.assertCleanupSafe(workDir);
+}
 const {
   buildEnrollmentContainerName,
 } = require("../../src/windows-cert-store");
@@ -51,7 +66,14 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
   let primary,
     facts,
     keyOwned = false;
-  const quote = (value) => value.replace(/'/g, "''");
+  active.add(path.resolve(workDir));
+  const guard = path.join(workDir, guardName);
+  fs.writeFileSync(guard, JSON.stringify({ enrollmentId, directory }), {
+    flag: "wx",
+  });
+  const guardStat = fs.lstatSync(guard, { bigint: true }),
+    guardBytes = fs.readFileSync(guard);
+  assert.ok(guardStat.ino > 0n);
   fs.mkdirSync(directory);
   fs.mkdirSync(stateDir);
   for (const name of ["winner", "loser", "retry"])
@@ -62,99 +84,116 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
         `$k=[Security.Cryptography.CngKey]::Open('${containerName}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);$r=$null;try{$r=[Security.Cryptography.RSACng]::new($k);@{name=$k.KeyName;unique=$k.UniqueName;provider=$k.Provider.Provider;machine=$k.IsMachineKey;policy=[int]$k.ExportPolicy;bits=$r.KeySize}|ConvertTo-Json -Compress}finally{if($r){$r.Dispose()};$k.Dispose()}`,
       ),
     );
-  const observe = (child) =>
-    JSON.parse(
-      powershell(
-        `$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${child.pid}';if(!$p -or $p.ParentProcessId -ne ${process.pid} -or $p.ExecutablePath -ne '${quote(process.execPath)}' -or !$p.CommandLine.Contains('${quote(entry)}') -or !$p.CommandLine.Contains('${enrollmentId}')){throw 'Owned child identity mismatch'};@{pid=$p.ProcessId;parent=$p.ParentProcessId;creation=$p.CreationDate.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress`,
-      ),
-    );
-  const start = (mode) => {
+  const start = async (mode) => {
     const folder =
       mode === "hold" ? "winner" : children.length === 1 ? "loser" : "retry";
-    const child = spawn(
-      process.execPath,
-      [entry, mode, stateDir, enrollmentId, path.join(directory, folder)],
-      {
-        stdio: ["ignore", "ignore", "ignore", "ipc"],
-        env: {
-          ...Object.fromEntries(
-            [
-              "SystemRoot",
-              "WINDIR",
-              "ComSpec",
-              "PATH",
-              "PATHEXT",
-              "TEMP",
-              "TMP",
-              "SystemDrive",
-              "ProgramFiles",
-              "ProgramData",
-              "USERPROFILE",
-            ]
-              .filter((name) => process.env[name] !== undefined)
-              .map((name) => [name, process.env[name]]),
-          ),
-          CERTOPS_HOST_TESTS: "1",
-        },
-      },
-    );
+    const protocol = path.join(directory, folder, "protocol");
+    fs.mkdirSync(protocol);
     const owned = {
-      child,
-      messages: [],
+      protocol,
+      resource: null,
       closed: false,
-      goSent: false,
       nativeDrained: false,
     };
-    owned.exit = new Promise((resolve) => {
-      child.once("error", () => {
-        owned.closed = true;
-        owned.nativeDrained = !owned.goSent;
-        resolve({ error: true });
-      });
-      child.once("close", (code, signal) => {
-        owned.closed = true;
-        owned.nativeDrained =
-          !owned.goSent ||
-          (code === 0 &&
-            owned.messages.some(
-              (item) => item.event === "released" && item.nativeActive === 0,
-            ));
-        resolve({ code, signal });
-      });
-    });
-    child.on("message", (message) => owned.messages.push(message));
     children.push(owned);
+    await contained.startContainedNativeProcess({
+      executable: process.execPath,
+      args: [
+        entry,
+        mode,
+        stateDir,
+        enrollmentId,
+        path.join(directory, folder),
+        protocol,
+      ],
+      environment: {
+        ...Object.fromEntries(
+          [
+            "SystemRoot",
+            "WINDIR",
+            "ComSpec",
+            "PATH",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "SystemDrive",
+            "ProgramFiles",
+            "ProgramData",
+            "USERPROFILE",
+          ]
+            .filter((name) => process.env[name] !== undefined)
+            .map((name) => [name, process.env[name]]),
+        ),
+        CERTOPS_HOST_TESTS: "1",
+      },
+      workDir,
+      maxLifetimeMs: 180000,
+      onCreated(resource) {
+        owned.resource = resource;
+        owned.exit = new Promise((resolve) => {
+          resource.wrapper.once("close", (code) => {
+            owned.closed = true;
+            resolve(code);
+          });
+        });
+      },
+    });
     return owned;
   };
   const message = async (owned, event) => {
-    const deadline = Date.now() + 90000;
+    const deadline = Date.now() + 90000,
+      file = path.join(owned.protocol, `event-${event}.json`);
     while (Date.now() < deadline) {
-      const found = owned.messages.find((item) => item.event === event);
-      if (found) return found;
-      assert.equal(owned.closed, false, `Owned child exited before ${event}`);
+      if (fs.existsSync(file)) {
+        const stat = fs.lstatSync(file);
+        assert.equal(stat.isSymbolicLink(), false);
+        assert.ok(stat.isFile() && stat.size <= 131072);
+        const value = JSON.parse(fs.readFileSync(file, "utf8"));
+        assert.equal(value.event, event);
+        return value;
+      }
+      assert.equal(
+        owned.closed,
+        false,
+        `Owned contained child exited before ${event}`,
+      );
       await delay(30);
     }
-    throw new Error(`Owned child timed out before ${event}`);
+    throw new Error(`Owned contained child timed out before ${event}`);
   };
+  const signal = (owned, event) =>
+    require("./enrollment-lock-child").publishOwnedProtocol(
+      owned.protocol,
+      `command-${event}`,
+      "1",
+    );
   const begin = async (owned) => {
     await message(owned, "ready");
-    owned.identity = observe(owned.child);
-    owned.goSent = true;
-    owned.child.send({ event: "go" });
+    signal(owned, "go");
   };
   const close = async (owned) => {
-    const result = await Promise.race([
-      owned.exit,
-      delay(10000).then(() => {
-        throw new Error("Owned child exit timed out");
-      }),
-    ]);
-    assert.equal(result.code, 0);
-    assert.equal(
-      owned.nativeDrained,
-      true,
-      "Actual native callbacks and explicit release must precede clean child exit",
-    );
+    const released = await message(owned, "released");
+    assert.equal(released.nativeActive, 0);
+    let timer;
+    let code;
+    try {
+      code = await Promise.race([
+        owned.exit,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Contained participant did not close")),
+            10000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    assert.equal(code, 0);
+    const proof = await owned.resource.stopAndDrain();
+    assert.equal(proof.rootExitCode, 0);
+    assert.equal(proof.activeNativeProcesses, 0);
+    owned.nativeDrained = true;
   };
   try {
     assert.equal(
@@ -164,7 +203,7 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
       "False",
     );
     keyOwned = true;
-    const winner = start("hold");
+    const winner = await start("hold");
     await begin(winner);
     const generated = await message(winner, "generated");
     assert.equal(generated.containerName, containerName);
@@ -211,7 +250,7 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
       );
     };
     sign();
-    const loser = start("attempt");
+    const loser = await start("attempt");
     await begin(loser);
     const denied = await message(loser, "locked");
     assert.equal(denied.code, "ENROLLMENT_LOCKED");
@@ -221,9 +260,9 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
     assert.deepEqual(snapshot(), before);
     assert.deepEqual(fs.readFileSync(generated.publicCsrPath), csrBytes);
     sign();
-    winner.child.send({ event: "release" });
+    signal(winner, "release");
     await close(winner);
-    const retry = start("attempt");
+    const retry = await start("attempt");
     await begin(retry);
     const refused = await message(retry, "collision");
     assert.equal(refused.reason, "enrollment_container_exists");
@@ -260,24 +299,13 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
   } finally {
     for (const owned of children) {
       try {
-        if (!owned.closed) {
-          if (!owned.identity) {
-            if (owned.child.connected) owned.child.disconnect();
-          } else {
-            assert.deepEqual(
-              observe(owned.child),
-              owned.identity,
-              "Refuse PID reuse during cleanup",
-            );
-            run("taskkill.exe", ["/PID", String(owned.child.pid), "/T", "/F"]);
-          }
-        }
-        await Promise.race([
-          owned.exit,
-          delay(10000).then(() => {
-            throw new Error("Owned process-tree drain timed out");
-          }),
-        ]);
+        assert.ok(
+          owned.resource,
+          "Contained resource must register before launch",
+        );
+        const proof = await owned.resource.stopAndDrain();
+        assert.equal(proof.activeNativeProcesses, 0);
+        owned.nativeDrained = true;
       } catch (error) {
         errors.push(error);
       }
@@ -302,9 +330,18 @@ async function qualifyEnrollmentContention({ powershell, run, workDir }) {
       [...(primary ? [primary] : []), ...errors],
       "Enrollment contention or owned cleanup failed",
     );
+  contained.assertCleanupSafe(workDir);
+  assert.equal(fs.lstatSync(guard, { bigint: true }).ino, guardStat.ino);
+  assert.ok(fs.readFileSync(guard).equals(guardBytes));
+  fs.unlinkSync(guard);
+  active.delete(path.resolve(workDir));
   facts.ownedChildrenStopped = true;
   facts.ownedKeyRemoved = true;
   verifyContentionFacts(facts);
   return facts;
 }
-module.exports = { qualifyEnrollmentContention, verifyContentionFacts };
+module.exports = {
+  qualifyEnrollmentContention,
+  verifyContentionFacts,
+  assertCleanupSafe,
+};

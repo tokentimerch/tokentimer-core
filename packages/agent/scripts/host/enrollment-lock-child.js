@@ -32,11 +32,39 @@ function persistPublicCsr(result, workDir) {
   });
   return file;
 }
+// Publish complete public protocol bytes atomically; observers never read a partial JSON write.
+function publishOwnedProtocol(directory, name, bytes) {
+  assert.match(name, /^(?:event-[a-z]+\.json|command-(?:go|release))$/);
+  assert.equal(fs.lstatSync(directory).isSymbolicLink(), false);
+  assert.equal(
+    fs.realpathSync(directory).toLowerCase(),
+    path.resolve(directory).toLowerCase(),
+  );
+  const data = Buffer.from(bytes);
+  assert.ok(data.length > 0 && data.length <= 131072);
+  const temporary = path.join(
+    directory,
+    `.publish-${require("node:crypto").randomUUID()}`,
+  );
+  fs.writeFileSync(temporary, data, { flag: "wx" });
+  try {
+    fs.linkSync(temporary, path.join(directory, name));
+  } finally {
+    fs.unlinkSync(temporary);
+  }
+}
 async function main() {
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_HOST_TESTS, "1");
-  assert.ok(process.send);
-  const [mode, stateDir, enrollmentId, workDir] = process.argv.slice(2);
+
+  const [mode, stateDir, enrollmentId, workDir, protocol] =
+    process.argv.slice(2);
+  const fileProtocol = typeof protocol === "string";
+  assert.ok(fileProtocol || process.send);
+  if (fileProtocol) {
+    assert.equal(path.dirname(protocol), path.resolve(workDir));
+    assert.equal(fs.lstatSync(protocol).isSymbolicLink(), false);
+  }
   assert.ok(["hold", "attempt"].includes(mode));
   assert.match(enrollmentId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
   let lock,
@@ -44,19 +72,49 @@ async function main() {
     certreqCalls = 0,
     nativeActive = 0;
   const send = (value) =>
-    new Promise((resolve, reject) =>
-      process.send(value, (error) => (error ? reject(error) : resolve())),
-    );
+    fileProtocol
+      ? Promise.resolve().then(() => {
+          assert.match(value.event, /^[a-z]+$/);
+          publishOwnedProtocol(
+            protocol,
+            `event-${value.event}.json`,
+            JSON.stringify(value),
+          );
+        })
+      : new Promise((resolve, reject) =>
+          process.send(value, (error) => (error ? reject(error) : resolve())),
+        );
   const event = (name) =>
-    new Promise((resolve) => {
-      const handler = (message) => {
-        if (message?.event === name) {
-          process.off("message", handler);
-          resolve();
-        }
-      };
-      process.on("message", handler);
-    });
+    fileProtocol
+      ? new Promise((resolve, reject) => {
+          const deadline = Date.now() + 120000;
+          const poll = () => {
+            const file = path.join(protocol, `command-${name}`);
+            if (fs.existsSync(file)) {
+              const stat = fs.lstatSync(file);
+              if (
+                !stat.isFile() ||
+                stat.isSymbolicLink() ||
+                fs.readFileSync(file, "utf8") !== "1"
+              )
+                return reject(new Error("Owned command refused"));
+              return resolve();
+            }
+            if (Date.now() >= deadline)
+              return reject(new Error("Owned command timeout"));
+            setTimeout(poll, 25);
+          };
+          poll();
+        })
+      : new Promise((resolve) => {
+          const handler = (message) => {
+            if (message?.event === name) {
+              process.off("message", handler);
+              resolve();
+            }
+          };
+          process.on("message", handler);
+        });
   const go = event("go");
   await send({ event: "ready", pid: process.pid });
   await go;
@@ -122,7 +180,7 @@ async function main() {
     if (lock) lock.release();
     assert.equal(nativeActive, 0);
     await send({ event: "released", nativeActive });
-    process.disconnect();
+    if (process.connected) process.disconnect();
   }
 }
 if (require.main === module)
@@ -131,4 +189,4 @@ if (require.main === module)
     if (process.connected) process.disconnect();
   });
 
-module.exports = { persistPublicCsr };
+module.exports = { persistPublicCsr, publishOwnedProtocol };

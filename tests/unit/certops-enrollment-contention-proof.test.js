@@ -97,3 +97,50 @@ test("fixture persists returned public CSR after actual helper removed INF/REQ",
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+// Source contract complements real native qualification; it starts no CNG process.
+test("contention participants launch inside retained native jobs and never use PID teardown", () => {
+  const source = require("node:fs").readFileSync(
+    require.resolve("../../packages/agent/scripts/host/enrollment-contention-fixture"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /taskkill|Stop-Process|\bspawn\(/);
+  assert.match(source, /startContainedNativeProcess/);
+  assert.match(source, /onCreated/);
+  assert.match(source, /stopAndDrain/);
+  assert.match(source, /rootExitCode/);
+  assert.match(source, /assertCleanupSafe/);
+});
+
+test("contained public file protocol publishes whole bytes once within its owned directory", () => {
+  const fs = require("node:fs"),
+    path = require("node:path"),
+    os = require("node:os");
+  const {
+    publishOwnedProtocol,
+  } = require("../../packages/agent/scripts/host/enrollment-lock-child");
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "certops-contention-protocol-"),
+  );
+  try {
+    const bytes = JSON.stringify({
+      event: "generated",
+      publicCsr: "a".repeat(5000),
+    });
+    publishOwnedProtocol(directory, "event-generated.json", bytes);
+    assert.equal(
+      fs.readFileSync(path.join(directory, "event-generated.json"), "utf8"),
+      bytes,
+    );
+    assert.throws(() =>
+      publishOwnedProtocol(directory, "event-generated.json", "different"),
+    );
+    assert.throws(() => publishOwnedProtocol(directory, "../outside", "1"));
+    assert.throws(() =>
+      publishOwnedProtocol(directory, "command-go", "a".repeat(131073)),
+    );
+    assert.deepEqual(fs.readdirSync(directory), ["event-generated.json"]);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});

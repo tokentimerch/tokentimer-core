@@ -181,7 +181,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     await gate.scenario("windows-enrollment-lock-cng-contention", async () => {
       gate.report.nativeEnrollmentContention = await require("./enrollment-contention-fixture").qualifyEnrollmentContention({ powershell, run, workDir });
       gate.report.fixtureSources ||= [];
-      for (const file of ["packages/agent/scripts/host/enrollment-contention-fixture.js","packages/agent/scripts/host/enrollment-lock-child.js","packages/agent/src/windows-cert-store/index.js","packages/agent/src/windows-cert-store/exclusive-lock-worker.js","packages/agent/src/platform/index.js","packages/agent/src/platform/durability.js"]) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+      for (const file of [...require("../../../../tests/e2e/helpers/certops-windows-contained-process").REQUIRED_SOURCES,"packages/agent/scripts/host/enrollment-contention-fixture.js","packages/agent/scripts/host/enrollment-lock-child.js","packages/agent/src/windows-cert-store/index.js","packages/agent/src/windows-cert-store/exclusive-lock-worker.js","packages/agent/src/platform/index.js","packages/agent/src/platform/durability.js"]) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
     }, { evidenceLevel: "real-host", oracle: "Actual enrollment lock across CNG CSR: another process refuses before native execution, retry refuses existing container without certreq; unchanged CSR/SPKI and native signatures prove same nonexportable key; verified callback drain and exact cleanup" });
     await gate.scenario("windows-cng-private-export-refusal", async () => {
       await require("./cng-export-fixture").qualifyCngExportRefusal({powershell,records:custodyCertificates,containers,workDir,gate});
@@ -347,6 +347,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     }
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
+      require("./enrollment-contention-fixture").assertCleanupSafe(workDir);
       require("./ipv6-shadow-fixture").assertCleanupSafe(workDir);
       require("./orphan-journal-fixture").assertCleanupSafe(workDir);
       require("./journal-read-refusal-fixture").assertCleanupSafe(workDir);

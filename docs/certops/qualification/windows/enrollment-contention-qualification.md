@@ -35,3 +35,5 @@ signature, PID details and key names stay local. Both host slots require current
 fixture, child, lock worker and I/O support-source fingerprints. Missing custody,
 nonzero loser native work, retry key generation, or unverified cleanup fails
 release verification. Portable proof checks do not count as native qualification.
+
+Participants now launch suspended inside a retained native JobObject before product code executes. The current runner SID is independently bound, including elevated non-SYSTEM host runs. Bounded atomic public file messages replace IPC; a clean native root exit, zero active job members and wrapper close authorize release. Emergency cleanup terminates only the retained owned job. Unknown drainage preserves the receipt, native key and host state before broad cleanup. This source change has not been executed against native CNG.
