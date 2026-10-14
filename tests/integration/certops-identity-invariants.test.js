@@ -1484,6 +1484,30 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert.equal((await db.query("SELECT status FROM certificate_jobs WHERE id=$1", [safe.id])).rows[0].status, "claimed");
   });
 
+  it("permits only initial provisioning with no previously observed fingerprint", async () => {
+    const ws = await workspace();
+    const freshAgent = await source(ws, null, { source: "agent_issuance", status: "provisioning" });
+    const initial = await job(ws, freshAgent, "pending");
+    await db.query(migrations.find(m => m.version === 73).sql);
+    assert.equal((await db.query("SELECT status FROM certificate_jobs WHERE id=$1",[initial.id])).rows[0].status,"pending");
+    await db.query("UPDATE certificate_jobs SET status='claimed' WHERE id=$1",[initial.id]);
+    const controller = await require("../../apps/api/services/certops/inventory").upsertManagedCertificateForControllerProvisioning(db,
+      {workspaceId:ws,sourceRef:randomUUID(),name:"Initial controller certificate",keyReference:"k8s://test/first",
+        clusterId:randomUUID(),namespace:"test",certificateName:"first"});
+    const created = await require("../../apps/api/services/certops/jobs").createCertificateJob({ client: db,
+      workspaceId: ws, operation: "deploy", executorKind: "controller", source: "controller_provisioning",
+      subjectType: "managed_certificate", subjectId: controller.id,
+      payload: { kind: "cert_manager_provision", desiredCertificate: {} }, mode: "dry_run" });
+    await db.query("UPDATE certificate_jobs SET status='claimed' WHERE id=$1",[created.id]);
+    const unknown = await source(ws, null, { source: "agent_filesystem", status: "provisioning" });
+    await assert.rejects(job(ws, unknown, "claimed"), { code: "55000" });
+    const retired = await source(ws, A, { source: "agent_issuance", status: "active" });
+    await retireCertificateIdentity({ client: db, workspaceId: ws, identityId: (await identity(ws,A)).id,
+      expectedFingerprintSha256: A, status: "revoked", reason: "Cannot disguise retirement as initial issuance" });
+    await db.query("UPDATE managed_certificates SET status='provisioning',fingerprint_sha256=NULL WHERE id=$1",[retired.id]);
+    await assert.rejects(job(ws, retired, "claimed"), { code: "55000" });
+    assert.equal((await identity(ws,A)).lifecycle_status,"revoked");
+  });
   it("accepts a replacement's active identity before admitting and claiming its next job", async () => {
     const ws = await workspace(), tid = await token(ws), mc = await source(ws, A, { tokenId: tid });
     await db.query("UPDATE managed_certificates SET key_mode='agent-local' WHERE id=$1", [mc.id]);
@@ -1733,6 +1757,24 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       expectedFingerprintSha256: B, status: "revoked", reason: "Other certificate revoked", client: db });
     assert.equal((await db.query("SELECT cert_lifecycle_status FROM tokens WHERE id=$1", [tid])).rows[0].cert_lifecycle_status,
       "revoked", "retiring all linked live identities retires the token");
+  });
+  it("stopping every management period retains linked fingerprints and their lifecycle evidence", async () => {
+    const ws = await workspace(), tid = await token(ws);
+    const first = await source(ws,A,{tokenId:tid,status:"active"});
+    const second = await source(ws,B,{tokenId:tid,status:"active"});
+    await observation(ws,first,A,time());
+    await observation(ws,second,B,time());
+    await retireCertificateIdentity({ workspaceId:ws,identityId:(await identity(ws,A)).id,
+      expectedFingerprintSha256:A,status:"revoked",reason:"Retired before stopping management",client:db });
+    for (const mc of [first,second]) await stopManagingSource({workspaceId:ws,periodId:(await period(mc)).id,client:db});
+    assert.equal(await countActiveManagedCertificatesWithClient(db,ws),0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM managed_certificates WHERE workspace_id=$1 AND token_id=$2",[ws,tid])).rows[0].n,2);
+    assert.equal((await db.query("SELECT count(*)::int n FROM certificate_instances WHERE workspace_id=$1",[ws])).rows[0].n,2);
+    assert.equal((await identity(ws,A)).lifecycle_status,"revoked");
+    assert.equal((await identity(ws,B)).lifecycle_status,"active");
+    assert.equal((await db.query("SELECT cert_lifecycle_status FROM tokens WHERE id=$1",[tid])).rows[0].cert_lifecycle_status,"active");
+    const retained=await listCertificateIdentities({workspaceId:ws,includeUnmanaged:true,client:db});
+    assert.deepEqual(new Set(retained.items.map(item=>item.fingerprintSha256)),new Set([A,B]));
   });
   it("retires three independent identities sharing one token without suppressing live siblings", async () => {
     const ws = await workspace(), tid = await token(ws);

@@ -33,6 +33,31 @@ CREATE TRIGGER trg_certops_0_capture_job_alert_token BEFORE INSERT OR UPDATE ON 
 
 -- Payload assertions do not prove what an agent will install or restore.
 -- An accepted replacement first acquires its own active fingerprint identity.
+-- Initial issuance has no fingerprint yet. Only server-owned provisioning
+-- sources with no previous fingerprint association or observation qualify.
+CREATE OR REPLACE FUNCTION certops_is_initial_provisioning(
+  workspace UUID, source_id UUID, operation TEXT, executor TEXT, job_source TEXT
+) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM managed_certificates mc
+      JOIN certops_management_periods p ON p.workspace_id=mc.workspace_id
+        AND p.managed_certificate_id=mc.id AND p.ended_at IS NULL
+    WHERE mc.workspace_id=workspace AND mc.id=source_id
+      AND certops_normalize_fingerprint(mc.fingerprint_sha256) IS NULL
+      AND p.current_identity_id IS NULL
+      AND ((mc.status='provisioning' AND mc.source='agent_issuance' AND executor='agent' AND operation='renew')
+        OR (mc.status IN ('discovered','provisioning') AND mc.source='cert_manager'
+          AND mc.key_mode='cert-manager-managed' AND mc.public_metadata ? 'controllerProvisioning'
+          AND executor='controller' AND operation='deploy' AND job_source='controller_provisioning'))
+      AND NOT EXISTS (SELECT 1 FROM certops_management_periods history
+        JOIN certops_management_associations a ON a.period_id=history.id
+        WHERE history.workspace_id=mc.workspace_id AND history.managed_certificate_id=mc.id)
+      AND NOT EXISTS (SELECT 1 FROM certificate_instances observation
+        WHERE observation.workspace_id=mc.workspace_id AND observation.managed_certificate_id=mc.id
+          AND certops_normalize_fingerprint(observation.observed_fingerprint_sha256) IS NOT NULL)
+  );
+$$;
+
 CREATE OR REPLACE FUNCTION certops_guard_job_identity_start()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE period_row RECORD; lifecycle TEXT;
@@ -48,6 +73,9 @@ BEGIN
   IF NOT FOUND OR period_row.ended_at IS NOT NULL THEN RETURN NEW; END IF;
   SELECT lifecycle_status INTO lifecycle FROM certops_certificate_identities
     WHERE workspace_id=NEW.workspace_id AND id=NEW.certificate_identity_id FOR SHARE;
+  IF NEW.certificate_identity_id IS NULL AND certops_is_initial_provisioning(
+    NEW.workspace_id,period_row.managed_certificate_id,NEW.operation,NEW.executor_kind,NEW.source
+  ) THEN RETURN NEW; END IF;
   IF lifecycle IS DISTINCT FROM 'active' THEN
     RAISE EXCEPTION 'CertOps certificate lifecycle blocks this operation' USING ERRCODE='55000';
   END IF;
@@ -67,7 +95,8 @@ UPDATE certificate_jobs cj SET status='cancelled', canceled_at=COALESCE(canceled
   WHERE cj.subject_type='managed_certificate' AND cj.management_period_id IS NOT NULL
     AND cj.operation IN ('renew','deploy','reload')
     AND cj.status IN ('pending','pending_approval','approved')
-    AND (cj.certificate_identity_id IS NULL OR EXISTS (
+    AND ((cj.certificate_identity_id IS NULL AND NOT certops_is_initial_provisioning(
+      cj.workspace_id,cj.subject_id::uuid,cj.operation,cj.executor_kind,cj.source)) OR EXISTS (
       SELECT 1 FROM certops_certificate_identities i WHERE i.workspace_id=cj.workspace_id
         AND i.id=cj.certificate_identity_id AND i.lifecycle_status IN ('revoked','decommissioned')));
 UPDATE certificate_jobs cj SET needs_operator_reconciliation=TRUE,
@@ -75,7 +104,8 @@ UPDATE certificate_jobs cj SET needs_operator_reconciliation=TRUE,
   WHERE cj.subject_type='managed_certificate' AND cj.management_period_id IS NOT NULL
     AND cj.operation IN ('renew','deploy','reload') AND cj.status IN ('claimed','running')
     AND (needs_operator_reconciliation IS DISTINCT FROM TRUE OR reconciliation_reason IS NULL)
-    AND (cj.certificate_identity_id IS NULL OR EXISTS (
+    AND ((cj.certificate_identity_id IS NULL AND NOT certops_is_initial_provisioning(
+      cj.workspace_id,cj.subject_id::uuid,cj.operation,cj.executor_kind,cj.source)) OR EXISTS (
       SELECT 1 FROM certops_certificate_identities i WHERE i.workspace_id=cj.workspace_id
         AND i.id=cj.certificate_identity_id AND i.lifecycle_status IN ('revoked','decommissioned')));
 

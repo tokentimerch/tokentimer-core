@@ -1191,6 +1191,8 @@ async function claimJobs({
                 AND period.ended_at IS NULL
                 AND (cj.management_period_id IS NULL OR cj.management_period_id = period.id)
                 AND (identity.lifecycle_status = 'active'
+                  OR (cj.certificate_identity_id IS NULL AND certops_is_initial_provisioning(
+                    cj.workspace_id,period.managed_certificate_id,cj.operation,cj.executor_kind,cj.source))
                   OR cj.operation NOT IN ('renew', 'deploy', 'reload'))
             )
           )

@@ -117,6 +117,10 @@ Slot and unmanaged observations enforce canonical fingerprints with database
 constraints. Caller-supplied replacement fingerprints and rollback assertions
 do not bypass retirement restrictions. An accepted replacement first acquires
 its own active fingerprint identity; subsequent jobs bind to that identity.
+Initial agent issuance retries and server-owned cert-manager provisioning can
+precede the first fingerprint. They qualify only while the source has no
+previous fingerprint association or observation; an unknown historical job
+cannot use this path to bypass retirement.
 
 Renewal-failure alerts require a known immutable job identity and the token
 association captured by the database when the job was inserted. Unknown

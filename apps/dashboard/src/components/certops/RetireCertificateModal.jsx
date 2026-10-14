@@ -179,7 +179,7 @@ export default function RetireCertificateModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Retire certificate</DashboardModalTitle>
           <DashboardModalDescription>
-            This asset is backed by a managed certificate, so it cannot be
+            This asset is linked to certificate records, so it cannot be
             deleted. Record a lifecycle retirement instead; the record and its
             history are kept. This does not revoke the certificate at its
             certificate authority or remove it from a host.
@@ -214,7 +214,7 @@ export default function RetireCertificateModal({
                 <Text fontSize='sm'>
                   This asset tracks several certificate identities. Choose the
                   certificate for this lifecycle change; the others keep their
-                  status.
+                  status. Stopping management does not unlink these records.
                 </Text>
                 <Select
                   id={certificateSelectId}
