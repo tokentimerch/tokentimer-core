@@ -18,8 +18,8 @@ The final descendant must pass the existing exact-thumbprint TLS probe; this
 does not replace the original predecessor's ownership, binding, shared-key,
 recovery-reference or actual deadline checks.
 
-Each production row is processed under the same store mutex used by agent
-cutover and rollback. After acquiring it, the sweep reads the row again and
+Each production row acquires the same ordered `My` → target-store mutexes used
+by agent cutover and rollback. After acquiring it, the sweep reads the row again and
 refuses a changed store. Native bindings, key sharing, descendant TLS,
 eligibility, certificate/key deletion, issuance-record removal and the final
 ledger outcome all remain inside that critical section. Native queries and TLS
@@ -36,3 +36,22 @@ mutex acquisition is refused during the simulated native query/deletion path.
 These temporary-file/unit checks do not delete real certificates or qualify an
 elapsed Windows retention window. The separate native repeated-renewal and
 elapsed-retention journeys require their hosted execution evidence.
+
+The machine-wide survivor query inspects Crypt32 certificate provider metadata
+in every LocalMachine logical store, including archived contexts. It never
+opens, signs with or exports private keys. Retention excludes only the exact
+predecessor store and thumbprint; an identical certificate mirrored in another
+store still protects the key. Startup recovery and abandoned-key cleanup exclude
+no certificate. Missing helpers, malformed or incomplete enumeration and
+cancellation fail closed before irreversible key deletion.
+
+The existing native guard case now requires five bounded facts proving a
+distinct WebHosting survivor, an identical old-certificate mirror, original-key
+preservation, replacement trusted TLS and removal of only owned public copies.
+The release collector strips raw inventories and the release verifier requires
+current hashes for the fixture, adapter, resolver, primitive, Go scan and builder.
+Both Server lanes and the supporting ARM64 desktop lane build the candidate
+helper before the first native cleanup case. Focused proof/unit/build checks
+are supporting evidence only; these native mutation variants remain unrun.
+Neither these cases nor the separate short expiry/grace lane qualifies a full
+24-hour elapsed retention window.

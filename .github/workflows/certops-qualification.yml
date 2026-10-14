@@ -138,6 +138,10 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+          cache: false
       - run: pnpm install --frozen-lockfile
       - name: Validate qualification catalog and skip ownership
         run: |
@@ -165,6 +169,8 @@ jobs:
           if (-not $result.Success -or $result.RestartNeeded -ne 'No') {
             throw 'Hosted IIS installation failed or requires reboot; qualification unsupported on this image'
           }
+      - name: Build candidate machine-store query helper before native cleanup cases
+        run: node packages/agent/scripts/build-windows-chain-helper.js
       - name: Real Windows discovery CNG IIS and supporting Go checks
         run: node --test packages/agent/scripts/host/windows-host.test.js
       - name: Assert required host scenarios executed

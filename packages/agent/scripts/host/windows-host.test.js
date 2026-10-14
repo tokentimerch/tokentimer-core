@@ -217,11 +217,14 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${acceptedCertificates[1]}')`), "True");
     }, { evidenceLevel: "real-host", oracle: "real owned certificate/key deletion and surviving replacement; synthetic time/context, not served-TLS retention E2E" });
     await gate.scenario("windows-retention-native-guards", async () => {
-      await require("./retention-fixture").qualifyRetentionGuards({ powershell, run, workDir,
+      gate.report.nativeKeySurvivors = await require("./retention-fixture").qualifyRetentionGuards({ powershell, run, workDir,
         oldThumbprint: acceptedCertificates[2], replacementThumbprint: acceptedCertificates[3], containerName: containers[2] });
-      const file = "packages/agent/scripts/host/retention-fixture.js";
+      const contract = require("../../../../scripts/certops-native-key-survivor-proof");
+      contract.verifyProof(gate.report.nativeKeySurvivors);
       gate.report.fixtureSources ||= [];
-      gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+      for (const file of contract.REQUIRED_SOURCES) {
+        if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+      }
     }, { evidenceLevel: "real-host", oracle: "product retention collector reads real HTTP.sys bindings, actual shared CNG key association and replacement TLS; real clock blocks fresh ledger cleanup" });
     await gate.scenario("windows-retention-real-expiry-grace", async () => {
       gate.report.fixtureSources ||= [];

@@ -785,11 +785,13 @@ describe("AD CS accept-failure key retention", () => {
     const block = src.slice(mirrorResume, mirrorResume + 1200);
     assert.match(block, /mirrorAcceptedCertificateToStore\(\{/);
     assert.match(block, /\bsignal\b/);
-    const retention = src.indexOf("async function performCleanup(row)");
+    const retention = src.indexOf("async function performCleanup(row, { signal, assertHeld })");
     assert.ok(retention >= 0);
-    const retentionBlock = src.slice(retention, retention + 900);
-    assert.match(retentionBlock, /storeLock\.run\(async \(signal\)/);
+    const retentionBlock = src.slice(retention, src.indexOf("const summary = await sweepLedger", retention));
     assert.match(retentionBlock, /removeCertificateAndKeyContainer\(\{[\s\S]*?signal,/);
+    const lockBlock = src.slice(src.indexOf("withRowLock: async (row, work)", retention), src.indexOf("windows-retention sweep:", retention));
+    assert.match(lockBlock, /acquireWindowsStoreLocks/);
+    assert.match(lockBlock, /storeLock\.run\(signal => work\(\{ signal,/);
   });
 });
 
@@ -1217,6 +1219,7 @@ describe("continue-enrollment recovery executor", () => {
   function contextFor(seed, extra = {}) {
     return {
       execution: { keysDir: path.join(path.dirname(seed.helperPath), "keys") },
+      windowsKeySurvivorHelperPath: __filename,
       adcsHelperPath: seed.helperPath,
       adcsCaCertPath: seed.caCertPath,
       adcsTemplateOid: templateOid,
@@ -1304,6 +1307,12 @@ describe("continue-enrollment recovery executor", () => {
         const executionContext = contextFor(seed, {
           windowsExecFileImpl: (file, args, opts, cb) => {
             calls.push(args);
+            if (args[0] === "--key-survivors") {
+              assert.equal(file,__filename);
+              assert.deepEqual(args,["--key-survivors","--container",seed.journalBase.containerName]);
+              cb(null,JSON.stringify({complete:true,shared:false,storesScanned:3,certificatesScanned:0,matches:0}),"");
+              return {kill(){},once(){},pid:1};
+            }
             assert.equal(file, "certutil.exe", "no CA helper or certreq may run");
             if (args.includes("-key")) cb(null, exists ? seed.journalBase.containerName + "\n" : "", "");
             else {
@@ -1353,6 +1362,24 @@ describe("continue-enrollment recovery executor", () => {
         assert.equal(result.status, exists ? "failed" : "succeeded", result.errorMessage);
         assert.equal(readEnrollmentJournal(stateDir, enrollmentId).kind, "not_found");
       }
+    });
+  });
+
+  it("terminal cleanup preserves its journal and key when a cross-store reference exists or inventory is incomplete", async()=>{
+    const enrollmentId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9";
+    for(const complete of [true,false]) await withState(enrollmentId,async stateDir=>{
+      const seed=await seedEnrollment(stateDir,enrollmentId,"submitting");seed.job.enrollment.terminalState="cancelled";
+      const before=readEnrollmentJournal(stateDir,enrollmentId).journal;let deletes=0,probes=0;
+      const result=await executorsFor(stateDir).executeWindowsIisContinueEnrollmentJob({job:seed.job,jobId:seed.journalBase.jobId,client:{},log:{},executionContext:contextFor(seed,{
+        windowsExecFileImpl(file,args,options,callback){
+          if(args.includes("-delkey"))deletes++;
+          if(args.includes("-key"))callback(null,seed.journalBase.containerName+"\n","");
+          else{assert.equal(args[0],"--key-survivors");probes++;callback(null,JSON.stringify({complete,shared:true,storesScanned:3,certificatesScanned:1,matches:1,...(!complete?{reason:"store_open_failed"}:{})}),"");}
+          return {kill(){},once(){},pid:1};
+        }
+      })});
+      assert.equal(result.status,"failed");assert.equal(result.enrollmentResult,undefined);assert.equal(deletes,0);assert.equal(probes,1);
+      assert.deepEqual(readEnrollmentJournal(stateDir,enrollmentId).journal,before);
     });
   });
 

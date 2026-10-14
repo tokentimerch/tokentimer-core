@@ -203,7 +203,14 @@
         "packages/agent/scripts/host/retention-elapsed-fixture.js",
         "packages/agent/src/index.js",
         "packages/agent/src/windows-discovery/index.js",
-        "packages/agent/scripts/host/retention-interrupted-child.js"
+        "packages/agent/scripts/host/retention-interrupted-child.js",
+        "scripts/certops-native-key-survivor-proof.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/reference/adcs-chain/main.go",
+        "packages/agent/reference/adcs-chain/keyrefs/result.go",
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go"
       ]
     },
     {
@@ -348,7 +355,14 @@
         "packages/agent/scripts/host/retention-elapsed-fixture.js",
         "packages/agent/src/index.js",
         "packages/agent/src/windows-discovery/index.js",
-        "packages/agent/scripts/host/retention-interrupted-child.js"
+        "packages/agent/scripts/host/retention-interrupted-child.js",
+        "scripts/certops-native-key-survivor-proof.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/reference/adcs-chain/main.go",
+        "packages/agent/reference/adcs-chain/keyrefs/result.go",
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go"
       ]
     },
     {

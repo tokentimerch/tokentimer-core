@@ -28,14 +28,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Windows retention follows verified replacements after repeated IIS rotations, so older superseded certificates can become eligible for cleanup. Agent cutover, rollback and retention checks share the store lock through deletion and ledger updates.
+- Windows retention follows verified replacements after repeated IIS rotations, so older superseded certificates can become eligible for cleanup. Agent cutover, rollback and retention checks share the store lock through deletion and ledger updates. Cleanup preserves a machine key referenced by a certificate in another machine store, including an identical certificate mirrored there.
 - Windows ACME issue and renewal jobs refuse returned certificates whose public key differs from their CNG CSR before acceptance or IIS cutover (`ACME_CERTIFICATE_KEY_MISMATCH`).
 - Manual and automatic renewal now honor revoked or decommissioned identity lifecycle even while inventory updates leave cached status behind or endpoints still serve the certificate. Manual renewal returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE`, matching bulk per-item refusals.
 
 - PowerDNS and OVH DNS challenge operations now refuse malformed record lookup responses before changing records or reporting successful cleanup, preserving unknown sibling values.
 - Windows agent fatal startup errors now finish pending native teardown and exit with code `1`, avoiding a native abort during registration conflicts.
 - Malformed successful Google Certificate Manager and Compute SSL certificate list responses no longer count as empty inventories, so cleanup preserves previously imported certificates.
-- Certificate tokens stay current after agent renewals and passive discovery, so inventory and expiry alerts use the renewed certificate's validity and public details.
+- Certificate tokens stay current after agent renewals and passive discovery, so inventory and expiry alerts use the renewed certificate's validity and public details. When renewal reports a different fingerprint without a parsed public leaf, predecessor PEM and public-key facts are cleared; importing the matching public certificate restores independently parsed facts.
 - Tokens linked to several certificate fingerprints can now open Retire from the asset inventory. Choose the certificate to revoke or decommission by its expiry and fingerprint; the other certificates keep their lifecycle status.
 - Control Center perpetual-asset and scoped-credential lists now show the rows already returned in `/control-center/stats` on first paint. The list hook could keep an empty seed after stats loaded, so the summary counts were right while the lists looked empty.
 - Opening a managed certificate from a job subject link now shows that certificate's Job history. The detail modal dropped the managed-certificate id on that deep-link path, so the history section never mounted.

@@ -32,6 +32,7 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
   let replacementBindingOwned = false;
   let sharedThumbprint;
   let sharedOwned = false;
+  const crossStoreCopies = [];
   let primaryError;
   const cleanupErrors = [];
   try {
@@ -73,14 +74,34 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
     // Remove only the fixture's public copy; its key remains owned by the
     // original certificate and must survive both this removal and the sweep.
     run("certutil.exe", ["-delstore", "My", sharedThumbprint]);
+    // Machine KSP custody is shared across stores. Exercise a distinct public
+    // leaf and then the exact same certificate mirrored into another store;
+    // excluding by thumbprint alone would incorrectly discard the latter.
+    for (const [thumbprint, publicFile] of [[sharedThumbprint, sharedCertificate], [oldThumbprint, path.join(workDir, "rsa-3072-My", "issued.pem")]]) {
+      assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}')`), "False");
+      crossStoreCopies.push(thumbprint); // ownership recorded before addstore
+      run("certutil.exe", ["-addstore", "WebHosting", publicFile]);
+      run("certutil.exe", ["-repairstore", "WebHosting", thumbprint]);
+      assert.equal(powershell(`$c=Get-Item 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}';$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);$k.Key.KeyName}finally{if($k){$k.Dispose()};$c.Dispose()}`), containerName);
+      result = await sweep();
+      assert.equal(result.removed.length, 0);
+      assert.ok(result.deferred.some(row => row.oldThumbprint === oldThumbprint && row.reason === "shared_key_container"));
+      assert.equal(powershell(`[bool]((Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').HasPrivateKey)`), "True");
+      assert.ok(run("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(containerName));
+      await expectOwnedServed(newPort, replacementThumbprint);
+      run("certutil.exe", ["-delstore", "WebHosting", thumbprint]);
+      assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}')`), "False");
+    }
     result = await sweep();
     assert.equal(result.removed.length, 0);
     assert.ok(result.deferred.some((row) => row.oldThumbprint === oldThumbprint && row.reason === "deadline_not_reached"));
     assert.equal(powershell(`[bool]((Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').HasPrivateKey)`), "True");
     await expectOwnedServed(newPort, replacementThumbprint);
+    return { differentCertificateCrossStoreProtected: true, sameCertificateCrossStoreProtected: true, originalKeyPreserved: true, replacementTrustedTlsPreserved: true, ownedCrossStoreCopiesRemoved: true };
   } catch (error) { primaryError = error; throw error; }
   finally {
     const clean = (action) => { try { action(); } catch (error) { cleanupErrors.push(error); } };
+    for (const thumbprint of crossStoreCopies) clean(() => powershell(`$p='Cert:\\LocalMachine\\WebHosting\\${thumbprint}';if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p};if(Test-Path -LiteralPath $p){throw 'Owned cross-store public copy remains'}`));
     if (sharedOwned) clean(() => powershell(`$p='Cert:\\LocalMachine\\My\\${sharedThumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Owned public shared-key certificate remains' }`));
     if (siteOwned) clean(() => powershell(`Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { Remove-Website -Name '${site}' }; if (Test-Path 'IIS:\\Sites\\${site}') { throw 'Retention fixture site remains' }`));
     for (const [port, owned] of [[oldPort, oldBindingOwned], [newPort, replacementBindingOwned]]) {

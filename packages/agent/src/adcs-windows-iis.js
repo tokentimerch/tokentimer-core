@@ -1559,6 +1559,13 @@ function createAdcsWindowsIisExecutors(deps) {
       ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
+            keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+            assertHeld: () => {
+              enrollmentLock?.assertHeld();
+              if (typeof onBeforeMutation === "function") {
+                onBeforeMutation("cleanup-enrollment-key");
+              }
+            },
             containerName,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
           });
@@ -2027,9 +2034,20 @@ function createAdcsWindowsIisExecutors(deps) {
         }
         if (typeof onBeforeMutation === "function") onBeforeMutation("cleanup-enrollment-key");
         enrollmentLock.assertHeld();
-        const cleanup = await removeAbandonedKeyContainer({ containerName, allowAlreadyAbsent: true,
+        const cleanup = await removeAbandonedKeyContainer({
+          keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+          assertHeld: () => {
+            enrollmentLock?.assertHeld();
+            if (typeof onBeforeMutation === "function") {
+              onBeforeMutation("cleanup-enrollment-key");
+            }
+          },
+          containerName,
+          allowAlreadyAbsent: true,
           requireAlreadyAbsent: journal.state === "missing",
-          signal, ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}) });
+          signal,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
         enrollmentLock.assertHeld();
         if (!cleanup.ok) {
           return { status: "failed", keyRotated: null,
@@ -2101,7 +2119,19 @@ function createAdcsWindowsIisExecutors(deps) {
         const receipt=readIssuedContainerRecord({stateDir,containerName});
         if(containerName!==buildEnrollmentContainerName(decoded.enrollmentId)||receipt?.status==="enrolled_by_agent"||receipt?.acceptedThumbprint)return {status:"failed",keyRotated:null,errorMessage:"Local policy refusal cannot free an unowned or already accepted enrollment key"};
         enrollmentLock.assertHeld();if(typeof onBeforeMutation==="function")onBeforeMutation("cleanup-enrollment-key");
-        const cleanup=await removeAbandonedKeyContainer({containerName,allowAlreadyAbsent:true,signal,...(windowsExecFileImpl?{execFileImpl:windowsExecFileImpl}:{})});
+        const cleanup=await removeAbandonedKeyContainer({
+          keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+          assertHeld: () => {
+            enrollmentLock?.assertHeld();
+            if (typeof onBeforeMutation === "function") {
+              onBeforeMutation("cleanup-enrollment-key");
+            }
+          },
+          containerName,
+          allowAlreadyAbsent: true,
+          signal,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
         enrollmentLock.assertHeld();if(!cleanup.ok)return {status:"failed",keyRotated:null,errorMessage:"Local policy refusal could not free the protected enrollment key; retry required"};
         removeIssuedContainerRecord({stateDir,containerName});
         await writeEnrollmentJournal(stateDir,decoded.enrollmentId,{...journal,state:"refused",...(journal.state==="keygen_intent"?{preSubmitPhase:"keygen_intent"}:{}),attempt:decoded.attempt,jobId,errorCode:"ADCS_CA_CONFIG_UNSAFE"});
@@ -2149,6 +2179,13 @@ function createAdcsWindowsIisExecutors(deps) {
         });
         if (!csrResult.ok && csrResult.reason === "enrollment_container_exists") {
           const cleanup = await removeAbandonedKeyContainer({
+            keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+            assertHeld: () => {
+              enrollmentLock?.assertHeld();
+              if (typeof onBeforeMutation === "function") {
+                onBeforeMutation("cleanup-enrollment-key");
+              }
+            },
             containerName,
             signal,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
@@ -3018,6 +3055,13 @@ function createAdcsWindowsIisExecutors(deps) {
       ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
+            keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+            assertHeld: () => {
+              enrollmentLock?.assertHeld();
+              if (typeof onBeforeMutation === "function") {
+                onBeforeMutation("cleanup-enrollment-key");
+              }
+            },
             containerName,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
           });

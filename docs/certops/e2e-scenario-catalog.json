@@ -775,7 +775,7 @@
         "windows-2025-host"
       ],
       "implementation": "packages/agent/scripts/host/retention-fixture.js",
-      "remainingCoverage": "Product collector reads actual old/replacement HTTPS bindings and an independently proven shared KSP key association; both old binding and surviving shared key block deletion. Additional enrollment/journal/provider variants remain."
+      "remainingCoverage": "Native source now checks actual old/replacement HTTPS bindings, a same-store shared machine KSP key, a distinct WebHosting certificate and an identical old-certificate mirror in WebHosting. Each cross-store case must defer deletion while preserving original key and replacement trusted TLS, then remove only owned public copies. Current source/build hashes and five bounded native facts are mandatory. Additional enrollment/journal/provider variants and actual native execution evidence remain pending."
     },
     {
       "id": "windows-retention.owned-only",

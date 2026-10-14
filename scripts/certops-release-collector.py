@@ -347,6 +347,11 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Incomplete two-generation native renewal evidence")
             result["nativeTwoRenewals"] = {**dict.fromkeys(fields, True), "successfulAutomationCycles": 2, "expiryCleanupQualified": False, "scope": scope}
         if value.get("suite") == "windows-host":
+            survivor_fields = ("differentCertificateCrossStoreProtected", "sameCertificateCrossStoreProtected", "originalKeyPreserved", "replacementTrustedTlsPreserved", "ownedCrossStoreCopiesRemoved")
+            survivors = value.get("nativeKeySurvivors")
+            if not isinstance(survivors, dict) or any(survivors.get(field) is not True for field in survivor_fields):
+                raise ValueError("Incomplete native cross-store CNG survivor evidence")
+            result["nativeKeySurvivors"] = dict.fromkeys(survivor_fields, True)
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):

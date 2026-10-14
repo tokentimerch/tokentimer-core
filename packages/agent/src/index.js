@@ -193,6 +193,7 @@ const {
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
 const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
+const { inspectMachineKeySurvivors } = require("./windows-key-survivors");
 const {
   resolveTrustStorePrerequisites,
   distributeTrust,
@@ -3341,6 +3342,7 @@ async function runWindowsIisDeployTail({
   journaledPredecessorThumbprint = null,
   windowsExecFileImpl,
   windowsConnectImpl,
+  windowsKeySurvivorHelperPath,
 }) {
   const retainKeyOnAcceptFailureEffective =
     retainKeyOnAcceptFailure === true || requireStoreAbsenceBeforeKeyDelete === true;
@@ -3406,14 +3408,16 @@ async function runWindowsIisDeployTail({
               const cleanup = await removeAbandonedKeyContainer({
                 containerName,
                 signal,
+                assertHeld: () => storeLock.assertHeld(),
+                ...(windowsKeySurvivorHelperPath ? { keySurvivorHelperPath: windowsKeySurvivorHelperPath } : {}),
                 ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
               });
               if (cleanup.ok !== true) {
                 emitLog(
                   log,
-                  `job ${jobId}: failed to delete abandoned CNG key container ` +
-                    `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
-                    `it will remain orphaned in the CNG key store until manually removed.`,
+                  `job ${jobId}: CNG key cleanup deferred for ${containerName} after ` +
+                    `certreq -accept failure (${cleanup.reason || "native_delete_failed"}); ` +
+                    `the key and ownership receipt remain for reconciliation.`,
                 );
               } else {
                 removeIssuedContainerRecord({ stateDir, containerName });
@@ -3932,10 +3936,11 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
  * @param {object} [input.log]
  * @param {Function} [input.execFileImpl] injection point for certutil.exe/netsh.exe.
  * @param {Function} [input.connectImpl] injection point for the replacement handshake probe.
+ * @param {string} [input.keySurvivorHelperPath] explicit helper override for embedded runs/tests.
  * @returns {Promise<{removed: string[], deferred: object[], deferredCountByReason: Record<string, number>}|null>}
  *   null when there is no ledger directory yet (nothing has ever been superseded).
  */
-async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl }) {
+async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl, keySurvivorHelperPath }) {
   const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
   if (!fs.existsSync(ledgerDir)) return null;
 
@@ -3956,21 +3961,21 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
               normalizeRetentionThumbprint(binding.thumbprint) === row.oldThumbprint,
           );
 
-    const storeResult = await listMachineStoreCertificates({
+    // A machine KSP key can remain referenced by another logical store,
+    // including an identical certificate mirrored outside the predecessor store.
+    // Crypt32 metadata enumeration excludes only this exact store/thumbprint;
+    // incomplete inventories keep the predecessor and key intact.
+    const survivorResult = await inspectMachineKeySurvivors({
+      containerName: row.cngKeyContainerId,
       store,
+      thumbprint: row.oldThumbprint,
       signal,
+      ...(keySurvivorHelperPath ? { helperPath: keySurvivorHelperPath } : {}),
       ...(execFileImpl ? { execFileImpl } : {}),
     });
     assertHeld();
     const keyContainerSharedWithSurvivor =
-      storeResult.ok !== true
-        ? true
-        : storeResult.certificates.some(
-            (cert) =>
-              cert.thumbprint !== row.oldThumbprint &&
-              isNonEmptyStringValue(cert.keyContainer) &&
-              cert.keyContainer === row.cngKeyContainerId,
-          );
+      survivorResult.ok !== true || survivorResult.shared !== false;
 
     let replacementPassesHandshakeNow = false;
     if (bindingsResult.ok === true) {
@@ -4014,6 +4019,7 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
       store,
       containerName: row.cngKeyContainerId,
       signal,
+      assertHeld,
       ...(execFileImpl ? { execFileImpl } : {}),
     });
     assertHeld();
@@ -4034,9 +4040,10 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
   const summary = await sweepLedger({
     ledgerDir, retentionHours, gatherContext, performCleanup,
     withRowLock: async (row, work) => {
-      // The same mutex used by agent cutover/rollback protects the complete
-      // eligibility transaction, including native observations and ledger state.
-      const storeLock = acquireStoreLock(stateDir, row.store || "My");
+      // Agent acceptance/mirroring always takes My before its target store.
+      // Share that lock scope so a concurrent cutover cannot introduce another
+      // machine-key reference between inventory and irreversible deletion.
+      const storeLock = acquireWindowsStoreLocks(stateDir, row.store || "My");
       try { return await storeLock.run(signal => work({ signal, assertHeld: () => storeLock.assertHeld() })); }
       finally { storeLock.release(); }
     },
@@ -4245,9 +4252,10 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
  * @param {string} input.stateDir agent state dir (journal + store-mutex location).
  * @param {object} [input.log]
  * @param {Function} [input.execFileImpl] injection point for certutil.exe.
+ * @param {string} [input.keySurvivorHelperPath] explicit helper override for embedded runs/tests.
  * @returns {Promise<{ freed: string[], skipped: { containerName: string, reason: string }[] }>}
  */
-async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl }) {
+async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl, keySurvivorHelperPath }) {
   const freed = [];
   const skipped = [];
 
@@ -4302,8 +4310,9 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     // Deduplicated: the common case (store: "My", or no store recorded at
     // all) checks the same store only once. Must match
     // acquireWindowsStoreLocks' own store set exactly, since the lock
-    // acquired below and the certificate query further down must agree on
-    // which stores are in scope.
+    // acquired below covers the default acceptance and recorded target stores.
+    // These local probes are fast positive checks only; global absence is
+    // independently required before freeing a key.
     const storesToCheck = [...new Set(["My", targetStore])];
 
     let storeLocks;
@@ -4326,6 +4335,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           storeLocks.assertHeld();
           const storeResult = await listMachineStoreCertificates({
             store: storeName,
+            signal,
             ...(execFileImpl ? { execFileImpl } : {}),
           });
           storeLocks.assertHeld();
@@ -4339,6 +4349,19 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           }
         }
 
+        // Absence in My/target is not global absence: an operator may have
+        // adopted this key in any other LocalMachine store since the crash.
+        if (!queryFailure && !enrolled) {
+          const survivors = await inspectMachineKeySurvivors({
+            containerName, signal,
+            ...(keySurvivorHelperPath ? { helperPath: keySurvivorHelperPath } : {}),
+            ...(execFileImpl ? { execFileImpl } : {}),
+          });
+          storeLocks.assertHeld();
+          if (survivors.ok !== true) queryFailure = "global machine-store inventory unavailable";
+          else enrolled = survivors.shared === true;
+        }
+
         if (queryFailure) {
           // Fail closed: a store lookup that could not be completed is NOT
           // evidence the container is unused there, so this entry must be
@@ -4349,7 +4372,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
 
         if (enrolled) {
           // A later attempt (or an operator) legitimately enrolled a
-          // certificate to this container -- either in "My" (e.g. certreq
+          // certificate to this container -- in any machine store, including "My" (e.g. certreq
           // -accept succeeded but a crash interrupted the later mirror step
           // into targetStore) or in targetStore itself -- since the journal
           // entry was written; never free a container backing a real
@@ -4374,15 +4397,24 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           containerName,
           ...(execFileImpl ? { execFileImpl } : {}),
           signal,
+          assertHeld: () => storeLocks.assertHeld(),
+          ...(keySurvivorHelperPath ? { keySurvivorHelperPath } : {}),
         });
         storeLocks.assertHeld();
         if (cleanup.ok !== true) {
+          if (cleanup.reason === "key_container_referenced") {
+            try { markWindowsCngContainerReconciled({stateDir,jobId:entry.jobId,attemptId:entry.attemptId}); } catch { /* Preserve the key even if receipt update fails. */ }
+            skipped.push({containerName,reason:"enrolled"});
+            return;
+          }
           skipped.push({
             containerName,
             reason:
               cleanup.reason === "aborted"
                 ? "store lock lost during delkey"
-                : `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+                : cleanup.reason === "key_reference_probe_failed"
+                  ? "global machine-store inventory unavailable during deletion"
+                  : `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
           });
           return;
         }
@@ -4661,6 +4693,7 @@ async function executeWindowsIisRenewJob({
   const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
   const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
   const windowsExecFileImpl = executionContext.windowsExecFileImpl;
+  const windowsKeySurvivorHelperPath = executionContext.windowsKeySurvivorHelperPath;
   const windowsConnectImpl = executionContext.windowsConnectImpl;
   const issuer = createAcmeIssuer({
     acmeKind,
@@ -4783,21 +4816,22 @@ async function executeWindowsIisRenewJob({
     // anywhere else, so this is the only place that can ever free it.
     // Best-effort and non-fatal: a cleanup failure here must not turn an
     // already-reported ACME failure into a second, different failure, and
-    // the orphaned container itself is inert (non-exportable, unbound,
-    // and safely re-attemptable) rather than a security or correctness
-    // problem if it is briefly leaked.
+    // A complete global inventory must still prove no certificate references
+    // this key. Unknown or adopted references retain the ownership receipt for
+    // reconciliation; they must never invite manual deletion of a live key.
     if (certificatePem === undefined) {
       try {
         const cleanup = await removeAbandonedKeyContainer({
           containerName,
+          ...(windowsKeySurvivorHelperPath ? { keySurvivorHelperPath: windowsKeySurvivorHelperPath } : {}),
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
         if (cleanup.ok !== true) {
           emitLog(
             log,
-            `job ${jobId}: failed to delete abandoned CNG key container ` +
-              `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
-              `orphaned in the CNG key store until manually removed.`,
+            `job ${jobId}: CNG key cleanup deferred for ${containerName} after ACME failure ` +
+              `(${cleanup.reason || "native_delete_failed"}); ` +
+              `the key and ownership receipt remain for reconciliation.`,
           );
         } else {
           removeIssuedContainerRecord({ stateDir, containerName });
@@ -4828,6 +4862,7 @@ async function executeWindowsIisRenewJob({
     onBeforeMutation,
     windowsExecFileImpl,
     windowsConnectImpl,
+    windowsKeySurvivorHelperPath,
   });
 }
 
@@ -6642,6 +6677,8 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   for certreq.exe/certutil.exe/netsh.exe
  * @param {Function} [params.windowsConnectImpl] test-only tls.connect
  *   override for the post-bind verification handshake
+ * @param {string} [params.windowsKeySurvivorHelperPath] local test/embedding
+ *   override; execution configuration and signed jobs cannot select this path.
  * @returns {{
  *   enabled: true,
  *   execution: object,
@@ -6652,9 +6689,10 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   acmeExecFileImpl: Function|undefined,
  *   windowsExecFileImpl: Function|undefined,
  *   windowsConnectImpl: Function|undefined,
+ *   windowsKeySurvivorHelperPath: string|undefined,
  * }|null}
  */
-function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl } = {}) {
+function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl, windowsKeySurvivorHelperPath } = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
   }
@@ -6697,6 +6735,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,
+    windowsKeySurvivorHelperPath,
     adcsValidationTimeoutSeconds: config.adcs?.validationTimeoutSeconds,
     adcsEnrollmentRules: Array.isArray(config.adcs?.enrollmentRules)
       ? config.adcs.enrollmentRules

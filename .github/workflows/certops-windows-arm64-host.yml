@@ -65,6 +65,8 @@ jobs:
             if ($result.RestartNeeded) { throw 'Desktop IIS requires restart; native qualification cannot proceed' }
             if ((Get-WindowsOptionalFeature -Online -FeatureName $feature).State -ne 'Enabled') { throw 'Desktop IIS capability unavailable' }
           }
+      - name: Build candidate machine-store query helper before native cleanup cases
+        run: node packages/agent/scripts/build-windows-chain-helper.js
       - name: Execute all mandatory supporting Windows host cases
         run: node --test packages/agent/scripts/host/windows-host.test.js
       - name: Verify mandatory cases and independent desktop architecture evidence

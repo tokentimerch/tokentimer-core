@@ -23,7 +23,7 @@ const RECOGNIZED_VERDICTS = new Set(["valid", "invalid", "revocation_unknown", "
  * @param {string} [opts.overridePath]
  * @param {string} [opts.packageRoot]
  */
-function resolveAdcsChainHelperPath({ overridePath, packageRoot } = {}) {
+function resolveAdcsChainHelperPath({ overridePath, packageRoot, platform = process.platform, arch = process.arch } = {}) {
   if (typeof overridePath === "string" && overridePath.length > 0) {
     if (!fs.existsSync(overridePath)) {
       return { error: `AD CS chain helper not found at ${overridePath}` };
@@ -34,17 +34,17 @@ function resolveAdcsChainHelperPath({ overridePath, packageRoot } = {}) {
     typeof packageRoot === "string" && packageRoot.length > 0
       ? packageRoot
       : path.join(__dirname, "..", "..");
-  const name = process.platform === "win32" ? "tokentimer-adcs-chain.exe" : "tokentimer-adcs-chain";
-  const candidates = [
-    path.join(root, "reference", "adcs-chain", "dist", name),
-    path.join(root, "reference", "adcs-chain", "dist", "tokentimer-adcs-chain-windows-amd64.exe"),
-  ];
+  const windowsArch = { x64: "amd64", arm64: "arm64" }[arch];
+  const candidates = platform === "win32" ? (windowsArch ? [
+    path.join(root, "bin", `tokentimer-adcs-chain-${windowsArch}.exe`),
+    path.join(root, "reference", "adcs-chain", "dist", `tokentimer-adcs-chain-windows-${windowsArch}.exe`),
+  ] : []) : [path.join(root, "reference", "adcs-chain", "dist", "tokentimer-adcs-chain")];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return { path: candidate };
   }
   return {
     error:
-      "tokentimer-adcs-chain helper binary is not installed under packages/agent/reference/adcs-chain/dist",
+      "tokentimer-adcs-chain helper binary for the current architecture is not installed under package/bin (run build:windows-chain-helper)",
   };
 }
 

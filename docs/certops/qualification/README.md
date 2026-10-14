@@ -48,7 +48,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Activation-function second-rename restoration](windows/installer-second-rename-restoration.md)
 - [Two successful unattended Windows renewal generations](windows/two-unattended-renewals.md)
 - [Retention-ledger atomic replacement refusal](windows/retention-ledger-atomic-replace.md)
-- [Retention replacement lineage and protected cleanup](windows/retention-replacement-lineage.md)
+- [Retention replacement lineage, cross-store key survivors and protected cleanup](windows/retention-replacement-lineage.md)
 - [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
 - [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
