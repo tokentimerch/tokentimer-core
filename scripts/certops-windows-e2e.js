@@ -36,6 +36,10 @@ async function main() {
       assert.equal(renameRefusal.suite,"windows-installer-first-rename-refusal");
       assert.deepEqual(require("./certops-qualification-report").verifyReport(renameRefusal),[]);
       require("../tests/e2e/helpers/certops-windows-rename-refusal").verifyProof(renameRefusal.nativeRenameRefusal);
+      const secondRename=JSON.parse(fs.readFileSync("qualification-results/windows-second-rename-activation.json","utf8"));
+      assert.equal(secondRename.suite,"windows-activation-second-rename");
+      assert.deepEqual(require("./certops-qualification-report").verifyReport(secondRename),[]);
+      require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(secondRename.nativeSecondRename);
     }
     if (process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE) {
       const upgrade=JSON.parse(fs.readFileSync("qualification-results/windows-source-upgrade.json","utf8"));

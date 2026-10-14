@@ -33,7 +33,8 @@
       "windows-discovery-http-sys-selectors": "real-host",
       "windows-cng-private-export-refusal": "real-host",
       "windows-iis-shared-port-sni-isolation": "real-host",
-      "windows-enrollment-lock-cng-contention": "real-host"
+      "windows-enrollment-lock-cng-contention": "real-host",
+      "windows-retention-atomic-replace-refusal": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -1050,6 +1051,20 @@
       "windows-upgrade-directory-handle-owned": "e2e",
       "windows-upgrade-first-rename-refusal-preserves-service": "e2e",
       "windows-upgrade-rename-refusal-owned-cleanup": "e2e"
+    },
+    "browser-retirement-visibility": {
+      "browser-retirement-active-observed-control": "e2e",
+      "browser-retirement-public-retire-and-real-rescan": "e2e",
+      "browser-retirement-default-hidden": "e2e",
+      "browser-retirement-show-retired": "e2e",
+      "browser-retirement-explicit-status-filter": "e2e",
+      "browser-retirement-factual-detail-no-renewal": "e2e",
+      "browser-retirement-owned-cleanup": "e2e"
+    },
+    "windows-activation-second-rename": {
+      "windows-activation-second-rename-restores-predecessor": "e2e",
+      "windows-activation-restoration-preserves-installed-custody": "e2e",
+      "windows-activation-second-rename-owned-cleanup": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1472,6 +1487,18 @@
       "system",
       "installedAgent",
       "api"
+    ],
+    "browser-retirement-visibility": [
+      "browser",
+      "api",
+      "postgres",
+      "openssl"
+    ],
+    "windows-activation-second-rename": [
+      "windows",
+      "system",
+      "installedAgent",
+      "api"
     ]
   },
   "suites": {
@@ -1507,7 +1534,8 @@
       "windows-discovery-http-sys-selectors",
       "windows-cng-private-export-refusal",
       "windows-iis-shared-port-sni-isolation",
-      "windows-enrollment-lock-cng-contention"
+      "windows-enrollment-lock-cng-contention",
+      "windows-retention-atomic-replace-refusal"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -2519,6 +2547,20 @@
       "windows-upgrade-directory-handle-owned",
       "windows-upgrade-first-rename-refusal-preserves-service",
       "windows-upgrade-rename-refusal-owned-cleanup"
+    ],
+    "browser-retirement-visibility": [
+      "browser-retirement-active-observed-control",
+      "browser-retirement-public-retire-and-real-rescan",
+      "browser-retirement-default-hidden",
+      "browser-retirement-show-retired",
+      "browser-retirement-explicit-status-filter",
+      "browser-retirement-factual-detail-no-renewal",
+      "browser-retirement-owned-cleanup"
+    ],
+    "windows-activation-second-rename": [
+      "windows-activation-second-rename-restores-predecessor",
+      "windows-activation-restoration-preserves-installed-custody",
+      "windows-activation-second-rename-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2607,6 +2649,8 @@
     "retirement-approval-api": "integration",
     "windows-acme-wrong-spki": "e2e",
     "retired-identity-scheduler-api": "integration",
-    "windows-installer-first-rename-refusal": "e2e"
+    "windows-installer-first-rename-refusal": "e2e",
+    "browser-retirement-visibility": "e2e",
+    "windows-activation-second-rename": "e2e"
   }
 }

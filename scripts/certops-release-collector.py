@@ -330,6 +330,19 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete native first-rename refusal evidence")
             result["nativeRenameRefusal"] = dict.fromkeys(fields, True)
+        if value.get("suite") == "windows-activation-second-rename":
+            proof = value.get("nativeSecondRename")
+            fields = ("childIdentityVerifiedBeforeActivation", "actualProductionFunctions", "nativeOrderedRestoreEvents", "originalDirectoryIdentityRestored", "heldStagingIdentityUnchanged", "explicitStagingCleanupFailure", "candidateNeverActivated", "predecessorFilesUnchanged", "sameRunningServicePid", "configurationAndCredentialUnchanged", "cngCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "freshAuthenticatedHeartbeat", "nativeHandleReleased", "ownedStagingRemoved", "ownedChildDrained")
+            scope = "production-activation-functions-not-installer-cli"
+            if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
+                raise ValueError("Incomplete native second-rename activation evidence")
+            result["nativeSecondRename"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "windows-host":
+            proof = value.get("nativeRetentionAtomicReplace")
+            fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
+            if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
+                raise ValueError("Incomplete native retention atomic replacement evidence")
+            result["nativeRetentionAtomicReplace"] = dict.fromkeys(fields, True)
         if value.get("suite") == "windows-acme-wrong-spki":
             proof = value.get("nativeWrongSpki")
             if not isinstance(proof, dict):

@@ -22,6 +22,44 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_second_rename_proof_retains_scope_and_refuses_incomplete_restoration(self):
+        fields = ("childIdentityVerifiedBeforeActivation", "actualProductionFunctions", "nativeOrderedRestoreEvents", "originalDirectoryIdentityRestored", "heldStagingIdentityUnchanged", "explicitStagingCleanupFailure", "candidateNeverActivated", "predecessorFilesUnchanged", "sameRunningServicePid", "configurationAndCredentialUnchanged", "cngCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "freshAuthenticatedHeartbeat", "nativeHandleReleased", "ownedStagingRemoved", "ownedChildDrained")
+        proof = {**dict.fromkeys(fields, True), "scope": "production-activation-functions-not-installer-cli"}
+        suite = "windows-activation-second-rename"
+        result = collector.sanitized_report({"suite": suite, "nativeSecondRename": {**proof, "rawConfig": "sentinel", "rawNativeEvents": "sentinel"}}, {suite}, set())
+        self.assertEqual(result["nativeSecondRename"], proof)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for field in fields:
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeSecondRename": {**proof, field: False}}, {suite}, set())
+        for invalid in (None, {**proof, "scope": "complete-installer-rollback"}):
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeSecondRename": invalid}, {suite}, set())
+
+    def test_retention_atomic_proof_strips_native_paths_and_requires_all_facts(self):
+        fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
+        proof = dict.fromkeys(fields, True)
+        suite = "windows-host"
+        custody_fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
+        custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True,
+                   "cases": [{"caseId": profile + "/" + store, **dict.fromkeys(custody_fields, True), "privateExportHResult": -2146893813} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]}
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
+        self.assertEqual(result["nativeRetentionAtomicReplace"], proof)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for field in fields:
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": {**proof, field: False}}, {suite}, set())
+        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite}, {suite}, set())
+    def test_browser_retirement_retains_declared_sources_without_browser_private_state(self):
+        suite = "browser-retirement-visibility"
+        sources = [{"file": file, "sha256": "a" * 64} for file in (
+            "scripts/certops-browser-retirement.js",
+            "tests/e2e/helpers/certops-browser-retirement-fixture.js",
+            "tests/e2e/helpers/certops-api-fixture.js")]
+        report = {"suite": suite, "fixtureSource": sources[0], "fixtureSources": sources,
+                  "cookies": [{"value": "sentinel"}], "screenshot": "sentinel", "tlsPrivateKey": "sentinel"}
+        result = collector.sanitized_report(report, {suite}, set())
+        self.assertEqual(result["fixtureSource"], sources[0])
+        self.assertEqual(result["fixtureSources"], sources)
+        self.assertNotIn("sentinel", json.dumps(result))
+
     def test_main_collects_more_than_old_run_and_report_limits_without_network(self):
         candidate = "a" * 40
         run_ids = list(range(1, 202))
@@ -183,20 +221,21 @@ class CollectorTests(unittest.TestCase):
 
     def test_cng_custody_has_ten_bounded_profiles_and_no_exported_bytes(self):
         suite = "windows-host"
+        atomic = dict.fromkeys(("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved"), True)
         fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
         cases = [{"caseId": profile + "/" + store, **dict.fromkeys(fields, True), "privateExportHResult": -2146893813, "rawPrivateBlob": "sentinel"} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True, "cases": cases, "signature": "sentinel"}
         sni = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My", **dict.fromkeys(("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified"), True), "privateConfig": "sentinel"}
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": sni}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeSamePortSni": sni}, {suite}, set())
         self.assertEqual(result["nativeSamePortSni"]["siteCount"], 2)
         self.assertTrue(result["nativeSamePortSni"]["peerRollbackPrimaryUnchanged"])
         for change in ({"siteCount": True}, {"hostnameCount": 1}, {"certificateStore": "Other"}):
             with self.assertRaises(ValueError):
                 collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, **change}}, {suite}, set())
-        missing = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
+        missing = collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
         self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
         contention = {**dict.fromkeys(("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved"), True), "loserNativeCalls": 0, "loserCertreqCalls": 0, "retryCertreqCalls": 0, "winnerCertreqCalls": 1, "retryNativeCalls": 1, "privateRaw": "sentinel"}
-        projected = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeEnrollmentContention": contention}, {suite}, set())
+        projected = collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeEnrollmentContention": contention}, {suite}, set())
         self.assertEqual(projected["nativeEnrollmentContention"]["loserNativeCalls"], 0)
         self.assertNotIn("sentinel", json.dumps(projected))
         for bad in (True, "0", -1, 33):

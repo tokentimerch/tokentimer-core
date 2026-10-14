@@ -29,3 +29,5 @@ A trusted candidate selection job validates these values against committed allow
 
 
 CertOps dashboard component/page changes and their route, workspace and API-client dependencies also select the cheap tooling lane. That lane runs the actual console, manager-route, workspace-context and CertOps URL-state component tests, including cached-text withdrawal after authority changes. These frontend-only paths do not select Windows hosts or the API stack. The real authenticated browser journeys remain manual qualification and mandatory release evidence; unrelated dashboard pages do not trigger CertOps qualification.
+
+The manual browser lane also requires [retired certificate visibility and factual details](../api/browser-retirement-visibility.md). Its producer and wiring regressions use the existing `scripts/certops-*` path selection; changing the certificate list or detail components continues to select cheap tooling without automatically launching Chromium, PostgreSQL or Windows hosts. The release matrix requires the separate browser retirement report even when navigation and console reports pass.

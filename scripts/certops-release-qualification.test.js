@@ -290,9 +290,12 @@ test("Windows host release proof requires complete CNG custody and same-port SNI
  const facts={privateExportBytesWritten:false,privateExportBytesReported:false,workDirectoryUnchanged:true,cases:CASES.map(caseId=>({caseId,exportableControlSucceeded:true,controlBytesZeroed:true,protectedBytesZeroed:true,protectedExportDenied:true,publicNonceSignatureVerified:true,originalCustodyUnchanged:true,controlKeyRemoved:true,privateExportHResult:-2146893813}))};
  const sni={siteCount:2,hostnameCount:2,certificateStore:"My",twoSitesSamePort:true,distinctHostnameSelectors:true,primaryCutoverPeerUnchanged:true,primaryRollbackPeerUnchanged:true,peerCutoverPrimaryUnchanged:true,peerRollbackPrimaryUnchanged:true,sameCertificateReplayVerified:true,independentAuthenticatedTls:true,ownedCleanupVerified:true};
  const contention={winnerGeneratedRealCsr:true,loserLockedBeforeNativeExecution:true,retryAcquiredEnrollmentLock:true,retryExistingContainerRefused:true,sameCsrAndSpki:true,sameNonExportableKey:true,winnerSignatureVerified:true,ownedChildrenStopped:true,ownedKeyRemoved:true,loserNativeCalls:0,loserCertreqCalls:0,retryCertreqCalls:0,winnerCertreqCalls:1,retryNativeCalls:1};
- const value=suiteArtifact(suite,slot.source,{cngCustody:facts,nativeSamePortSni:sni,nativeEnrollmentContention:contention});value.environment=value.report.qualificationEnvironment={...slot.environment,measurement:"native"};
+ const value=suiteArtifact(suite,slot.source,{cngCustody:facts,nativeSamePortSni:sni,nativeEnrollmentContention:contention,nativeRetentionAtomicReplace:Object.fromEntries(require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").FIELDS.map(field=>[field,true]))});value.environment=value.report.qualificationEnvironment={...slot.environment,measurement:"native"};
  value.report.fixtureSources=slot.requiredSources.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
  const options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};assert.deepEqual(verifyMatrix([value],options),[]);
+ for(const field of require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").FIELDS){const bad=structuredClone(value);bad.report.nativeRetentionAtomicReplace[field]=false;assert.ok(verifyMatrix([bad],options).length,field);}
+ const missingAtomic=structuredClone(value);delete missingAtomic.report.nativeRetentionAtomicReplace;assert.ok(verifyMatrix([missingAtomic],options).length);
+ const staleAtomic=structuredClone(value);staleAtomic.report.fixtureSources.find(source=>source.file.endsWith("retention-ledger-atomic-fixture.js")).sha256="0".repeat(64);assert.ok(verifyMatrix([staleAtomic],options).length);
  for(const mutate of [v=>{delete v.report.nativeEnrollmentContention;},v=>{v.report.nativeEnrollmentContention.loserNativeCalls=1;},v=>{v.report.nativeEnrollmentContention.retryCertreqCalls=1;},v=>{v.report.nativeEnrollmentContention.sameNonExportableKey=false;},v=>{v.report.nativeEnrollmentContention.ownedChildrenStopped=false;},v=>{delete v.report.nativeSamePortSni;},v=>{v.report.nativeSamePortSni.hostnameCount=1;},v=>{v.report.nativeSamePortSni.peerRollbackPrimaryUnchanged=false;},v=>{v.report.nativeSamePortSni.ownedCleanupVerified=false;},v=>{delete v.report.cngCustody;},v=>{v.report.cngCustody.cases.pop();},v=>{v.report.cngCustody.cases[0].controlBytesZeroed=false;},v=>{v.report.cngCustody.privateExportBytesReported=true;},v=>{v.report.cngCustody.cases[0].privateExportHResult=0;}]){const bad=structuredClone(value);mutate(bad);assert.ok(verifyMatrix([bad],options).length);}
 });
 
@@ -316,4 +319,19 @@ test("first-rename refusal requires actual held fault and preserved running pred
   assert.ok(verifyMatrix([missing], options).length);
   const stale = structuredClone(value); stale.report.fixtureSources[0].sha256 = "0".repeat(64);
   assert.ok(verifyMatrix([stale], options).length);
+});
+
+test("second-rename evidence cannot claim full CLI rollback or omit native ownership and cleanup", () => {
+  const suite = "windows-activation-second-rename", helper = require("../tests/e2e/helpers/certops-windows-second-rename");
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+  const proof = { ...Object.fromEntries(helper.factFields.map(field => [field, true])), scope: "production-activation-functions-not-installer-cli" };
+  const value = suiteArtifact(suite, slot.source, { nativeSecondRename: proof });
+  value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  for (const field of helper.factFields) { const invalid = structuredClone(value); invalid.report.nativeSecondRename[field] = false; assert.ok(verifyMatrix([invalid], options).length, field); }
+  const missing = structuredClone(value); delete missing.report.nativeSecondRename; assert.ok(verifyMatrix([missing], options).length);
+  const falseScope = structuredClone(value); falseScope.report.nativeSecondRename.scope = "complete-cli-rollback"; assert.ok(verifyMatrix([falseScope], options).length);
+  const stale = structuredClone(value); stale.report.fixtureSources[0].sha256 = "0".repeat(64); assert.ok(verifyMatrix([stale], options).length);
 });

@@ -253,6 +253,14 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     await gate.scenario("windows-installer-build-floor", () => {
       require("./installer-build-floor-fixture").qualifyInstallerBuildFloor();
     }, { evidenceLevel: "unit", oracle: "Real PowerShell AST extracts only actual production Fail, floor assignment and build guard; three unsupported values refused and four supported boundaries accepted; no unsupported OS boot or installer mutation" });
+    await gate.scenario("windows-retention-atomic-replace-refusal", async () => {
+      const fixture = require("./retention-ledger-atomic-fixture");
+      gate.report.nativeRetentionAtomicReplace = await fixture.qualifyLedgerAtomicReplace();
+      gate.report.fixtureSources ||= [];
+      for (const file of fixture.REQUIRED_SOURCES) {
+        if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+      }
+    }, { evidenceLevel: "real-host", oracle: "Actual native file-sharing denial forces production atomic rename refusal, preserves exact prior bytes/file ID, removes only temporary write, then release permits a real replacement independently read by a fresh process with restrictive native ACLs" });
     await gate.scenario("windows-retention-process-durability", async () => {
       const ledgerDir = path.join(workDir, "restart-ledger");
       const driver = path.resolve(__dirname, "../vm-verify/windows-retention-restart.js");
@@ -347,6 +355,6 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");
     }, { evidenceLevel: "real-host", oracle: "certificate absence and certutil KSP enumeration" });
-    await gate.finish({ requiredScenarios: ["windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    await gate.finish({ requiredScenarios: ["windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

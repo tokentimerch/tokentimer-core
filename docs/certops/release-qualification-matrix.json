@@ -196,7 +196,10 @@
         "packages/agent/src/windows-cert-store/index.js",
         "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/src/platform/durability.js"
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/scripts/host/retention-ledger-atomic-fixture.js",
+        "packages/agent/scripts/host/retention-ledger-file-hold.ps1",
+        "packages/agent/src/windows-retention/index.js"
       ]
     },
     {
@@ -334,7 +337,10 @@
         "packages/agent/src/windows-cert-store/index.js",
         "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/src/platform/durability.js"
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/scripts/host/retention-ledger-atomic-fixture.js",
+        "packages/agent/scripts/host/retention-ledger-file-hold.ps1",
+        "packages/agent/src/windows-retention/index.js"
       ]
     },
     {
@@ -2453,6 +2459,66 @@
         "osFamily": "windows",
         "osVersion": "2025",
         "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "browser-retirement-ubuntu24",
+      "kind": "host",
+      "suite": "browser-retirement-visibility",
+      "source": "scripts/certops-browser-retirement.js",
+      "requiredSources": [
+        "scripts/certops-browser-retirement.js",
+        "tests/e2e/helpers/certops-browser-retirement-fixture.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "measurement": "native"
+      }
+    },
+    {
+      "id": "windows-second-rename-2022-rsa-2048",
+      "kind": "host",
+      "suite": "windows-activation-second-rename",
+      "source": "tests/e2e/helpers/certops-windows-second-rename.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "packages/agent/scripts/install-agent.ps1",
+        "scripts/certops-installer-second-rename-support.js",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/windows-real-journey.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-second-rename-2025-rsa-2048",
+      "kind": "host",
+      "suite": "windows-activation-second-rename",
+      "source": "tests/e2e/helpers/certops-windows-second-rename.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "packages/agent/scripts/install-agent.ps1",
+        "scripts/certops-installer-second-rename-support.js",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/windows-real-journey.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "measurement": "native",
         "keyProfile": "rsa-2048"
       }
     }

@@ -265,9 +265,10 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       // function against owned temporary files, then the full fixture below
       // independently observes the actual installed service and trusted TLS.
       const swapProof = JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(repoRoot,"scripts/certops-installer-swap.test.ps1")]));
-      for (const field of ["productionAstParsed","bothRenamesProtected","unexpectedPathsRefused","realFirstRenameRefused","predecessorPreserved","failedStagingRemoved","handleReleased","actualPositiveActivation","existingRecoveryPreserved"]) assert.equal(swapProof[field],true,field);
+      for (const field of ["productionAstParsed","bothRenamesProtected","unexpectedPathsRefused","realFirstRenameRefused","predecessorPreserved","failedStagingRemoved","handleReleased","actualPositiveActivation","existingRecoveryPreserved","actualSecondRenameRestoration"]) assert.equal(swapProof[field],true,field);
       assert.equal(swapProof.scope,"owned-temporary-filesystem-only");
       await require("./helpers/certops-windows-rename-refusal").qualifyRenameRefusal({pool,workspaceId,agentId,configDir,workDir,repoRoot,installerFixture,createBootstrap,baseUrl,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil});
+      await require("./helpers/certops-windows-second-rename").qualifySecondRename({pool,workspaceId,agentId,configDir,workDir,repoRoot,packageDir:candidateRoot,installerFixture,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil});
     }
     let lastSeenBeforeRestart = (await pool.query("SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId])).rows[0].last_seen_at;
     const preUpgradeConfig = fs.readFileSync(path.join(configDir, "config.json"));
