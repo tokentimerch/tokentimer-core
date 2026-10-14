@@ -206,3 +206,13 @@ test("installed Unicode paths sidecar reporter validates real public file lookup
     fs.rmSync(root, { recursive: true });
   }
 });
+
+test('installed native crash reporter requires bounded current facts for every key profile',()=>{
+ const os=require('node:os'),h=require('../tests/e2e/helpers/certops-windows-owned-process'),reporter=require('./certops-stack-reporter');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'certops-crash-reporter-')),name='real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence';
+ try{fs.mkdirSync(path.join(root,'qualification-results'));for(const profile of ['rsa-2048','rsa-3072','rsa-4096','ec-p256','ec-p384']){
+ const scope='real-agent-windows-acme-iis/'+profile,file=path.join(root,'qualification-results',`windows-native-crash-${profile}.json`);
+ assert.throws(()=>reporter.installedCrashProof(scope,name,root));const proof={scope:'installed-system-native-handle-crash-fixture-lease-recovery',...Object.fromEntries(h.PUBLIC_FLAGS.map(flag=>[flag,true])),atomicTreeContainmentQualified:false,productionLeaseGraceQualified:false};fs.writeFileSync(file,JSON.stringify(proof));assert.deepEqual(reporter.installedCrashProof(scope,name,root),proof);
+ for(const key of Object.keys(proof)){const bad={...proof};delete bad[key];fs.writeFileSync(file,JSON.stringify(bad));assert.throws(()=>reporter.installedCrashProof(scope,name,root));}
+ }assert.equal(reporter.installedCrashProof('real-agent-acme-filesystem',name,root),undefined);}finally{fs.rmSync(root,{recursive:true});}
+});

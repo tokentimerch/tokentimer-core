@@ -244,8 +244,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "SCM fixture child exit17 recovers and actual agent hard-crash startup reconciles CNG orphan; full automatic SCM recovery of every live job stage remains."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; tests/e2e/windows-real-journey.js; tests/e2e/helpers/certops-windows-owned-process.js; tests/e2e/helpers/certops-windows-owned-process.ps1",
+      "remainingCoverage": "SCM fixture child exit17 recovery and installed-agent hard-crash startup reconciliation have source coverage. The installed crash now requires original exact SCM/Node arguments, same-invocation retained native process handles, fresh creation/executable/SYSTEM identity checks, captured descendant drainage and sticky cleanup preservation. Mandatory public proof also requires exact orphan-key absence, unchanged trusted TLS and no attempt replay after fixture-adjusted lease expiry and zero-grace reaping. Native execution remains pending. Existing-process observation does not provide atomic tree containment or qualify production lease/grace timing; automatic SCM recovery at each certificate-operation stage remains."
     },
     {
       "id": "windows-install.retirement-stop",

@@ -594,7 +594,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))
@@ -1413,6 +1413,19 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result[0][1]["fixtureSources"], report["fixtureSources"])
         self.assertNotIn("never-copy", json.dumps(result))
 
+
+    def test_installed_crash_projection_requires_native_facts_without_scope_promotion(self):
+        flags = ["retainedNativeHandles", "freshIdentityReverified", "capturedHandlesExited", "capturedLineageAbsent", "fixtureCommandPathsAbsent", "fixtureAdjustedLeaseRecovery", "unresolvedAttemptNotReplayed", "startupOrphanKeyRemoved", "priorTrustedTlsPreserved"]
+        proof = {"scope": "installed-system-native-handle-crash-fixture-lease-recovery", **dict.fromkeys(flags, True), "atomicTreeContainmentQualified": False, "productionLeaseGraceQualified": False}
+        event = {"scope": "real-agent-windows-acme-iis/rsa-2048", "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "nativeInstalledCrash": {**proof, "rawProcessCommand": "private"}}
+        self.assertEqual(collector.installed_crash_fields(event), {"nativeInstalledCrash": proof})
+        for key in proof:
+            missing = json.loads(json.dumps(event)); del missing["nativeInstalledCrash"][key]
+            with self.assertRaises(ValueError): collector.installed_crash_fields(missing)
+            wrong = json.loads(json.dumps(event)); wrong["nativeInstalledCrash"][key] = True if key.endswith("Qualified") else False
+            with self.assertRaises(ValueError): collector.installed_crash_fields(wrong)
+        self.assertEqual(collector.installed_crash_fields({**event, "scope": "real-agent-acme-filesystem"}), {})
+        self.assertEqual(collector.installed_crash_fields({**event, "type": "test:fail"}), {})
 
     def test_installed_iis_refusal_projection_is_bounded_and_requires_claim_audit(self):
         proof = installed_iis_refusal_proof()

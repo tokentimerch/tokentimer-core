@@ -74,8 +74,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const installedPathProofPath=path.join(repoRoot,"qualification-results",`windows-installed-paths-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(installedPathProofPath),false,"Refuse stale Unicode installed-path proof");
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
-  let outputPrivacy, keyReuseRefusalProof, installedIisRefusalProof;
+  let outputPrivacy, keyReuseRefusalProof, installedIisRefusalProof, installedCrashProof;
   const ownedIisRefusalShadows=[];
+  const crashProofPath=path.join(repoRoot,"qualification-results",`windows-native-crash-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(crashProofPath),false,"Refuse stale installed crash proof");
   const installedIisRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-installed-iis-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(installedIisRefusalProofPath),false,"Refuse stale installed IIS refusal proof");
   const reuseProofPath=path.join(repoRoot,"qualification-results",`windows-key-reuse-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);assert.equal(fs.existsSync(reuseProofPath),false,"Refuse stale Windows reuse refusal proof");
   let publicSession, publicIssuanceFacts, publicIssueInput;
@@ -611,9 +612,17 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const readInterrupted = () => fs.existsSync(journalDir) ? fs.readdirSync(journalDir).filter((name) => name.endsWith(".json")).map((name) => JSON.parse(fs.readFileSync(path.join(journalDir, name), "utf8"))).find((row) => row.jobId === interruptedJob.id && row.windowsCngContainerName) : null;
     const interrupted = await waitUntil(readInterrupted);
     assert.ok(command("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(interrupted.windowsCngContainerName), "interruption must follow real native key generation");
-    const childPid = Number(ps("$s=Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\"; $children=@(Get-CimInstance Win32_Process -Filter \"ParentProcessId=$($s.ProcessId)\" | Where-Object { $_.Name -eq 'node.exe' }); if ($children.Count -ne 1) { throw 'Expected one owned service child' }; $children[0].ProcessId"));
-    assert.ok(Number.isSafeInteger(childPid) && childPid > 0);
-    command("taskkill.exe", ["/PID", String(childPid), "/T", "/F"]);
+    const ownedProcess = require("./helpers/certops-windows-owned-process");
+    await runNamedScenario(ownedProcess.scenarioName, async () => {
+    const crashIdentity = ownedProcess.captureInstalledAgentIdentity({
+      powershell: ps, workDir, configDir, nodePath: process.execPath,
+      commandRoots: [path.join(workDir, "app/bin/tokentimer-agent.js"),
+        path.join(workDir, "app/bin/tokentimer-agent-host-amd64.exe"),
+        configDir, outputPrivacy.directory],
+    });
+    // Existing-process capture is bounded observation, not retroactive Job containment.
+    // Native handles stay retained in the same invocation until every captured child exits.
+    const nativeCrashProof = ownedProcess.terminateOwnedProcessTree({identity: crashIdentity, run: command});
     await waitUntil(() => /STOPPED/.test(command("sc.exe", ["query", "TokenTimerAgent"])), 20000);
     for (const response of heldResponses) response.destroy();
     heldResponses.clear();
@@ -634,10 +643,14 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.equal(orphaned.attempt_count, crashed.attempt_count);
     command("sc.exe", ["start", "TokenTimerAgent"]);
     await waitUntil(() => readInterrupted()?.windowsCngContainerReconciledAt);
-    assert.ok(!command("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(interrupted.windowsCngContainerName), "startup must reconcile orphaned native key");
+    assert.match(interrupted.windowsCngContainerName,/^tokentimer-[A-Za-z0-9_-]+$/);
+    assert.equal(ps(`[string][Security.Cryptography.CngKey]::Exists('${interrupted.windowsCngContainerName}',[Security.Cryptography.CngProvider]::new('Microsoft Software Key Storage Provider'),[Security.Cryptography.CngKeyOpenOptions]::MachineKey)`), "False", "startup must reconcile exact orphaned native key");
     const postCrash = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate().fingerprint256); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Post-crash IIS TLS timeout"))); });
     assert.equal(postCrash, renewed.fingerprint256, "mid-renewal hard crash must preserve prior served certificate");
     assert.equal((await pool.query("SELECT attempt_count FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, interruptedJob.id])).rows[0].attempt_count, crashed.attempt_count, "restart must not repeat an unresolved mutating attempt");
+    // Emit public facts only after actual restart/key/TLS and no-replay oracles pass.
+    installedCrashProof = ownedProcess.publicProof(nativeCrashProof);
+    });
     command("sc.exe", ["failure", "TokenTimerAgent", "reset=", "60", "actions=", "restart/1000"]);
     const retirementLogOffset = fs.statSync(serviceLog).size;
     const registered = (await pool.query("SELECT id FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId])).rows[0];
@@ -678,6 +691,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     journeyFailure = error;
     throw error;
   } finally {
+    // Missing/tampered receipts cannot release unresolved in-memory process ownership.
+    require("./helpers/certops-windows-owned-process").assertCleanupSafe(workDir);
     // Refuse all public/native cleanup after an owned-root replacement.
     installedPaths.assertOwnedRoot(installedPathReceipt);
     // Unknown signed work or shadow ownership must preserve certificate/key,
@@ -730,6 +745,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
     if (!historicalSupportingOnly && !journeyFailure && errors.length === 0) {
+      require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
       installedPaths.verifyProof(installedPathProof);
       fs.writeFileSync(installedPathProofPath, JSON.stringify(installedPathProof), { flag: "wx" });
       require("./helpers/certops-windows-installed-iis-refusal").verifyProof(installedIisRefusalProof);fs.writeFileSync(installedIisRefusalProofPath,JSON.stringify(installedIisRefusalProof),{flag:"wx"});

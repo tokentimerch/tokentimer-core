@@ -195,6 +195,7 @@ jobs:
             qualification-results/windows-installed-paths-${{ matrix.key_profile }}.json
             qualification-results/windows-installed-handoff-${{ matrix.key_profile }}.json
             qualification-results/windows-adoption-${{ matrix.key_profile }}.json
+            qualification-results/windows-native-crash-${{ matrix.key_profile }}.json
             qualification-results/windows-output-privacy-${{ matrix.key_profile }}.json
             qualification-results/windows-wrong-spki-${{ matrix.key_profile }}.json
             qualification-results/windows-two-renewals-${{ matrix.key_profile }}.json

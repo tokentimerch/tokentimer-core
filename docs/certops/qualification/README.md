@@ -43,6 +43,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+
 - [Temporary file response barriers (supporting controls)](adcs/response-delivery-barrier-support.md)
 
 - [AD CS algorithm/template negatives with actual positive issuance controls](adcs/algorithm-template-boundaries.md)
@@ -162,3 +163,5 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [IPv6 wildcard shadow and rollback](windows/ipv6-wildcard-shadow-rollback.md): separate [::] native scope and both-stack isolation prerequisites; native execution pending.
 
 - [Installed Unicode paths](windows/installed-unicode-paths.md): exact native SCM/Node/config paths with spaces, Unicode and literal brackets, actual public signed issuance and CNG/IIS/trusted TLS. Historical migration runs first in a separate ASCII supporting root. Native execution remains pending.
+
+- [Installed crash ownership](windows/installed-crash-ownership.md): exact native handles, fail-closed fixture preservation and explicit shortened-lease recovery scope; native execution pending.

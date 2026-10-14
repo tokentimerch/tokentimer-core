@@ -253,6 +253,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -291,7 +292,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -308,6 +311,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -346,7 +350,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -363,6 +369,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -401,7 +408,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -418,6 +427,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -456,7 +466,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -473,6 +485,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -511,7 +524,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -591,6 +606,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -629,7 +645,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -646,6 +664,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -684,7 +703,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -701,6 +722,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -739,7 +761,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -756,6 +780,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -794,7 +819,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
@@ -811,6 +838,7 @@
         "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
+        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -849,7 +877,9 @@
         "packages/agent/src/windows-iis/index.js",
         "tests/e2e/helpers/certops-windows-installed-paths.js",
         "scripts/certops-windows-e2e.js",
-        "packages/agent/scripts/install-agent.ps1"
+        "packages/agent/scripts/install-agent.ps1",
+        "tests/e2e/helpers/certops-windows-owned-process.js",
+        "tests/e2e/helpers/certops-windows-owned-process.ps1"
       ]
     },
     {
