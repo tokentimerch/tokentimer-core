@@ -269,7 +269,7 @@
         "windows-2025-host"
       ],
       "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Actual product same-candidate installer re-run on owned root must restart SCM with a new PID, preserve exact operator configuration and registered credential, and produce a fresh authenticated heartbeat. A deliberately unloadable extracted service-host candidate must trigger actual installer health-check failure and exact previous-native-binary rollback followed by authenticated heartbeat. Malformed startup then repairs without altering credential or binding. Actual SYSTEM ReadData denial on an owned public candidate file must fail the real staging copy while the healthy service PID/helper/config/credential remain unchanged. Optional strict historical-source-build lane verifies the signed immutable v0.17.2 commit, builds its own two helpers and original installer, then requires actual version migration to candidate with exact credential/config/signing-key-pin preservation and authenticated versioned heartbeat. Public v0.17.2/v0.17.3 archives lack service-host executables; separate immutable-public-baseline preflight fails honestly and never substitutes candidate bytes. Atomic-rename failures, unmodified fixed-root installation and published-release artifact migration remain; native execution evidence is pending."
+      "remainingCoverage": "Actual product same-candidate installer re-run on owned root must restart SCM with a new PID, preserve exact operator configuration and registered credential, and produce a fresh authenticated heartbeat. A deliberately unloadable extracted service-host candidate must trigger actual installer health-check failure and exact previous-native-binary rollback followed by authenticated heartbeat. Malformed startup then repairs without altering credential or binding. Actual SYSTEM ReadData denial on an owned public candidate file must fail the real staging copy while the healthy service PID/helper/config/credential remain unchanged. Mandatory historical-source-upgrade reports for Server 2022 and 2025 verify the signed immutable v0.17.2 source, build its own helpers and installer, then require distinct-version migration with exact credential/config/signing-pin and completed-job preservation, authenticated versioned heartbeat, operational CNG/IIS/TLS state and owned fixture cleanup. Public v0.17.2/v0.17.3 archives lack service-host executables; separate immutable-public-baseline preflight fails honestly and never substitutes candidate bytes. Atomic-rename failures, unmodified fixed-root installation and published-release artifact migration remain; native execution evidence is pending."
     },
     {
       "id": "windows-install.uninstall",
@@ -518,7 +518,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Independent .NET ExportPolicy None and absence of exported CNG work files covered; exhaustive process/path audits, protocol/storage/log encoded leak sentinels and exact package matrix remain."
+      "remainingCoverage": "Mandatory host source covers ten RSA/EC and My/WebHosting samples: actual native private-PKCS8 export refusal, successful same-provider/profile exportable controls, independently verified signatures before/after the attempt, unchanged custody, cleared returned private buffers and exact control-key absence. No private export bytes enter files or reports. Native execution remains pending. Exhaustive process/path audits, protocol/storage/log encoded leak sentinels and the full package/architecture matrix remain separate qualification."
     },
     {
       "id": "windows-cng.named-store",
@@ -1110,8 +1110,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres-openssl"
       ],
-      "implementation": "tests/e2e/certops-profile-permissions-e2e.test.js; tests/e2e/certops-profiles-api-e2e.test.js",
-      "remainingCoverage": "Actual supported autoRenewEnabled false/true persists disabled/active with audit and role checks. Disabled/archived scheduler non-execution and explicit manual renewal semantics still need qualified execution evidence."
+      "implementation": "tests/e2e/certops-profile-permissions-e2e.test.js; tests/e2e/certops-profiles-api-e2e.test.js; tests/e2e/certops-renewal-toggle-e2e.test.js",
+      "remainingCoverage": "Seven focused actual public API/PostgreSQL and production SQL-NOW scheduler cases pass: public disable excludes automatic pickup/admission with zero jobs, public manual and bulk renewal retain independently asserted target/key/SAN/verification contracts, disabled profiles do not consume batchSize1, and re-enable plus concurrent sweeps creates exactly one job. Complete agent-local profiles are seeded prerequisites; native CA execution and archived-profile lifecycle permutations remain separate qualification."
     },
     {
       "id": "renewal.profile-edit",

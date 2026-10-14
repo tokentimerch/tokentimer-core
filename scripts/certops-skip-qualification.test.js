@@ -21,6 +21,20 @@ test("platform and stack candidate cells remain distinct", () => {
   assert.equal(environmentFor({ file: "tests/integration/certops.test.js", name: "query" }), "core-postgres-integration");
   assert.equal(environmentFor({ file: "fixture.test.js", name: "unknown dependency" }), "prerequisite-review");
 });
+
+test("shared scheduler mutations route only to the exclusive manual stack", () => {
+  const files = ["certops-scheduler-capacity-e2e.test.js", "certops-renewal-toggle-e2e.test.js"];
+  const runnerFiles = require("./certops-api-qualification").suites.map(([, file]) => file);
+  const result = generate(files.map(file => ({ file: `tests/e2e/${file}`, line: 1, name: "exclusive scheduler fixture", kind: "dynamic", reason: "no-host" })));
+  for (const site of result.sites) {
+    assert.equal(site.environment, "core-exclusive-scheduler-api");
+    assert.equal(site.workflow, ".github/workflows/certops-scheduler-capacity-qualification.yml");
+    assert.equal(site.workflowStatus, "file-selected-not-qualified");
+    assert.equal(site.executionStatus, "not-qualified");
+    assert.ok(!runnerFiles.includes(site.file.split("/").at(-1)));
+    assert.ok(result.environments[site.environment].capabilities.includes("exclusive-scheduler-stack"));
+  }
+});
 test("committed ownership mapping matches actual scanner sites", () => {
   assert.deepEqual(check(require("../docs/certops/skip-qualification.generated.json")), []);
 });

@@ -2,6 +2,18 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "core-exclusive-scheduler-api": {
+      "capabilities": [
+        "postgres",
+        "core-api",
+        "openssl",
+        "disposable-stack",
+        "exclusive-scheduler-stack"
+      ],
+      "owner": "Exclusive scheduler API qualification",
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "windows-elevated": {
       "capabilities": [
         "windows",
@@ -1350,6 +1362,19 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "71f62331bfc03a91eff6",
+      "file": "tests/e2e/certops-renewal-toggle-e2e.test.js",
+      "line": 17,
+      "name": "disabled automatic renewal preserves manual admission and SQL batch fairness",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "core-exclusive-scheduler-api",
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "2d3f16e1092344c1614c",
       "file": "tests/e2e/certops-result-fences-e2e.test.js",
       "line": 16,
@@ -1382,9 +1407,9 @@
       "name": "SQL clock scheduler shares public issuance capacity and pause fences",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
-      "environment": "prerequisite-review",
-      "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
+      "environment": "core-exclusive-scheduler-api",
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
       "executionStatus": "not-qualified",
       "classificationStatus": "candidate-needs-review"
     },

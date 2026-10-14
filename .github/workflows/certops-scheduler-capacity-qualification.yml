@@ -19,6 +19,7 @@ jobs:
       CERTOPS_SCHEDULER_EXCLUSIVE_STACK: '1'
       CERTOPS_E2E_REQUIRED: '1'
       CERTOPS_SCHEDULER_CAPACITY_REPORT: qualification-results/scheduler-capacity.json
+      CERTOPS_RENEWAL_TOGGLE_REPORT: qualification-results/renewal-toggle.json
       CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
       DB_HOST: localhost
@@ -50,6 +51,10 @@ jobs:
         run: |
           node --test tests/e2e/certops-scheduler-capacity-e2e.test.js
           node scripts/certops-qualification-report.js qualification-results/scheduler-capacity.json
+      - name: Verify automatic renewal disable manual admission and batch fairness
+        run: |
+          node --test tests/e2e/certops-renewal-toggle-e2e.test.js
+          node scripts/certops-qualification-report.js qualification-results/renewal-toggle.json
       - name: Destroy isolated stack
         if: always()
         run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
@@ -58,6 +63,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: scheduler-capacity-api-${{ github.sha }}
-          path: qualification-results/scheduler-capacity.json
+          path: |
+            qualification-results/scheduler-capacity.json
+            qualification-results/renewal-toggle.json
           if-no-files-found: error
           retention-days: 14

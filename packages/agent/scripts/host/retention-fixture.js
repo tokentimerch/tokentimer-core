@@ -10,7 +10,14 @@ const path = require("node:path");
 const { freePort, expectServed } = require("./iis-fixture");
 const { createLedgerRow } = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
+// These host-suite leaves are signed by the owned CA and carry this exact
+// DNS SAN. Keep hostname authentication even though transport is loopback/IP.
+function createRetentionTlsProbe({caPem,servername="certops-host.invalid"}={}){
+ assert.equal(typeof caPem,"string");assert.equal(new crypto.X509Certificate(caPem).ca,true,"Retention TLS requires the owned public CA");assert.match(servername,/^[a-z0-9.-]+$/i);
+ return (port,thumbprint)=>expectServed(port,thumbprint,servername,caPem);
+}
 async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint, replacementThumbprint, containerName }) {
+  const expectOwnedServed=createRetentionTlsProbe({caPem:fs.readFileSync(path.join(workDir,"ca.pem"),"utf8")});
   const site = `CertOps-Retention-${crypto.randomUUID()}`;
   const oldPort = await freePort();
   let newPort = await freePort();
@@ -35,8 +42,8 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
     powershell(`Import-Module WebAdministration; (Get-WebBinding -Name '${site}' -Protocol https | Where-Object { $_.bindingInformation -eq '127.0.0.1:${oldPort}:' }).AddSslCertificate('${oldThumbprint}','My')`);
     replacementBindingOwned = true;
     powershell(`Import-Module WebAdministration; (Get-WebBinding -Name '${site}' -Protocol https | Where-Object { $_.bindingInformation -eq '127.0.0.1:${newPort}:' }).AddSslCertificate('${replacementThumbprint}','My')`);
-    await expectServed(oldPort, oldThumbprint);
-    await expectServed(newPort, replacementThumbprint);
+    await expectOwnedServed(oldPort, oldThumbprint);
+    await expectOwnedServed(newPort, replacementThumbprint);
     const oldNotAfter = powershell(`(Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').NotAfter.ToUniversalTime().ToString('o')`);
     createLedgerRow({ ledgerDir, oldThumbprint, replacementThumbprint, cngKeyContainerId: containerName,
       verifiedCutoverAt: new Date().toISOString(), oldNotAfter, ownershipProvenance: "tokentimer_installed", store: "My" });
@@ -70,7 +77,7 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
     assert.equal(result.removed.length, 0);
     assert.ok(result.deferred.some((row) => row.oldThumbprint === oldThumbprint && row.reason === "deadline_not_reached"));
     assert.equal(powershell(`[bool]((Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').HasPrivateKey)`), "True");
-    await expectServed(newPort, replacementThumbprint);
+    await expectOwnedServed(newPort, replacementThumbprint);
   } catch (error) { primaryError = error; throw error; }
   finally {
     const clean = (action) => { try { action(); } catch (error) { cleanupErrors.push(error); } };
@@ -83,4 +90,4 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
       "Retention fixture cleanup failed", { cause: primaryError });
   }
 }
-module.exports = { qualifyRetentionGuards };
+module.exports = { qualifyRetentionGuards, createRetentionTlsProbe };

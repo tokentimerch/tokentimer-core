@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 122
+Total skips found: 123
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -109,6 +109,7 @@ Total skips found: 122
 | `tests/e2e/certops-queued-profile-snapshot-e2e.test.js` | 13 | public queued renewal freezes profile across operator edits approval and signed claim | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-renewal-admission-e2e.test.js` | 20 | renewal admission preserves monitored-only and terminal certificate policy | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-renewal-alert-worker-e2e.test.js` | 15 | owned renewal failure outbox reaches actual delivery worker SMTP receipt | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-renewal-toggle-e2e.test.js` | 17 | disabled automatic renewal preserves manual admission and SQL batch fairness | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-result-fences-e2e.test.js` | 16 | real result API rejects forged nonce and attempt before consuming an owned lease | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-retired-observation-e2e.test.js` | 22 | fresh TLS observation cannot reactivate a retired identity | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-scheduler-capacity-e2e.test.js` | 13 | SQL clock scheduler shares public issuance capacity and pause fences | dynamic (this.skip() / t.skip()) | `no-host` |

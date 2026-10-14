@@ -1002,6 +1002,15 @@
       "decommission-real-tls-rediscovery": "e2e",
       "decommission-concurrent-rescans-preserve-terminal": "e2e",
       "decommission-owned-cleanup": "e2e"
+    },
+    "renewal-toggle-scheduler-api": {
+      "renew-toggle-public-disable": "integration",
+      "renew-toggle-automatic-admission-refused": "integration",
+      "renew-toggle-manual-stored-profile-allowed": "integration",
+      "renew-toggle-disabled-not-batch-starvation": "integration",
+      "renew-toggle-resume-exactly-once": "integration",
+      "renew-toggle-owned-cleanup": "integration",
+      "renew-toggle-bulk-stored-profile-allowed": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1390,6 +1399,12 @@
       "postgres",
       "openssl",
       "native-filesystem"
+    ],
+    "renewal-toggle-scheduler-api": [
+      "api",
+      "postgres",
+      "openssl",
+      "exclusiveStack"
     ]
   },
   "suites": {
@@ -2394,6 +2409,15 @@
       "decommission-real-tls-rediscovery",
       "decommission-concurrent-rescans-preserve-terminal",
       "decommission-owned-cleanup"
+    ],
+    "renewal-toggle-scheduler-api": [
+      "renew-toggle-public-disable",
+      "renew-toggle-automatic-admission-refused",
+      "renew-toggle-manual-stored-profile-allowed",
+      "renew-toggle-bulk-stored-profile-allowed",
+      "renew-toggle-disabled-not-batch-starvation",
+      "renew-toggle-resume-exactly-once",
+      "renew-toggle-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2476,6 +2500,7 @@
     "agent-log-maintenance-worker": "integration",
     "windows-historical-source-upgrade": "e2e",
     "linux-systemd-published-upgrade": "real-host",
-    "decommission-lifecycle-api": "e2e"
+    "decommission-lifecycle-api": "e2e",
+    "renewal-toggle-scheduler-api": "integration"
   }
 }

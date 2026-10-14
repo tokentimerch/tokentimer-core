@@ -214,6 +214,9 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     await gate.scenario("windows-retention-native-guards", async () => {
       await require("./retention-fixture").qualifyRetentionGuards({ powershell, run, workDir,
         oldThumbprint: acceptedCertificates[2], replacementThumbprint: acceptedCertificates[3], containerName: containers[2] });
+      const file = "packages/agent/scripts/host/retention-fixture.js";
+      gate.report.fixtureSources ||= [];
+      gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
     }, { evidenceLevel: "real-host", oracle: "product retention collector reads real HTTP.sys bindings, actual shared CNG key association and replacement TLS; real clock blocks fresh ledger cleanup" });
     await gate.scenario("windows-retention-real-expiry-grace", async () => {
       await require("./retention-elapsed-fixture").qualifyElapsedRetention({ gate, powershell, run, workDir,
