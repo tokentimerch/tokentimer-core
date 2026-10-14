@@ -324,6 +324,287 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     }
   });
 
+  it("returns real AD CS metadata in every audit feed and JSON/CSV export", async () => {
+    const { fork } = require("node:child_process");
+    const path = require("node:path");
+    const request = require("supertest");
+    const {
+      createIssuer,
+      confirmIssuerKey,
+      createEnrollment,
+      abandonEnrollment,
+    } = require("../../apps/api/services/certops/certificateEnrollments");
+    const ws = await workspace();
+    await db.query(
+      `INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES($1,$2,'admin')
+      ON CONFLICT(workspace_id,user_id) DO UPDATE SET role='admin'`,
+      [ws, userId],
+    );
+    const outsider = (
+      await db.query(
+        `INSERT INTO users(email,email_original,display_name,password_hash,auth_method)
+      VALUES($1::text,$1::text,'Outside audit','unused','local') RETURNING id`,
+        [`audit-outsider-${randomUUID()}@example.test`],
+      )
+    ).rows[0].id;
+    const issuer = await createIssuer({
+      client: db,
+      workspaceId: ws,
+      kind: "adcs",
+      name: "Audit CA",
+      actorUserId: userId,
+    });
+    await db.query(
+      `UPDATE certificate_issuers SET last_preflight=$2::jsonb WHERE id=$1`,
+      [
+        issuer.id,
+        JSON.stringify({
+          caConfig: "ca.example.test\\Audit CA",
+          template: "WebServer",
+          templateCheck: { verdict: "safe" },
+          caCheck: { verdict: "safe" },
+          caCertificates: [{ keySha256: A }],
+        }),
+      ],
+    );
+    await confirmIssuerKey({
+      client: db,
+      workspaceId: ws,
+      issuerId: issuer.id,
+      caKeySha256: A,
+      actorUserId: userId,
+    });
+    const mc = await source(ws, A);
+    await db.query(
+      "UPDATE managed_certificates SET key_mode='agent-local' WHERE id=$1",
+      [mc.id],
+    );
+    const agent = (
+      await db.query(
+        `INSERT INTO certops_agents(workspace_id,agent_id,name,agent_version,protocol_version,credential_prefix,credential_hash,status)
+      VALUES($1,$2,'Audit agent','0.1.0','1.0.0','ttagent_1234567812345678',$3,'active') RETURNING id`,
+        [ws, randomUUID(), B],
+      )
+    ).rows[0].id;
+    const enrollment = await createEnrollment({
+      client: db,
+      workspaceId: ws,
+      issuerId: issuer.id,
+      certificateId: mc.id,
+      agentId: agent,
+      target: {
+        type: "windows-iis",
+        reference: "iis-01/webhosting",
+        store: "WebHosting",
+        binding: { site: "Shop", port: 443, sniHost: "app.example.test" },
+      },
+      authorizedDnsNames: ["app.example.test"],
+      keyAlgorithm: "rsa",
+      keySize: 2048,
+      actorUserId: userId,
+      mode: "dry_run",
+      env: { CERTOPS_ENABLED: "true" },
+    });
+    await db.query(
+      "UPDATE certificate_enrollments SET state='submission_uncertain' WHERE id=$1",
+      [enrollment.enrollmentId],
+    );
+    await abandonEnrollment({
+      client: db,
+      workspaceId: ws,
+      enrollmentId: enrollment.enrollmentId,
+      actorUserId: userId,
+    });
+    const expected = [
+      ["CERTOPS_ISSUER_CREATED", { issuerId: issuer.id, kind: "adcs" }],
+      [
+        "CERTOPS_ISSUER_KEY_CONFIRMED",
+        { issuerId: issuer.id, version: 1, caKeySha256: A },
+      ],
+      [
+        "CERTOPS_ENROLLMENT_CREATED",
+        {
+          enrollmentId: enrollment.enrollmentId,
+          issuerId: issuer.id,
+          jobId: enrollment.jobId,
+        },
+      ],
+      [
+        "CERTOPS_ENROLLMENT_ABANDONED",
+        { enrollmentId: enrollment.enrollmentId },
+      ],
+    ];
+    for (const [action, metadata] of expected) {
+      const stored = (
+        await db.query(
+          "SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action=$2",
+          [ws, action],
+        )
+      ).rows;
+      assert.equal(stored.length, 1, action);
+      assert.deepEqual(stored[0].metadata, metadata, action);
+    }
+    const child = fork(
+      path.join(__dirname, "helpers/audit-http-server.js"),
+      [],
+      {
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          DB_NAME: dbName,
+          TT_AUDIT_TEST_ACTORS: JSON.stringify({
+            owner: { id: userId, is_admin: false, auth_method: "local" },
+            outsider: { id: outsider, is_admin: false, auth_method: "local" },
+          }),
+        },
+      },
+    );
+    let childError = "";
+    child.stderr.on("data", (data) => {
+      childError += data.toString();
+    });
+    try {
+      const port = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () =>
+            reject(new Error("Audit fixture startup timed out: " + childError)),
+          15000,
+        );
+        child.once("message", (message) => {
+          clearTimeout(timeout);
+          resolve(message.port);
+        });
+        child.once("exit", (code) => {
+          clearTimeout(timeout);
+          reject(new Error("Audit fixture exited " + code + ": " + childError));
+        });
+      });
+      const api = request(`http://127.0.0.1:${port}`);
+      for (const [action, metadata] of expected) {
+        for (const [url, query, wrapped] of [
+          ["/api/audit-events", { action }, false],
+          ["/api/audit-events", { scope: "organization", action }, false],
+          [`/api/v1/workspaces/${ws}/audit-events`, { action }, false],
+          ["/api/v1/audit", { workspace_id: ws, event_type: action }, true],
+        ]) {
+          const response = await api.get(url).query(query).expect(200);
+          const items = wrapped ? response.body.items : response.body;
+          assert.equal(items.length, 1, url + " " + action);
+          assert.equal(items[0].action, action);
+          assert.deepEqual(items[0].metadata, metadata, url + " " + action);
+        }
+        for (const scope of ["user", "workspace", "organization"]) {
+          const query = { scope, workspace_id: ws, action };
+          const json = await api
+            .get("/api/account/export-audit")
+            .query({ ...query, format: "json" })
+            .expect(200);
+          assert.equal(json.body.events.length, 1);
+          assert.deepEqual(json.body.events[0].metadata, metadata);
+          const csv = await api
+            .get("/api/account/export-audit")
+            .query({ ...query, format: "csv" })
+            .expect(200);
+          assert(csv.text.includes(action));
+          const metadataCell = csv.text.match(/,"((?:[^"]|"")*)"$/);
+          assert(metadataCell, "CSV metadata column must be quoted");
+          assert.deepEqual(
+            JSON.parse(metadataCell[1].replaceAll('""', '"')),
+            metadata,
+          );
+        }
+      }
+      // Historical dotted actions remain immutable, but their public action,
+      // filtering and metadata must behave exactly like newly emitted events.
+      for (const [legacy, canonical] of [
+        ["certops.issuer.key_confirmed", "CERTOPS_ISSUER_KEY_CONFIRMED"],
+        ["certops.enrollment.created", "CERTOPS_ENROLLMENT_CREATED"],
+        ["certops.enrollment.abandoned", "CERTOPS_ENROLLMENT_ABANDONED"],
+      ]) {
+        const metadata = expected.find(([action]) => action === canonical)[1];
+        const id = (
+          await db.query(
+            `INSERT INTO audit_events(actor_user_id,subject_user_id,workspace_id,action,metadata)
+          VALUES($1,$1,$2,$3,$4::jsonb) RETURNING id`,
+            [userId, ws, legacy, JSON.stringify(metadata)],
+          )
+        ).rows[0].id;
+        for (const action of [legacy, canonical]) {
+          const feed = await api
+            .get(`/api/v1/workspaces/${ws}/audit-events`)
+            .query({ action })
+            .expect(200);
+          assert.equal(feed.body.length, 2);
+          for (const event of feed.body) {
+            assert.equal(event.action, canonical);
+            assert.deepEqual(event.metadata, metadata);
+          }
+          const exported = await api
+            .get("/api/account/export-audit")
+            .query({
+              scope: "workspace",
+              workspace_id: ws,
+              action,
+              format: "json",
+            })
+            .expect(200);
+          assert.equal(exported.body.events.length, 2);
+          for (const event of exported.body.events) {
+            assert.equal(event.action, canonical);
+            assert.deepEqual(event.metadata, metadata);
+          }
+        }
+        const search = await api
+          .get(`/api/v1/workspaces/${ws}/audit-events`)
+          .query({ query: canonical })
+          .expect(200);
+        assert.equal(search.body.length, 2);
+        assert.equal(
+          (await db.query("SELECT action FROM audit_events WHERE id=$1", [id]))
+            .rows[0].action,
+          legacy,
+        );
+      }
+      const machineMetadata = {
+        jobId: enrollment.jobId,
+        claimId: randomUUID(),
+        code: "CERTOPS_AGENT_LOG_PRIVATE_MATERIAL",
+      };
+      await require("../../apps/api/services/audit").writeAudit({
+        client: db,
+        workspaceId: ws,
+        action: "certops.agent_log.rejected",
+        metadata: machineMetadata,
+      });
+      for (const url of [
+        `/api/v1/workspaces/${ws}/audit-events`,
+        "/api/audit-events?scope=organization",
+      ]) {
+        const feed = await api
+          .get(url)
+          .query({ action: "CERTOPS_AGENT_LOG_REJECTED" })
+          .expect(200);
+        assert.equal(feed.body.length, 1);
+        assert.deepEqual(feed.body[0].metadata, machineMetadata);
+      }
+      await api
+        .get(`/api/v1/workspaces/${ws}/audit-events`)
+        .set("X-Audit-Test-Actor", "outsider")
+        .expect(403);
+      await api
+        .get("/api/account/export-audit")
+        .query({ scope: "workspace", workspace_id: ws })
+        .set("X-Audit-Test-Actor", "outsider")
+        .expect(403);
+    } finally {
+      if (child.exitCode === null) {
+        child.send("close");
+        await new Promise((resolve) => child.once("exit", resolve));
+      }
+    }
+  });
+
   it("upgrades representative pre-v62 history without guessing lifecycle or historical job identity", async () => {
     assert.equal((await identity(fixture.ws, A)).lifecycle_status, "revoked");
     assert.equal((await identity(fixture.ws, B)).lifecycle_status, "active");

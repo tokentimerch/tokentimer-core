@@ -1581,7 +1581,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
     }
   }
 
-  function formatMetadata(ev) {
+  function getRecentCertOpsMetadataEntries(ev) {
     const action = String(ev?.action || '');
     if (
       action.startsWith('CERTOPS_ISSUER_') ||
@@ -1607,6 +1607,7 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         ['Claim', md.claimId],
         ['Code', md.code],
         ['Profile', md.profileId],
+        ['Profile name', md.profileName],
         ['Command', md.commandRef],
         ['Target', md.reference],
         [
@@ -1622,7 +1623,17 @@ export default function Audit({ session, onLogout, onAccountClick }) {
         ['Signing key', md.signingKeyId],
       ]
         .filter(([, value]) => value !== undefined && value !== null)
-        .map(([label, value]) => `${label}: ${value}`)
+        .map(([label, value]) => ({ label, value: String(value) }));
+    }
+    return null;
+  }
+
+  function formatMetadata(ev) {
+    const action = String(ev?.action || '');
+    const certOpsEntries = getRecentCertOpsMetadataEntries(ev);
+    if (certOpsEntries) {
+      return certOpsEntries
+        .map(({ label, value }) => `${label}: ${value}`)
         .join(' | ');
     }
 
@@ -1981,6 +1992,8 @@ export default function Audit({ session, onLogout, onAccountClick }) {
   }
 
   function getMetadataEntries(ev) {
+    const certOpsEntries = getRecentCertOpsMetadataEntries(ev);
+    if (certOpsEntries?.length) return certOpsEntries;
     const formatted = formatMetadata(ev);
     if (!formatted) {
       return [{ label: 'Metadata', value: '-' }];

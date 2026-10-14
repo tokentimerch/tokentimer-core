@@ -15,7 +15,7 @@ These metadata fields are available in the Audit feed and CSV/JSON export.
 - `CERTOPS_AGENT_LOG_REJECTED`: `{ jobId, claimId, code }` records rejection of log material containing prohibited secrets. The rejected content is never recorded.
 - `CERTOPS_AGENT_ALERT_SETTINGS_UPDATED`: `{ agentId, downtimeAlertsEnabled, contactGroupId }` records changes to agent downtime alert delivery.
 - `CERTOPS_DIAGNOSTIC_AGENT_BOOTSTRAPPED`: `{ agentId, requestId, jobId, credentialPrefix, signingKeyId }` records diagnostic-agent bootstrap. Only the credential prefix is recorded.
-- `CERTOPS_RENEWAL_PROFILE_CREATED`: `{ profileId, commandRef, reference }` records renewal-profile creation. AD CS profiles record `{ profileId, issuerId }` instead.
+- `CERTOPS_RENEWAL_PROFILE_CREATED`: `{ profileId, profileName, issuerId, reference }` records AD CS renewal-profile creation.
 
 Audit feeds, action filters and exports recognize the earlier dotted names and
 present the canonical action names. Stored events remain immutable, with their
