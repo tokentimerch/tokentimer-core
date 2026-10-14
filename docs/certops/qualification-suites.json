@@ -293,7 +293,10 @@
       "adcs-real-browser-owned-requestid-reconcile": "real-host",
       "adcs-real-browser-reconcile-native-installed-and-unused-revoked": "real-host",
       "adcs-real-browser-requested-renewal-cancel": "real-host",
-      "adcs-real-browser-cancel-native-custody-and-capacity": "real-host"
+      "adcs-real-browser-cancel-native-custody-and-capacity": "real-host",
+      "adcs-real-browser-manager-viewer-admin-boundary": "real-host",
+      "adcs-real-browser-role-boundary-preserves-native-uncertain-state": "real-host",
+      "adcs-real-issued-wrong-san-preserves-predecessor": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -618,7 +621,10 @@
       "adcs-real-browser-owned-requestid-reconcile": "real-host",
       "adcs-real-browser-reconcile-native-installed-and-unused-revoked": "real-host",
       "adcs-real-browser-requested-renewal-cancel": "real-host",
-      "adcs-real-browser-cancel-native-custody-and-capacity": "real-host"
+      "adcs-real-browser-cancel-native-custody-and-capacity": "real-host",
+      "adcs-real-browser-manager-viewer-admin-boundary": "real-host",
+      "adcs-real-browser-role-boundary-preserves-native-uncertain-state": "real-host",
+      "adcs-real-issued-wrong-san-preserves-predecessor": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1991,7 +1997,10 @@
       "adcs-real-browser-owned-requestid-reconcile",
       "adcs-real-browser-reconcile-native-installed-and-unused-revoked",
       "adcs-real-browser-requested-renewal-cancel",
-      "adcs-real-browser-cancel-native-custody-and-capacity"
+      "adcs-real-browser-cancel-native-custody-and-capacity",
+      "adcs-real-browser-manager-viewer-admin-boundary",
+      "adcs-real-browser-role-boundary-preserves-native-uncertain-state",
+      "adcs-real-issued-wrong-san-preserves-predecessor"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2316,7 +2325,10 @@
       "adcs-real-browser-owned-requestid-reconcile",
       "adcs-real-browser-reconcile-native-installed-and-unused-revoked",
       "adcs-real-browser-requested-renewal-cancel",
-      "adcs-real-browser-cancel-native-custody-and-capacity"
+      "adcs-real-browser-cancel-native-custody-and-capacity",
+      "adcs-real-browser-manager-viewer-admin-boundary",
+      "adcs-real-browser-role-boundary-preserves-native-uncertain-state",
+      "adcs-real-issued-wrong-san-preserves-predecessor"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

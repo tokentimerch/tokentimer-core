@@ -829,7 +829,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -925,7 +935,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1021,7 +1041,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1117,7 +1147,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1213,7 +1253,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1309,7 +1359,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1405,7 +1465,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1501,7 +1571,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -1597,7 +1677,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {
@@ -2230,7 +2320,17 @@
         "tests/e2e/helpers/certops-adcs-browser-session.js",
         "tests/e2e/certops-adcs-real-e2e.test.js",
         "tests/e2e/helpers/certops-adcs-browser-reconcile.js",
-        "tests/e2e/helpers/certops-adcs-browser-cancel.js"
+        "tests/e2e/helpers/certops-adcs-browser-cancel.js",
+        "tests/e2e/helpers/certops-adcs-browser-admin-boundary.js",
+        "apps/dashboard/src/components/certops/useCertOps.js",
+        "apps/api/routes/workspaces.js",
+        "apps/api/services/rbac.js",
+        "tests/e2e/helpers/certops-adcs-native-cleanup-guard.js",
+        "tests/e2e/helpers/certops-adcs-issued-san-boundary.js",
+        "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
+        "infra/certops-adcs/issued-san-fault.ps1",
+        "packages/agent/src/issuers/issued-certificate-validation.js",
+        "apps/api/services/workspace.js"
       ]
     },
     {

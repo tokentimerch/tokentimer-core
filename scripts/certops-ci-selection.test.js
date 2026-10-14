@@ -98,3 +98,11 @@ test("retention owner collection import changes explicitly trigger only tooling"
  assert.equal(workflow.on.push.paths.includes("scripts/**"),false);
  assert.deepEqual(selectFiles(["scripts/certops_retention24h_collection.py"]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
 });
+
+test("SAN public temporary file controls select cheap Windows without the domain lab",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ for(const file of ["infra/certops-adcs/issued-san-fault.ps1","scripts/certops-adcs-issued-san-file.test.ps1"]){assert.deepEqual(selectFiles([file]),{tooling:true,windows:true,stack:false,reason:"changed-files"});assert.ok(workflow.on.push.paths.includes(file.startsWith("infra/")?"infra/certops-adcs/**":"scripts/certops-*"));}
+ for(const file of ["infra/certops-adcs/issued-template-fault.ps1","scripts/certops-adcs-issued-san-unrelated.ps1","docs/certops/qualification/adcs/native-issued-san-refusal.md"])assert.equal(selectFiles([file]).windows,false);
+ const step=workflow.jobs.windows.steps.find(item=>item.name==="SAN public temporary file ownership (supporting only)");assert.ok(step);assert.equal(step.shell,"powershell");assert.equal(step.if,undefined);assert.notEqual(step["continue-on-error"],true);assert.match(step.run,/& \.\/scripts\/certops-adcs-issued-san-file\.test\.ps1/);assert.match(step.run,/LASTEXITCODE -ne 0/);assert.doesNotMatch(step.run,/issued-san-fault|certreq|setextension|workflow_dispatch/);
+});

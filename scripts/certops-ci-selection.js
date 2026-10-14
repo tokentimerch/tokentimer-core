@@ -15,6 +15,7 @@ function selectFiles(files){
   }
   if(file==="scripts/certops-installer-swap.test.ps1"||file==="scripts/certops-installer-pe.test.ps1")selected.windows=true;
   if(/^scripts\/certops-response-barrier-(?:driver\.ps1|worker\.ps1|support(?:\.test)?\.js)$/.test(file))selected.windows=true;
+  if(file==="infra/certops-adcs/issued-san-fault.ps1"||file==="scripts/certops-adcs-issued-san-file.test.ps1")selected.windows=true;
   if(/^packages\/(?!agent\/)/.test(file))selected.stack=true;
   if(/^apps\/(api|worker)\//.test(file)||/^deploy\/compose\//.test(file)||/^tests\/(e2e|integration)\//.test(file))selected.stack=true;
   if(/^scripts\/certops-(api-qualification|stack-report|stack-reporter|linux-discovery-report)\.js$/.test(file))selected.stack=true;

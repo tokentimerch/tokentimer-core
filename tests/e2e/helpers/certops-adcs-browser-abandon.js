@@ -90,6 +90,7 @@ function createBrowserAbandonActor(context) {
     async abandonEnrollment(enrollmentId) {
       assert.match(enrollmentId, uuid);
       assert.equal(actedId, undefined);
+      if (context.beforeAbandon) await context.beforeAbandon(enrollmentId);
       for (const file of REQUIRED_SOURCES) {
         gate.report.fixtureSources ??= [];
         const sha256 = crypto

@@ -164,6 +164,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'Windows PowerShell 5.1 is required for installer compatibility' }
           & ./scripts/certops-installer-swap.test.ps1
+      - name: SAN public temporary file ownership (supporting only)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/certops-adcs-issued-san-file.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'SAN public temporary file controls failed' }
       - name: Temporary file response barriers (supporting only)
         shell: pwsh
         env:

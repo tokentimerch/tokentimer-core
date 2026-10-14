@@ -292,6 +292,22 @@ def browser_cancel_fields(proof):
     return result
 
 
+def issued_san_fields(proof):
+    flags = ["matchingNativePositiveControl","actualOwnedPendingCaMutation","actualCaSignature","sameRequestCsrSpkiAndTemplate","exactUnauthorizedDnsSan","productionSignedContinuationRefused","rejectedBeforeCertificateAccept","predecessorBindingTlsAndCngUnchanged","unacceptedKeyRemovedAndJournalPreserved","noCaResubmission","ownedCaRequestRevoked","cleanupOwnershipRegistered"]
+    if not isinstance(proof, dict) or proof.get("scope") != "actual-ca-issued-owned-wrong-san-refused-before-accept" or proof.get("errorCode") != "ADCS_CERTIFICATE_INVALID" or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete native issued SAN refusal")
+    result = {"scope": proof["scope"], "errorCode": proof["errorCode"], **dict.fromkeys(flags, True)}
+    for key in ("requestId", "enrollmentId", "continuationJobId"):
+        value = proof.get(key)
+        pattern = r"[1-9][0-9]{0,9}" if key == "requestId" else r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+        if not isinstance(value, str) or not re.fullmatch(pattern, value):
+            raise ValueError("Invalid native issued SAN identity")
+        result[key] = value
+    if int(result["requestId"]) > 0xffffffff:
+        raise ValueError("Invalid native SAN request bound")
+    return result
+
+
 def browser_reconcile_fields(proof):
     flags = ["actualUncertainRequestIdForm","invalidRequestIdDidNotMutate","exactOwnedRequestIdPosted","exactPublicReconcileAcknowledged","browserAndTrustDrained","nativeSelectedRequestInstalled","nativeSameProtectedMachineKey","nativeClaimBoundVerification","nativeExactReconcileAudit","unusedOwnedRequestRevoked","unusedLeafNeverAccepted","originalOrphanPreserved"]
     if not isinstance(proof, dict) or proof.get("scope") != "browser-requestid-reconcile-real-operator-created-same-csr-ambiguity" or proof.get("fixtureOrigin") != "operator-created-two-real-system-submissions-of-the-same-public-csr" or any(proof.get(flag) is not True for flag in flags):
@@ -308,6 +324,21 @@ def browser_reconcile_fields(proof):
     for key, expected in (("reconcilePosts", 1), ("invalidRequestPosts", 0)):
         if type(proof.get(key)) is not int or proof[key] != expected:
             raise ValueError("Invalid browser reconciliation mutation count")
+        result[key] = expected
+    return result
+
+
+def browser_admin_boundary_fields(proof):
+    flags = ["distinctOwnedNonownerActors","noGlobalAdminBypassAssumed","publicManagerViewerManagerTransitions","managerAndViewerUiDenied","bothRolesReconcileAndAbandonForbidden","publicOwnerAdminPatchDemotionRefused","exactOwnerAdminUnchanged","actualUncertainEnrollmentAndJobsUnchanged","nativeCaAndUnacceptedKeyUnchanged","servingNativeCustodyAndTrustedTlsUnchanged","targetCertOpsAuditUnchanged","exactMembershipAudits","managerMembershipRestored","browserAndTrustDrained"]
+    if not isinstance(proof, dict) or proof.get("scope") != "public-manager-viewer-adcs-admin-boundary-not-mounted-admin-withdrawal" or proof.get("mountedAdminWithdrawalQualified") is not False or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete supported browser role-boundary evidence")
+    enrollment = proof.get("enrollmentId")
+    if not isinstance(enrollment, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", enrollment):
+        raise ValueError("Invalid browser role-boundary enrollment")
+    result = {"scope": proof["scope"], "enrollmentId": enrollment, "mountedAdminWithdrawalQualified": False, **dict.fromkeys(flags, True)}
+    for key, expected in (("forbiddenMutations", 4), ("roleChanges", 2), ("adminDemotions", 0)):
+        if type(proof.get(key)) is not int or proof[key] != expected:
+            raise ValueError("Invalid browser role-boundary counts")
         result[key] = expected
     return result
 
@@ -837,7 +868,11 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
+            result["nativeBrowserAdminBoundary"] = browser_admin_boundary_fields(value.get("nativeBrowserAdminBoundary"))
+            if result["nativeBrowserAdminBoundary"]["enrollmentId"] != result["nativeBrowserAbandon"]["enrollmentId"]:
+                raise ValueError("Role boundary must bind actual abandoned enrollment")
             result["nativeBrowserReconcile"] = browser_reconcile_fields(value.get("nativeBrowserReconcile"))
             result["nativeAdcsCapacity"] = adcs_capacity_fields(value.get("nativeAdcsCapacity"))
             result["nativeBrowserCancel"] = browser_cancel_fields(value.get("nativeBrowserCancel"))

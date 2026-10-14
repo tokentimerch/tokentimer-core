@@ -4,6 +4,8 @@ Start with the [qualification overview](../e2e-qualification.md). These runbooks
 
 Machine-readable specifications retain their stable locations: [scenario catalog](../e2e-scenario-catalog.json), [mandatory suite inventory](../qualification-suites.json), [release environment matrix](../release-qualification-matrix.json) and [skip mappings](../skip-qualification.generated.json).
 
+- [Supported AD CS manager/viewer admin boundary](adcs/browser-admin-role-boundary.md)
+
 ## API, inventory and worker behavior
 
 - [Native certificate dry-run and independent side-effect controls](api/native-certificate-dry-run.md)
@@ -72,6 +74,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native uncertain submission, acknowledged recovery and safe abandonment](adcs/uncertain-abandon.md)
 - [Browser confirmation of uncertain AD CS abandonment](adcs/browser-uncertain-abandon.md)
 - [Browser RequestId reconciliation of owned AD CS ambiguity](adcs/browser-requestid-reconcile.md)
+- [Native issued unauthorized SAN refusal](adcs/native-issued-san-refusal.md)
 - [Browser cancellation of a never-approved AD CS renewal](adcs/browser-requested-cancel.md)
 - [AD CS renewal, discovery and retention coordinates in WebHosting](adcs/webhosting-renewal.md)
 - [Native AD CS per-issuer capacity and genuine approval release](adcs/native-issuer-capacity.md)
