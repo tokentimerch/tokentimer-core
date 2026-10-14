@@ -690,7 +690,8 @@ async function recordHeartbeat({
     typeof body.pinnedSigningKeyId === "string" && body.pinnedSigningKeyId
       ? body.pinnedSigningKeyId
       : null;
-  const supportedOperations = normalizeStringList(body.supportedOperations, 16);
+  const supportedOperations = Array.isArray(body.supportedOperations)
+    ? normalizeStringList(body.supportedOperations, 16) : null;
   const supportedDnsProviders = normalizeStringList(
     body.supportedDnsProviders,
     64,
@@ -699,10 +700,8 @@ async function recordHeartbeat({
     body.declaredTargetSelectors,
     64,
   );
-  const declaredCommandProfileNames = normalizeStringList(
-    body.declaredCommandProfileNames,
-    64,
-  );
+  const declaredCommandProfileNames = Array.isArray(body.declaredCommandProfileNames)
+    ? normalizeStringList(body.declaredCommandProfileNames, 64) : null;
   // Capability declaration is three-valued, unlike the legacy list fields
   // above: omitted preserves the stored set, an explicitly-sent empty array
   // clears it, and a non-empty array replaces it. Collapsing "absent" and
@@ -752,7 +751,7 @@ async function recordHeartbeat({
               pinned_signing_key_id = COALESCE($5, pinned_signing_key_id),
               agent_version = $6,
               supported_operations = CASE
-                WHEN $7::jsonb = '[]'::jsonb THEN supported_operations
+                WHEN $7::jsonb IS NULL THEN supported_operations
                 ELSE $7::jsonb
               END,
               supported_dns_providers = CASE
@@ -764,7 +763,7 @@ async function recordHeartbeat({
                 ELSE $9::jsonb
               END,
               declared_command_profile_names = CASE
-                WHEN $10::jsonb = '[]'::jsonb THEN declared_command_profile_names
+                WHEN $10::jsonb IS NULL THEN declared_command_profile_names
                 ELSE $10::jsonb
               END,
               declared_capabilities = CASE
@@ -794,10 +793,10 @@ async function recordHeartbeat({
         uptimeSeconds,
         pinnedSigningKeyId,
         body.agentVersion || agent.agentVersion,
-        JSON.stringify(supportedOperations),
+        supportedOperations === null ? null : JSON.stringify(supportedOperations),
         JSON.stringify(supportedDnsProviders),
         JSON.stringify(declaredTargetSelectors),
-        JSON.stringify(declaredCommandProfileNames),
+        declaredCommandProfileNames === null ? null : JSON.stringify(declaredCommandProfileNames),
         envelope.protocolVersion || null,
         declaredCapabilities,
       ],
@@ -1030,10 +1029,7 @@ async function claimJobs({
       `UPDATE certops_agents
           SET last_seen_at = NOW(),
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
-              supported_operations = CASE
-                WHEN $2::jsonb = '[]'::jsonb THEN supported_operations
-                ELSE $2::jsonb
-              END,
+              supported_operations = $2::jsonb,
               supported_dns_providers = CASE
                 WHEN $3::jsonb = '[]'::jsonb THEN supported_dns_providers
                 ELSE $3::jsonb

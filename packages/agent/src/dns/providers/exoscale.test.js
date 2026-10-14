@@ -293,3 +293,17 @@ test("exoscale: error body echoing the apiSecret is redacted wholesale", async (
   assert.equal(result.ok, false);
   assert.equal(result.detail, "[redacted]");
 });
+
+test("exoscale: generated request signature echoes are redacted on HTTP and network failures", async () => {
+  for (const network of [false, true]) {
+    let signature;
+    const fetchImpl = (_url, options) => {
+      signature = options.headers.Authorization.split("signature=")[1];
+      assert.ok(signature);
+      if (network) throw new Error("Reflected signed request " + signature);
+      return Promise.resolve({ status: 403, text: () => Promise.resolve("Reflected signed request " + signature) });
+    };
+    const result = await solverWith(fetchImpl).presentChallenge(CHALLENGE);
+    assert.equal(result.ok, false); assert.equal(result.detail.includes(signature), false);
+  }
+});

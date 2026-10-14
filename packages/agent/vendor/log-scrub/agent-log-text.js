@@ -1,3 +1,9 @@
+/*
+ * VENDORED COPY for self-contained agent distribution.
+ * Source of truth: packages/log-scrub/agent-log-text.js (@tokentimer/log-scrub).
+ * Refresh with: node packages/agent/scripts/sync-vendor.js
+ * Do not edit detection logic here; change the upstream file and re-sync.
+ */
 "use strict";
 
 /**

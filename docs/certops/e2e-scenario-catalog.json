@@ -1,0 +1,2305 @@
+{
+  "schemaVersion": 1,
+  "description": "Certificate lifecycle specifications and implementation mappings. Planned and partial statuses are not execution evidence; qualification requires successful named reports from mapped environments.",
+  "scenarios": [
+    {
+      "id": "inventory.monitor-initial",
+      "outcome": "A real endpoint/domain scan creates the correct public certificate identity, token linkage, validity, and observation.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-inventory-lifecycle-e2e.test.js",
+      "remainingCoverage": "Real loopbackTLS domainmonitorAPI scan identity/fingerprint observed; other endpoint/adapters/browser cases remain."
+    },
+    {
+      "id": "inventory.monitor-rotation",
+      "outcome": "A served-certificate rotation creates a new identity/instance history without overwriting prior evidence.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-inventory-lifecycle-e2e.test.js",
+      "remainingCoverage": "Realservedleafreplacement preserves oldobservations and distinct fingerprintidentities; broader issuer/target/version permutations remain."
+    },
+    {
+      "id": "inventory.shared-fingerprint",
+      "outcome": "One certificate observed at multiple hosts/bindings creates distinct observations with correct shared identity and no duplicate quota consumption.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-api-postgres-real-tls"
+      ],
+      "implementation": "tests/e2e/certops-shared-sources-e2e.test.js",
+      "remainingCoverage": "Two real local TLS endpoints serve the same independently parsed leaf. Actual API inventory yields one shared identity, two source/location observations and one quota identity; stop/readd preserves sibling observation/history. Focused execution passed. Distinct native hosts/IIS bindings and edition quota admission need their respective native/overlay qualification."
+    },
+    {
+      "id": "inventory.absence-unknown",
+      "outcome": "Confirmed absence, unreachable endpoint, stale scan, and unknown visibility remain distinct; a failed scan does not imply removal.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-inventory-lifecycle-e2e.test.js; tests/integration/import-cleanup-scan-lifecycle.test.js; tests/integration/import-cleanup-route.test.js",
+      "remainingCoverage": "Actual TLS unreachable rescan preserves identities/history. Supporting real database/service and HTTP cleanup tests prove backend complete-empty scopes, incomplete refusal, stale observation/rediscovery fences and single-use cleanup. Provider-native enumeration/absence and certificate source teardown reconciliation still require qualified host E2E evidence."
+    },
+    {
+      "id": "inventory.file-decoy",
+      "outcome": "Installed-agent discovery finds real PEM certificates and ignores adjacent private-key/decoy files without transmitting their contents.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Actual agent process has isolated public/key/raw/wrapped/mixed/oversized fixtures and persisted evidence assertions; installed package/service discovery and filesystem permission/symlink variants remain. Native Linux execution is pending."
+    },
+    {
+      "id": "inventory.windows-stores",
+      "outcome": "Discovery covers supported LocalMachine store names, key locality and all supported HTTP.sys binding selectors, without key export.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "My fingerprint completion and ConstrainedLanguage DER plus WebHosting acceptance are covered; all installed discovery stores/selectors and inventory/RBAC flows remain."
+    },
+    {
+      "id": "inventory.localized-inventory",
+      "outcome": "German/French discovery produces the same structured identity and binding data as English; no localized label parsing assumptions.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Mandatory native discovery source checks all seven actual CA-issued owned SNI fixtures against independent certificate fingerprints and native binding coordinates. The existing release matrix requires true installed English/German/French resources and LocalSystem UI culture across Windows Server2019/2022/2025. Native runs remain pending; broader arbitrary store/integration-source/locale permutations remain distinct."
+    },
+    {
+      "id": "inventory.public-import",
+      "outcome": "Supported PEM leaf/bundle and exact DER import produce correct typed SAN, serial, issuer, SPKI and SHA-256 data.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-public-import-e2e.test.js",
+      "remainingCoverage": "Actual public PEM leaf/bundle parsing independently checks serial, issuer, DNS/IP/URI/email SAN values and DER/SPKI fingerprints. Direct exact-DER production parser coverage is supporting unit evidence; additional identity/encoding variants need qualified matrix coverage."
+    },
+    {
+      "id": "inventory.malformed-import",
+      "outcome": "Malformed/trailing DER, unsupported PEM content, oversized input, and invalid source references fail with the documented error and no partial rows.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-public-import-e2e.test.js",
+      "remainingCoverage": "Actual public malformed leaf/bundle/trailing text, 64KiB limit, control/secret/oversized source reference refusals are atomic. Exact DER trailing/bundled bytes are checked directly as unit evidence; remaining container and encoding variants require qualified coverage."
+    },
+    {
+      "id": "inventory.idempotent-import",
+      "outcome": "Repeated import/observation and concurrent same-fingerprint ingestion preserve identity, history, contacts and correct admission counts.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-public-import-e2e.test.js",
+      "remainingCoverage": "Actual repeated and four concurrent fresh public imports conserve identity, managed asset and token. A separate five-case real API/PostgreSQL suite proves public operator contact/group edits survive repeated and four concurrent distinct-observer reimports; invalid foreign-group assignment is atomic and original provenance remains. Contact-group settings are seeded prerequisites, not delivery evidence. Cross-host native observer concurrency and edition admission remain distinct qualification coverage."
+    },
+    {
+      "id": "inventory.integration-sources",
+      "outcome": "Every implemented certificate-producing integration/auto-sync adapter gets source-to-inventory coverage; keep real provider evidence distinct from fixtures.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-integration-sources-e2e.test.js",
+      "remainingCoverage": "Twenty-one real API/PostgreSQL scenarios passed: production scanners normalize six certificate source kinds using SDK/HTTP upstream fixtures, persisted scans bind imports to authoritative provenance, replay and permission fences hold, incomplete/older scans preserve tokens and a complete owned empty scan removes only its exact source. Live upstream providers, all-provider absence permutations and actual auto-sync worker topology remain distinct unqualified coverage."
+    },
+    {
+      "id": "inventory.workspace-transfer",
+      "outcome": "Supported token/workspace transfer preserves scoped certificate/target/CSR links; conflicting or partial associations fail atomically.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-certificate-transfer-e2e.test.js",
+      "remainingCoverage": "Actual public import and transfer API proves dual-workspace authority, fingerprint conflict atomicity, successful certificate/token relocation and stale-source replay. CSR/target/observation histories and host-owned key custody across transfers remain separate supporting/native coverage gaps."
+    },
+    {
+      "id": "inventory.private-input",
+      "outcome": "Private-key material in plain, encoded, compressed or nested inputs is rejected before persistence and scrubbed from outputs/logs.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-public-import-e2e.test.js",
+      "remainingCoverage": "Actual public plain PEM, base64 and nested gzip private-key inputs are rejected422 before persistence and never echoed. Other binary container, depth/size and output/log channels need expanded qualified coverage."
+    },
+    {
+      "id": "inventory.unmanaged-observation",
+      "outcome": "Admission-blocked discovery preserves the supported unmanaged/freshness view without silently treating the host as empty.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres-native-filesystem"
+      ],
+      "implementation": "tests/e2e/certops-unmanaged-discovery-e2e.test.js",
+      "remainingCoverage": "Seven actual native filesystem discovery/public certificate/registered protocol/API/PostgreSQL cases passed. Explicit quota0 prerequisite preserves fresh unmanaged identity/slot, repeated scan freshness without duplicates; public unmanaged detail is confirmed_present/stored_copy and quota1 rescan admits same identity once. Windows stores/CNG and edition plan admission remain separately qualified. Real malformed public-file scan emits zero observations/posts and preserves prior identity/capture/slot rather than treating scan failure as absence."
+    },
+    {
+      "id": "windows-install.release-package",
+      "outcome": "Install the exact candidate package including service host/native helpers; check package digest, architecture and shipped-source completeness.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-local"
+      ],
+      "implementation": "packages/agent/scripts/host/package-fixture.js",
+      "remainingCoverage": "Real candidate archive, independent native digest, both PE architectures, extracted imports and checksum tampering refusal covered. Full Windows journey invokes the checked candidate product installer with only its root redirected to an owned temporary directory, then runs its installed amd64 runtime through registration/CNG/IIS/renewal. Unmodified fixed-root installation, arm64 execution and externally authenticated signed release provenance remain."
+    },
+    {
+      "id": "windows-install.new-service",
+      "outcome": "Install a uniquely named real service, register with the API, and prove the child agent runs under the declared service identity.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual fixed-name LocalSystem service, registration and independent SID proof covered; unique production service naming, exact installer/package and other identities remain."
+    },
+    {
+      "id": "windows-install.path-quoting",
+      "outcome": "Paths with spaces and supported drive/UNC forms work where documented; malformed/unauthorized paths fail before mutation.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/installer-smoke.test.js",
+      "remainingCoverage": "Unique real SCM fixture binary/state path contains spaces and survives start/restart/recovery. Exact released installer, all Node paths and architecture matrix remain."
+    },
+    {
+      "id": "windows-install.state-acl",
+      "outcome": "Config, credentials, signing pin, journal, outbox, keys and retention state have correct machine/service ACLs; weak ACLs fail closed.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Real SYSTEM harness prepares production restrictive config/DNS ACLs and reads agent restricted credential/journal state; exhaustive weak-ACL refusal and every state artifact remain."
+    },
+    {
+      "id": "windows-install.system-environment",
+      "outcome": "SYSTEM/service execution resolves Node, PowerShell, Go helpers, Git Bash, ACME tooling, DNS hook and CA trust without relying on an interactive user's PATH.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Real SYSTEM service resolves Windows CNG/IIS tooling and GitBash acme.sh DNS hooks with explicit fixture profile; every supported tool profile, architecture and machine environment remain."
+    },
+    {
+      "id": "windows-install.configuration",
+      "outcome": "Valid configuration loads through the installed service; malformed JSON, encoding/BOM and invalid fields yield explicit bounded startup failure.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-local"
+      ],
+      "implementation": "packages/agent/scripts/host/package-fixture.js",
+      "remainingCoverage": "Extracted candidate refuses malformed JSON, array/null, BOM and invalid retention while preserving state-marker bytes. Unique SCM fixture requires real parse failure and repaired loader recovery. Full Windows journey also requires actual registered credential and binding preservation through malformed startup, then fresh authenticated heartbeat and trusted TLS after exact configuration restoration. Exhaustive invalid fields, encoding variants and package-version upgrade recovery remain."
+    },
+    {
+      "id": "windows-install.stop-start",
+      "outcome": "SCM stop/start/interrogate and graceful child shutdown complete, with bounded force-kill and no leaked child.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Real service stop/start keeps credential and served certificate, fixture smoke covers bounded SCM lifecycle; full interrogate/forced shutdown and child-leak matrix remain."
+    },
+    {
+      "id": "windows-install.crash-recovery",
+      "outcome": "A non-zero child exit triggers actual SCM recovery and preserves registration/custody/recovery state.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "SCM fixture child exit17 recovers and actual agent hard-crash startup reconciles CNG orphan; full automatic SCM recovery of every live job stage remains."
+    },
+    {
+      "id": "windows-install.retirement-stop",
+      "outcome": "HTTP 410 retirement exits 86 as a clean stop and does not enter an SCM restart loop.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Supporting SCM fixture verifies child exit86. Full Windows installed-agent journey retires its actual API identity, observes newly logged native host exit86 and clean SCM ExitCode0, and proves no new host PID over five configured restart intervals. All source awaits native host execution; other identity/job-stage retirement variants remain."
+    },
+    {
+      "id": "windows-install.upgrade-rollback",
+      "outcome": "Upgrade/start failure restores the previous service configuration/binary as specified and leaves usable state.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual product same-candidate installer re-run on owned root must restart SCM with a new PID, preserve exact operator configuration and registered credential, and produce a fresh authenticated heartbeat. A deliberately unloadable extracted service-host candidate must trigger actual installer health-check failure and exact previous-native-binary rollback followed by authenticated heartbeat. Malformed startup then repairs without altering credential or binding. Actual SYSTEM ReadData denial on an owned public candidate file must fail the real staging copy while the healthy service PID/helper/config/credential remain unchanged. Optional strict historical-source-build lane verifies the signed immutable v0.17.2 commit, builds its own two helpers and original installer, then requires actual version migration to candidate with exact credential/config/signing-key-pin preservation and authenticated versioned heartbeat. Public v0.17.2/v0.17.3 archives lack service-host executables; separate immutable-public-baseline preflight fails honestly and never substitutes candidate bytes. Atomic-rename failures, unmodified fixed-root installation and published-release artifact migration remain; native execution evidence is pending."
+    },
+    {
+      "id": "windows-install.uninstall",
+      "outcome": "Uninstall removes owned service resources according to documented retention policy and leaves unrelated services/certificates untouched.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/installer-smoke.test.js",
+      "remainingCoverage": "Supporting unique SCM fixture verifies marker retention and idempotent uninstall. Full Windows journey invokes the checked candidate product uninstaller on owned root, requires actual service/app removal and exact registered credential/configuration preservation. Unmodified fixed-root and distinct-version uninstall qualification remain."
+    },
+    {
+      "id": "windows-install.reregister",
+      "outcome": "Supported credential/capability re-registration works as documented; identity conflicts are explicit and do not destroy working state.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-windows-core-api-agent-pebble"
+      ],
+      "implementation": "tests/e2e/helpers/certops-windows-reregistration.js",
+      "remainingCoverage": "Native Windows focused API/agent execution passed retired-identity HTTP409 refusal with bootstrap authorization unconsumed, fresh protected-state replacement registration and authenticated heartbeat, unchanged predecessor identity/credential/jobs, and two observe-only restarts publishing profile addition then empty removal plus log-stream capability withdrawal. Server/local identity, credential and signing-key pin remain identical and assigned jobs cannot be claimed or replayed. Full installed Windows journey also requires predecessor credential and served TLS preservation after the separate replacement process. Installed SCM replacement handoff and key/journal custody migration remain distinct; full hosted matrix execution is pending."
+    },
+    {
+      "id": "windows-install.build-floor",
+      "outcome": "Unsupported Windows builds are refused before changes; separately qualify every advertised SKU/architecture instead of equating preflight support with E2E proof.",
+      "status": "partial",
+      "evidenceLevel": "unit",
+      "requiredEnvironments": [
+        "disposable-windows-host"
+      ],
+      "implementation": "packages/agent/scripts/host/installer-build-floor-fixture.js",
+      "remainingCoverage": "Seven actual local PowerShell checks execute the exact production guard extracted through its AST and cover refused/supported numeric boundaries. This does not boot an unsupported OS or invoke the whole installer. Qualified advertised SKU/architecture execution and unsupported-host no-mutation evidence remain separate."
+    },
+    {
+      "id": "execution.bootstrap",
+      "outcome": "Bootstrap scope, expiry, use count and concurrent registration are enforced; show-once credentials do not leak after initial display.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-bootstrap-fences-e2e.test.js; tests/e2e/certops-credentials-api-e2e.test.js; scripts/certops-browser.js",
+      "remainingCoverage": "Actual HTTP concurrent distinct registrations consume one token; same-registration retries recover one identical credential; unused revocation, expiry, cross-workspace refusal, show-once API/browser and retired credential fences are covered. Native installer re-registration and service recovery across qualified Windows/Linux environments still require host execution evidence."
+    },
+    {
+      "id": "execution.fresh-capabilities",
+      "outcome": "Register/heartbeat/claim advertise current qualified capabilities, DNS providers, commands and target selectors; stale/missing declarations block incompatible work.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-observe-only-e2e.test.js",
+      "remainingCoverage": "Actual register/claim/heartbeat API tests distinguish omitted operations (preserve) from explicit empty operations (clear), preserve pending jobs in observe-only, and activate execution only after an explicit claim advertisement. Optional log capability negotiation is separately exercised. Focused execution passed. Native qualified-build freshness, DNS/command/target selector combinations and stale-capability wall-clock cases remain separately qualified."
+    },
+    {
+      "id": "execution.observe-only",
+      "outcome": "Observe-only agents continue observation but never execute jobs or generate certificate keys.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Actual API empty claim/heartbeat advertisements preserve pending work and clear persisted execution eligibility; native agent source additionally stops claim polls while retaining genuine heartbeats and pending noop. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; observation continuity and certificate-specific mutation absence remain separately qualified."
+    },
+    {
+      "id": "execution.signature",
+      "outcome": "Altered payload/hash, unknown signing key, forged signature and invalid windows cause no execution-side mutation.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Actual unmodified native Node agent source consumes real signed noop claims under deliberate loopback payload/signature/unknown-key transport faults and asserts no lease/result/evidence submission. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; certificate-specific effect and signing-rotation/time-window variants remain separate coverage."
+    },
+    {
+      "id": "execution.signing-rotation",
+      "outcome": "Planned signing-key rotation/re-pin and agent restart preserve the documented trust boundary and resume eligible work.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "native-signing-rotation"
+      ],
+      "implementation": "tests/e2e/certops-signing-rotation-native-e2e.test.js",
+      "remainingCoverage": "Nine strict scenarios passed focused real Linux Node 24 two-agent registration, operator CLI begin/status/complete, incomplete-fleet refusal, actual heartbeat pin acknowledgements and restart/new-signed-job execution on a separate disposable API/PostgreSQL stack. Windows service/SYSTEM pin adoption, in-flight certificate jobs and hosted release qualification remain."
+    },
+    {
+      "id": "execution.replay-clock",
+      "outcome": "Duplicate nonce/job, sequence regression, expired dispatch and clock drift are rejected without duplicate side effects.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-agent-e2e.test.js; tests/e2e/certops-job-decisions-e2e.test.js",
+      "remainingCoverage": "Actual protocol nonce replay/foreign ownership and monotonic sequence/re-registration boundaries are covered; supporting lease tests use controlled database eligibility timestamps. Native expired dispatch, drifted host clock and side-effect refusal still require qualified execution evidence."
+    },
+    {
+      "id": "execution.local-policy",
+      "outcome": "Local path/command/CA/DNS/target/enrollment-rule rejection wins over a valid signed control-plane request.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Actual native candidate source accepts a genuine signed public reload job but rejects disallowed command references through agent-local policy. The genuine eleven-case local container execution passed; expanded cross-agent and hosted qualification are pending. Certificate path/CA/DNS/target/enrollment rules and native Windows variants remain separately qualified."
+    },
+    {
+      "id": "execution.dry-run",
+      "outcome": "Signed dry-run traverses real gates and reports dry_run_complete without exec, DNS, certificate-store, key or binding changes.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Native agent source reports dry_run_complete through real signing/lease/result paths for harmless noop jobs and observes empty local key directory. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; this does not establish DNS/store/IIS/command absence for certificate-operation dry runs."
+    },
+    {
+      "id": "execution.lease-before-write",
+      "outcome": "Unavailable initial lease prevents all side effects; loss during work stops further mutation and reports the correct risk state.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Native noop source deliberately refuses the actual initial lease at the loopback transport and requires blocked with no certificate evidence. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; loss during real certificate mutation and uncertain effect handling remain separate native qualification."
+    },
+    {
+      "id": "execution.outbox-restart",
+      "outcome": "Result/evidence delivery survives API outage and service restart, retries without duplicating state, and handles permanent dead-letter outcomes.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Native agent source blocks actual result delivery until a persisted successful noop outbox entry exists, restarts the real process, then requires one attempt and drained outbox/API success. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; full certificate mutation interruption and hosted service/native fault variants remain."
+    },
+    {
+      "id": "execution.journal-corruption",
+      "outcome": "Corrupt/unreadable custody, signing-pin or replay/journal state fails safely without unsafe automatic cleanup.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-native-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-native-agent-e2e.test.js",
+      "remainingCoverage": "Native agent source corrupts only its owned signing pin and requires nonzero process exit before recovery; Linux trust source separately exercises owned receipt corruption. Focused actual Linux container agent/API execution passed; hosted workflow qualification is pending; all custody/replay/journal formats and managed certificate recovery remain distinct coverage."
+    },
+    {
+      "id": "execution.claim-binding",
+      "outcome": "Late evidence/results from old attempts or other agents cannot promote a certificate or overwrite the current attempt.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-result-fences-e2e.test.js",
+      "remainingCoverage": "Actual signed noop API lease rejects forged nonce and attempt without consuming ownership; matching success/replay remains idempotent. Competing registered agents and forced retirement tests additionally fence foreign/retired results. Focused execution passed. Late evidence across genuine native certificate retries and uncertain effects remains separate qualification."
+    },
+    {
+      "id": "execution.two-agents",
+      "outcome": "Competing eligible agents and retry delivery produce one owned execution and preserve attempt/history semantics.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "linux-api-postgresql"
+      ],
+      "implementation": "tests/e2e/certops-job-decisions-e2e.test.js",
+      "remainingCoverage": "Actual simultaneous registered-agent claim yields one persisted noop attempt and foreign result fencing; native certificate execution, retry delivery and process recovery still require qualified host evidence."
+    },
+    {
+      "id": "windows-cng.rsa-ec",
+      "outcome": "Generate and use supported RSA/P-256/P-384 machine keys with expected provider, key usage and non-exportability.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "All supported RSA sizes (2048/3072/4096) and EC curves (P256/P384) have native CSR, accept, same-container and non-exportability host scenarios; exact shipped architecture/package qualification remains."
+    },
+    {
+      "id": "windows-cng.csr-identity",
+      "outcome": "CSR public key/SANs/subject match the request and independent crypto parsing; invalid INF does not mutate the store.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Issued SANs and accepted key association for all supported algorithms plus invalid CN/malformed PEM have host scenarios; exhaustive subject/SPKI/INF injection permutations remain."
+    },
+    {
+      "id": "windows-cng.container-collision",
+      "outcome": "Second generation in an existing container is refused; no key replacement occurs.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Existing enrollment container refusal and subsequent same-key acceptance covered; multiprocess enrollment race/crash variants remain."
+    },
+    {
+      "id": "windows-cng.accept-match",
+      "outcome": "A issued leaf accepts only onto its matching CSR/key, with store thumbprint matching independent DER hashing.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "All five supported algorithms in both My and WebHosting have acceptance scenarios with independent DER thumbprint and key association; additional issuer permutations remain."
+    },
+    {
+      "id": "windows-cng.accept-mismatch",
+      "outcome": "Wrong SPKI/template/algorithm, malformed certificate or missing private-key association fails before cutover.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Malformed PEM refusal covered; wrong SPKI/template/algorithm and broken association matrix remain."
+    },
+    {
+      "id": "windows-cng.no-export",
+      "outcome": "Track allowed processes and work paths and probe export policy; no exported customer key/PFX is written or returned.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Independent .NET ExportPolicy None and absence of exported CNG work files covered; exhaustive process/path audits, protocol/storage/log encoded leak sentinels and exact package matrix remain."
+    },
+    {
+      "id": "windows-cng.named-store",
+      "outcome": "Supported non-default machine-store issue/renew/discovery/retention paths preserve the exact store coordinate.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "WebHosting issue acceptance and absence of duplicate My copy covered; non-default renewal/discovery/retention and every supported store remain."
+    },
+    {
+      "id": "windows-cng.store-concurrency",
+      "outcome": "Same-store and cross-store multi-process locks serialize the intended mutations without overblocking unrelated targets.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Real independent-process WebHosting versus My mutex collision and post-release reacquisition covered; overlapping native mutations, unrelated targets and crash-lock variants remain."
+    },
+    {
+      "id": "windows-cng.helper-validation",
+      "outcome": "CMC/chain/verifier binaries from the candidate artifact run correctly; missing/wrong helper, architecture or signature fails as specified.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "All four Go modules require zero skips. Fresh candidate package verifies both helper digests and PE architectures independently; actual native chain helper checks PEM/DER parity, missing/malformed public input, wrong CA pin, unavailable revocation and genuinely expired/not-yet-valid leaves. Authenticated release signatures, ARM64 native execution and candidate CMC/verifier integration fault variants remain; native execution evidence is pending."
+    },
+    {
+      "id": "windows-cng.provider-ground-truth",
+      "outcome": "Verify key presence through a real provider-specific observation; certutil exit 0/name echo alone is not proof, including the 2022 -csp regression.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Actual provider-specific KSP listing and .NET accepted key association covered; other providers, locales and exact released package matrix remain."
+    },
+    {
+      "id": "windows-cng.powerShell-modes",
+      "outcome": "Windows PowerShell 5.1 and Constrained Language Mode reads return correct JSON; missing tools degrade only where documented and fail required jobs.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Real ConstrainedLanguage query and independent DER oracle plus actual missing/wrong native-runtime failures are covered; additional build/language and malformed native-output variants remain."
+    },
+    {
+      "id": "windows-cng.user-store-boundary",
+      "outcome": "CurrentUser/PFX import and other unimplemented custody paths are explicitly refused/unsupported until a product feature lands.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/host/user-store-fixture.js",
+      "remainingCoverage": "Actual owned CurrentUser My certificate is excluded from native machine-store query; service identities and caller privilege permutations remain."
+    },
+    {
+      "id": "windows-iis.first-cutover",
+      "outcome": "First issue installs the certificate and binding; a real TLS handshake serves the newly issued leaf.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual registered SYSTEM agent signed issue flows through ACME/CNG/My/IIS with independent trusted TLS, native binding and persisted evidence; authenticated public API/browser trigger and full host matrix remain."
+    },
+    {
+      "id": "windows-iis.renew-cutover",
+      "outcome": "Renewal replaces the intended binding with the new key/certificate while preserving the prior rollback material until verified.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Persisted derived profile and real worker function create unattended renewal, new trusted TLS leaf/native binding and retained predecessor; additional target/key/version and daemon deployment matrix remain."
+    },
+    {
+      "id": "windows-iis.bind-failure",
+      "outcome": "Certificate without valid key association or failed add restores the prior binding after delete-then-add failure.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Owned missing-store certificate triggers actual binding failure/rollback with TLS oracle; broken associations and supported version/language variants remain."
+    },
+    {
+      "id": "windows-iis.verify-failure",
+      "outcome": "Wrong served fingerprint/TLS timeout triggers rollback and independent re-verification of the prior live endpoint.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/host/iis-fixture.js",
+      "remainingCoverage": "Actual owned concrete-IP shadow serves different certificate after valid SNI bind, causing real TLS VERIFY_FAILED and endpoint rollback; connection interruption and all target permutations remain."
+    },
+    {
+      "id": "windows-iis.rollback-failure",
+      "outcome": "Failed restore produces explicit uncertain live state/reconciliation evidence, never a succeeded job.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-windows-server-native"
+      ],
+      "implementation": "packages/agent/scripts/host/iis-fixture.js",
+      "remainingCoverage": "Mandatory native SNI fixture removes only the owned predecessor public copy, keeps its key, and uses actual concrete-IP shadow to force TLS mismatch. Product restore to absent predecessor must report rolledBack=false plus diagnostic; independent served TLS/unrelated binding measured. Native host source unexecuted; public-job reconciliation/installed-agent evidence variants remain."
+    },
+    {
+      "id": "windows-iis.sni-selector",
+      "outcome": "Supported SNI uses hostnameport correctly; the intended name verifies while unrelated bindings remain unchanged.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Owned SNI hostnameport cutover/rollback with unrelated HTTPS binding unchanged covered; shared-port multi-name and full target matrix remain."
+    },
+    {
+      "id": "windows-iis.ip-shadow",
+      "outcome": "Concrete-IP versus wildcard/SNI shadowing follows the actual supported selector/verification contract.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Concrete loopback-IP shadow configuration yields actual native query warning, clears after owned removal and preserves SNI TLS; wildcard/IPv6 and alternate client address families remain."
+    },
+    {
+      "id": "windows-iis.flags-preserved",
+      "outcome": "Client-certificate/revocation/protocol/per-connection settings survive renewal without blanket HTTP.sys reset.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "IIS sslFlags and native HTTP.sys disableHTTP2/disableLegacyTLS DefaultFlags bits/hash survive actual rebind/rollback; every client-cert/revocation/per-connection flag remains."
+    },
+    {
+      "id": "windows-iis.noop-redeploy",
+      "outcome": "Re-applying the exact certificate avoids delete/add downtime while still performing verification.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/host/iis-fixture.js",
+      "remainingCoverage": "Actual same-certificate replay verifies native TLS and skippedMutation; full agent/API replay and other host/target variants remain."
+    },
+    {
+      "id": "windows-iis.false-success",
+      "outcome": "A netsh zero exit with no binding created is detected by independent postcondition inspection, including older-version unsupported flags.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Actual registry/hash and TLS postconditions reject an assumed successful bind; deliberate exit-zero/no-mutation fault and legacy flags/version matrix remain."
+    },
+    {
+      "id": "windows-iis.unknown-settings",
+      "outcome": "Unknown registry values and CTL-without-identifier fail closed with no destructive rewrite.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/host/iis-fixture.js",
+      "remainingCoverage": "Owned persisted HTTP.sys metadata faults (unknown value, unknown flag bit, incomplete CTL pair) are refused before binding mutation with independent TLS/hash unchanged; every future host setting and supported CTL combination remains."
+    },
+    {
+      "id": "windows-iis.locale",
+      "outcome": "First deploy, repeat deploy, renewal, discovery and rollback work on true de-DE/fr-FR hosts.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-iis-locale.js",
+      "remainingCoverage": "The actual CA-issued seven-profile locale source now repeats deployment twice with skipped mutation and unchanged native metadata/TLS, and forces genuine SNI verification failure with an exactly owned concrete-IP shadow followed by real rollback, restored trusted TLS, preserved flags/store/coordinates and unaffected unrelated endpoint. Initial issuance, renewal and native discovery run in the same true9OS/language matrix. Native execution remains pending; additional wildcard bindings/custom native settings and failure permutations remain unqualified."
+    },
+    {
+      "id": "windows-iis.binding-identity",
+      "outcome": "Store/site/port/SNI references and actual selected binding agree in API, audit and UI; no accidental reuse of an unrelated site.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual API service target store/site/port/SNI agrees with native binding and independent TLS; audit filtering, UI and unrelated-site/reuse variants remain."
+    },
+    {
+      "id": "windows-iis.unsupported-target",
+      "outcome": "Unsupported standalone deploy-only or multi-SNI layouts follow the current product contract and do not masquerade as supported success.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-windows-server-native"
+      ],
+      "implementation": "packages/agent/scripts/host/unsupported-target-fixture.js",
+      "remainingCoverage": "Mandatory native host source reaches actual product standalone IIS deploy and unsupported multi-SNI renewal refusal; independent owned stores/CNG names/HasKey/export policy/binding metadata/served TLS must remain unchanged. Native source unexecuted; installed-agent/public API refusal journey variants remain."
+    },
+    {
+      "id": "windows-retention.cutover-clock",
+      "outcome": "Retention starts only after verified cutover, not after a bind attempt or failed verify.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Real issued predecessor remains after verified unattended cutover. Supporting native elapsed-expiry fixture independently proves trusted valid short-lived CNG leaf cutover, factual native expiry, real expiry-plus300s wait and actual native collector deletion while trusted replacement survives. Bind/verify failure clock permutations and full24h elapsed retention remain; native execution evidence is pending."
+    },
+    {
+      "id": "windows-retention.active-key",
+      "outcome": "Active bindings and open rollback/enrollment journals defer key/certificate cleanup.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/host/retention-fixture.js",
+      "remainingCoverage": "Product collector reads actual old/replacement HTTPS bindings and an independently proven shared KSP key association; both old binding and surviving shared key block deletion. Additional enrollment/journal/provider variants remain."
+    },
+    {
+      "id": "windows-retention.owned-only",
+      "outcome": "Only agent-owned superseded material is deleted; unrelated/pre-existing certificates and keys remain.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Actual owned certificate/key deletion preserves replacement with synthetic eligibility/time; separate native collector proves bound predecessor, truly shared key and real24h-window deferral. Elapsed-expiry fixture uses no injectedclock/context/native queries or TLS: real expiry-plus300s native sweep deletes exactly its owned certificate/key and persists removed ledger while trusted replacement survives. Unmanaged/provider and full enrollment-journal permutations remain; native execution evidence is pending."
+    },
+    {
+      "id": "windows-retention.boundary-config",
+      "outcome": "Real config-loader default/min/max and invalid retention/sweep values reach the installed service and affect eligibility correctly.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022-host",
+        "windows-2025-host"
+      ],
+      "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Native collector with a fresh supporting ledger and real clock defers24h cleanup. Separate real-clock fixture retains the supported24h policy but uses the product's earlier actual certificate-expiry-plus300s deadline, waits the actual elapsed grace and verifies cleanup. Synthetic-clock supporting sweep remains separately labeled. Exact full24h passage and every min/max config combination remain; native execution evidence is pending."
+    },
+    {
+      "id": "windows-retention.durable-ledger",
+      "outcome": "Atomic ledger writes survive separate processes/restart; orphan .tmp files are not interpreted as valid rows.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Separate real process ledger persistence covered; torn atomic writes, orphan tmp/ACL and interrupted certificate/key deletion remain."
+    },
+    {
+      "id": "windows-retention.interrupted-delete",
+      "outcome": "Crash between certificate deletion and key deletion resumes safely and records the eventual outcome.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-windows-server-native"
+      ],
+      "implementation": "packages/agent/scripts/host/retention-elapsed-fixture.js",
+      "remainingCoverage": "Mandatory native host fixture delegates every OS command to actual native execution and exits86 only after owned certificate deletion succeeds before key deletion. Independent parent requires certificate absent/key retained/incomplete ledger/replacement trusted; normal product sweep resumes owned dead lock and key cleanup after actual elapsed expiry grace. Native source not executed; full24h window and installed-agent/job interruption variants remain."
+    },
+    {
+      "id": "windows-retention.container-sweep",
+      "outcome": "Orphan-container sweep distinguishes protected in-flight keys, old owned orphans and foreign keys.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Real installed-agent hard-crash journal key reconciliation covered in Windows journey; protected enrollment, foreign key and old orphan age cross-product remain."
+    },
+    {
+      "id": "windows-retention.multiple-cutovers",
+      "outcome": "Two unattended renewal cycles produce correct old-to-new lineage and eligible cleanup after their own windows.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "One successful worker-driven renewal plus a later genuinely interrupted renewal covered; two successful unattended cycles and eventual eligible cleanup remain."
+    },
+    {
+      "id": "acme.windows-issue",
+      "outcome": "Real UI/API issue flows through signing/claim/CNG/ACME/accept/IIS/TLS/reconciliation, with no flattened test-only payload shape.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual API service transaction, real signed installed-agent CNG/ACME/accept/IIS/TLS and reconciliation covered; authenticated public REST/browser issue trigger remains."
+    },
+    {
+      "id": "acme.windows-tooling",
+      "outcome": "Every Windows command profile actually supported by the candidate is qualified; certbot hook invocation uses an executable wrapper and supports quoting.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual GitBash acme.sh profile runs under SYSTEM; all supported profiles, certbot executable hook wrapper and UNC/path quoting matrix remain."
+    },
+    {
+      "id": "acme.linux-certbot",
+      "outcome": "Installed Linux certbot-csr issue/deploy reaches active with disk and served fingerprint equality.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Actual Node agent, certbot DNS01, filesystem deployment, dynamic TLS oracle and persisted-profile scheduler renewal are wired. Installer/service lifecycle and remaining ACME failure variants require separate coverage. Native Linux execution is pending."
+    },
+    {
+      "id": "acme.linux-acmesh",
+      "outcome": "Installed acmesh-signcsr issue/deploy reaches active with the shipped DNS hook/dnsapi wrapper.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Pinned installed acme.sh with genuine DNS01 wrapper, real Node agent, filesystem deployment, trusted served TLS fingerprint and scheduler renewal are wired into a separate mandatory release slot. Native Linux execution and ACME failure variants remain pending."
+    },
+    {
+      "id": "acme.wildcard-san",
+      "outcome": "Wildcard/apex/multiple-name and supported typed-SAN cases preserve requested/issued policy and reject a mismatched leaf before deploy.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "real-agent-acme-filesystem",
+        "real-agent-acmesh-filesystem"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Mandatory native source independently requires exact wildcard, apex and extra DNS SANs on issued and renewed trusted TLS leaves. Native execution, typed non-DNS SAN policy and issued-leaf mismatch rejection across other executors remain."
+    },
+    {
+      "id": "acme.account-eab",
+      "outcome": "Supported account/contact/EAB configuration works; missing/invalid credentials produce correct bounded failure without disclosure.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "real-agent-acme-eab-filesystem",
+        "real-agent-acmesh-eab-filesystem"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js; scripts/certops-real-acme.js",
+      "remainingCoverage": "Mandatory native source uses a genuinely EAB-required Pebble directory, protected local account references, wrong/missing-account failure with no installation, valid recovery and HMAC disclosure assertions for certbot/acme.sh. Native execution, account/contact permutations and additional real CA/provider variants remain pending."
+    },
+    {
+      "id": "acme.key-policy",
+      "outcome": "Supported key reuse/rotation and algorithm choices preserve custody; Windows changes from AD CS do not break ACME.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "real-agent-acme-filesystem",
+        "real-agent-acmesh-filesystem"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Mandatory native source requires real SPKI changes with rotateOnRenew through two naturally due certificate renewals for both clients. Native execution, key reuse, algorithm cross-products and Windows ACME regression permutations remain."
+    },
+    {
+      "id": "acme.zone-provider",
+      "outcome": "Longest matching zone/provider mapping, boundary matching and policy-denied zones/providers are exercised through the real hook.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-native-dns-hook"
+      ],
+      "implementation": "scripts/certops-dns-routing-host.js",
+      "remainingCoverage": "Six actual focused native Windows hook cases passed against real challtestsrv and independent TXT Resolver: longest child provider mapping vs denied parent, exact dot boundary, provider/zone denial before absent credentials, propagation outage after actual TXT write, owned value/process/port cleanup. Separate hosted Ubuntu workflow is mandatory but unexecuted. External provider mapping permutations and other OS/libc native qualification remain."
+    },
+    {
+      "id": "acme.txt-coexist",
+      "outcome": "Concurrent apex/wildcard challenge values coexist; cleanup removes only this attempt's owned value.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "dns-provider-host"
+      ],
+      "implementation": "scripts/certops-dns-provider-host.js",
+      "remainingCoverage": "Mandatory source runs two actual separate provider-hook Node processes presenting concurrent values under the production lock, independently resolves TXT and cleans only owned values. Eleven provider lanes remain unexecuted; full apex/wildcard challenge CA execution and provider error permutations remain."
+    },
+    {
+      "id": "acme.propagation",
+      "outcome": "Authoritative/configured recursive resolver behavior, delayed visibility, cleanup wait, timeout and cancellation follow the current resolver contract.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "protected-isolated-dns-provider-zone"
+      ],
+      "implementation": "scripts/certops-dns-provider-host.js",
+      "remainingCoverage": "Direct genuine provider calls and independently configured recursive resolver poll bound visibility/coexistence and owned cleanup. External execution, authoritative-vs-recursive divergence, slow propagation timeout/cancellation and CA challenge acceptance remain pending."
+    },
+    {
+      "id": "acme.provider-contracts",
+      "outcome": "Cover cloudflare, route53, azure-dns, google-cloud-dns, rfc2136, acme-dns, ovhcloud, hetzner, infomaniak, exoscale and powerdns from the verified baseline registry.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "protected-isolated-dns-provider-zone"
+      ],
+      "implementation": "scripts/certops-dns-provider-host.js",
+      "remainingCoverage": "All eleven production solvers now have mandatory protected-zone direct provider API and independent DNS resolver source; separate child processes assert two TXT values coexist. Native provider execution and CA-driven certbot/acme.sh failure variants remain pending."
+    },
+    {
+      "id": "acme.provider-errors",
+      "outcome": "Per-adapter auth/signing/zone lookup, pagination where implemented, conflict, throttling, transient failures and retry limits preserve structured safe evidence.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "dns-provider-errors",
+        "dns-provider-host"
+      ],
+      "implementation": "scripts/certops-dns-provider-errors.js",
+      "remainingCoverage": "Focused execution passed 109 mandatory fault scenarios and 192 exact adapter/shared contract tests across all eleven production solvers. Owned loopback HTTP/UDP cases are integration evidence; fixed-endpoint injected upstream faults and virtual retry delays are unit evidence. Source-bound reports enforce auth/signing/lookup/pagination/cleanup/error contracts and safe redaction. Real provider credentials, authoritative propagation and provider-specific operational fault injection still require separate live-provider qualification; no fixture result qualifies those environments."
+    },
+    {
+      "id": "acme.provider-cleanup",
+      "outcome": "Verify real DNS removal where supported; acme-dns cleanup_not_applicable is explicit and is not reported as deletion proof.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "protected-isolated-dns-provider-zone"
+      ],
+      "implementation": "scripts/certops-dns-provider-host.js",
+      "remainingCoverage": "Direct provider source independently observes value-specific owned removal where supported plus reserved-label stale-fixture janitor. acme-dns explicitly records not-applicable-two-slot-provider; it never claims deletion. External execution and interrupted challenge/issuance cleanup remain pending."
+    },
+    {
+      "id": "acme.ca-outage",
+      "outcome": "CA/DNS network outage, rate limit and malformed response leave correct job/key/challenge state; recovery does not duplicate issuance.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-linux-real-acme",
+        "disposable-alpine-real-acme"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Mandatory native sources exercise actual client HTTPS directory503, structured ACME429 and malformed200 refusal through public issue jobs, no installed/active certificate, independent request counters and TXT cleanup, then restore forwarding for genuine issuance. Native execution is pending; order-stage CA interruption, DNS provider outages and retrying the same failed job remain separate coverage."
+    },
+    {
+      "id": "acme.unattended-two-cycles",
+      "outcome": "Real scheduler produces automation-sourced renewal, new certificate and TLS cutover for two bounded cycles, with derived profile and retention lineage.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "real-agent-acme-filesystem",
+        "real-agent-acmesh-filesystem",
+        "real-agent-acme-eab-filesystem",
+        "real-agent-acmesh-eab-filesystem"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js; tests/e2e/certops-agent-e2e.test.js; scripts/certops-real-acme.js",
+      "remainingCoverage": "Mandatory source performs public REST issuance followed by two naturally due production scheduler renewals, advancing real expiry, TLS fingerprints and key identities for certbot/acme.sh with and without required EAB. Native execution remains pending; unattended deployed worker/cron and broader issuer/retention permutations require qualification."
+    },
+    {
+      "id": "acme.challenge-boundary",
+      "outcome": "Native DNS-01 and external/controller HTTP-01 are separate journeys; unsupported native HTTP-01/tls-alpn claims are refused or documented.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-linux-real-acme",
+        "disposable-kubernetes-http01"
+      ],
+      "implementation": "scripts/certops-kubernetes-http01-e2e.js",
+      "remainingCoverage": "Separate mandatory sources cover native DNS01 with real clients and production controller HTTP01 with actual solver/Pebble validation and independent trusted TLS. Product documentation explicitly excludes native HTTP01 and TLSALPN01; native adapter argv regressions retain DNS hooks. Native workflows remain unrun, and additional external-client/public-CA challenge variants remain unqualified."
+    },
+    {
+      "id": "renewal.derived-profile",
+      "outcome": "Issue reconciliation derives a complete usable profile from the actual API target shape, including Windows store/binding and exact issued SANs.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "windows-2022-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/windows-real-journey.js",
+      "remainingCoverage": "Actual Windows issuance persists exact usable store/binding/CA/command/DNS profile and worker consumes it; other issuers/targets/SAN variants remain."
+    },
+    {
+      "id": "renewal.derivation-failure",
+      "outcome": "A missing required field leaves truthful active-but-not-renewable state with a reason, rather than fabricated automatic renewal.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "derivation-failure-api"
+      ],
+      "implementation": "tests/e2e/certops-derivation-failure-e2e.test.js",
+      "remainingCoverage": "Focused actual API/PostgreSQL cases pass genuine public certificate import and production profile derivation with named missing endpoint/command/provider/zone/path reasons, no fabricated profile/jobs, unchanged identity and public not-eligible projection; complete derivation positive control exists. Historical active-state/payload prerequisites are explicitly seeded, not successful issuance. Native issue-to-derivation failure, UI reason presentation and recovery execution remain."
+    },
+    {
+      "id": "renewal.adoption",
+      "outcome": "Supported renewal-setup/adoption intent, preflight, continuation and retry establish the real supported custody/target path.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-renewal-admission-e2e.test.js",
+      "remainingCoverage": "Actual public import of real certificates remains monitored-only; adoption and dry-run requests refuse without proven agent custody and create no jobs/intents. Supported native adoption, completed preflight confirmation and parked-intent recovery remain."
+    },
+    {
+      "id": "renewal.manual",
+      "outcome": "Manual renew resolves an immutable profile snapshot and reaches independent live verification.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-linux-real-acme",
+        "disposable-alpine-real-acme",
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Native ACME source submits public manual renew with identity/idempotency only, checks derived stored-profile payload, replay, genuinely changed leaf/serial/SPKI, matching local key, trusted served TLS, evidence, TXT cleanup and unchanged execution profile. Actual API queued-profile regressions separately cover immutable dispatch snapshots. ADCS source also renews existing identities through public enrollment and actual CNG/IIS/CA observations. Native execution and remaining issuer/target permutations are pending."
+    },
+    {
+      "id": "renewal.bulk",
+      "outcome": "Mixed eligible/ineligible bulk requests preserve per-item outcomes, idempotency, approval and quota behavior.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-renewal-admission-e2e.test.js",
+      "remainingCoverage": "Actual public API/PostgreSQL coverage includes heterogeneous unprofiled/revoked/unknown reasons, viewer/pause and forbidden override refusal, plus six mixed eligible cases: dry-run no work, shared issuance/renewal capacity with independent per-item outcomes, stable successful replay at capacity, requester rejection releasing one slot, and queued payload immutability after public profile edit. Complete linked profiles and agent-local admission metadata are explicit seeded prerequisites. Actual CA/native item execution, successful renewal completion, scheduler interaction and edition quota consumption remain separate qualification gaps."
+    },
+    {
+      "id": "renewal.scheduler-once",
+      "outcome": "Repeated/concurrent sweeps admit one owned due renewal; overdue windows are handled without runaway loops.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "real-agent-acme-filesystem",
+        "real-agent-acmesh-filesystem",
+        "real-agent-acme-eab-filesystem",
+        "real-agent-acmesh-eab-filesystem"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js; tests/e2e/certops-agent-e2e.test.js; scripts/certops-real-acme.js",
+      "remainingCoverage": "Mandatory source stops only its owned real agent while two production scheduler sweeps contend for one naturally due renewal generation, asserting exactly one job before resuming. Native execution remains pending; overdue-window, deployed worker scheduling and additional cross-process timing permutations remain."
+    },
+    {
+      "id": "renewal.profile-disabled",
+      "outcome": "Disabled/archived automatic renewal stays stopped; supported explicit manual behavior matches the product contract.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-profile-permissions-e2e.test.js; tests/e2e/certops-profiles-api-e2e.test.js",
+      "remainingCoverage": "Actual supported autoRenewEnabled false/true persists disabled/active with audit and role checks. Disabled/archived scheduler non-execution and explicit manual renewal semantics still need qualified execution evidence."
+    },
+    {
+      "id": "renewal.profile-edit",
+      "outcome": "Allowed edits persist and audit; immutable execution fields and attempts to override them fail explicitly.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres-openssl"
+      ],
+      "implementation": "tests/e2e/certops-profile-permissions-e2e.test.js; tests/e2e/certops-profiles-api-e2e.test.js",
+      "remainingCoverage": "Actual admin profile toggles/key edits/audit, manager read-only and viewer topology refusal, immutable target/command/provider/multi-target edits and mixed-patch atomic refusal are covered. Derived profile ownership, scheduler snapshot and native post-edit renewal need qualified E2E."
+    },
+    {
+      "id": "renewal.snapshot-frozen",
+      "outcome": "Profile/issuer changes while queued/pending never redirect a signed or awaiting enrollment to a different execution context.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; tests/e2e/certops-queued-profile-snapshot-e2e.test.js",
+      "remainingCoverage": "Mandatory real pending ADCS profile source edits the public stored profile issuer/key size, refuses immutable target edits, then approves the original CA request and requires unchanged signed snapshot/request/target plus actual original RSA2048 CNG/IIS. Host execution is pending; generic queued ACME jobs and remaining issuer/approval races remain. Six actual public ACME manual-renew admission/live edit/independent approval/signed claim cases passed with immutable original snapshot and edited policy applied only to a new request. Complete linked profile and initial agent-local metadata are explicitly seeded supporting prerequisites; native execution and scheduler concurrency remain separate."
+    },
+    {
+      "id": "renewal.ca-capacity",
+      "outcome": "Manual/bulk/scheduler share per-CA concurrency reservation; waiting is visible, then clears without duplicate jobs.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "ca-capacity-api"
+      ],
+      "implementation": "tests/e2e/certops-ca-capacity-e2e.test.js",
+      "remainingCoverage": "Six public issuance cases and six mixed bulk admission cases passed against actual API/PostgreSQL: concurrent reservations at the shared per-CA cap, endpoint canonicalization, independent CA admission, atomic failed reservation, successful job replay, requester rejection releasing a slot, and heterogeneous bulk renewal sharing issuance reservations. Jobs remain pending approval and complete linked renewal profiles are seeded prerequisites. Actual scheduler-to-manual/bulk capacity interaction, visible waiting/worker recovery and CA/native execution remain distinct qualification gaps. Separate strict scheduler-capacity-api source/workflow now implements actual SQL NOW due selection, five issuance reservations blocking automatic creation, concurrent sweep single-slot release, bulk shared admission, pause and resume. All six scheduler cases passed against an independently owned actual API/database, with strict report verification and complete fixture destruction; hosted/native qualification remains pending."
+    },
+    {
+      "id": "renewal.path-health",
+      "outcome": "Unreachable agent, unsupported provider/capability, missing signing trust and other blocked paths yield accurate renewable/blocked/unknown state.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "renewal-health-database-integration"
+      ],
+      "implementation": "tests/integration/certops-renewal-path-health-real-topology.test.js",
+      "remainingCoverage": "Fifteen mandatory supporting real PostgreSQL topology/eligibility cases passed: pinned online/offline/retired, open-claim redundancy/degradation/all-down, missing selector/profile/custody, disabled/retired certificate policy and dependency queries. Liveness and custody are explicit seeded prerequisites rather than real native outages. Public UI/API health rendering, actual host dependency failures and live recovery remain."
+    },
+    {
+      "id": "renewal.issuer-switch",
+      "outcome": "Supported ACME/AD CS profile switch persists or rolls back on failure; legacy no-issuer profiles retain ACME behavior.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "profile-issuer-switch-api"
+      ],
+      "implementation": "tests/e2e/certops-profile-issuer-switch-e2e.test.js",
+      "remainingCoverage": "Six focused real API/PostgreSQL cases passed confirmed AD CS issuer reassignment preserving immutable execution policy, atomic unconfirmed/foreign/incomplete-ACME refusal, attributable audit and no-op/no-job side-effect fences. Confirmed issuer rows are explicit policy prerequisites, not CA validation evidence. Actual ACME-to-ADCS-to-ACME renewable profiles, native issuance after switching and failure rollback remain."
+    },
+    {
+      "id": "renewal.renewal-alerts",
+      "outcome": "Actual failure/uncertain-live-state alerts and outbox delivery behave correctly; cancelled, approval-rejected, dry-run and first-issue cases follow their distinct policy.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "renewal-alert-worker-api"
+      ],
+      "implementation": "tests/e2e/certops-renewal-alert-worker-e2e.test.js",
+      "remainingCoverage": "Eight focused real API/PostgreSQL/protocol/production-worker cases passed renewal failure -> durable outbox -> alert queue -> actual SMTP receipt independently captured by owned MailHog, terminal replay deduplication and first-issue/human-rejection/dry-run exclusions. Initial agent-local admission metadata is an explicitly seeded prerequisite for genuine local key/cert fixture; no native renewal failure or custody proof is claimed. Native deployment uncertainty, cancellations, additional recipient/channel policies and hosted full CI remain."
+    },
+    {
+      "id": "adcs.release-gate",
+      "outcome": "A normal unqualified build refuses AD CS execution/dispatch without fresh adcs-enroll-v1; qualification artifacts explicitly identify their test-only capability selection.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres",
+        "disposable-enterprise-adcs-native"
+      ],
+      "implementation": "tests/e2e/certops-adcs-gates-api-e2e.test.js",
+      "remainingCoverage": "Actual six-case API suite tests unconfigured issuer/unsafe confirmation/unconfirmed enrollment/private continuation privilege fences with an explicitly protocol-declared Windows identity lacking enrollment capability. Read-only preflight remains supported and is not enrollment qualification. Enterprise native source uses explicit test-qualified candidate; default native Windows build enrollment refusal/fresh capability/native full matrix remains required."
+    },
+    {
+      "id": "adcs.issuer-preflight",
+      "outcome": "Admin creates/selects issuer, dispatches read-only preflight, observes completion persistence, and confirms CA key only after safe template and CA verdicts.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Mandatory native source registers the actual LocalSystem candidate, dispatches issuer preflight through the public API, persists native CA/template/SPKI results and confirms the observed key. Enterprise host execution is pending; unsupported discovery transports, all unsafe flags and freshness-expiry variants remain."
+    },
+    {
+      "id": "adcs.preflight-refresh",
+      "outcome": "Pending/stale/failed snapshots and changed CA keys prevent unsafe confirmation and provide truthful UI/API refresh state.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Native new-CA-key recovery performs a fresh actual preflight and public confirmation, refusing enrollment while revalidation is required. Host execution is pending; TTL expiry and all stale capability/cache combinations remain."
+    },
+    {
+      "id": "adcs.auto-issue",
+      "outcome": "UI/API request goes through actual service identity, Kerberos/template checks, CSR/submit/accept/install/TLS and active reconciliation.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Five algorithm/template variants use the public enrollment API and actual installed LocalSystem agent, native CA issuance/CNG/IIS, persisted evidence and independent served TLS. Host execution is pending; complete browser initiation and all installation/fault variants remain."
+    },
+    {
+      "id": "adcs.manager-approval",
+      "outcome": "Real pending CA request remains awaiting approval; officer approval triggers retrieval/validation/install and eventual completed issuance.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Owned real pending request is approved by the isolated CA officer then the production continuation dispatch retrieves/validates/accepts/installs and verifies served TLS. Host execution is pending; delayed approval and overlapping restart/renewal variants remain."
+    },
+    {
+      "id": "adcs.late-approval",
+      "outcome": "Older pending request approved later obeys validity/snapshot rules and does not attach to the wrong key or renewal.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
+      "remainingCoverage": "Native source approves an actual expired pending RequestId after exact-key cleanup, independently observes CA issuance and requires no scheduler revival, key recreation or IIS binding. Native execution is pending; late approval after superseding renewal and all validity/snapshot variants remain."
+    },
+    {
+      "id": "adcs.denied-timeout-cancel",
+      "outcome": "CA denial, pending timeout and cancellation each produce correct enrollment/job/key state with safe retained evidence.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Mandatory native cases cover actual officer denial, public pending cancellation and supported scheduler eligibility/expiry controls, with signed terminal cleanup and independent CNG absence. Host execution is pending; real elapsed long windows and all recovery-phase combinations remain."
+    },
+    {
+      "id": "adcs.duplicate-continuation",
+      "outcome": "Repeated or overlapping continuation never repeats submit, accept or binding side effects incorrectly.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
+      "remainingCoverage": "Native source concurrently invokes four due scheduler calls for a genuinely pending enrollment and requires exactly one signed continuation, unchanged native CA request count and preserved exact CNG key. Native execution is pending; repeated accept/bind delivery and installed-stage overlap remain."
+    },
+    {
+      "id": "adcs.restart-phases",
+      "outcome": "Service restart at prepared/submitting/pending/validation_deferred and each installation step resumes durably without deleting protected keys.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
+      "remainingCoverage": "Native mandatory source restarts the owned SCM service while a genuine CA request is pending and verifies new PID, unchanged durable CSR/SPKI/snapshot/RequestId and no duplicate submission. A real owned IIS outage exercises protected-key installation failure and audited public retry with same CSR/key/RequestId and trusted TLS. A separate experimental observed-journal fixture terminates the verified owned service tree at prepared, submitting or initial installing, waits for actual lease/reaper orphaning, and uses acknowledged public recovery without journal/DB-clock rewrites; it remains unqualified until native interception runs. Deferred and each remaining installation-step fault timing, default long lease/grace and complete native evidence remain."
+    },
+    {
+      "id": "adcs.lost-submit-response",
+      "outcome": "CA commits a request but agent loses reply; submission_uncertain persists and no automatic resubmission occurs.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-enterprise-adcs-response-loss-experiment"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
+      "remainingCoverage": "Experimental native source and separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile only its exact owned candidate. Native source has not executed and is explicitly nonqualified/excluded from release matrix; deterministic fault-window coverage and zero/ambiguous unique-candidate/operator recovery cases remain."
+    },
+    {
+      "id": "adcs.unreachable-before-submit",
+      "outcome": "Provably not-submitted transport failure retries without duplicate CA requests and follows documented key cleanup.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-submission-boundaries.js",
+      "remainingCoverage": "Native source blocks only the owned certreq RPC path while safety probes remain available, independently requires zero actual CA requests and prepared custody, then restores connectivity and retries the same CSR/key with one CA request and live TLS. Source is mandatory in the 64-case baseline; native lab execution remains pending."
+    },
+    {
+      "id": "adcs.operator-reconcile",
+      "outcome": "Zero/unique/ambiguous candidate search, first-request-id and operator supplied RequestId preserve requester/key/snapshot constraints.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-enterprise-adcs-response-loss-experiment"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
+      "remainingCoverage": "Experimental native source and separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile only its exact owned candidate. Native source has not executed and is explicitly nonqualified/excluded from release matrix; deterministic fault-window coverage and zero/ambiguous unique-candidate/operator recovery cases remain."
+    },
+    {
+      "id": "adcs.abandon",
+      "outcome": "Abandon is offered/accepted only from supported uncertain states and respects protected-key ownership; pending issuance cannot be silently abandoned.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
+      "remainingCoverage": "Native source attempts public abandon against a genuinely pending request and requires invalid-transition refusal, identical actual CA RequestId/disposition/count and protected CNG key. Native execution is pending; successful uncertain-state abandon and all protected-key acceptance boundaries remain."
+    },
+    {
+      "id": "adcs.adcs-renewal",
+      "outcome": "AD CS renewal profile drives real automatic renewal through approval/continuation where needed, including CA capacity waiting.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Native source covers public fresh-enrollment manual renewal, stored-profile service initiation, real SQL-NOW short-lived certificate selection and pending profile continuation. Host execution is pending; signed CMC renewal semantics, capacity contention and repeated unattended cycles remain."
+    },
+    {
+      "id": "adcs.control-plane-path",
+      "outcome": "Preflight and enrollment result persistence are proven across real dispatch/outbox/routes; a direct module success does not replace a failed API path.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Mandatory native preflight/enrollment/pending/renewal cases require real authenticated public requests, signed installed-agent dispatch and persisted result/evidence before independent CNG/IIS/TLS checks. Host execution is pending; outage/retry and all outbox failure-phase combinations remain."
+    },
+    {
+      "id": "adcs-safety.rule-boundary",
+      "outcome": "Out-of-rule CA/template selectors are refused before CA contact; unpublished and non-enrollable templates have accurate distinct outcomes.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Native templates enforce actual CA publication and enrollment ACL denials with exact HRESULTs and owned-key absence. Host execution is pending; all agent-local CA/name/algorithm allowlist negative boundaries remain."
+    },
+    {
+      "id": "adcs-safety.unsafe-templates",
+      "outcome": "Every ADR unsafe EKU/template/schema/subject/application-policy rule rejects before enrollment or installation as specified.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Native source refuses confirmation for unsafe EKU and shipped WebServer templates after genuine preflight. Host execution is pending; every remaining ADR schema/subject/application-policy unsafe rule still needs native variants."
+    },
+    {
+      "id": "adcs-safety.unsafe-ca-flags",
+      "outcome": "EDITF_ATTRIBUTESUBJECTALTNAME2 and missing IF_ENFORCEENCRYPTICERTREQUEST produce unsafe preflight/refusal.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-adcs-real",
+        "enterprise-adcs-hierarchy-real"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; infra/certops-adcs/safety-cases.json",
+      "remainingCoverage": "Mandatory real lab source includes three actual isolated CA flag fault combinations, exact flag restore and no submitted-request/CNG side effects. Native cross-version/language qualification and partial failure restoration still remain pending."
+    },
+    {
+      "id": "adcs-safety.algorithm-template",
+      "outcome": "RSA key size and EC curve/template mismatches fail; RSA and P-256/P-384 supported template combinations genuinely issue.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Actual required native issuance covers RSA2048/RSA3072/RSA4096 and EC P256/P384 under supported owned templates. Host execution is pending; all incompatible algorithm/curve/template negative combinations remain."
+    },
+    {
+      "id": "adcs-safety.issued-template",
+      "outcome": "Issued leaf template extension differs from the frozen snapshot: refuse before accept/bind.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-submission-boundaries.js",
+      "remainingCoverage": "Native source changes only an owned pending CA request to another safe template, independently verifies actual CA signature, differing template OID and unchanged SPKI, and requires product rejection before accept/binding while predecessor TLS remains served. Mandatory native execution remains pending."
+    },
+    {
+      "id": "adcs-safety.foreign-request",
+      "outcome": "Foreign/unknown RequestId, wrong SPKI, expired/revoked leaf and mismatched names fail without installing borrowed certificates.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-elevated-native"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "Native Windows chain source covers actual wrong CA pin, expired/not-yet-valid leaf and malformed public material; enterprise source covers native revocation and deferred validation. Both host executions remain pending. Foreign RequestId/SPKI/name/template reconciliation and borrowed-identity installation refusals still require complete native paths."
+    },
+    {
+      "id": "adcs-safety.cmc-locale",
+      "outcome": "CA-signed CMC decoding and HRESULT classifications survive localized text, malformed/adversarial responses and signed RequestId boundaries.",
+      "status": "partial",
+      "evidenceLevel": "unit",
+      "requiredEnvironments": [
+        "disposable-windows-host",
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "packages/agent/reference/adcs-cmc/cmccore/decode_adversarial_test.go",
+      "remainingCoverage": "Thirty-three actual Windows Go checks including nested cases pass genuine signed issued/pending/denied fixture controls, tampering/truncation/trailing data refusal, nonzero full uint32 RequestId bounds, strict pending time/body fields, and synthetic English/French/German structured descriptions. Current native lab source exercises localized real pending/disposition journeys; fresh native adversarial CA-response qualification remains pending. Response decoding does not implement signed CMC renewal requests."
+    },
+    {
+      "id": "adcs-safety.chain-online",
+      "outcome": "Real two-tier chain using HTTP distribution points validates under the declared service identity.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Separate required hierarchy suite creates a genuine standalone offline root/enterprise subordinate, published public root/CRL and stopped root service; five actual leaf algorithms must have native online three-element chain and served TLS. Host execution is pending; all required distribution/language cross-products and additional chain failures remain."
+    },
+    {
+      "id": "adcs-safety.revocation-recovery",
+      "outcome": "CRL/OCSP outage reaches validation_deferred then recovers; persistent outage reaches validation_expired without premature invalid rejection.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Native source isolates real LDAP CRL outage, requires validation_deferred with old TLS/owned key retained, removes the fault and continues the same CA request/key. Host execution is pending; persistent validation_expired and OCSP/HTTP distribution fault variants remain."
+    },
+    {
+      "id": "adcs-safety.ca-key-reuse",
+      "outcome": "CA certificate renewal with same key during pending enrollment validates without unnecessary operator re-approval.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Mandatory native CA renewal uses certutil ReuseKeys, requires observed certificates share the confirmed SPKI and new issuance works without reapproval. Host execution is pending; simultaneous pending requests and all cache/chain variants remain."
+    },
+    {
+      "id": "adcs-safety.ca-key-change",
+      "outcome": "CA renewal with new key produces ADCS_CA_KEY_CHANGED and controlled re-approval; no silent pin replacement.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Native CA rekey must fail with ADCS_CA_KEY_CHANGED, preserve existing served TLS, block further requests, then genuine new-root preflight/public confirmation restores issuance. Host execution is pending; all pending phases and cross-language/native cache variants remain."
+    },
+    {
+      "id": "adcs-safety.downtime",
+      "outcome": "CertSvc/RPC/endpoint-mapper interruption yields correct not-submitted versus uncertain outcome and recovers safely.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-ca-outage.js",
+      "remainingCoverage": "Mandatory native sources cover known-pending CertSvc outage with exact identity/key preservation and initial narrowly classified certreq RPC no-submit failure with zero actual CA requests followed by same-CSR/key recovery. Native execution, endpoint-mapper interruption after acceptance and uncertain transport boundaries remain unqualified."
+    },
+    {
+      "id": "adcs-safety.key-generation-crash",
+      "outcome": "Crash during certreq -new preserves protected custody; a clean abort and orphan sweep remove only eligible material.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "experimental-enterprise-adcs-journal-phase"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-journal-phase-experiment.js",
+      "remainingCoverage": "Experimental keygen_intent source observes real certreq-new and a protected actual CNG key before terminating only the owned tree. Missing durable CSR must refuse public recovery with ADCS_RECOVERY_CSR_REQUIRED while preserving that key; supported public cancellation and signed cleanup must physically remove it with no CA request. Native experiment remains unrun and its artifacts cannot satisfy mandatory release qualification."
+    },
+    {
+      "id": "adcs-safety.lock-lease-fault",
+      "outcome": "Store-lock/lock-worker death, process kill, lease failure and drain timeout preserve retryable/blocked/STORE_LOCK_LOST semantics.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-windows-native-store-lock"
+      ],
+      "implementation": "packages/agent/scripts/host/store-lock-death-fixture.js",
+      "remainingCoverage": "Actual focused local Windows cases passed for production store-lock worker death, noncooperative5s drain timeout and independent holder process SIGKILL/stale marker successor acquisition. Native IPC/mutex/PID/token observations and benign child lifetime are real; no injected clock/heartbeat/marker state and no certificate mutation. Mandatory hosted Server source remains unexecuted; actual agent lease failure and active native certificate-operation uncertainty still need qualification."
+    },
+    {
+      "id": "adcs-safety.full-matrix",
+      "outcome": "Every current ADR release case runs on all required server versions and required disposition languages; the catalog cannot weaken the ADR cross-product.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-adcs-domain-lab"
+      ],
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "remainingCoverage": "Trusted manual native source covers Server2019/2022/2025 in actual English/German/French plus hierarchy scope; real SYSTEM enrollment, safety descriptors and requested-key mismatches, CA flag faults with attestation fences, public immutable validity boundaries, native unknown/foreign retrieval and restored live LDAP template mutation refusal. Isolated real candidate-agent preflight cohorts preserve production workspace rate limits. Source is implemented, not executed native qualification: every required ADR slot and independent report must pass, and experimental submit/journal fault phases remain explicitly unqualified. Full real elapsed validation-window expiry and any unsupported native attribute rendering still need qualified execution; no completion claim follows from source inventory alone."
+    },
+    {
+      "id": "csr.submit-public",
+      "outcome": "Create a public PKCS#10 workflow bound to workspace/target; state is pending_signature and key remains local.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "Real authenticated publicCSR create; independent signature and target scoping; alternatesupportedCSRforms remain."
+    },
+    {
+      "id": "csr.csr-idempotency",
+      "outcome": "Same DER CSR on same target is idempotent; scope changes and cancel/restart produce the documented audit/history behavior.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "Concurrent HTTP duplicate create and cancel/restart audited behavior; other scope permutations remain."
+    },
+    {
+      "id": "csr.signed-import",
+      "outcome": "Import matching signed public leaf/chain, verify SPKI and names, and reach signed_pending_install without claiming deployment.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "Public leaf signing/import independentSPKI/fingerprint; full realobservedinstallation/chain variants remain."
+    },
+    {
+      "id": "csr.wrong-key-names",
+      "outcome": "Wrong key/unsupported name changes/unsafe or malformed input are refused or require the exact supported manager review.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-observation-e2e.test.js",
+      "remainingCoverage": "Existing wrong-SPKI/name-review API cases plus real served TLS observation defer promotion until manager acknowledges changed names; replay preserves observed provenance without manual attestation. Additional unsafe material and browser/native combinations remain."
+    },
+    {
+      "id": "csr.observed-install",
+      "outcome": "Actual matching endpoint/agent observation completes/promotes the workflow and creates truthful deployed instance evidence.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-api-postgres-real-tls"
+      ],
+      "implementation": "tests/e2e/certops-csr-bound-observation-e2e.test.js",
+      "remainingCoverage": "Actual public API CSR against an existing observed certificate: real new served leaf records factual observation, while pending name review preserves the selected active fingerprint/management identity and existing token expiry. Public acknowledgement promotes the new identity/expiry without manual attestation; repeat scan preserves provenance. Actual focused execution passed. Additional agent/controller locations, identity conflicts and native enterprise/certificate-chain combinations remain separate qualification."
+    },
+    {
+      "id": "csr.manual-attestation",
+      "outcome": "Manual confirmation is audited attestation and never invents a live observed certificate instance.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "Real manualconfirmation API and publicfields tested; absenceofobservedinstances must be explicitly asserted."
+    },
+    {
+      "id": "csr.pending-review",
+      "outcome": "A matching observation while name review is pending preserves observed history but does not prematurely change active identity/token expiry.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-api-postgres-real-tls"
+      ],
+      "implementation": "tests/e2e/certops-csr-bound-observation-e2e.test.js",
+      "remainingCoverage": "Actual public API CSR against an existing observed certificate: real new served leaf records factual observation, while pending name review preserves the selected active fingerprint/management identity and existing token expiry. Public acknowledgement promotes the new identity/expiry without manual attestation; repeat scan preserves provenance. Actual focused execution passed. Additional agent/controller locations, identity conflicts and native enterprise/certificate-chain combinations remain separate qualification."
+    },
+    {
+      "id": "csr.identity-conflict",
+      "outcome": "Existing/retired A-to-B identity collisions remain conflicts; name acknowledgement cannot transfer a real B-owned deployment to A.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "Actual twoidentity collision and retired fingerprint refusal tested; observedB-ownedinstance conflict further required."
+    },
+    {
+      "id": "csr.cancel",
+      "outcome": "Cancellation releases only unshared provisional state and does not delete unrelated identity/history/key material.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "API cancel/restart and completedcancelrefusal covered; sharedprovisionalidentity cleanup cases remain."
+    },
+    {
+      "id": "csr.external-http01",
+      "outcome": "An external ACME/HTTP-01 client's public certificate results enter the supported executor/controller observation path; no native-agent challenge claim.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-kind-api-http01"
+      ],
+      "implementation": "scripts/certops-kubernetes-http01-e2e.js",
+      "remainingCoverage": "Mandatory native source uses genuine private Pebble HTTP-01 validation through Traefik/cert-manager; production controller persists external public leaf observations and a destination serves independently CA-root-trusted TLS. Native workflow has not run; additional external executors/public CA providers remain. No native-agent HTTP-01 claim."
+    },
+    {
+      "id": "deploy.leaf-chain-key",
+      "outcome": "Deploy explicit certificate/chain/local-key destinations with correct permissions and ownership; private bytes stay on host.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "filesystem-host"
+      ],
+      "implementation": "scripts/certops-filesystem-host.js",
+      "remainingCoverage": "Mandatory direct native deployment source independently verifies leaf/chain/private-key correspondence and local key permissions on Ubuntu/Windows. Host execution, signed API dispatch and all ownership/principal variants remain pending."
+    },
+    {
+      "id": "deploy.path-containment",
+      "outcome": "Disallowed paths, symlink/race containment escape, directory-as-file and missing explicit keyPath fail before unsafe mutation.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "filesystem-host"
+      ],
+      "implementation": "scripts/certops-filesystem-host.js",
+      "remainingCoverage": "Mandatory direct native fixture exercises a real owned symlink/junction escape and input/target refusals. Host execution, adversarial race timing and other target classes remain pending."
+    },
+    {
+      "id": "deploy.atomic-backups",
+      "outcome": "Atomic replace/fsync, backup retention and first-deploy cleanup preserve the documented durability contract.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "filesystem-host"
+      ],
+      "implementation": "scripts/certops-filesystem-host.js",
+      "remainingCoverage": "Mandatory direct native source verifies first deployment, actual replay, certificate/key/chain backups after rotation and bounded finalization cleanup. Native execution, interrupted fsync/replace fault injection and retention age permutations remain pending."
+    },
+    {
+      "id": "deploy.reload-services",
+      "outcome": "Each supported nginx/apache/haproxy validate-and-reload profile reaches a real served-certificate change.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "linux-native-qualification"
+      ],
+      "implementation": "scripts/certops-nginx-host.js",
+      "remainingCoverage": "Actual native nginx/direct production filesystem deploy and validate/reload source asserts trusted served leaf cutover plus invalid-config and missing-command refusals on Ubuntu22.04/24.04. Native execution is pending; Apache/HAProxy and signed/API/service journeys remain uncovered."
+    },
+    {
+      "id": "deploy.validate-failure",
+      "outcome": "Failed config validation prevents reload and restores/defer-mutates according to the supported deployment flow.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "nginx-host",
+        "apache-host",
+        "haproxy-host"
+      ],
+      "implementation": "scripts/certops-nginx-host.js",
+      "remainingCoverage": "Mandatory native process source requires actual service configuration validation failure to block reload and preserves independently observed trusted TLS. Native execution and signed agent/API deployment rollback permutations remain pending."
+    },
+    {
+      "id": "deploy.multi-target",
+      "outcome": "All preflighted targets succeed transactionally; later failure restores earlier targets in reverse order and re-verifies live state.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "multi-target-deploy-api"
+      ],
+      "implementation": "tests/e2e/certops-multi-target-deploy-e2e.test.js",
+      "remainingCoverage": "Mandatory source executes the production multi-destination coordinator with genuine certificate/key files, real authenticated protocol context/evidence adapter, preflight denial, reverse byte-identical rollback, first-install removal and deliberately removed owned backup producing uncertainty/reconciliation. Native ACL/leaf fixture refinements await final current-source report. Public deploy admission, real CA, daemon reload/TLS and native fault timing remain."
+    },
+    {
+      "id": "deploy.uncertain-rollback",
+      "outcome": "Failed rollback/first-deploy uncertainty yields orphaned_unknown_effect and blocks blind re-execution until reconciliation.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "multi-target-deploy-api"
+      ],
+      "implementation": "tests/e2e/certops-multi-target-deploy-e2e.test.js",
+      "remainingCoverage": "Mandatory source executes the production multi-destination coordinator with genuine certificate/key files, real authenticated protocol context/evidence adapter, preflight denial, reverse byte-identical rollback, first-install removal and deliberately removed owned backup producing uncertainty/reconciliation. Native ACL/leaf fixture refinements await final current-source report. Public deploy admission, real CA, daemon reload/TLS and native fault timing remain."
+    },
+    {
+      "id": "deploy.served-leaf",
+      "outcome": "Disk/store/issued/served fingerprints agree; a correct file with the wrong live endpoint certificate fails verification.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "packages/agent/scripts/host/windows-host.test.js",
+      "remainingCoverage": "IIS fixture checks served thumbprint before/after replacement and rollback; file targets/full issuer journey and all verify failures remain required."
+    },
+    {
+      "id": "deploy.os-service",
+      "outcome": "Install/write-path/systemd readiness, daemon stop/start and exit-86 behavior run through actual OS supervision.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-linux-systemd",
+        "disposable-windows-service"
+      ],
+      "implementation": "tests/e2e/linux-systemd-real-journey.js",
+      "remainingCoverage": "Mandatory Linux source uses the actual installer/unit/nonroot candidate process, credential-preserving restarts, crash recovery and retirement86 without restart. A bounded actual-unit ExecStartPre probe verifies configured write-path success and unlisted peer EROFS after independent equal-DAC write controls. Windows source independently measures actual SCM/native-host lifecycle and retirement. Full native workflows, additional distro/SKU and supervised certificate deployment permutations remain pending."
+    },
+    {
+      "id": "deploy.no-systemd",
+      "outcome": "Foreground Alpine/musl issue and renewal work; OpenRC/systemd supervision is not falsely credited from a foreground process.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "real-agent-alpine-certbot",
+        "real-agent-alpine-acmesh"
+      ],
+      "implementation": "scripts/certops-alpine-bootstrap.sh; tests/e2e/acme-real-journey.js; .github/workflows/certops-alpine-acme-qualification.yml",
+      "remainingCoverage": "Implemented manual strict Alpine 3.23.6 Node24/musl container foreground API/agent source runs both real ACME clients through trusted TLS and two naturally due renewals. Native lane execution remains pending; OpenRC/systemd supervision, other musl versions and EAB are not claimed."
+    },
+    {
+      "id": "deploy.missing-dependency",
+      "outcome": "OpenSSL, reload executables, DNS hook, helper and privilege failures are explicit and fail required qualification.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "nginx-host",
+        "apache-host",
+        "haproxy-host"
+      ],
+      "implementation": "scripts/certops-nginx-host.js",
+      "remainingCoverage": "Mandatory native process source asserts a genuinely missing reload executable gives explicit failure with trusted live TLS unchanged. Native execution, missing OpenSSL/DNS/native-helper/privilege cases across all adapters remain pending."
+    },
+    {
+      "id": "trust.root-intermediate",
+      "outcome": "Signed distribute-trust installs root/intermediate into the correct Windows Root/CA or supported Linux store and reports independent observed trust.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-vm",
+        "ubuntu-24.04-vm",
+        "almalinux-9.6-container"
+      ],
+      "implementation": "scripts/certops-linux-trust.js",
+      "remainingCoverage": "Direct native executor source covers root/intermediate distribution and independent derived system-bundle chain verification on Ubuntu VMs and Alma container. Host execution is pending; signed/API service dispatch and Windows CA store qualification remain."
+    },
+    {
+      "id": "trust.platform-refresh",
+      "outcome": "update-ca-certificates and update-ca-trust extract populate derived trust correctly; source-file presence alone is not success.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-vm",
+        "ubuntu-24.04-vm",
+        "almalinux-9.6-container"
+      ],
+      "implementation": "scripts/certops-linux-trust.js",
+      "remainingCoverage": "Native source requires update-ca-certificates/update-ca-trust plus independent OpenSSL chain verification of derived trust. Required Ubuntu22.04/24.04 VM and Alma9.6 container reports remain unexecuted."
+    },
+    {
+      "id": "trust.preexisting-anchor",
+      "outcome": "Pre-existing identical anchors are observed/idempotent without acquiring unsafe deletion ownership.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-vm",
+        "ubuntu-24.04-vm",
+        "almalinux-9.6-container"
+      ],
+      "implementation": "scripts/certops-linux-trust.js",
+      "remainingCoverage": "Native source proves independently preinstalled matching anchor cannot acquire deletion ownership. Required host execution and signed/API policy integration remain."
+    },
+    {
+      "id": "trust.ownership-revoke",
+      "outcome": "revoke-trust removes only receipt-owned material and preserves unrelated/pre-existing/cross-signed anchors.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-vm",
+        "ubuntu-24.04-vm",
+        "almalinux-9.6-container"
+      ],
+      "implementation": "scripts/certops-linux-trust.js",
+      "remainingCoverage": "Native source removes receipt-owned anchor and independently rejects its leaf while retaining pre-existing trust. Required host execution, cross-signed bundles and full service jobs remain."
+    },
+    {
+      "id": "trust.invalid-anchor",
+      "outcome": "Fingerprint/content mismatch, invalid anchor role and unauthorized store/command references fail without trust mutation.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-vm",
+        "ubuntu-24.04-vm",
+        "almalinux-9.6-container"
+      ],
+      "implementation": "scripts/certops-linux-trust.js",
+      "remainingCoverage": "Native source covers fingerprint mismatch and invalid leaf-as-root refusal without trust mutation; API public approval rejects private input. Required native execution plus every unauthorized command/store and receipt-finalize failure remain."
+    },
+    {
+      "id": "trust.receipt-finalize",
+      "outcome": "OS success followed by receipt-finalize failure is truthful; redistribute repairs pending receipt before revoke can safely proceed.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-linux-native-trust-store"
+      ],
+      "implementation": "scripts/certops-linux-trust-receipt-fault.js",
+      "remainingCoverage": "Mandatory native helper delegates genuine refresh command unchanged, then an owned filesystem directory collision prevents receipt finalize after actual OS success. Independent default OpenSSL trust verifies installation, restored pending receipt refuses revoke, real redistribution repairs and real revocation removes derived trust. Native source not executed; signed/API/installed-service and Windows receipt-finalization fault variants remain."
+    },
+    {
+      "id": "trust.restart-recovery",
+      "outcome": "Restart/fault during install/remove/receipt write recovers durably and does not orphan ownership or delete live trust blindly.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-vm",
+        "ubuntu-24.04-vm",
+        "almalinux-9.6-container"
+      ],
+      "implementation": "scripts/certops-linux-trust.js",
+      "remainingCoverage": "Native source recreates executor and replays durable receipts; missing real refresh executable yields intent-written failure followed by real native refresh recovery. Corrupt owned receipt bytes refuse mutation until restored. Required host execution, installed-service restart and interruption at every receipt-write boundary remain."
+    },
+    {
+      "id": "trust.bundle-concurrency",
+      "outcome": "Multiple anchors and concurrent operations preserve per-store/fingerprint ownership with no implicit desired-state pruning.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-trust-multiple-e2e.test.js",
+      "remainingCoverage": "Actual public CA-anchor API preserves a single identity under concurrent approval of one fingerprint; two distinct anchors remain independently active/retired/reapproved and multi-certificate anchor input is rejected atomically. Focused execution passed. This is desired-anchor API state only; native per-store/reference ownership, multi-anchor distribution and concurrent OS cleanup remain separately qualified."
+    },
+    {
+      "id": "trust.trust-rbac",
+      "outcome": "Only authorized admin/policy-approved jobs mutate trust; renewal-only agent policy cannot execute trust-store commands.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "linux-trust-host",
+        "trust-api-lifecycle"
+      ],
+      "implementation": "scripts/certops-linux-trust.js; tests/e2e/certops-trust-api-e2e.test.js",
+      "remainingCoverage": "Mandatory native source uses genuine renewal-only local policy for distribute/revoke refusal and independently unchanged real anchor inventories/default OpenSSL trust/no receipt. Public API supporting tests cover admin admission and pause boundaries. Native execution, complete trust-specific role/approval matrix and signed agent/service dispatch remain pending."
+    },
+    {
+      "id": "controller.observe",
+      "outcome": "Real Certificate/CertificateRequest watch creates correct public inventory without agent registration, agent claims or host key custody.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-kind-cert-manager-api-postgres"
+      ],
+      "implementation": "scripts/certops-kubernetes-controller-e2e.js",
+      "remainingCoverage": "Production controller list/watch, public intent and persisted CA fingerprint without agent registration are wired; scale, all observation conditions and remaining issuer variants remain. Native execution is pending."
+    },
+    {
+      "id": "controller.crt-fallback",
+      "outcome": "Supported bounded tls.crt Secret fallback extracts public data only and never serializes/forwards tls.key.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "kubernetes-host"
+      ],
+      "implementation": "scripts/certops-kubernetes-host.js; scripts/certops-kubernetes-secret-fallback.js",
+      "remainingCoverage": "Mandatory native source uses actual cert-manager TLS Secret, production mounted-credential raw Secret reader and fallback parser under exact get-only Secret RBAC. Independent public fingerprint, no tls.key/private material in enriched output, foreign namespace403 and genuine malformed/over64KiB public Secret refusals are asserted. Native cluster execution and full controller/API fallback observation publication remain pending."
+    },
+    {
+      "id": "controller.provision",
+      "outcome": "Explicit provision mode creates/patches only owned Certificates from cluster-bound commands; cert-manager issues/renews and actual observations reconcile.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-kind-cert-manager"
+      ],
+      "implementation": "scripts/certops-kubernetes-host.js",
+      "remainingCoverage": "Production in-cluster client and actual public API command delivery, merge patch, issued public leaf, served TLS and persisted observations are wired across both suites. Full renewal timing and remaining issuer/failure variants remain. Native execution is pending."
+    },
+    {
+      "id": "controller.rbac-boundary",
+      "outcome": "Observe remains read-only; provision cannot write Secrets/CertificateRequests or delete resources; absent permission fails truthfully.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-kind-cert-manager"
+      ],
+      "implementation": "scripts/certops-kubernetes-host.js",
+      "remainingCoverage": "Real read-only service-account and production client create/patch denials plus scoped production-controller credentials are wired. Remaining API and Kubernetes permission failure permutations remain. Native execution is pending."
+    },
+    {
+      "id": "controller.cluster-scope",
+      "outcome": "Wrong workspace/cluster/namespace/issuer ownership and duplicate commands do not mutate foreign resources.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "disposable-kind-cert-manager"
+      ],
+      "implementation": "scripts/certops-kubernetes-host.js",
+      "remainingCoverage": "Actual Certificate ownership conflict, idempotency and local workspace/cluster/namespace refusals are wired; issuer ownership and full public command boundary remain. Native lane execution is pending."
+    },
+    {
+      "id": "controller.restart-watch",
+      "outcome": "Controller restart/API outage/watch resync preserves identity and command idempotency without losing public lifecycle evidence.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-kind-cert-manager-api-postgres"
+      ],
+      "implementation": "scripts/certops-kubernetes-controller-e2e.js",
+      "remainingCoverage": "Actual transport suspension/resumption, new issued/served leaf with retained history, production pod restart and fresh watch evidence are wired. API server loss, Kubernetes watch compaction and longer outage/backpressure variants remain. Native execution is pending. Supporting loopback HTTP production-client tests now exercise an actual streamed Status Failure/code410, relist once, resume resourceVersion20 and observe event21; sixteen observer/client tests passed. This is real client protocol evidence, not native etcd compaction."
+    },
+    {
+      "id": "controller.pause-gates",
+      "outcome": "Pause/feature/license policy blocks new provision delivery while preserving allowed passive observations/events.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-kind-cert-manager-api-postgres"
+      ],
+      "implementation": "scripts/certops-kubernetes-controller-e2e.js",
+      "remainingCoverage": "Actual public pause blocks intent creation while genuine watch updates advance passive observations. Already-delivered mutation races and edition feature/license policies remain. Native execution is pending."
+    },
+    {
+      "id": "controller.external-issuer",
+      "outcome": "Supported external issuer/HTTP-01 workflows are tested as cert-manager execution, without claiming agent-native support.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-kind-api-http01"
+      ],
+      "implementation": "scripts/certops-kubernetes-http01-e2e.js",
+      "remainingCoverage": "Strict native source and manual hosted workflow use actual public provision intents, production controller, maintained ingress HTTP-01 solver and Pebble CA with validation bypass disabled; observed presented HTTP-01 challenge and independently trusted destination TLS are mandatory. Native workflow has not executed. This is private test-CA controller issuance, not public CA or native agent HTTP-01 qualification."
+    },
+    {
+      "id": "governance.approval",
+      "outcome": "Workspace always-approval affects manual/bulk/scheduler/trust creation; caller false cannot bypass it; approved work still obeys dispatch pause.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "linux-api-postgresql"
+      ],
+      "implementation": "tests/e2e/certops-jobs-api-e2e.test.js; tests/e2e/certops-job-decisions-e2e.test.js",
+      "remainingCoverage": "Bulk, scheduler and trust approval creation plus native execution dispatch pause require qualified execution evidence. Actual manual approval/hash binding, rejection while paused, viewer refusal and one-decision history are covered."
+    },
+    {
+      "id": "governance.pause",
+      "outcome": "Pause/resume is audited; new dispatch/provision is blocked while allowed observations/results remain ingestible.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "pause-ingestion-api",
+        "jobs-api-boundaries",
+        "trust-api-lifecycle"
+      ],
+      "implementation": "tests/e2e/certops-pause-ingestion-e2e.test.js; tests/e2e/certops-jobs-api-e2e.test.js; tests/e2e/certops-trust-api-e2e.test.js",
+      "remainingCoverage": "Focused actual public API/protocol/PostgreSQL cases pass audited idempotent pause/resume, blocked new claim/provision without new certificate/attempt, permitted existing heartbeat/claim-bound evidence/result ingestion and exactly-once resumed claim. Existing approval/trust policy boundaries support this. Protocol noop fixtures do not prove certificate side effects; native service recovery, controller and edition cross-products still need host/overlay qualification."
+    },
+    {
+      "id": "governance.roles",
+      "outcome": "Viewer/manager/admin and session/machine/worker tokens obey action-specific permissions; cross-workspace IDs fail.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "remainingCoverage": "CSR viewer/anonymous/crossworkspace covered; allactions machines/workers scope further required."
+    },
+    {
+      "id": "governance.retire-precondition",
+      "outcome": "Retire requires exact fingerprint and reason, preserves histories and does not reactivate when the same fingerprint is scanned.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-governance-e2e.test.js",
+      "remainingCoverage": "ActualHTTP428/412 fingerprint gates on realTLS observedidentity tested; concurrentretire and otherroles further needed."
+    },
+    {
+      "id": "governance.decommission-use",
+      "outcome": "Fresh confirmed TLS/binding use blocks decommission; uncertain/stored-only copies require acknowledgement and later use stays visible.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-governance-e2e.test.js",
+      "remainingCoverage": "RealservingTLS prevents decommission despite acknowledgement; uncertain/stored-only conditions and lateruse further needed."
+    },
+    {
+      "id": "governance.stop-managing",
+      "outcome": "Close/reopen a management period without rewriting lifecycle/history; quotas use the current identity/open-period rules.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-governance-e2e.test.js",
+      "remainingCoverage": "ActualHTTP stop/readd newperiod idempotency/conflict/history tested; sharedsources quota othereditions further needed."
+    },
+    {
+      "id": "governance.alerts-retired",
+      "outcome": "Retirement suppresses expiry/renewal alerts according to shared-token siblings, while independent endpoint-down alerts remain unaffected.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "alerts-database-integration"
+      ],
+      "implementation": "tests/integration/retired-certificate-alerts.integration.test.js",
+      "remainingCoverage": "Five mandatory existing real API/PostgreSQL/queue/delivery-worker cases cover retirement deleting owned unsent renewal failures without suppressing shared-token siblings, endpoint-health delivery after final sibling retirement, expiry queue suppression, stale renewal delivery discard and weekly digest omission. New strict manual workflow group makes execution required. This group has not been executed in the current session; independently observed SMTP receipts, fresh agent renewal failure and native fault alert lineage remain."
+    },
+    {
+      "id": "governance.ui-visibility",
+      "outcome": "Active-only hides retired rows even if still observed; explicit filters/history reveal them with accurate lifecycle and renewal status.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-governance-e2e.test.js",
+      "remainingCoverage": "ActualAPI excludeRetired/detail preserves retired/history; browser filters and live-rescan retired further needed."
+    },
+    {
+      "id": "governance.core-journey",
+      "outcome": "Core release stack proves issue-to-promotion/profile/scheduler and certificate UI with real APIs, never a dev-mock substitute.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-linux-real-acme-api-postgres",
+        "disposable-browser-real-api"
+      ],
+      "implementation": "tests/e2e/acme-real-journey.js",
+      "remainingCoverage": "Mandatory native source now uses public Core REST issuance, production derived profile and actual SQL-NOW scheduler selection through two naturally due renewals, distinct trusted served leaves and key rotation; separate real browser/API suite has focused execution evidence. Full CA/agent native lane and composed end-to-end release workflow have not executed, and remaining certificate UI journeys are not implied by supporting browser navigation/profile checks."
+    },
+    {
+      "id": "governance.cloud-journey",
+      "outcome": "Repeat full promotion/derivation/renewal through the actual SaaS overlay API and supported plan, not Core API behind a Cloud-looking UI.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "cloud-exact-pin-native-acme-pro-team"
+      ],
+      "implementation": "tokentimer-cloud/tests/e2e/cloud-acme-real-journey.js",
+      "remainingCoverage": "Runnable native Cloud source and manual hosted workflow cover actual SaaS public issue, the exact pinned real agent, discovery/promotion/derived profile and two production SQL-NOW renewal generations. Concurrent sweeps require one second-generation job; each deployment independently verifies advanced real expiry, rotated public SPKI and trusted served TLS across Certbot/acme.sh and Pro/Team. Native workflow has not executed. Preserved Core b6ad7fc cannot qualify the new Core candidate or post-pin ADCS; Cloud browser, Windows/service and packaged scheduler lifecycle variants remain."
+    },
+    {
+      "id": "governance.cloud-policy",
+      "outcome": "Plan/quota/frozen-workspace and upgrade/downgrade boundaries preserve advertised capability reads, history and existing lifecycle behavior.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "cloud-exact-pin-disposable-api-postgres"
+      ],
+      "implementation": "tokentimer-cloud/scripts/cloud-certops-qualification.js",
+      "remainingCoverage": "24 actual SaaS API/PostgreSQL cases passed at preserved Core b6ad7fc: plan/role/frozen/quota/security precedence, lifecycle quota, machine continuation and upgrade/downgrade history, Free mid-claim continuation and envelope workspace-binding precedence. Entitlement changes are explicit prerequisite DB records, not billing payment transitions. Hosted Node22, browser/native hosts/default quotas and newer Core features remain unqualified. Edition candidate/composition identity is separate from Core release matrix."
+    },
+    {
+      "id": "governance.enterprise-policy",
+      "outcome": "Actual license/edition overlay gates and supported packaged deployment preserve certificate lifecycle and log/compliance visibility.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "enterprise-exact-pin-source-built-api-postgres"
+      ],
+      "implementation": "tokentimer-enterprise/tests/integration/certops-qualification.json",
+      "remainingCoverage": "48 actual Enterprise public API/PostgreSQL cases passed twice against exact source-built runtime at Core155fe990: base CertOps entitlement, license/compliance precedence/audit, trust RBAC and manual job create. Independent runtime489-source verification/image identity/strict cleanup preserved. Local baseline evidence does not qualify newer Core/post-pin ADCS, native Windows/Azure, hosted packaging or full release CI."
+    },
+    {
+      "id": "governance.migration-package",
+      "outcome": "Supported upgrade migrations preserve jobs/enrollments/identities/receipts and resume work; release artifact/source pin is recorded.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-api-migration-ubuntu24-postgres16"
+      ],
+      "implementation": "scripts/certops-migration-upgrade.js",
+      "remainingCoverage": "Trusted manual isolated PostgreSQL lane runs fixed historical Core source b6ad7fc3d38db35b4c41a2c6137b0c39afc72158 and candidate from their separate frozen lockfiles. Real old public pending approval, imported certificate identity, signed pending CSR and actual TLS monitor survive additional candidate migrations; independent approval and actual served-leaf observation complete supported transitions. Candidate restart requires unchanged schema and no duplicate promotion. Exact source/lockfile/image identities and schema counts are mandatory. Historical enrollment/agent/install-receipt migrations, published artifacts, schema rollback and additional supported version floors remain; full workflow execution is pending."
+    },
+    {
+      "id": "experience.browser-lifecycle",
+      "outcome": "User creates supported issue/renew job, reviews progress/evidence, and sees the actual live certificate and inventory outcome.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-real-dashboard-disposable-stack"
+      ],
+      "implementation": "scripts/certops-browser.js",
+      "remainingCoverage": "ActualpublicCSR browser submit/import/manualattestation independentlyverified; agentissue/renew realdestinationbrowsertrigger remains."
+    },
+    {
+      "id": "experience.browser-adcs",
+      "outcome": "Issuer/preflight/CA confirmation, pending approval, continuation/reconciliation and restricted Abandon run through real #347 routes and service agent.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-real-dashboard-disposable-stack"
+      ],
+      "implementation": "scripts/certops-browser.js",
+      "remainingCoverage": "ActualCorewizard missingagent/preflight gate tested; actualdomain safeconfirm/enrollment/reconcilebrowserjourneys remain."
+    },
+    {
+      "id": "experience.browser-settings",
+      "outcome": "Pause/approval/renewal switch/allowed profile edit persist with correct role controls, errors and failed-save rollback.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-real-dashboard-disposable-stack"
+      ],
+      "implementation": "scripts/certops-browser.js",
+      "remainingCoverage": "Sixteen actual browser cases passed against genuine API/PostgreSQL/UI without interception. Settings coverage includes pause/resume and approval persistence through reload and independent API reads, actual renewal switch and lead-time edits, edit cancellation preserving stored policy, viewer settings authority, and a real backend403 failed save with visible error, unchanged stored policy and reload. Profile policy and controlled role changes are explicit prerequisites; no issuance is claimed. Additional profile/issuer variants and native/edition UI journeys remain distinct coverage gaps."
+    },
+    {
+      "id": "experience.ui-layout",
+      "outcome": "Supported dark/light themes, phone/desktop layout, keyboard/dialog navigation and pending/error states remain usable across certificate surfaces.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "core-real-dashboard-disposable-stack"
+      ],
+      "implementation": "scripts/certops-browser.js",
+      "remainingCoverage": "Actualphonewidth certificate navigation with light/darkmedia tested; visualthemecontrast/dialogkeyboard and othereditions remain."
+    },
+    {
+      "id": "experience.console-live",
+      "outcome": "Real agent logs appear incrementally during job execution and close correctly for every supported terminal/interruption state.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js",
+      "remainingCoverage": "Actual protocol and API incremental stream persistence/cursor paging/final closure are covered; stream closure explicitly does not fabricate terminal job success. Browser console rendering during real native execution and all interruption/terminal states still require qualified E2E."
+    },
+    {
+      "id": "experience.log-pagination",
+      "outcome": "Cursor paging and reconnect deduplicate/retain order without losing or reordering old pages.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-log-pagination-e2e.test.js",
+      "remainingCoverage": "Actual registered-agent diagnostics and authenticated opaque-cursor polling across initial/tail pages, empty-page reconnects, fresh live appends and duplicate replay/final stream closure preserve exact line order without backfill or invented job completion. Actual focused execution passed. Browser reconnect transport, multi-attempt retained history and native process-output paging remain separate qualification."
+    },
+    {
+      "id": "experience.log-access",
+      "outcome": "Viewer status-only versus authorized line text, agent/job workspace boundaries and retired-agent access obey policy.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-boundaries-e2e.test.js",
+      "remainingCoverage": "Actual authenticated API job streams enforce viewer status-only access, claim ownership, route authority, secret scrubbing and pagination. Browser live console, support bundle and every interruption/terminal authorization boundary still require qualified E2E."
+    },
+    {
+      "id": "experience.log-pressure",
+      "outcome": "Fleet line/budget limits, partial stream failure, retry/reconnect, 413 accounting, retention and quota preserve bounded truthful behavior.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "core-disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-agent-log-boundaries-e2e.test.js",
+      "remainingCoverage": "Actual API bounds, sequence-gap/drop accounting, late/conflicting replay, atomic noncontiguous refusal and telemetry final closure are covered using synthetic public diagnostics. Fleet quotas, daily budget pressure, reconnect/413 accounting and retention under real agent execution remain."
+    },
+    {
+      "id": "experience.log-disabled",
+      "outcome": "Streaming-disabled and abandoned-stream cases report explicit status and recover without spurious completed execution.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-log-disabled-e2e.test.js",
+      "remainingCoverage": "Missing-capability real machine claim explicitly disables streaming. Actual uploads acknowledge disabled without storage; claimed job stays incomplete. A fresh capability heartbeat enables a new attempt while the old disabled offer remains immutable. Focused execution passed. Global storage-disabled mode, abandoned elapsed-window behavior and native process/browser states remain separately qualified."
+    },
+    {
+      "id": "experience.log-secret-sentinel",
+      "outcome": "Synthetic secret/key markers in stdout/stderr/provider errors are scrubbed before upload, storage, browser rendering and diagnostic artifacts.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "agent-log-api",
+        "agent-log-order-api"
+      ],
+      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js",
+      "remainingCoverage": "Focused real authenticated agent-log upload and PostgreSQL persistence cases exercise private-key, password and bearer sentinel scrubbing and sequencing. Native stdout/stderr/provider failure, live browser rendering and every diagnostic artifact channel require their own evidence."
+    },
+    {
+      "id": "experience.audit-target",
+      "outcome": "Job create/issue/renew/preflight/failure/profile/retire/trust events show correct Windows store/site/port/SNI/issuer context and can be filtered.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-api-postgres"
+      ],
+      "implementation": "tests/e2e/certops-audit-history-e2e.test.js",
+      "remainingCoverage": "Eight actual API cases passed: public Windows-target profile create/edit audit exposes profile/issuer/reference identity; actual public Windows-target issue admission plus authenticated claimed protocol failure exposes store/site/port/SNI/agent/job and replay creates no duplicate audit. Exact action/reference/literal percent-underscore search, pagination, workspace isolation and viewer/manager authorization passed. Windows platform is protocol-declared, confirmed issuer metadata is seeded and no native CA/CNG/IIS operation occurs. Native success/preflight/retire/trust audit variants and browser filtering remain."
+    },
+    {
+      "id": "experience.evidence-integrity",
+      "outcome": "Job/claim/CSR/leaf/CA response/fingerprint digests tie independent observations to exact artifact and attempt; missing evidence fails qualification.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "first-issuance-admission-api",
+        "queued-profile-snapshot-api"
+      ],
+      "implementation": "tests/e2e/certops-first-issuance-admission-e2e.test.js; tests/e2e/certops-queued-profile-snapshot-e2e.test.js; scripts/certops-release-qualification.test.js",
+      "remainingCoverage": "Actual public issuance admission/period/fresh capability/routing and signed dispatch cases plus queued-profile canonical snapshot/approval hash and cryptographically verified signed claim passed focused integration. Report guards reject missing/stale source and candidate evidence. CSR/leaf/CA-response/native side-effect digest chains, full host execution and all artifact transport permutations remain."
+    },
+    {
+      "id": "experience.harness-failure",
+      "outcome": "A failed underlying suite, fake successful command, empty output or regex match cannot be promoted to pass; scenario ID/report assertions are authoritative.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "qualification-tooling"
+      ],
+      "implementation": "scripts/certops-qualification-report.test.js; scripts/certops-release-qualification.test.js; scripts/certops-release-collector.test.py",
+      "remainingCoverage": "Focused guard tests reject failed/skipped/empty/foreign reports, missing mandatory IDs, stale source/candidate/environment and all-feature promotion from an incomplete catalog. Every harness adapter and uploaded artifact transport still require native/full CI qualification."
+    },
+    {
+      "id": "linux-install.systemd-registration",
+      "outcome": "Product local installer creates the system user and hardened unit; the real service registers with the API and removes its bootstrap file.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-disposable-api-postgres-systemd",
+        "ubuntu-24.04-disposable-api-postgres-systemd"
+      ],
+      "implementation": "tests/e2e/linux-systemd-real-journey.js",
+      "remainingCoverage": "Released archive/package and ARM64 host qualification remain; current fixture uses the candidate local source package."
+    },
+    {
+      "id": "linux-install.state-permissions",
+      "outcome": "Actual installed state has mode0700 and credential/config mode0600 owned by the real non-root service UID/GID; live process soft/hard core limits are zero.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-disposable-api-postgres-systemd",
+        "ubuntu-24.04-disposable-api-postgres-systemd"
+      ],
+      "implementation": "tests/e2e/linux-systemd-real-journey.js",
+      "remainingCoverage": "Additional distributions and malicious ownership/symlink upgrade variants remain."
+    },
+    {
+      "id": "linux-install.restart-recovery",
+      "outcome": "Actual systemd restart and SIGKILL recovery preserve the persisted credential and advance authenticated API heartbeats from a fresh native process.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-disposable-api-postgres-systemd",
+        "ubuntu-24.04-disposable-api-postgres-systemd"
+      ],
+      "implementation": "tests/e2e/linux-systemd-real-journey.js",
+      "remainingCoverage": "Mid-certificate-mutation recovery and system reboot qualification remain separate."
+    },
+    {
+      "id": "linux-install.retirement-stop",
+      "outcome": "Real API retirement causes installed native agent exit86 and systemd suppresses restart over multiple configured recovery intervals.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-disposable-api-postgres-systemd",
+        "ubuntu-24.04-disposable-api-postgres-systemd"
+      ],
+      "implementation": "tests/e2e/linux-systemd-real-journey.js",
+      "remainingCoverage": "Released package/distribution variants and simultaneous in-flight mutation retirement remain."
+    },
+    {
+      "id": "linux-install.uninstall",
+      "outcome": "Product uninstaller removes its unit/app while preserving state; independent receipt-owned cleanup removes only fresh qualification resources.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-22.04-disposable-api-postgres-systemd",
+        "ubuntu-24.04-disposable-api-postgres-systemd"
+      ],
+      "implementation": "tests/e2e/linux-systemd-real-journey.js",
+      "remainingCoverage": "Upgrade rollback and preservation of operator-specific existing configuration require additional qualification."
+    }
+  ]
+}

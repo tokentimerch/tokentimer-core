@@ -23,6 +23,15 @@ const CHALLENGE = {
 };
 
 const ZONE_URL = "http://127.0.0.1:8081/api/v1/servers/localhost/zones/example.com.";
+test("powerdns: malformed zone reads refuse present and cleanup before PATCH", async () => {
+  const bodies = ["not-json", "null", "[]", "{}", '{"rrsets":"invalid"}', '{"rrsets":[{}]}', '{"rrsets":[{"name":"_acme-challenge.example.com.","type":"TXT","records":[null]}]}'];
+  for (const body of bodies) for (const operation of ["presentChallenge", "cleanupChallenge"]) {
+    const fetchStub = makeFetchStub(() => ({ status: 200, body }));
+    const result = await solverWith(fetchStub)[operation](CHALLENGE);
+    assert.equal(result.ok, false); assert.equal(fetchStub.calls.length, 1);
+    assert.equal(fetchStub.calls[0].options.method, "GET");
+  }
+});
 
 function zoneBody(rrsets) {
   return JSON.stringify({ name: "example.com.", rrsets });

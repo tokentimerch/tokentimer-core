@@ -10,11 +10,11 @@ import (
 	"golang.org/x/sys/windows/svc"
 )
 
-// serviceName must equal install-agent.ps1's $ServiceName exactly: the SCM
-// dispatcher table windows/svc builds from Execute's registration is keyed
-// by this string, and a mismatch here means StartServiceCtrlDispatcher
-// simply never routes control requests to this process at all - the exact
-// silent failure mode this host exists to eliminate.
+// Default dispatcher registration label matches install-agent.ps1. Windows
+// ignores the SERVICE_TABLE_ENTRY name for SERVICE_WIN32_OWN_PROCESS, but the
+// host must still call StartServiceCtrlDispatcher and report its lifecycle.
+// Qualification uses a temporary Go source overlay for a uniquely named
+// disposable SCM service without changing this released default.
 const serviceName = "TokenTimerAgent"
 
 // agentRetiredExitCode must equal AGENT_RETIRED_EXIT_CODE in

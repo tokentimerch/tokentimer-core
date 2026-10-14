@@ -1,0 +1,38 @@
+name: Independent DNS qualification fixture cleanup
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        provider: [cloudflare, route53, azure-dns, google-cloud-dns, rfc2136, acme-dns, ovhcloud, hetzner, infomaniak, exoscale, powerdns]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: certops-dns-${{ matrix.provider }}
+    concurrency:
+      group: certops-dns-${{ matrix.provider }}
+      cancel-in-progress: false
+    env:
+      CERTOPS_DNS_DEDICATED_FIXTURE: '1'
+      CERTOPS_DNS_PROVIDER: ${{ matrix.provider }}
+      CERTOPS_DNS_ZONE: ${{ vars.CERTOPS_DNS_ZONE }}
+      CERTOPS_DNS_RESOLVERS_JSON: ${{ vars.CERTOPS_DNS_RESOLVERS_JSON }}
+      CERTOPS_DNS_CREDENTIALS_JSON: ${{ secrets.CERTOPS_DNS_CREDENTIALS_JSON }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Remove only stale owned TXT values
+        run: |
+          node --test scripts/certops-dns-provider-host.test.js
+          node scripts/certops-dns-provider-host.js --janitor

@@ -16,5 +16,6 @@ const { defaultAgentLogger } = require("../src/logging");
 
 runAgent(process.argv.slice(2)).catch((err) => {
   defaultAgentLogger.error("fatal error", err);
-  process.exit(1);
+  // Let pending native teardown finish before the process exits.
+  process.exitCode = 1;
 });

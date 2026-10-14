@@ -1,0 +1,345 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const tls = require("node:tls");
+const https = require("node:https");
+const { Resolver } = require("node:dns/promises");
+const { spawn, spawnSync } = require("node:child_process");
+
+function localEndpoint(value, protocol) {
+  const url = new URL(value);
+  assert.equal(url.protocol, protocol);
+  assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(url.hostname), "qualification CA must be loopback only");
+  return url.href;
+}
+async function waitUntil(check, timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await check();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("Real ACME journey exceeded its deadline");
+}
+module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, createBootstrap, repoRoot }) {
+  const acmeKind = process.env.CERTOPS_REAL_ACME_CLIENT || "certbot";
+  assert.ok(["certbot", "acme.sh"].includes(acmeKind), "Only declared real ACME clients are qualified");
+  const commandRef = acmeKind === "certbot" ? "qualification-certbot" : "qualification-acmesh";
+  let commandArgv = acmeKind === "certbot" ? ["certbot", "--no-verify-ssl", "--agree-tos", "--register-unsafely-without-email"] : ["bash", process.env.CERTOPS_LINUX_ACMESH, "--insecure", "--accountemail", "certops@example.test"];
+  if (acmeKind === "acme.sh") assert.ok(path.isAbsolute(process.env.CERTOPS_LINUX_ACMESH || "") && fs.existsSync(process.env.CERTOPS_LINUX_ACMESH), "Pinned acme.sh executable required");
+  const upstreamCaEndpoint = localEndpoint(process.env.CERTOPS_PEBBLE_DIRECTORY, "https:");
+  let caEndpoint = upstreamCaEndpoint;
+  const dnsEndpoint = localEndpoint(process.env.CERTOPS_PEBBLE_DNS_API, "http:");
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-real-acme-"));
+  const domain = `certops-${crypto.randomBytes(6).toString("hex")}.example.test`;
+  const requestedNames = [domain, `*.${domain}`, `alternate.${domain}`];
+  const verifyNames = (leaf) => assert.deepEqual(leaf.subjectAltName.split(/,\s*/).map((name) => name.replace(/^DNS:/, "")).sort(), [...requestedNames].sort(), "Issued leaf must preserve exactly the requested apex wildcard and additional SAN");
+  const publicKeyDer = (leaf) => leaf.publicKey.export({ type: "spki", format: "der" });
+  const resolver = new Resolver({ timeout: 2000, tries: 1 }); resolver.setServers([process.env.CERTOPS_PEBBLE_DNS_RESOLVER || "127.0.0.1:8053"]);
+  const verifyDnsCleanup = async () => {
+    for (const name of new Set(requestedNames.map((name) => `_acme-challenge.${name.replace(/^\*\./, "")}`))) {
+      try { assert.deepEqual(await resolver.resolveTxt(name), [], "Actual authoritative DNS must contain no residual challenge TXT values"); }
+      catch (error) { if (!["ENODATA", "ENOTFOUND"].includes(error.code)) throw error; }
+    }
+  };
+  const agentId = `acme-${crypto.randomUUID()}`;
+  const certPath = path.join(workDir, "deployed", "fullchain.pem");
+  const configDir = path.join(workDir, "agent");
+  const discoveryDir=path.join(workDir,"discovery");
+  let agent, certificateId, jobId, tlsServer, primaryError, publicSession, gateway, barrierDirectory;
+  const ownedTlsSockets=new Set();
+  let gatewayFailure = "unavailable", blockedDirectoryRequests = 0;
+  const ownedJobIds=[], ownedCertificateIds=[];
+  try {
+  fs.mkdirSync(configDir, { mode: 0o700 });
+  barrierDirectory=path.join(workDir,"command-barrier");fs.mkdirSync(barrierDirectory,{mode:0o700});
+  commandArgv=[process.execPath,path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"),barrierDirectory,...commandArgv];
+  const credentialsFile = path.join(configDir, "dns.json");
+  fs.writeFileSync(credentialsFile, JSON.stringify({ baseUrl: dnsEndpoint, allowInsecureLocalHttp: true }), { mode: 0o600 });
+  const config = {
+    serverUrl: baseUrl, agentId, allowInsecureLocalHttp: true,
+    pollIntervalMs: 500, heartbeatIntervalMs: 1000,
+    declaredTargetSelectors: [domain], declaredCommandProfileNames: [commandRef],
+    execution: { enabled: true, dryRun: false },
+    discovery:{directories:[discoveryDir],intervalMs:1000},
+    windowsDiscovery:{enabled:false},
+    policy: { allowedPaths: [workDir], allowedCommands: { [commandRef]: { argv: commandArgv } }, allowedCaEndpoints: [caEndpoint], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] },
+    dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } },
+    dnsPropagation: { resolvers: [process.env.CERTOPS_PEBBLE_DNS_RESOLVER || "127.0.0.1:8053"], checkAuthoritative: false, intervalMs: 500, timeoutMs: 30000 },
+  };
+  const eabRef = process.env.CERTOPS_REAL_ACME_EAB === "required" ? "qualification-account" : null;
+  let eabSecret;
+  let invalidEabSecret;
+  if (eabRef) {
+    assert.ok(path.isAbsolute(process.env.CERTOPS_PEBBLE_EAB_FILE || ""));
+    const account = JSON.parse(fs.readFileSync(process.env.CERTOPS_PEBBLE_EAB_FILE, "utf8")); eabSecret = account.eabHmacKey;
+    assert.ok(typeof eabSecret === "string" && eabSecret.length > 20);
+    const accountFile = path.join(configDir, "acme-account.json"); fs.writeFileSync(accountFile, JSON.stringify(account), { mode: 0o600 });
+    invalidEabSecret = crypto.randomBytes(32).toString("base64url");
+    const invalidAccountFile = path.join(configDir, "invalid-acme-account.json");
+    fs.writeFileSync(invalidAccountFile, JSON.stringify({ eabKid: account.eabKid, eabHmacKey: invalidEabSecret }), { mode: 0o600 });
+    config.acmeAccounts = { [eabRef]: { credentialsFile: accountFile }, "qualification-invalid-account": { credentialsFile: invalidAccountFile }, "qualification-missing-account": { credentialsFile: path.join(configDir, "missing-owned-account.json") } };
+  }
+  fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), { mode: 0o600 });
+    const { token, plaintextToken } = await createBootstrap();
+    fs.mkdirSync(discoveryDir,{mode:0o700});
+    const certificateFile=path.join(discoveryDir,"server.crt");
+    const privateFile=path.join(discoveryDir,"server.key");
+    const generated=spawnSync("openssl",["req","-x509","-newkey","rsa:2048","-nodes","-keyout",privateFile,"-out",certificateFile,"-days","2","-subj","/CN=discovery.example.test","-addext","subjectAltName=DNS:discovery.example.test"],{stdio:"ignore",timeout:20000});
+    assert.equal(generated.status,0,"Independent discovery certificate generation must succeed");
+    const privateFixture=fs.readFileSync(privateFile,"utf8");
+    const privateBodySentinel=privateFixture.split(/\r?\n/).find(line=>line&&!line.startsWith("-----")).slice(0,64);
+    const publicFixture=fs.readFileSync(certificateFile,"utf8");
+    gateway = https.createServer({ cert: publicFixture, key: privateFixture }, (request, response) => {
+      if (request.method !== "GET" || request.url !== "/dir") { response.writeHead(403).end(); return; }
+      if (gatewayFailure) {
+        blockedDirectoryRequests++;
+        if (gatewayFailure === "rate-limited") response.writeHead(429, { "content-type": "application/problem+json", "retry-after": "0" }).end(JSON.stringify({ type: "urn:ietf:params:acme:error:rateLimited", detail: "Owned qualification directory rate limit" }));
+        else if (gatewayFailure === "malformed") response.writeHead(200, { "content-type": "application/json" }).end("{owned-invalid-directory");
+        else response.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "Owned qualification gateway unavailable" }));
+        return;
+      }
+      const upstream = https.get(upstreamCaEndpoint, { ca: fs.readFileSync(process.env.CERTOPS_PEBBLE_HTTPS_CERT), timeout: 10000 }, (reply) => {
+        const chunks = []; let size = 0;
+        reply.on("data", (chunk) => { size += chunk.length; if (size > 65536) reply.destroy(); else chunks.push(chunk); });
+        reply.on("end", () => { if (!response.destroyed && !response.writableEnded) response.writeHead(reply.statusCode, { "content-type": "application/json" }).end(Buffer.concat(chunks)); });
+        reply.on("error", () => response.destroy());
+      });
+      upstream.on("timeout", () => upstream.destroy()); upstream.on("error", () => response.destroy());
+      response.on("close", () => { if (!response.writableFinished) upstream.destroy(); });
+    });
+    await new Promise((resolve, reject) => { gateway.once("error", reject); gateway.listen(0, "127.0.0.1", () => { gateway.removeListener("error", reject); resolve(); }); });
+    caEndpoint = `https://127.0.0.1:${gateway.address().port}/dir`;
+    config.policy.allowedCaEndpoints = [caEndpoint];
+    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), { mode: 0o600 });
+    fs.writeFileSync(path.join(discoveryDir,"disguised.crt"),privateFixture,{mode:0o600});
+    fs.writeFileSync(path.join(discoveryDir,"wrapped.pem"),Buffer.from(privateFixture).toString("base64"),{mode:0o600});
+    fs.writeFileSync(path.join(discoveryDir,"mixed.pem"),publicFixture+privateFixture,{mode:0o600});
+    fs.writeFileSync(path.join(discoveryDir,"oversized.pem"),Buffer.alloc(1024*1024+1,65),{mode:0o600});
+    const discoveryFingerprint=new crypto.X509Certificate(publicFixture).fingerprint256.replace(/:/g,"").toLowerCase();
+    agent = spawn(process.execPath, [path.join(repoRoot, "packages/agent/bin/tokentimer-agent.js")], {
+      cwd: repoRoot, stdio: "ignore", env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}), TOKENTIMER_AGENT_CONFIG_DIR: configDir, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: plaintextToken, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID: String(token.id) },
+    });
+    await waitUntil(async () => {
+      assert.equal(agent.exitCode, null, "real agent process exited during registration");
+      return (await pool.query("SELECT 1 FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2 AND retired_at IS NULL", [workspaceId, agentId])).rows.length > 0;
+    });
+    await waitUntil(async()=>{
+      assert.equal(agent.exitCode,null,"Real agent exited during file discovery");
+      const observations=await pool.query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1 AND metadata->>'agentId'=$2 AND metadata->>'eventType'='certificate.observed'",[workspaceId,agentId]);
+      if(!observations.rows.length)return false;
+      assert.ok(observations.rows.every(row=>row.metadata.filePath===certificateFile&&row.metadata.fingerprintSha256===discoveryFingerprint),"Only the independently parsed public certificate may become discovery evidence");
+      assert.ok(observations.rows.some(row=>row.metadata.coLocatedKeyDetected===true),"Actual adjacent key presence must be observed without custody");
+      const serialized=JSON.stringify(observations.rows);
+      assert.ok(!serialized.includes(privateFixture)&&!serialized.includes(Buffer.from(privateFixture).toString("base64")),"Private fixture material must never reach persisted evidence");
+      assert.ok(!serialized.includes(privateBodySentinel)&&!serialized.includes("PRIVATE KEY-----"),"Even a private-key body fragment or header must remain local");
+      return true;
+    });
+    publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl);
+    await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ($1,$2,'admin')", [workspaceId, publicSession.userId]);
+    for (const failure of ["unavailable", "rate-limited", "malformed"]) {
+    gatewayFailure = failure;
+    const requestsBefore = blockedDirectoryRequests;
+    const unavailablePath = path.join(workDir, "deployed", `${failure}-gateway.pem`);
+    const unavailable = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", { operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath: unavailablePath, commandRef, caEndpoint, acmeKind, ...(eabRef ? { eabRef } : {}), dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } });
+    assert.equal(unavailable.status, 201); const unavailableJob = unavailable.body.job;
+    ownedJobIds.push(unavailableJob.id); ownedCertificateIds.push(unavailableJob.subjectId);
+    await waitUntil(async () => {
+      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+      const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, unavailableJob.id])).rows[0];
+      if (["succeeded", "dry_run_complete", "cancelled"].includes(current?.status)) throw new Error("Unavailable real CA gateway incorrectly completed issuance");
+      return current?.status === "failed";
+    });
+    assert.ok(blockedDirectoryRequests > requestsBefore, `Actual client must encounter the controlled ${failure} HTTPS directory response`);
+    assert.equal(fs.existsSync(unavailablePath), false);
+    await verifyDnsCleanup();
+    assert.notEqual((await pool.query("SELECT status FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [workspaceId, unavailableJob.subjectId])).rows[0].status, "active");
+    }
+    gatewayFailure = null;
+    if (eabRef) {
+      for (const accountRef of ["qualification-missing-account", "qualification-invalid-account"]) {
+        const refusedPath = path.join(workDir, "deployed", `${accountRef}.pem`);
+        const refused = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", { operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath: refusedPath, commandRef, caEndpoint, acmeKind, eabRef: accountRef, dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } });
+        assert.equal(refused.status, 201); const rejectedJob = refused.body.job;
+        ownedJobIds.push(rejectedJob.id); ownedCertificateIds.push(rejectedJob.subjectId);
+        await waitUntil(async () => {
+          assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+          const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, rejectedJob.id])).rows[0];
+          if (["succeeded", "dry_run_complete", "cancelled"].includes(current?.status)) throw new Error("Invalid or missing EAB credentials incorrectly completed issuance");
+          return current?.status === "failed";
+        });
+        assert.equal(fs.existsSync(refusedPath), false, "Failed EAB admission must never install a certificate");
+        await verifyDnsCleanup();
+        assert.notEqual((await pool.query("SELECT status FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [workspaceId, rejectedJob.subjectId])).rows[0].status, "active");
+      }
+    }
+    const outcome = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", { operation: "issue", idempotencyKey: crypto.randomUUID(), payload: { sans: requestedNames, target: { type: "domain", reference: domain }, certPath, commandRef, caEndpoint, acmeKind, ...(eabRef ? { eabRef } : {}), dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } });
+    assert.equal(outcome.status, 201, `Actual public issuance admission failed (${outcome.body.code || "no-code"})`);
+    const job = outcome.body.job;
+    certificateId = job.subjectId || job.subject_id;
+    ownedCertificateIds.push(certificateId);
+    jobId = job.id;
+    ownedJobIds.push(jobId);
+    assert.ok(jobId && certificateId, "issuance must return job and certificate identities");
+    await waitUntil(async () => {
+      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [jobId])).rows[0];
+      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Real ACME job terminated ${row.status}`);
+      return row?.status === "succeeded";
+    });
+    const firstIssuanceObservedAt = Date.now();
+    await verifyDnsCleanup();
+    const pem = fs.readFileSync(certPath, "utf8");
+    const certificate = new crypto.X509Certificate(pem);
+    verifyNames(certificate);
+    assert.equal(certificate.checkHost(domain), domain);
+    assert.ok(Date.parse(certificate.validTo) > Date.now());
+    const key = fs.readFileSync(path.join(configDir, "keys", `${certificateId}.key.pem`), "utf8");
+    assert.ok(certificate.checkPrivateKey(crypto.createPrivateKey(key)), "deployed certificate must match agent-local private key");
+    const keyPath=path.join(configDir,"keys",`${certificateId}.key.pem`);
+    tlsServer = tls.createServer({ cert: pem, key,SNICallback:(_name,callback)=>{
+      try{callback(null,tls.createSecureContext({cert:fs.readFileSync(certPath),key:fs.readFileSync(keyPath)}));}catch(error){callback(error);}
+    } }, (socket) => socket.end());
+    tlsServer.on("connection",socket=>{ownedTlsSockets.add(socket);socket.once("close",()=>ownedTlsSockets.delete(socket));});
+    await new Promise((resolve, reject) => { tlsServer.once("error", reject); tlsServer.listen(0, "127.0.0.1", () => { tlsServer.removeListener("error", reject); resolve(); }); });
+    const servedFingerprint = () => new Promise((resolve, reject) => {
+      const socket = tls.connect({ host: "127.0.0.1", port: tlsServer.address().port, servername: domain, ca: fs.readFileSync(process.env.CERTOPS_PEBBLE_ISSUER_ROOT), rejectUnauthorized: true }, () => { try { assert.equal(socket.authorized, true); resolve(socket.getPeerCertificate().fingerprint256); } catch (error) { reject(error); } finally { socket.end(); } });
+      socket.setTimeout(10000, () => socket.destroy(new Error("Independent trusted TLS observation timed out")));
+      socket.on("error", reject);
+    });
+    const observed=await servedFingerprint();
+    assert.equal(observed, certificate.fingerprint256);
+    const evidence = await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, jobId]);
+    assert.ok(evidence.rows.length, "real agent evidence must persist in the API database");
+
+    const profile=(await pool.query("SELECT cp.public_metadata, mc.not_after FROM managed_certificates mc JOIN certificate_profiles cp ON cp.id=mc.profile_id AND cp.workspace_id=mc.workspace_id WHERE mc.workspace_id=$1 AND mc.id=$2",[workspaceId,certificateId])).rows[0];
+    assert.ok(profile?.public_metadata?.renewalProfile,"Actual successful issuance must derive a reusable execution profile");
+    assert.equal(profile.public_metadata.renewalProfile.acme.commandRef, commandRef, "Persisted renewal must use the actual qualified client profile");
+    if (eabRef) assert.equal(profile.public_metadata.renewalProfile.ca.eabRef, eabRef);
+    assert.ok(new Date(profile.not_after).getTime()<=Date.now()+30*86400000,"Real short-lived fixture leaf must naturally enter the renewal window");
+    assert.ok((await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE",[workspaceId,certificateId])).rows.length,"Successful agent deployment must enable its actual management period");
+    await waitUntil(() => Date.now() > firstIssuanceObservedAt + 1500);
+    const sweep=await require(path.join(repoRoot,"apps/api/services/certops/renewalScheduler.js")).runRenewalSchedulerSweep({dbPool:pool,env:process.env});
+    assert.equal(sweep.errors.length,0,"Actual renewal scheduler must not hide errors");
+    const renewal=(await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation' ORDER BY created_at DESC LIMIT 1",[workspaceId,String(certificateId)])).rows[0];
+    assert.ok(renewal,"Real persisted profile must produce an automatic renewal job");
+    ownedJobIds.push(renewal.id);
+    await waitUntil(async()=>{
+      assert.equal(agent.exitCode,null,"Actual agent exited during scheduled renewal");
+      const row=(await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[renewal.id])).rows[0];
+      if(["failed","rejected","cancelled"].includes(row?.status))throw new Error("Actual scheduled renewal terminated unsuccessfully");
+      return row?.status==="succeeded";
+    });
+    const firstRenewalObservedAt = Date.now();
+    await verifyDnsCleanup();
+    const renewed=new crypto.X509Certificate(fs.readFileSync(certPath));
+    verifyNames(renewed);
+    assert.equal(renewed.checkHost(domain),domain);
+    assert.notEqual(renewed.fingerprint256,certificate.fingerprint256,"CA must issue a genuinely new leaf");
+    assert.equal(publicKeyDer(renewed).equals(publicKeyDer(certificate)), false, "Derived rotateOnRenew must genuinely rotate the agent-local key");
+    assert.ok(Date.parse(renewed.validTo) > Date.parse(certificate.validTo), "Actual expiry must advance to the next scheduler generation");
+    assert.ok(renewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
+    assert.equal(await servedFingerprint(),renewed.fingerprint256,"Dynamic filesystem TLS fixture must serve the actual renewed deployment");
+    assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2",[workspaceId,renewal.id])).rows.length,"Scheduled renewal must persist actual agent evidence");
+    // Exercise a second naturally due cycle without changing certificate or
+    // scheduler timestamps. Pause only our own execution process while two
+    // real sweeps race, so completion cannot create a new due generation
+    // between the admission checks.
+    assert.equal(process.platform, "linux");
+    await waitUntil(() => Date.now() > firstRenewalObservedAt + 1500);
+    const previousRenewals = (await pool.query("SELECT id FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation'", [workspaceId, String(certificateId)])).rows.map((row) => row.id);
+    assert.equal(agent.kill("SIGSTOP"), true);
+    let second;
+    try {
+      const sweeps = await Promise.all([0, 1].map(() => require(path.join(repoRoot, "apps/api/services/certops/renewalScheduler.js")).runRenewalSchedulerSweep({ dbPool: pool, env: process.env })));
+      assert.ok(sweeps.every((result) => result.errors.length === 0));
+      const admitted = (await pool.query("SELECT id,status FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation' AND NOT(id=ANY($3::uuid[]))", [workspaceId, String(certificateId), previousRenewals])).rows;
+      assert.equal(admitted.length, 1, "Concurrent sweeps must admit one job for the actual next expiry generation");
+      second = admitted[0]; ownedJobIds.push(second.id);
+    } finally { assert.equal(agent.kill("SIGCONT"), true); }
+    await waitUntil(async () => {
+      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+      const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [second.id])).rows[0];
+      if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error("Actual second scheduled renewal terminated unsuccessfully");
+      return row?.status === "succeeded";
+    });
+    const twiceRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
+    await verifyDnsCleanup();
+    verifyNames(twiceRenewed);
+    assert.equal(twiceRenewed.checkHost(domain), domain);
+    assert.notEqual(twiceRenewed.fingerprint256, renewed.fingerprint256);
+    assert.notEqual(twiceRenewed.fingerprint256, certificate.fingerprint256);
+    assert.equal(publicKeyDer(twiceRenewed).equals(publicKeyDer(renewed)), false);
+    assert.ok(Date.parse(twiceRenewed.validTo) > Date.parse(renewed.validTo));
+    assert.ok(twiceRenewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
+    assert.equal(await servedFingerprint(), twiceRenewed.fingerprint256);
+    assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, second.id])).rows.length);
+    // A human renewal must resolve the stored profile, rather than accepting
+    // caller-supplied issuer/path settings, and reach the same native pipeline.
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const profileBeforeManual = (await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile;
+    const manualInput = { operation: "renew", subjectType: "managed_certificate", subjectId: String(certificateId), idempotencyKey: crypto.randomUUID() };
+    const manual = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", manualInput);
+    assert.equal(manual.status, 201); const manualJob = manual.body.job; ownedJobIds.push(manualJob.id);
+    assert.equal(manualJob.source, "api");
+    assert.equal(manualJob.payload.commandRef, commandRef);
+    assert.equal(manualJob.payload.caEndpoint, caEndpoint);
+    assert.equal(manualJob.payload.certPath, certPath);
+    assert.equal(manualJob.payload.dnsProvider, "pebble-challtestsrv");
+    assert.equal(manualJob.payload.dnsZone, "example.test");
+    assert.deepEqual([...manualJob.payload.sans].sort(), [...requestedNames].sort());
+    const repeatedManual = await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/jobs`, "POST", manualInput);
+    assert.equal(repeatedManual.status, 201); assert.equal(repeatedManual.body.job.id, manualJob.id);
+    await waitUntil(async () => {
+      assert.equal(agent.exitCode, null); assert.equal(agent.signalCode, null);
+      const current = (await pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, manualJob.id])).rows[0];
+      if (["failed", "rejected", "cancelled", "blocked", "orphaned_unknown_effect"].includes(current?.status)) throw new Error("Actual profile-driven manual renewal terminated unsuccessfully");
+      return current?.status === "succeeded";
+    });
+    await verifyDnsCleanup();
+    const manuallyRenewed = new crypto.X509Certificate(fs.readFileSync(certPath));
+    verifyNames(manuallyRenewed);
+    assert.notEqual(manuallyRenewed.fingerprint256, twiceRenewed.fingerprint256);
+    assert.notEqual(manuallyRenewed.serialNumber, twiceRenewed.serialNumber);
+    assert.equal(publicKeyDer(manuallyRenewed).equals(publicKeyDer(twiceRenewed)), false);
+    assert.ok(manuallyRenewed.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(keyPath))));
+    assert.equal(await servedFingerprint(), manuallyRenewed.fingerprint256);
+    assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, manualJob.id])).rows.length);
+    assert.deepEqual((await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile, profileBeforeManual,
+      "manual renewal must preserve its stored execution profile");
+    await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,waitUntil,verifyDnsCleanup,servedFingerprint});
+    if (eabSecret) {
+      const stored = await pool.query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1", [workspaceId]);
+      const jobs = await pool.query("SELECT payload,result_metadata FROM certificate_jobs WHERE workspace_id=$1", [workspaceId]);
+      const publicData = JSON.stringify([stored.rows, jobs.rows, profile.public_metadata]);
+      assert.equal([eabSecret, invalidEabSecret].some((secret) => publicData.includes(secret)), false, "Actual EAB HMACs must remain agent-local and absent from persisted public data");
+    }
+  } catch(error) { primaryError=error; throw error; }
+  finally {
+    const cleanupErrors = [];
+    const cleanup = async (action) => { try { await action(); } catch (error) { cleanupErrors.push(error); } };
+    await cleanup(async () => { if (tlsServer) {for(const socket of ownedTlsSockets)socket.destroy();let closed=false;tlsServer.close(()=>{closed=true;});await waitUntil(()=>closed&&ownedTlsSockets.size===0,5000);} });
+    await cleanup(async () => { if (agent && agent.exitCode === null && agent.signalCode === null) {
+      agent.kill("SIGCONT"); agent.kill("SIGTERM");
+      try { await waitUntil(() => agent.exitCode !== null || agent.signalCode !== null, 5000); }
+      catch { agent.kill("SIGKILL"); await waitUntil(() => agent.exitCode !== null || agent.signalCode !== null, 5000); }
+    } });
+    await cleanup(async () => { if (gateway) { gateway.closeAllConnections(); let closed = false; gateway.close(() => { closed = true; }); await waitUntil(() => closed, 5000); } });
+    for(const ownedJobId of ownedJobIds) {
+      await cleanup(() => pool.query("DELETE FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, ownedJobId]));
+      await cleanup(() => pool.query("DELETE FROM certificate_job_log WHERE workspace_id=$1 AND job_id=$2", [workspaceId, ownedJobId]));
+      await cleanup(() => pool.query("DELETE FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [workspaceId, ownedJobId]));
+    }
+    for (const ownedCertificateId of ownedCertificateIds) await cleanup(() => pool.query("DELETE FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [workspaceId, ownedCertificateId]));
+    await cleanup(async () => { if (publicSession) await publicSession.cleanup(); });
+    await cleanup(() => {
+      assert.equal(path.dirname(path.resolve(workDir)), path.resolve(os.tmpdir()));
+      assert.ok(path.basename(workDir).startsWith("certops-real-acme-"));
+      if(barrierDirectory){for(const entry of fs.readdirSync("/proc")){if(!/^\d+$/.test(entry))continue;let argv;try{argv=fs.readFileSync(`/proc/${entry}/cmdline`,"utf8").split("\0");}catch(error){if(["ENOENT","ESRCH","EACCES"].includes(error.code))continue;throw error;}assert.ok(!(argv.includes(path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"))&&argv.includes(barrierDirectory)),"Refusing state removal while an owned command barrier remains alive");}}
+      fs.rmSync(workDir, { recursive: true, force: true });
+    });
+    if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed");
+  }
+};

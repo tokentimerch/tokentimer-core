@@ -1,0 +1,52 @@
+name: CertOps enterprise ADCS offline-root hierarchy
+on:
+  workflow_dispatch:
+    inputs:
+      lab_hours:
+        description: Maximum lifetime of the isolated four-VM hierarchy lab
+        type: choice
+        options: ['4', '8']
+        default: '4'
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  hierarchy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-lab
+    timeout-minutes: 165
+    env:
+      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+      LAB_HOURS: ${{ inputs.lab_hours }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Require every AD CS safety fixture family before provisioning
+        run: node scripts/certops-adcs-safety-inventory.js
+      - name: Authenticate dedicated disposable lab environment
+        shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Build offline root and enterprise subordinate and run real agent journeys
+        shell: pwsh
+        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion '2022' -Language 'en-US' -HierarchyRole subordinate
+      - name: Verify mandatory hierarchy execution evidence
+        run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-hierarchy-real.json
+      - name: Destroy every owned temporary resource and prove group absence
+        if: always()
+        shell: pwsh
+        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP
+      - name: Preserve sanitized hierarchy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: disposable-enterprise-adcs-hierarchy
+          path: qualification-results/enterprise-adcs-*.json
+          if-no-files-found: error

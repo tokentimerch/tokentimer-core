@@ -27,6 +27,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { normalizeRuleConstraints } = require("../issuers/adcs-enrollment-rules");
 const { normalizePropagationConfig } = require("../dns/propagate.js");
 const {
   applyRestrictivePermissions,
@@ -1020,7 +1021,7 @@ function validateAdcsObject(value) {
       if (typeof rule.template !== "string" || !ADCS_TEMPLATE_PATTERN.test(rule.template)) {
         throw new Error(`tokentimer-agent: adcs.enrollmentRules[${index}].template is invalid`);
       }
-      const normalized = { caConfig: rule.caConfig, template: rule.template };
+      const normalized = { caConfig: rule.caConfig, template: rule.template, ...normalizeRuleConstraints(rule, `tokentimer-agent: adcs.enrollmentRules[${index}]`) };
       if (rule.operatorAttested !== undefined) {
         if (typeof rule.operatorAttested !== "boolean") {
           throw new Error(

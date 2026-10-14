@@ -71,6 +71,8 @@
       { "path": "/api/v1/workspaces/{id}/certops/csrs/{csrId}/cancel", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/settings", "method": "PUT" },
+      { "path": "/api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/retry-installation", "method": "POST" },
+      { "path": "/api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "GET" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs", "method": "POST" },
       { "path": "/api/v1/workspaces/{id}/certops/jobs/bulk-renew", "method": "POST" },

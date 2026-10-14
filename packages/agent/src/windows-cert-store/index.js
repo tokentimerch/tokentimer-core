@@ -1787,6 +1787,8 @@ async function removeAbandonedKeyContainer({
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal = undefined,
+  allowAlreadyAbsent = false,
+  requireAlreadyAbsent = false,
 } = {}) {
   if (!isNonEmptyString(containerName) || !CONTAINER_NAME_PATTERN.test(containerName)) {
     throw buildError(`containerName must match ${CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`);
@@ -1796,6 +1798,19 @@ async function removeAbandonedKeyContainer({
   }
   assertSafeArgvElements("certutilPath", [certutilPath]);
 
+  if (allowAlreadyAbsent || requireAlreadyAbsent) {
+    const listing = await execWithoutShell(execFileImpl,
+      [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-key"], timeoutMs, signal);
+    if (listing.exitCode !== 0 || listing.execError) {
+      return guardReturnValue({ ok: false, reason: "container_probe_failed", exitCode: listing.exitCode });
+    }
+    if (!String(listing.stdout || "").split(/\r?\n/).map((line) => line.trim()).includes(containerName)) {
+      return guardReturnValue({ ok: true, alreadyAbsent: true });
+    }
+  }
+  if (requireAlreadyAbsent) {
+    return guardReturnValue({ ok: false, reason: "unproven_container_ownership", exitCode: null });
+  }
   const delkeyArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-delkey", containerName];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
   const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);

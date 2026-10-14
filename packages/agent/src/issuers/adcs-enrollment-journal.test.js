@@ -768,4 +768,27 @@ describe("adcs-enrollment-journal", () => {
     assert.equal(read.journal.predecessorThumbprint, "AA".repeat(20));
     assert.equal(read.journal.installStep, "verify");
   });
+
+  it("a pre-CSR refusal cannot discard submitted CSR identity", async () => {
+    const { csrSha256 } = await commitPrepared(stateDir);
+    await commitSubmitting(stateDir, csrSha256);
+    await assert.rejects(writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+      state: "refused", preSubmitPhase: "keygen_intent", containerName: CONTAINER,
+      snapshotSha256: "b".repeat(64), errorCode: "ADCS_TEMPLATE_UNSAFE",
+    }), /requires an existing key-generation intent/);
+    const read = readEnrollmentJournal(stateDir, ENROLLMENT_ID);
+    assert.equal(read.journal.state, "submitting"); assert.equal(read.journal.csrSha256, csrSha256);
+  });
+
+  it("a pre-CSR refusal cannot carry invented request or certificate evidence", async () => {
+    await writeKeygenIntent({ stateDir, enrollmentId: ENROLLMENT_ID, containerName: CONTAINER,
+      attempt: 1, snapshotSha256: "b".repeat(64), jobId: "job:1" });
+    for (const evidence of [{ requestId: 1 }, { csrSpkiSha256: "c".repeat(64) }, { leafSha256: "d".repeat(64) }]) {
+      await assert.rejects(writeEnrollmentJournal(stateDir, ENROLLMENT_ID, {
+        state: "refused", preSubmitPhase: "keygen_intent", containerName: CONTAINER,
+        snapshotSha256: "b".repeat(64), errorCode: "ADCS_TEMPLATE_UNSAFE", ...evidence,
+      }), /unexpected .* before CSR/);
+    }
+    assert.equal(readEnrollmentJournal(stateDir, ENROLLMENT_ID).journal.state, "keygen_intent");
+  });
 });

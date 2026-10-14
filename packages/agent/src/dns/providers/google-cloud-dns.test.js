@@ -33,6 +33,24 @@ const CHALLENGE = {
   recordName: "_acme-challenge.example.com",
   txtValue: "token-value",
 };
+test("google-cloud-dns: generated OAuth bearer echoes are redacted on HTTP and network failures", async () => {
+  const token = "generated-gcp-bearer-fixture";
+  for (const network of [false, true]) {
+    const fetchStub = makeFetchStub((url) => {
+      if (url.includes("oauth2.googleapis.com")) return { status: 200, body: JSON.stringify({ access_token: token }) };
+      if (network) throw new Error("Upstream transport reflected " + token);
+      return { status: 403, body: "Upstream reflected " + token };
+    });
+    const result = await createDnsSolver({provider: "google-cloud-dns",credentials:CREDENTIALS,fetchImpl:fetchStub,useFileLock:false}).presentChallenge(CHALLENGE);
+    assert.equal(result.ok, false); assert.equal(result.detail.includes(token), false);
+  }
+});
+test("google-cloud-dns: OAuth grant errors redact the generated signed assertion", async () => {
+  let assertion;
+  const fetchStub = makeFetchStub((_url, options) => { assertion = new URLSearchParams(options.body).get("assertion"); return { status: 403, body: assertion }; });
+  const result = await createDnsSolver({provider: "google-cloud-dns",credentials:CREDENTIALS,fetchImpl:fetchStub,useFileLock:false}).presentChallenge(CHALLENGE);
+  assert.equal(result.ok, false); assert.ok(assertion); assert.equal(result.detail.includes(assertion), false);
+});
 
 function makeFetchStub(respond) {
   const calls = [];

@@ -1,0 +1,11 @@
+# External HTTP-01 controller qualification
+
+The manual `certops-kubernetes-http01-qualification.yml` workflow on trusted `main` creates a dedicated single-node kind cluster, cert-manager, the candidate production controller and a migrated API/PostgreSQL fixture. This source has not yet executed on its native hosted environment.
+
+A private Pebble 2.8 test CA performs real HTTP-01 validation. A pinned Traefik 3.7.14 ingress serves cert-manager's genuine solver response on the kind node's port 80. The DNS-only challenge fixture resolves reserved `certops.invalid` names to that node; fake HTTP/TLS challenge servers and Pebble validation bypass are disabled. A watched, actually presented HTTP-01 Challenge is mandatory. This validates the supported external controller path; it does not qualify native-agent HTTP-01 or a public certificate authority.
+
+Eight named scenarios require public provisioning/idempotency, actual HTTP-01 presentation and issuance, persisted public certificate observation, CA-root-trusted destination TLS, pause admission with continued observation, real API transport interruption/reissue recovery, production controller restart, and cleanup. Only the destination pod consumes its mounted private key. The harness reads bounded public certificates and records sanitized scenario results, candidate identity and source fingerprint.
+
+Cleanup removes owned ingress/CA/DNS processes, Helm release, namespaces, private bridge, API identities and temporary files. It restores the dedicated cluster's original CoreDNS configuration. The workflow always destroys the API stack and kind cluster. Cleanup failure prevents qualification; absent capabilities and missing scenarios cannot become successful skips. The release matrix requires this suite separately from self-signed controller validation.
+
+The fixture follows the [cert-manager HTTP-01 solver contract](https://cert-manager.io/docs/configuration/acme/http01/) and the [private ACME CA trust contract](https://cert-manager.io/docs/configuration/acme/). [Pebble 2.8](https://github.com/letsencrypt/pebble/tree/v2.8.0) is a test CA; [Traefik chart 41.7.1](https://github.com/traefik/traefik-helm-chart/releases/tag/v41.7.1) is pinned with the ingress image digest.

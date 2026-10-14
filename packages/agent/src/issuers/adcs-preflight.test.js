@@ -231,6 +231,7 @@ describe("adcs-preflight certutil parsing", () => {
         `pKIExtendedKeyUsage = ${eku}`,
         `msPKI-Certificate-Application-Policy = ${eku}`,
         "msPKI-Minimal-Key-Size = 2048",
+        "msPKI-Certificate-Name-Flag = 1",
       ].join("\n");
     }
     function execFor(selected) {

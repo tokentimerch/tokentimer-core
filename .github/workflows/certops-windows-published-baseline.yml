@@ -1,0 +1,35 @@
+name: Published Windows upgrade baseline preflight
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Download immutable public previous-release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'published-windows-baseline'
+          New-Item -ItemType Directory -Path $output | Out-Null
+          gh release download v0.17.2 --repo tokentimerch/tokentimer-core --pattern 'tokentimer-agent-0.17.2.tgz*' --dir $output
+          if ($LASTEXITCODE) { throw 'Public baseline assets unavailable' }
+          node scripts/certops-windows-published-baseline.js "$output\tokentimer-agent-0.17.2.tgz" "$output\tokentimer-agent-0.17.2.tgz.sha256" qualification-results/windows-published-baseline.json
+          if ($LASTEXITCODE) { throw 'Strict published Windows upgrade preflight failed; inspect public-only prerequisite report' }
+      - name: Preserve public-only baseline readiness report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-published-upgrade-baseline
+          path: qualification-results/windows-published-baseline.json
+          if-no-files-found: error

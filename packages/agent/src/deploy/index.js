@@ -58,6 +58,7 @@ const fsp = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { fsyncDirectory } = require("../platform/durability.js");
+const { applyWindowsAcl } = require("../platform");
 
 // Mirrors discovery/index.js's PRIVATE_KEY_PEM_HEADER_PATTERN (which itself
 // mirrors apps/api/utils/secretMaterial.js). Duplicated, not imported, to
@@ -532,7 +533,7 @@ async function atomicWrite(
   fspImpl,
   destinationPath,
   content,
-  { mode = DEPLOYED_FILE_MODE, uid = null, gid = null } = {},
+  { mode = DEPLOYED_FILE_MODE, uid = null, gid = null, privateMaterial = false } = {},
 ) {
   const dirPath = path.dirname(destinationPath);
   const tempPath = path.join(
@@ -543,6 +544,9 @@ async function atomicWrite(
   let handle;
   try {
     handle = await fspImpl.open(tempPath, "wx", mode);
+    // Restrict the empty staging file before any secret bytes are written.
+    // chmod does not enforce a Windows DACL. Rename retains this verified ACL.
+    if (privateMaterial && process.platform === "win32") applyWindowsAcl(tempPath);
     await handle.writeFile(content);
     if (typeof handle.chmod === "function") {
       try {
@@ -1369,6 +1373,14 @@ async function deployCertificateAndKey({
       (existingChain !== null &&
         existingChain.equals(Buffer.from(chainPem, "utf8")));
     if (certUnchanged && keyUnchanged && chainUnchanged) {
+      if (process.platform === "win32") {
+        try { applyWindowsAcl(realKeyDestination); }
+        catch (error) {
+          if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+          if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
+          return failure("permissions", "deploy: could not restrict unchanged private key: " + error.message);
+        }
+      }
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
       if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
       counters.idempotentSkips += 1;
@@ -1398,8 +1410,8 @@ async function deployCertificateAndKey({
       }
       if (existingKey !== null) {
         keyBackupPath = backupPathFor(realKeyDestination, target.backupDir, stamp);
-        await fspImpl.writeFile(keyBackupPath, existingKey, {
-          mode: DEPLOYED_FILE_MODE,
+        await atomicWrite(fspImpl, keyBackupPath, existingKey, {
+          mode: DEPLOYED_FILE_MODE, privateMaterial: true,
         });
       }
       if (realChainDestination !== null && existingChain !== null) {
@@ -1428,8 +1440,8 @@ async function deployCertificateAndKey({
           rolledBack = true;
         }
         if (keyBackupPath !== null && existingKey !== null) {
-          await fspImpl.writeFile(realKeyDestination, existingKey, {
-            mode: DEPLOYED_FILE_MODE,
+          await atomicWrite(fspImpl, realKeyDestination, existingKey, {
+            mode: DEPLOYED_FILE_MODE, privateMaterial: true,
           });
           rolledBack = true;
         }
@@ -1477,6 +1489,7 @@ async function deployCertificateAndKey({
         gid: ownership.gid,
       });
       await atomicWrite(fspImpl, realKeyDestination, keyContent, {
+        privateMaterial: true,
         mode: keyMode,
         uid: ownership.uid,
         gid: ownership.gid,
@@ -1526,6 +1539,7 @@ async function deployCertificateAndKey({
           // deletes the only remaining copy of the rotated key.
           const stagingKeyBytes = await fspImpl.readFile(normalizedPrivateKeyPath);
           await atomicWrite(fspImpl, custodyResolved, stagingKeyBytes, {
+            privateMaterial: true,
             mode: DEPLOYED_KEY_DEFAULT_MODE,
           });
           const promoted = await fspImpl.readFile(custodyResolved);

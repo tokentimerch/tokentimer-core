@@ -378,6 +378,16 @@ describe("loadAgentConfig", () => {
     });
   });
 
+  it("preserves explicit whole AD CS rule scopes and rejects malformed configured constraints", () => {
+    const dir=makeTempConfigDir();ensureConfigDir(dir);
+    const rule={caConfig:"ca.example.com\\Example CA",template:"Web",dnsScopes:["EXAMPLE.COM"],keyAlgorithms:["rsa","ecdsa"]};
+    const write=value=>fs.writeFileSync(path.join(dir,"config.json"),JSON.stringify({serverUrl:"https://control-plane.example.com",adcs:{enrollmentRules:[value]}}));
+    withEnv({TOKENTIMER_AGENT_SERVER_URL:undefined},()=>{
+      write(rule);assert.deepEqual(loadAgentConfig({configDir:dir}).adcs.enrollmentRules,[{...rule,dnsScopes:["example.com"]}]);
+      for(const malformed of [{dnsScopes:null},{dnsScopes:[]},{dnsScopes:["*.example.com"]},{keyAlgorithms:[]},{keyAlgorithms:["RSA"]}]){write({...rule,...malformed});assert.throws(()=>loadAgentConfig({configDir:dir}),/adcs.enrollmentRules\[0\]/);}
+    });
+  });
+
   it("rejects a non-object policy in config.json", () => {
     const dir = makeTempConfigDir();
     ensureConfigDir(dir);

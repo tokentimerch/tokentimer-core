@@ -603,7 +603,7 @@ const SERVICE_ENVIRONMENT_REGISTRY_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Servi
  * Rewrites the Windows service's registry `Environment` value (written by
  * install-agent.ps1's `Set-ServiceEnvironment`) to drop the single-use
  * bootstrap token immediately after it has been exchanged for a stored
- * credential, leaving only `TOKENTIMER_AGENT_CONFIG_DIR` behind. Without
+ * credential, preserving the owning config directory and unrelated values. Without
  * this, a secret documented and enforced everywhere else as single-use
  * would otherwise sit in `HKLM` in cleartext for the entire lifetime of
  * the install, readable by anything that can read a LocalSystem service's
@@ -640,10 +640,35 @@ function clearWindowsServiceBootstrapToken({
     return { attempted: false, cleared: false, reason: "not running on Windows" };
   }
 
-  const runRegExe = (args) =>
-    spawn("reg.exe", args, { encoding: "utf8", windowsHide: true, timeout: 30000 });
+  const normalizeOwnedPath = (value) => {
+    if (typeof value !== "string" || /[\0\r\n]/.test(value) ||
+        !/^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+(?:[\\/]|$))/.test(value) ||
+        /^\\\\[?.]\\/.test(value)) return null;
+    const normalized = path.win32.normalize(value);
+    return normalized === path.win32.parse(normalized).root ? normalized : normalized.replace(/\\+$/, "");
+  };
+  const callerPath = normalizeOwnedPath(configDir);
+  if (!callerPath) return { attempted: false, cleared: false, reason: "caller config directory is not an unambiguous absolute Windows path" };
+  const runRegExe = (args) => {
+    try { return spawn("reg.exe", args, { encoding: "utf8", windowsHide: true, timeout: 30000 }); }
+    catch (error) { return { error }; }
+  };
 
-  const queryResult = runRegExe(["query", SERVICE_ENVIRONMENT_REGISTRY_KEY, "/v", "Environment"]);
+  // Two explicit separators make ambiguous native rendering fail closed:
+  // neither literal "\\0" nor an embedded separator may corrupt an entry.
+  const queryArgs = (separator) => ["query", SERVICE_ENVIRONMENT_REGISTRY_KEY, "/v", "Environment", "/se", separator];
+  const parseEnvironment = (result, separator) => {
+    if (!result || result.error || result.status !== 0) return null;
+    const matches = String(result.stdout || "").split(/\r?\n/).map((line) => /^[ \t]*Environment[ \t]+REG_MULTI_SZ[ \t]+(.*)$/i.exec(line)).filter(Boolean);
+    if (matches.length !== 1) return null;
+    const entries = matches[0][1].split(separator);
+    // Empty terminal strings terminate REG_MULTI_SZ; empty interior entries
+    // are ambiguous and must never cause an environment rewrite.
+    while (entries.at(-1) === "") entries.pop();
+    if (!entries.length || entries.some((entry) => entry.indexOf("=") <= 0 || /[\0\r\n]/.test(entry))) return null;
+    return entries;
+  };
+  const queryResult = runRegExe(queryArgs("|"));
   if (!queryResult || (queryResult.error && queryResult.error.code === "ENOENT")) {
     return { attempted: true, cleared: false, reason: "reg.exe is not available on this host" };
   }
@@ -657,8 +682,19 @@ function clearWindowsServiceBootstrapToken({
       reason: "no service Environment registry value is present",
     };
   }
-  if (!/TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=/.test(String(queryResult.stdout || ""))) {
+  const environment = parseEnvironment(queryResult, "|");
+  if (!environment) return { attempted: true, cleared: false, reason: "service Environment is not an unambiguous REG_MULTI_SZ" };
+  const ownerEntries = environment.filter((entry) => /^TOKENTIMER_AGENT_CONFIG_DIR=/i.test(entry));
+  if (ownerEntries.length !== 1 || normalizeOwnedPath(ownerEntries[0].slice(ownerEntries[0].indexOf("=") + 1)) !== callerPath) {
+    return { attempted: true, cleared: false, reason: "service config directory does not match this agent" };
+  }
+  const isBootstrap = (entry) => /^TOKENTIMER_AGENT_BOOTSTRAP_TOKEN(?:_ID)?=/i.test(entry);
+  if (!environment.some(isBootstrap)) {
     return { attempted: true, cleared: false, reason: "registry value already has no token" };
+  }
+  const corroborated = parseEnvironment(runRegExe(queryArgs("^")), "^");
+  if (!corroborated || JSON.stringify(corroborated) !== JSON.stringify(environment)) {
+    return { attempted: true, cleared: false, reason: "service Environment changed or has ambiguous separators" };
   }
 
   const addResult = runRegExe([
@@ -669,7 +705,9 @@ function clearWindowsServiceBootstrapToken({
     "/t",
     "REG_MULTI_SZ",
     "/d",
-    `TOKENTIMER_AGENT_CONFIG_DIR=${configDir}`,
+    environment.filter((entry) => !isBootstrap(entry)).join("|"),
+    "/s",
+    "|",
     "/f",
   ]);
   if (!addResult || addResult.status !== 0) {

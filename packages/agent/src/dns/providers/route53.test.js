@@ -371,3 +371,17 @@ test("route53: error body echoing the secret key is redacted wholesale", async (
   const result = await solver.presentChallenge(CHALLENGE);
   assert.equal(result.detail, "[redacted]");
 });
+
+test("route53: generated SigV4 signature echoes are redacted on HTTP and network failures", async () => {
+  for (const network of [false, true]) {
+    let signature;
+    const fetchImpl = (_url, options) => {
+      signature = options.headers.Authorization.split("Signature=")[1]; assert.ok(signature);
+      if (network) throw new Error("Reflected signed request " + signature);
+      return Promise.resolve({ status: 403, text: () => Promise.resolve("Reflected signed request " + signature) });
+    };
+    const solver = createDnsSolver({ provider: "route53", credentials: CREDENTIALS, fetchImpl });
+    const result = await solver.presentChallenge(CHALLENGE);
+    assert.equal(result.ok, false); assert.equal(result.detail.includes(signature), false);
+  }
+});

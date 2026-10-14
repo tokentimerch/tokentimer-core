@@ -840,6 +840,12 @@ async function renewJobLeaseOrAbort({
  * @param {{ intervalMs?: number, onAbort?: (abort: object) => void }} [options]
  * @returns {{ stop: () => void, getAbort: () => object|null }}
  */
+function startExecutionLeaseRenewal(leaseOpts, options = {}) {
+  const controller = new AbortController();
+  const heartbeat = startPeriodicLeaseRenewal(leaseOpts, {...options, onAbort: abort => controller.abort(abort)});
+  return {...heartbeat, signal: controller.signal};
+}
+
 function startPeriodicLeaseRenewal(leaseOpts, { intervalMs = LEASE_HEARTBEAT_INTERVAL_MS, onAbort } = {}) {
   let stopped = false;
   let inFlight = null;
@@ -2078,7 +2084,7 @@ async function handleSignedJob({
       log,
       leaseState,
     };
-    const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
+    const leaseHeartbeat = startExecutionLeaseRenewal(leaseOpts);
     let outcome;
     try {
       outcome = await withJobConsole(jobLogSession, () => executeJob({
@@ -2091,6 +2097,7 @@ async function handleSignedJob({
         leaseClient: client,
         leaseState,
         executionContext,
+        signal: leaseHeartbeat.signal,
         log,
         jobLog: jobLogSession?.logger,
       }));
@@ -2309,6 +2316,7 @@ function stepForAction(action) {
 
 async function executeJob({
   job,
+  signal = null,
   jobId,
   attemptId = null,
   claimId = null,
@@ -2534,6 +2542,7 @@ async function executeJob({
     if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
       return executeWindowsIisRenewJob({
         job,
+      signal,
         jobId,
         policyEngine,
         client: claimBoundClient,
@@ -2546,6 +2555,7 @@ async function executeJob({
     }
     return executeRenewJob({
       job,
+      signal,
       jobId,
       policyEngine,
       client: claimBoundClient,
@@ -2829,6 +2839,7 @@ function discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId }
  */
 async function executeRenewJob({
   job,
+  signal = null,
   jobId,
   policyEngine,
   client,
@@ -2968,6 +2979,7 @@ async function executeRenewJob({
   const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
   const issuer = createAcmeIssuer({
     acmeKind,
+    signal,
     argv: commandVerdict.argv,
     caEndpoint: job.caEndpoint,
     preferredChain: resolveJobPreferredChain(job),
@@ -4490,6 +4502,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
  */
 async function executeWindowsIisRenewJob({
   job,
+  signal = null,
   jobId,
   policyEngine,
   client,
@@ -4630,6 +4643,7 @@ async function executeWindowsIisRenewJob({
   const windowsConnectImpl = executionContext.windowsConnectImpl;
   const issuer = createAcmeIssuer({
     acmeKind,
+    signal,
     argv: commandVerdict.argv,
     caEndpoint: job.caEndpoint,
     preferredChain: resolveJobPreferredChain(job),
@@ -6842,6 +6856,9 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       const ntpSynced = await checkNtpSynced();
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
+        // Observe-only processes do not claim jobs, so heartbeat must revoke
+        // the previous execution declaration after a configuration change.
+        supportedOperations: resolveClaimSupportedActions(executionContext),
         ntpSynced,
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
         supportedDnsProviders,
@@ -6855,6 +6872,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // never returns an empty set, only the base set or the base set plus
         // agent-id-binding-v1.
         declaredCapabilities: resolveDeclaredCapabilities(config.requireSignedAgentId),
+        // Observe-only processes never claim jobs; publish both profile additions
+        // and explicit removals here so their declarations cannot remain stale.
+        ...(Array.isArray(config.declaredCommandProfileNames)
+          ? { declaredCommandProfileNames: config.declaredCommandProfileNames } : {}),
         // Publishes DNS names added to config.json. An empty list is omitted
         // so a restart cannot wipe the stored selectors.
         ...(Array.isArray(config.declaredTargetSelectors) &&
@@ -7081,6 +7102,7 @@ module.exports = {
   adoptSigningKeyRotation,
   renewJobLeaseOrAbort,
   createLeaseState,
+  startExecutionLeaseRenewal,
   startPeriodicLeaseRenewal,
   stopPeriodicLeaseRenewal,
   AGENT_VERSION,

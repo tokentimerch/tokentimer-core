@@ -1,0 +1,40 @@
+name: CertOps real DNS hook routing qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dns-routing:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CERTOPS_DNS_ROUTING_DISPOSABLE_FIXTURE: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/dns-routing.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build pinned real DNS fixture
+        run: |
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Real production hook routing policy and propagation
+        run: |
+          node scripts/certops-dns-routing-host.js
+          node scripts/certops-qualification-report.js qualification-results/dns-routing.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-dns-routing
+          path: qualification-results/dns-routing.json
+          if-no-files-found: error

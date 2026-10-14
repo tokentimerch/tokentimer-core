@@ -1,0 +1,1670 @@
+{
+  "schemaVersion": 1,
+  "slots": [
+    {
+      "id": "job-decisions-api",
+      "kind": "host",
+      "suite": "job-decisions-api",
+      "source": "tests/e2e/certops-job-decisions-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "csr-api-lifecycle",
+      "kind": "host",
+      "suite": "csr-api-lifecycle",
+      "source": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "csr-api-algorithms",
+      "kind": "host",
+      "suite": "csr-api-algorithms",
+      "source": "tests/e2e/certops-csr-algorithms-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "csr-api-chain",
+      "kind": "host",
+      "suite": "csr-api-chain",
+      "source": "tests/e2e/certops-csr-chain-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "inventory-api-lifecycle",
+      "kind": "host",
+      "suite": "inventory-api-lifecycle",
+      "source": "tests/e2e/certops-inventory-lifecycle-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "governance-api-lifecycle",
+      "kind": "host",
+      "suite": "governance-api-lifecycle",
+      "source": "tests/e2e/certops-governance-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "trust-api-lifecycle",
+      "kind": "host",
+      "suite": "trust-api-lifecycle",
+      "source": "tests/e2e/certops-trust-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "jobs-api-boundaries",
+      "kind": "host",
+      "suite": "jobs-api-boundaries",
+      "source": "tests/e2e/certops-jobs-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "credentials-api-lifecycle",
+      "kind": "host",
+      "suite": "credentials-api-lifecycle",
+      "source": "tests/e2e/certops-credentials-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "profiles-api-policy",
+      "kind": "host",
+      "suite": "profiles-api-policy",
+      "source": "tests/e2e/certops-profiles-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "token-api-boundaries",
+      "kind": "host",
+      "suite": "token-api-boundaries",
+      "source": "tests/e2e/certops-token-boundaries-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "agent-log-api",
+      "kind": "host",
+      "suite": "agent-log-api",
+      "source": "tests/e2e/certops-agent-logs-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "adcs-api-release-gates",
+      "kind": "host",
+      "suite": "adcs-api-release-gates",
+      "source": "tests/e2e/certops-adcs-gates-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "agent-log-boundaries",
+      "kind": "host",
+      "suite": "agent-log-boundaries",
+      "source": "tests/e2e/certops-agent-log-boundaries-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "agent-lease-api",
+      "kind": "host",
+      "suite": "agent-lease-api",
+      "source": "tests/e2e/certops-agent-lease-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "shared-source-lifecycle",
+      "kind": "host",
+      "suite": "shared-source-lifecycle",
+      "source": "tests/e2e/certops-shared-sources-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "retired-observation-lifecycle",
+      "kind": "host",
+      "suite": "retired-observation-lifecycle",
+      "source": "tests/e2e/certops-retired-observation-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "browser-linux",
+      "kind": "host",
+      "suite": "browser-certificate-surfaces",
+      "source": "scripts/certops-browser.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "kubernetes-linux",
+      "kind": "host",
+      "suite": "kubernetes-host",
+      "source": "scripts/certops-kubernetes-host.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "windows-host-2022",
+      "kind": "host",
+      "suite": "windows-host",
+      "source": "packages/agent/scripts/host/windows-host.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      }
+    },
+    {
+      "id": "windows-acme-2022-rsa-2048",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/rsa-2048",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2022-rsa-3072",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/rsa-3072",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2022-rsa-4096",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/rsa-4096",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2022-ec-p256",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/ec-p256",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2022-ec-p384",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/ec-p384",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-host-2025",
+      "kind": "host",
+      "suite": "windows-host",
+      "source": "packages/agent/scripts/host/windows-host.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      }
+    },
+    {
+      "id": "windows-acme-2025-rsa-2048",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/rsa-2048",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2025-rsa-3072",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/rsa-3072",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2025-rsa-4096",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/rsa-4096",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2025-ec-p256",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/ec-p256",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "windows-acme-2025-ec-p384",
+      "kind": "stack",
+      "suite": "real-agent-windows-acme-iis/ec-p384",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregistration.js",
+        "tests/e2e/helpers/certops-windows-capability-refresh.js"
+      ]
+    },
+    {
+      "id": "adcs-2019-en-US",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2019",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2019-de-DE",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2019",
+        "nativeLanguage": "de-DE",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2019-fr-FR",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2019",
+        "nativeLanguage": "fr-FR",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2022-en-US",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2022-de-DE",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "de-DE",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2022-fr-FR",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "fr-FR",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2025-en-US",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2025-de-DE",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "nativeLanguage": "de-DE",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "adcs-2025-fr-FR",
+      "kind": "host",
+      "suite": "enterprise-adcs-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "nativeLanguage": "fr-FR",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "linux-real-acme",
+      "kind": "stack",
+      "suite": "real-agent-acme-filesystem",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/acme-real-journey.js",
+        "scripts/certops-real-acme.js",
+        "tests/e2e/helpers/certops-acme-lease-loss.js",
+        "tests/e2e/helpers/certops-acme-command-barrier.js"
+      ]
+    },
+    {
+      "id": "agent-protocol-stack",
+      "kind": "stack",
+      "suite": "agent-protocol-api-worker",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json"
+    },
+    {
+      "id": "linux-systemd-22.04",
+      "kind": "stack",
+      "suite": "real-agent-linux-systemd",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "22.04"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart"
+      ]
+    },
+    {
+      "id": "linux-systemd-24.04",
+      "kind": "stack",
+      "suite": "real-agent-linux-systemd",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart"
+      ]
+    },
+    {
+      "id": "kubernetes-controller-api",
+      "kind": "host",
+      "suite": "kubernetes-controller-api",
+      "source": "scripts/certops-kubernetes-controller-e2e.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "membership-api-fences",
+      "kind": "host",
+      "suite": "membership-api-fences",
+      "source": "tests/e2e/certops-membership-fences-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "bootstrap-api-fences",
+      "kind": "host",
+      "suite": "bootstrap-api-fences",
+      "source": "tests/e2e/certops-bootstrap-fences-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "adcs-database-integration",
+      "kind": "database",
+      "suite": "adcs-database-integration",
+      "source": "tests/integration/certops-adcs-enrollments.test.js",
+      "requiredGroup": "adcs",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "controller-database-integration",
+      "kind": "database",
+      "suite": "controller-database-integration",
+      "source": "tests/integration/certops-controller-e2e.test.js",
+      "requiredGroup": "controller",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "inventory-database-integration",
+      "kind": "database",
+      "suite": "inventory-database-integration",
+      "source": "tests/integration/certops-inventory.test.js",
+      "requiredGroup": "inventory",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "trust-database-integration",
+      "kind": "database",
+      "suite": "trust-database-integration",
+      "source": "tests/integration/certops-trust-anchors.test.js",
+      "requiredGroup": "trust",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "identity-database-integration",
+      "kind": "database",
+      "suite": "identity-database-integration",
+      "source": "tests/integration/certops-identity-invariants.test.js",
+      "requiredGroup": "identity",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "jobs-database-integration",
+      "kind": "database",
+      "suite": "jobs-database-integration",
+      "source": "tests/integration/certops-job-create-api.test.js",
+      "requiredGroup": "jobs",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "worker-database-integration",
+      "kind": "database",
+      "suite": "worker-database-integration",
+      "source": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
+      "requiredGroup": "worker",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "csr-database-integration",
+      "kind": "database",
+      "suite": "csr-database-integration",
+      "source": "tests/integration/certops-csr-workflow.test.js",
+      "requiredGroup": "csr",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "import-absence-database-integration",
+      "kind": "database",
+      "suite": "import-absence-database-integration",
+      "source": "tests/integration/import-cleanup-scan-lifecycle.test.js",
+      "requiredGroup": "import-absence",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "public-import-api",
+      "kind": "host",
+      "suite": "public-import-api",
+      "source": "tests/e2e/certops-public-import-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "profile-permissions-api",
+      "kind": "host",
+      "suite": "profile-permissions-api",
+      "source": "tests/e2e/certops-profile-permissions-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "agent-log-order-api",
+      "kind": "host",
+      "suite": "agent-log-order-api",
+      "source": "tests/e2e/certops-agent-log-order-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "renewal-admission-api",
+      "kind": "host",
+      "suite": "renewal-admission-api",
+      "source": "tests/e2e/certops-renewal-admission-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-trust-host-ubuntu-22.04",
+      "kind": "host",
+      "suite": "linux-trust-host",
+      "source": "scripts/certops-linux-trust.js",
+      "environment": {
+        "osFamily": "linux",
+        "distribution": "ubuntu",
+        "osVersion": "22.04",
+        "executionSurface": "disposable-vm"
+      }
+    },
+    {
+      "id": "linux-trust-host-ubuntu-24.04",
+      "kind": "host",
+      "suite": "linux-trust-host",
+      "source": "scripts/certops-linux-trust.js",
+      "environment": {
+        "osFamily": "linux",
+        "distribution": "ubuntu",
+        "osVersion": "24.04",
+        "executionSurface": "disposable-vm"
+      }
+    },
+    {
+      "id": "linux-trust-host-alma-9.6",
+      "kind": "host",
+      "suite": "linux-trust-host",
+      "source": "scripts/certops-linux-trust.js",
+      "environment": {
+        "osFamily": "linux",
+        "distribution": "almalinux",
+        "osVersion": "9.6",
+        "executionSurface": "disposable-container"
+      }
+    },
+    {
+      "id": "linux-real-acmesh",
+      "kind": "stack",
+      "suite": "real-agent-acmesh-filesystem",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/acme-real-journey.js",
+        "scripts/certops-real-acme.js",
+        "tests/e2e/helpers/certops-acme-lease-loss.js",
+        "tests/e2e/helpers/certops-acme-command-barrier.js"
+      ]
+    },
+    {
+      "id": "filesystem-linux-22.04",
+      "kind": "host",
+      "suite": "filesystem-host",
+      "source": "scripts/certops-filesystem-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "22.04"
+      }
+    },
+    {
+      "id": "filesystem-linux-24.04",
+      "kind": "host",
+      "suite": "filesystem-host",
+      "source": "scripts/certops-filesystem-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "filesystem-windows-2022",
+      "kind": "host",
+      "suite": "filesystem-host",
+      "source": "scripts/certops-filesystem-host.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      }
+    },
+    {
+      "id": "filesystem-windows-2025",
+      "kind": "host",
+      "suite": "filesystem-host",
+      "source": "scripts/certops-filesystem-host.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      }
+    },
+    {
+      "id": "linux-csr-observation-api",
+      "kind": "host",
+      "suite": "csr-observation-api",
+      "source": "tests/e2e/certops-csr-observation-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "nginx-ubuntu-22.04",
+      "kind": "host",
+      "suite": "nginx-host",
+      "source": "scripts/certops-nginx-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "22.04"
+      }
+    },
+    {
+      "id": "nginx-ubuntu-24.04",
+      "kind": "host",
+      "suite": "nginx-host",
+      "source": "scripts/certops-nginx-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "linux-observe-only-api",
+      "kind": "host",
+      "suite": "observe-only-api",
+      "source": "tests/e2e/certops-observe-only-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-agent-alert-api",
+      "kind": "host",
+      "suite": "agent-alert-api",
+      "source": "tests/e2e/certops-agent-alert-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-diagnostic-agent-api",
+      "kind": "host",
+      "suite": "diagnostic-agent-api",
+      "source": "tests/e2e/certops-diagnostic-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-certificate-transfer-api",
+      "kind": "host",
+      "suite": "certificate-transfer-api",
+      "source": "tests/e2e/certops-certificate-transfer-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "dns-cloudflare",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "cloudflare"
+      }
+    },
+    {
+      "id": "dns-route53",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "route53"
+      }
+    },
+    {
+      "id": "dns-azure-dns",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "azure-dns"
+      }
+    },
+    {
+      "id": "dns-google-cloud-dns",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "google-cloud-dns"
+      }
+    },
+    {
+      "id": "dns-rfc2136",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "rfc2136"
+      }
+    },
+    {
+      "id": "dns-acme-dns",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "acme-dns"
+      }
+    },
+    {
+      "id": "dns-ovhcloud",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "ovhcloud"
+      }
+    },
+    {
+      "id": "dns-hetzner",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "hetzner"
+      }
+    },
+    {
+      "id": "dns-infomaniak",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "infomaniak"
+      }
+    },
+    {
+      "id": "dns-exoscale",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "exoscale"
+      }
+    },
+    {
+      "id": "dns-powerdns",
+      "kind": "host",
+      "suite": "dns-provider-host",
+      "source": "scripts/certops-dns-provider-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "dnsProvider": "powerdns"
+      }
+    },
+    {
+      "id": "enterprise-adcs-hierarchy-2022-en-US",
+      "kind": "host",
+      "suite": "enterprise-adcs-hierarchy-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-iis-locale.js",
+        "tests/e2e/helpers/certops-adcs-native-reconcile.js",
+        "infra/certops-adcs/owned-ca-checkpoint.ps1",
+        "tests/e2e/helpers/certops-adcs-validity-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-retrieve-boundaries.js",
+        "infra/certops-adcs/foreign-request.ps1",
+        "tests/e2e/helpers/certops-adcs-preflight-cohorts.js",
+        "infra/certops-adcs/owned-ca-request-certificate.ps1",
+        "tests/e2e/helpers/certops-adcs-template-mutations.js",
+        "infra/certops-adcs/template-safety-mutation.ps1",
+        "tests/e2e/helpers/certops-adcs-local-rules.js"
+      ]
+    },
+    {
+      "id": "linux-result-fences-api",
+      "kind": "host",
+      "suite": "result-fences-api",
+      "source": "tests/e2e/certops-result-fences-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-csr-frozen-api",
+      "kind": "host",
+      "suite": "csr-frozen-api",
+      "source": "tests/e2e/certops-csr-frozen-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "apache-ubuntu-22.04",
+      "kind": "host",
+      "suite": "apache-host",
+      "source": "scripts/certops-nginx-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "22.04"
+      }
+    },
+    {
+      "id": "apache-ubuntu-24.04",
+      "kind": "host",
+      "suite": "apache-host",
+      "source": "scripts/certops-nginx-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "haproxy-ubuntu-22.04",
+      "kind": "host",
+      "suite": "haproxy-host",
+      "source": "scripts/certops-nginx-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "22.04"
+      }
+    },
+    {
+      "id": "haproxy-ubuntu-24.04",
+      "kind": "host",
+      "suite": "haproxy-host",
+      "source": "scripts/certops-nginx-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "linux-native-agent-api",
+      "kind": "host",
+      "suite": "native-agent-api",
+      "source": "tests/e2e/certops-native-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-csr-bound-observation-api",
+      "kind": "host",
+      "suite": "csr-bound-observation-api",
+      "source": "tests/e2e/certops-csr-bound-observation-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-agent-log-pagination-api",
+      "kind": "host",
+      "suite": "agent-log-pagination-api",
+      "source": "tests/e2e/certops-log-pagination-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-agent-log-disabled-api",
+      "kind": "host",
+      "suite": "agent-log-disabled-api",
+      "source": "tests/e2e/certops-log-disabled-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-trust-multiple-api",
+      "kind": "host",
+      "suite": "trust-multiple-api",
+      "source": "tests/e2e/certops-trust-multiple-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-native-signing-rotation",
+      "kind": "host",
+      "suite": "native-signing-rotation",
+      "source": "tests/e2e/certops-signing-rotation-native-e2e.test.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionVersion": "24.04",
+        "distributionId": "ubuntu"
+      }
+    },
+    {
+      "id": "linux-real-acme-eab",
+      "kind": "stack",
+      "suite": "real-agent-acme-eab-filesystem",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/acme-real-journey.js",
+        "scripts/certops-real-acme.js",
+        "tests/e2e/helpers/certops-acme-lease-loss.js",
+        "tests/e2e/helpers/certops-acme-command-barrier.js"
+      ]
+    },
+    {
+      "id": "linux-real-acmesh-eab",
+      "kind": "stack",
+      "suite": "real-agent-acmesh-eab-filesystem",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/acme-real-journey.js",
+        "scripts/certops-real-acme.js",
+        "tests/e2e/helpers/certops-acme-lease-loss.js",
+        "tests/e2e/helpers/certops-acme-command-barrier.js"
+      ]
+    },
+    {
+      "id": "linux-profile-issuer-switch-api",
+      "kind": "host",
+      "suite": "profile-issuer-switch-api",
+      "source": "tests/e2e/certops-profile-issuer-switch-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "alpine-real-acme-certbot",
+      "kind": "stack",
+      "suite": "real-agent-alpine-certbot",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "alpine",
+        "distributionVersion": "3.23.6",
+        "executionSurface": "container",
+        "libc": "musl"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/acme-real-journey.js",
+        "scripts/certops-real-acme.js",
+        "tests/e2e/helpers/certops-acme-lease-loss.js",
+        "tests/e2e/helpers/certops-acme-command-barrier.js"
+      ]
+    },
+    {
+      "id": "alpine-real-acme-acmesh",
+      "kind": "stack",
+      "suite": "real-agent-alpine-acmesh",
+      "source": "tests/e2e/certops-agent-e2e.test.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "alpine",
+        "distributionVersion": "3.23.6",
+        "executionSurface": "container",
+        "libc": "musl"
+      },
+      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
+      "requiredTests": [
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+      ],
+      "requiredSources": [
+        "tests/e2e/acme-real-journey.js",
+        "scripts/certops-real-acme.js",
+        "tests/e2e/helpers/certops-acme-lease-loss.js",
+        "tests/e2e/helpers/certops-acme-command-barrier.js"
+      ]
+    },
+    {
+      "id": "linux-ca-capacity-api",
+      "kind": "host",
+      "suite": "ca-capacity-api",
+      "source": "tests/e2e/certops-ca-capacity-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "alerts-database-integration",
+      "kind": "database",
+      "suite": "alerts-database-integration",
+      "source": "tests/integration/retired-certificate-alerts.integration.test.js",
+      "requiredGroup": "alerts",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-renewal-alert-worker-api",
+      "kind": "host",
+      "suite": "renewal-alert-worker-api",
+      "source": "tests/e2e/certops-renewal-alert-worker-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-queued-profile-snapshot-api",
+      "kind": "host",
+      "suite": "queued-profile-snapshot-api",
+      "source": "tests/e2e/certops-queued-profile-snapshot-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-first-issuance-admission-api",
+      "kind": "host",
+      "suite": "first-issuance-admission-api",
+      "source": "tests/e2e/certops-first-issuance-admission-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "renewal-health-database-integration",
+      "kind": "database",
+      "suite": "renewal-health-database-integration",
+      "source": "tests/integration/certops-renewal-path-health-real-topology.test.js",
+      "requiredGroup": "renewal-health",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-pause-ingestion-api",
+      "kind": "host",
+      "suite": "pause-ingestion-api",
+      "source": "tests/e2e/certops-pause-ingestion-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-derivation-failure-api",
+      "kind": "host",
+      "suite": "derivation-failure-api",
+      "source": "tests/e2e/certops-derivation-failure-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "linux-multi-target-deploy-api",
+      "kind": "host",
+      "suite": "multi-target-deploy-api",
+      "source": "tests/e2e/certops-multi-target-deploy-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "kubernetes-http01-api",
+      "kind": "host",
+      "suite": "kubernetes-http01-api",
+      "source": "scripts/certops-kubernetes-http01-e2e.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "windows-adoption-2022-rsa-2048",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-adoption-2022-rsa-3072",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-3072"
+      }
+    },
+    {
+      "id": "windows-adoption-2022-rsa-4096",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-4096"
+      }
+    },
+    {
+      "id": "windows-adoption-2022-ec-p256",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p256"
+      }
+    },
+    {
+      "id": "windows-adoption-2022-ec-p384",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p384"
+      }
+    },
+    {
+      "id": "windows-adoption-2025-rsa-2048",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-adoption-2025-rsa-3072",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-3072"
+      }
+    },
+    {
+      "id": "windows-adoption-2025-rsa-4096",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-4096"
+      }
+    },
+    {
+      "id": "windows-adoption-2025-ec-p256",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p256"
+      }
+    },
+    {
+      "id": "windows-adoption-2025-ec-p384",
+      "kind": "host",
+      "suite": "windows-adoption-retention-real",
+      "source": "tests/e2e/windows-adoption-retention-journey.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p384"
+      }
+    },
+    {
+      "id": "certificate-audit-api",
+      "kind": "host",
+      "suite": "certificate-audit-api",
+      "source": "tests/e2e/certops-audit-history-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "unmanaged-discovery-api",
+      "kind": "host",
+      "suite": "unmanaged-discovery-api",
+      "source": "tests/e2e/certops-unmanaged-discovery-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "adcs-installation-recovery-api",
+      "kind": "host",
+      "suite": "adcs-installation-recovery-api",
+      "source": "tests/e2e/certops-enrollment-recovery-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "dns-routing-host-ubuntu-24.04",
+      "kind": "host",
+      "suite": "dns-routing-host",
+      "source": "scripts/certops-dns-routing-host.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "integration-certificate-sources-api",
+      "kind": "host",
+      "suite": "integration-certificate-sources-api",
+      "source": "tests/e2e/certops-integration-sources-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "core-api-migration-upgrade",
+      "kind": "host",
+      "suite": "core-api-migration-upgrade",
+      "source": "scripts/certops-migration-upgrade.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "linux-systemd-writepath-22.04",
+      "kind": "host",
+      "suite": "linux-systemd-writepath",
+      "source": "tests/e2e/linux-systemd-real-journey.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "22.04"
+      }
+    },
+    {
+      "id": "linux-systemd-writepath-24.04",
+      "kind": "host",
+      "suite": "linux-systemd-writepath",
+      "source": "tests/e2e/linux-systemd-real-journey.js",
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "dns-provider-errors",
+      "kind": "host",
+      "suite": "dns-provider-errors",
+      "source": "scripts/certops-dns-provider-errors.js",
+      "requiredSources": [
+        "packages/agent/src/dns/providers/cloudflare.test.js",
+        "packages/agent/src/dns/providers/route53.test.js",
+        "packages/agent/src/dns/providers/azure-dns.test.js",
+        "packages/agent/src/dns/providers/google-cloud-dns.test.js",
+        "packages/agent/src/dns/providers/rfc2136.test.js",
+        "packages/agent/src/dns/providers/acme-dns.test.js",
+        "packages/agent/src/dns/providers/ovhcloud.test.js",
+        "packages/agent/src/dns/providers/hetzner.test.js",
+        "packages/agent/src/dns/providers/infomaniak.test.js",
+        "packages/agent/src/dns/providers/exoscale.test.js",
+        "packages/agent/src/dns/providers/powerdns.test.js",
+        "packages/agent/src/dns/dns.test.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "adcs-enrollment-policy-api",
+      "kind": "host",
+      "suite": "adcs-enrollment-policy-api",
+      "source": "tests/e2e/certops-enrollment-policy-api-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "import-metadata-api",
+      "kind": "host",
+      "suite": "import-metadata-api",
+      "source": "tests/e2e/certops-import-metadata-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "bulk-eligible-api",
+      "kind": "host",
+      "suite": "bulk-eligible-api",
+      "source": "tests/e2e/certops-bulk-eligible-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "scheduler-capacity-api",
+      "kind": "host",
+      "suite": "scheduler-capacity-api",
+      "source": "tests/e2e/certops-scheduler-capacity-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    }
+  ]
+}

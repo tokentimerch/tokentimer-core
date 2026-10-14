@@ -772,6 +772,13 @@ async function ensureManagedCertificateToken(
 ) {
   if (options.tokenId) return options.tokenId;
 
+  // Allocation must share the inventory admission lock: two concurrent
+  // imports otherwise both find no token, insert separate tokens, and only
+  // later converge on the same unique managed-certificate row. Reuse the
+  // existing workspace lock so CSR, reconciliation and quota paths retain
+  // the same lock ordering instead of introducing an inverse lock pair.
+  await acquireManagedCertificateImportLock(client, options.workspaceId);
+
   const existing =
     existingManagedCertificate ||
     (await existingManagedCertificateForToken(client, certificate, options));

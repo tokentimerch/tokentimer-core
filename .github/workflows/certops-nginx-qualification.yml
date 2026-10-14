@@ -1,0 +1,42 @@
+name: Native Linux consuming-server certificate reload qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nginx:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        service: [nginx, apache, haproxy]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CERTOPS_RELOAD_DISPOSABLE_HOST: '1'
+      CERTOPS_RELOAD_SERVICE: ${{ matrix.service }}
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/nginx.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Install actual consuming server
+        run: |
+          sudo apt-get update
+          package='${{ matrix.service }}'
+          if [ "$package" = apache ]; then package=apache2; fi
+          sudo apt-get install -y "$package"
+      - name: Qualify owned nginx process and trusted TLS cutover
+        run: node scripts/certops-nginx-host.js
+      - name: Independently verify every mandatory case
+        run: node scripts/certops-qualification-report.js qualification-results/nginx.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-reload-${{ matrix.service }}-${{ matrix.os }}
+          path: qualification-results/nginx.json
+          if-no-files-found: error

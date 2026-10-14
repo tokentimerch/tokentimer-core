@@ -1,0 +1,1902 @@
+{
+  "adcs": {
+    "files": [
+      "certops-adcs-enrollments.test.js",
+      "certops-adcs-readiness.test.js",
+      "certops-adcs-profile-issuer-switch.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "decodes a BIGINT RequestId and schedules reconciliation"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "rolls back the enrollment when creating the first job fails"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "lets only one of two scheduler connections claim a due enrollment"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "leaves a due enrollment alone while another transaction holds its row lock"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "cancels the continuation job the scheduler created for a cancelled enrollment"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "rolls back an issuer version when confirmation does not finish"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "dispatches abandonment cleanup and refuses a bad snapshot or a revalidation hold"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "keeps concurrent preflights inside the hourly limit and stores the agent result"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "keeps the latest dispatched preflight when an older job finishes later"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "orders preflight results by the locked sequence when transaction time is reversed"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "qualifies an agent whose safe preflight matches the confirmed CA, template, and key"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "does not qualify a preflight older than the 24-hour freshness bound"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "qualifies a preflight 23 hours old, inside the freshness bound"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "does not qualify a preflight that checked a different template"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "does not qualify a preflight that pinned a different CA key"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "stops qualifying evidence once the issuer is re-confirmed with a different template"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "requires a new preflight job created after re-confirmation even when nothing changed"
+      },
+      {
+        "file": "certops-adcs-profile-issuer-switch.test.js",
+        "name": "applies AD CS edit rules after an ACME-shaped Windows/IIS profile is moved to an AD CS issuer"
+      }
+    ]
+  },
+  "controller": {
+    "files": [
+      "certops-controller-e2e.test.js",
+      "certops-controller-observations.test.js",
+      "certops-controller-provisioning.test.js",
+      "certops-k8s-controller-provisioning-execution.test.js",
+      "certops-k8s-controller-wiring.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-controller-e2e.test.js",
+        "name": "composes status-first observation and the instrumented tls.crt fallback into real inventory"
+      },
+      {
+        "file": "certops-controller-e2e.test.js",
+        "name": "preserves source history through rotation, UID replacement, sticky rediscovery and independent retirement"
+      },
+      {
+        "file": "certops-controller-e2e.test.js",
+        "name": "composes manager intent, command execution, owned create/patch, evidence, and eventual issuance observation"
+      },
+      {
+        "file": "certops-controller-e2e.test.js",
+        "name": "keeps key rejection ahead of scope and pause while passive reporting remains available"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "replays an unchanged post-restart envelope without side effects and accepts real resource changes"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "atomically creates source-stable inventory, jobless evidence, and one acceptance audit"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "keeps public PEM imports idempotent while cert-manager keeps a separate source identity"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "creates pending observations without instances and keeps managed identity through rotation and recreation"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "isolates controller inventory by workspace and cluster and never resurrects terminal certificates"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "serializes identical idempotency and atomically reuses one target for concurrent observations"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "rolls back inventory and idempotency when required controller evidence or audit writes fail"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "mints a legacy tokens row once cert-manager reports notAfter, defers while pending, and reuses it across rotation"
+      },
+      {
+        "file": "certops-controller-observations.test.js",
+        "name": "enforces the controller route's authenticated binding, passive pause, private-key precedence, and idempotency responses"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "upgrades the migration-21 token shape to migration 22 and accepts the provision scope"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "upgrades the earlier controller delivery shape from migration 22 to 23"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "requires and preserves the immutable controller cluster binding for provisioning tokens"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "creates one source-stable intent atomically, replays it, and rejects a conflicting idempotency key"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "requires a human manager session and preserves private-material precedence"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "preserves observed public certificate state across intent creation and replays"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "ignores a generic non-controller job and does not turn it into a provisioning command"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "blocks a forged controller-lane job then still delivers the valid controller command"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "blocks delivery when the authoritative inventory identity is missing or terminal"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "rolls back transient identity-query failures without blocking or duplicating delivery"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "rolls back inventory, job, idempotency, and audit state when the required audit write fails"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "rejects revoked and decommissioned cert-manager identities without reactivating them"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "blocks human intent creation and command delivery while paused but keeps observations and executor events available"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "keeps command delivery isolated by scope, workspace, and immutable cluster binding"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "returns 204 for no work and uses SKIP LOCKED delivery without creating an agent protocol record"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "redelivers a non-terminal ambiguous command after the bounded interval and never redelivers a terminal job"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "uses one canonical server timeline for older completed and failed controller events"
+      },
+      {
+        "file": "certops-controller-provisioning.test.js",
+        "name": "preserves later controller times, explicit evidence times, and generic executor event times"
+      },
+      {
+        "file": "certops-k8s-controller-provisioning-execution.test.js",
+        "name": "delivers a command through HTTP, creates a Certificate, records events/evidence, and reconciles a later intent"
+      },
+      {
+        "file": "certops-k8s-controller-provisioning-execution.test.js",
+        "name": "pauses after delivery and performs no create or patch while failure reporting remains available"
+      },
+      {
+        "file": "certops-k8s-controller-provisioning-execution.test.js",
+        "name": "reports reconciliation failure, then redelivers a completion-report failure without job.failed"
+      },
+      {
+        "file": "certops-k8s-controller-wiring.test.js",
+        "name": "keeps the controller package and default image tag aligned with Chart.appVersion"
+      },
+      {
+        "file": "certops-k8s-controller-wiring.test.js",
+        "name": "keeps the fourth image non-root, locked, and independently executable"
+      },
+      {
+        "file": "certops-k8s-controller-wiring.test.js",
+        "name": "publishes the in-cluster image without advertising an unsupported Compose runtime"
+      },
+      {
+        "file": "certops-k8s-controller-wiring.test.js",
+        "name": "uses a bounded streaming tls.crt reader instead of deserializing Secret objects"
+      }
+    ]
+  },
+  "inventory": {
+    "files": [
+      "certops-inventory.test.js",
+      "certops-inventory-import-helpers.test.js",
+      "certops-agent-unmanaged-observations.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-inventory.test.js",
+        "name": "imports a public certificate and returns normalized inventory data"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "register endpoint creates and reuses the linked token"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "accepts a valid external key mode"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects invalid keyMode with a controlled validation error"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "normalizes an empty key reference to null"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "deduplicates by workspace and SHA-256 fingerprint"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows a workspace manager to import a public certificate chain"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rolls back certificate import when the inventory audit write fails"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows viewers to list and fetch certificates in their workspace"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows viewers to list public certificate instance history"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows viewers to list workspace certificate instances without a certId (flat inventory browse)"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows viewers to list certificate targets (deployment/observation locations)"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "retires a managed certificate as decommissioned without deleting rows"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "retires a managed certificate as revoked and mirrors token lifecycle"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "does not mirror a terminal status onto a token while a sibling certificate stays active"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "counts open distinct identities even when their lifecycle is retired"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "does not reset retired status when a retired certificate is re-imported"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "keeps retired rediscovery sticky and rotates to an independent active identity"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects invalid retire status without changing database state"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects private-key material in retire reason without echoing it"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "keeps retire operations isolated by workspace"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "blocks hard delete of managed-backed certificate tokens"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "blocks bulk delete of managed-backed certificate tokens"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "blocks reclassifying a managed-backed certificate token away from cert"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "blocks deletion of managed-backed tokens regardless of classification"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows hard delete of manual cert tokens not backed by managed certificates"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "allows hard delete of non-cert tokens"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "denies viewer writes"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "keeps certificate detail and list access isolated by workspace"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "keeps certificate instance history isolated by workspace"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "returns safe 404 for malformed certificate ids on instance history"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects private key material without echoing raw input"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects an overlong key reference without echoing it"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects obvious secret-like key references without echoing them"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects private key material in keyReference at the request boundary"
+      },
+      {
+        "file": "certops-inventory.test.js",
+        "name": "rejects malformed certificate input with a stable code"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "imports multiple certificates in one caller-managed transaction"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "countActiveManagedCertificatesWithClient retains retired open management units"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "countQuotaConsumingNewFingerprints treats active fingerprints as idempotent"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "countQuotaConsumingNewFingerprints treats decommissioned fingerprints as idempotent"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "countQuotaConsumingNewFingerprints treats revoked fingerprints as idempotent"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "countQuotaConsumingNewFingerprints counts unseen fingerprints"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "countQuotaConsumingNewFingerprints classifies mixed fingerprint sets"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "acquireManagedCertificateImportLock serializes concurrent transactions"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "rolls back import when validateImport throws and creates no rows"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "leaves active managed certificate count unchanged on idempotent re-import"
+      },
+      {
+        "file": "certops-inventory-import-helpers.test.js",
+        "name": "keeps a decommissioned certificate retired on re-import without consuming quota"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "retains two locations and evidence without tokens or management, fences replays, and later enrolls the same identity"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "retains unmanaged service bindings, blocks decommission, and preserves revoked lifecycle on rediscovery"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "keeps existing-source rotation admissible while over quota"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "persists unchanged and stopped-source observations while another transaction owns the quota lock"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "admits concurrent agent locations and a manual import sharing one fingerprint at quota"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "does not deadlock token-first manual enrollment with an agent enriching the same certificate"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "rejects malformed and fingerprint-mismatched public material before burning sequence"
+      },
+      {
+        "file": "certops-agent-unmanaged-observations.test.js",
+        "name": "rolls back the sequence and retained observations on non-admission database failures"
+      }
+    ]
+  },
+  "trust": {
+    "files": [
+      "certops-trust-anchors.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "creates a distribute-trust job and advances the installation row to pending_install"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "forces pending_approval when the workspace requires approval for every job, even though this caller never sets requiresApproval"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "replays the same idempotencyKey and returns the same job and generation"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "replaying the same idempotencyKey does not touch last_attempt_at or last_error"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "re-approving the same fingerprint updates anchor_type when the caller submits a different type"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "requires idempotencyKey (rejects, does not merely accept omission)"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects distribute-trust against a retired anchor"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects revoke-trust when no installation is tracked, without leaving a phantom row"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "Bug A: the same raw idempotencyKey for a no-job revoke-trust release and an unrelated distribute-trust never collide"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "Bug B: the same raw idempotencyKey for two different revoke-trust tuples never collide"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "a genuine same-tuple revoke-trust replay still succeeds after deriveTrustJobIdempotencyKey namespacing"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "serializes two concurrent distribute-trust requests on the same installation without a lost update"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "serializes two concurrent replays of the same idempotencyKey to exactly one job"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "does not unwind a superseded (older-generation) job's terminal outcome"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "unwinds a pending_install when the anchor is retired between approval and dispatch"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "always permits revoke-trust dispatch regardless of anchor status"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "revoke-trust for one owner never touches the OS while another owner's reference is still live"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "revoke-trust for a preexisting installation releases the reference without dispatching an agent job"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "does not short-circuit (and does not orphan a certificate) when the only other reference is still pending_install"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "dispatches a real revoke-trust job for the last reference even when ITS OWN provenance is preexisting, because a different (already-released) owner's row is the one that genuinely mutated the OS"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "still releases without dispatching a job when NO row in the tuple's history was ever tokentimer_installed, even across multiple owners"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "fails closed on a signed pem/anchorType/fingerprint mismatch (defense-in-depth)"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "supplies the generation that result ingestion will demand, and the wire payload validates"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result for a job whose assigned agent does not match the installation's agent"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose store does not match the signed job"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose observed fingerprint does not match the signed job's installation row"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose action disagrees with the job's own operation"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose jobId does not match the job it was ingested against"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose workspaceId does not match the job's own workspace"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose wire-format agentId does not match the agent this job was signed for"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a distribute-trust result reporting outcome installed with observedFingerprintAfter null (defense in depth against a stale/permissive schema)"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "does not promote provenance to tokentimer_installed unless action is distribute-trust with mutationPerformed true"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a revoke-trust result reporting outcome 'installed' (revoke's own failure-fallback shape can never be a completed transition)"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "promotes provenance to tokentimer_installed when a distribute-trust result reports outcome preexisting with receipt.state finalized"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "does not promote provenance to tokentimer_installed when a distribute-trust result reports outcome preexisting with receipt.state missing (negative guard against over-promotion)"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "end-to-end: a real agent distributeTrust retry after a lost result lands the installation on tokentimer_installed, not stuck at preexisting"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result whose transitionGeneration is stale"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a result that reports a non-null failureCategory (self-contradictory: only ingested via the succeeded-job path)"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "advances installed->installed with provenance tokentimer_installed on a successful distribute"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "settles a pending_install row as installed (not rejected/unwound) when the OS mutation genuinely completed but the agent's local receipt-finalize write failed"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "settles a pending_remove row as removed (not reverted to installed) when the OS mutation genuinely completed but the agent's local receipt-finalize write failed"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "a fresh installation's first-ever result starts provenance at preexisting, not tokentimer_installed"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "preexisting never loosens an already-tokentimer_installed provenance"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "advances removed/already_absent outcomes to transition_state 'removed'"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "marks an overdue pending row stale once it exceeds the max reconcile age"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "marks an overdue pending row stale with the no-job reason when it has no last_job_id"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "reschedules an overdue row that is still within its max age budget"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "does not reclassify a genuine unrelated last_error as a stalled reconciliation"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "unwinds (rather than redispatches) an overdue row whose job already reached a terminal-negative status"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "retire never fans out removal jobs against existing installations"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "is idempotent: retiring an already-retired anchor is a no-op success"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "lists anchors and reflects their current status"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "re-approving with the SAME anchorType still refreshes name/pem/metadata and reactivates from retired"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects an anchorType change while a live (non-removed) installation exists for the fingerprint"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "allows an anchorType change once no live installation remains anywhere for the fingerprint"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "unwinds the installation row when dispatch revalidation fails with trust_anchor_payload_mismatch"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "unwinds the installation row when dispatch revalidation fails with trust_installation_not_found"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "replaying the same idempotencyKey for a preexisting-provenance revoke is a true no-op"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "replaying the same idempotencyKey for an other-live-reference revoke is a true no-op"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a fresh revoke-trust attempt against an installation already in transition_state 'removed'"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "returns every installation row for the anchor, newest updated_at first, with the full installation shape"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "returns an empty array for an anchor with no installations"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects with CERTOPS_TRUST_ANCHOR_NOT_FOUND for an anchor id that belongs to another workspace"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects with CERTOPS_TRUST_ANCHOR_NOT_FOUND for a well-formed but nonexistent anchor id"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "returns { items: [] } for an admin on an anchor with no installations"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "returns 404 for an anchor id that does not exist in this workspace"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "rejects a viewer and a workspace_manager with 403, and allows admin"
+      },
+      {
+        "file": "certops-trust-anchors.test.js",
+        "name": "omits requireWorkspaceCertOpsActive: a paused workspace can still be read"
+      }
+    ]
+  },
+  "identity": {
+    "files": [
+      "certops-identity-invariants.test.js",
+      "certops-identity-routes.test.js",
+      "certops-identity-token-details.test.js",
+      "certops-api-token-auth.test.js",
+      "certops-api-token-routes.test.js",
+      "certops-api-tokens.test.js",
+      "certops-machine-token-rate-limit.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "upgrades representative pre-v62 history without guessing lifecycle or historical job identity"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "v62 compatibility preserves erased-workspace audit metadata and rolls preparation back on failure"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "raw v63 is idempotent with live records and immutable closed periods"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "deduplicates normalized fingerprints concurrently within a workspace and isolates workspaces"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "endpoint deletion/recreation preserves identity, observations and separate source periods"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "deletion closes a Domain Checker source reused by an endpoint"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "retired rediscovery remains retired; revoked A does not leak into rotated B"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "late A observations update history without moving B's management association backwards"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "retirement and rotation respect active fingerprints sharing one token"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "database lifecycle rejects retired reactivation and revoked downgrade"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "stop/re-add creates a new admitted period and old periods stay immutable"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "replace-management refuses another certificate's period and leaves both sources managed"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "replace-management rolls back the stop when the re-attach is refused"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "a re-added provisional source reports its actual new management start time"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "quota admission does not serialize lifecycle or unchanged source captures"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "existing identity lifecycle row locks do not block source captures or observation foreign keys"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "retirement skips a contended source while preserving authoritative lifecycle and token state"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "endpoint token-first ingestion and retirement cannot invert token/source locks"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "retirement cancellation locks only work for the affected fingerprint"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "quota counts distinct managed identities plus provisionals, regardless of lifecycle"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "re-add fails admission when another identity took the freed slot"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "two concurrent admissions with one remaining slot cannot both succeed"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "existing-source rotation allows temporary overage while new enrollment remains blocked"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "v64 repairs already-applied v63 without exempting closed or foreign periods from admission"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "closing cancels only unstarted period jobs and preserves claimed/running reconciliation"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "claim-first versus stop has a deterministic claimed result with reconciliation"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "stop-first while claimant holds job row cancels the claim without a deadlock"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "INSERT cannot bypass lifecycle protection by directly creating claimed work"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "unchanged endpoint captures remain independent of a held quota lock"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "endpoint rotation acquires quota before monitor ownership, allowing deletion to finish"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "late endpoint result cannot create tokens, management or mutate a recreated endpoint"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "lease takeover suppresses the complete old worker side-effect path"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "global identity/provisional pagination is stable for every sort and direction"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "source, lifecycle and management operations cannot cross workspace boundaries"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "physical source deletion preserves immutable periods, observations and identity"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "equal timestamps fail closed, and controller resource versions cannot regress the current fingerprint"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "every direct period opening, including provisional management, passes admission"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "decommission respects fresh serving evidence and proven absence after binding rotation"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "legacy raw service-binding fingerprints block decommission on the safety read path"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "groups recreated endpoint monitors before pagination without hiding genuine visibility gaps"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "previous deleted monitors do not make a freshly observed endpoint uncertain"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "visibility is known when all 21 locations are fresh in list and detail"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "visibility distinguishes no evidence from fresh confirmed absence"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "stored-copy uncertainty requires acknowledgment and decommissioned rediscovery stays visible"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "late claimed results cannot update a re-added provisioning source or a rotated active source"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "workspace transfers deduplicate independently, retain closed provenance and admit destination management"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "workspace transfer preserves source snapshots without hydrating destination token or source data"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "workspace transfer rolls back completely on quota denial or in-flight work"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "source detail retains every historical period beyond the list summary limit"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "identity and legacy retirement helpers preserve a caller-owned PostgreSQL transaction"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "fingerprint-only instance changes create normalized identities without moving management"
+      },
+      {
+        "file": "certops-identity-invariants.test.js",
+        "name": "v63 reruns after workspace erasure without attributing orphaned audit fingerprints"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "exposes source and location history to a manager"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "redacts sensitive source, key and deployment references from viewer list and detail"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "rejects every management/lifecycle write from viewers"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "isolates reads and all writes from a different workspace even with forged body workspace IDs"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "rejects key material on identity retirement, stop and re-add without echoing it"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "requires the exact fingerprint precondition on the legacy source retirement route"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "manager stop is idempotent and explicit re-add creates a different period"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "rejects invalid UUID configuration, filters and sorting with client errors"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "searches certificate identities by fingerprint substring and common name"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "route re-add cannot bypass mandatory quota admission"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "keeps deleted-source snapshots in manager and viewer HTTP history"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "isolates transferred token and source data in original-workspace HTTP history"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "returns global visibility and full counts with only 20 HTTP locations"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "retains stopped identity details with workspace authorization and never hydrates a moved token"
+      },
+      {
+        "file": "certops-identity-routes.test.js",
+        "name": "projects current renewal facts for a rotated identity without a token and clears them when management stops"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "keeps full token and X.509 details after closing the final management period"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "keeps original public history without exposing moved token or destination edits"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "retains read-only public fields after token deletion and excludes arbitrary/private metadata"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "idempotent backfill cannot invent token fields for an already rotated identity"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "keeps one canonical token and its notes when multiple sources have distinct tokens for A"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "a less complete second source cannot erase retained X.509 facts for the same fingerprint"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "source-then-token workspace transfer seeds only destination details while retaining original history"
+      },
+      {
+        "file": "certops-identity-token-details.test.js",
+        "name": "backfill prefers the oldest verified token over an older divergent token and safely fills missing details on rerun"
+      },
+      {
+        "file": "certops-api-token-auth.test.js",
+        "name": "authenticates a valid scoped token without attaching session/admin identity"
+      },
+      {
+        "file": "certops-api-token-auth.test.js",
+        "name": "rejects missing, non-Bearer, and malformed tokens with generic 401"
+      },
+      {
+        "file": "certops-api-token-auth.test.js",
+        "name": "rejects wrong-workspace, revoked, expired, and missing-scope tokens"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "requires authentication and workspace membership"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "lists metadata for the requested workspace only"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "denies token list to viewers while workspace managers get 200"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "creates a scoped API token for managers and returns plaintext only once"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "revokes tokens within the workspace without returning plaintext or hashes"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "rejects raw CertOps tokens in names without exposing them or overblocking prefixes"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "requires a real session manager or admin for token mutations"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "writes one revoke audit for concurrent idempotent revocation"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "rolls back token mutations when the corresponding audit write fails"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "blocks token creation while the workspace is paused, but still allows revoke"
+      },
+      {
+        "file": "certops-api-token-routes.test.js",
+        "name": "rejects private-key material before token creation or revoke handlers run"
+      },
+      {
+        "file": "certops-api-tokens.test.js",
+        "name": "creates the api_tokens table with safe lookup columns and indexes"
+      },
+      {
+        "file": "certops-api-tokens.test.js",
+        "name": "supports create, list, validate, and revoke without persisting raw tokens"
+      },
+      {
+        "file": "certops-api-tokens.test.js",
+        "name": "rejects expired tokens and invalid scopes"
+      },
+      {
+        "file": "certops-api-tokens.test.js",
+        "name": "allows certops:read for job reads but not write scopes"
+      },
+      {
+        "file": "certops-machine-token-rate-limit.test.js",
+        "name": "allows valid machine tokens under limit and blocks the same token over limit"
+      },
+      {
+        "file": "certops-machine-token-rate-limit.test.js",
+        "name": "keeps different tokens and workspaces in separate limiter buckets"
+      },
+      {
+        "file": "certops-machine-token-rate-limit.test.js",
+        "name": "blocks at pre-auth rate limiting before token validation"
+      }
+    ]
+  },
+  "jobs": {
+    "files": [
+      "certops-job-create-api.test.js",
+      "certops-job-read-apis.test.js",
+      "certops-jobs-evidence.test.js",
+      "certops-executor-events.test.js",
+      "certops-issuance-claim-gating.test.js",
+      "certops-issuance-concurrency.test.js",
+      "certops-agent-job-logs.test.js",
+      "certops-workspace-kill-switch-api.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "requires authentication, workspace membership, and manager role"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "creates a job for managers, forces source to api, and writes an audit event"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "allows a bare operation with no subject"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "rejects invalid operations and subject combinations without creating a job"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "rejects private-key material before the rollout gate or manager check run"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "replays a lifecycle-advanced job without duplicating its creation audit"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "keeps same-subject manual-job audits uniquely traceable by jobId"
+      },
+      {
+        "file": "certops-job-create-api.test.js",
+        "name": "scopes created jobs to the requesting workspace only"
+      },
+      {
+        "file": "certops-job-read-apis.test.js",
+        "name": "requires authentication and workspace membership"
+      },
+      {
+        "file": "certops-job-read-apis.test.js",
+        "name": "lists workspace jobs with pagination and safe filters"
+      },
+      {
+        "file": "certops-job-read-apis.test.js",
+        "name": "gets one sanitized job detail"
+      },
+      {
+        "file": "certops-job-read-apis.test.js",
+        "name": "returns job log and evidence scoped to the requested workspace job"
+      },
+      {
+        "file": "certops-job-read-apis.test.js",
+        "name": "handles missing, malformed, and unsafe inputs without internal errors"
+      },
+      {
+        "file": "certops-jobs-evidence.test.js",
+        "name": "creates the job, log, and evidence tables with safe columns and indexes"
+      },
+      {
+        "file": "certops-jobs-evidence.test.js",
+        "name": "roundtrips job, log, and evidence data with workspace isolation"
+      },
+      {
+        "file": "certops-jobs-evidence.test.js",
+        "name": "rejects dangerous payload and evidence metadata before persistence"
+      },
+      {
+        "file": "certops-jobs-evidence.test.js",
+        "name": "enforces monotonic status transitions and replay-safe idempotency"
+      },
+      {
+        "file": "certops-jobs-evidence.test.js",
+        "name": "cascades job logs and detaches evidence when a job is deleted"
+      },
+      {
+        "file": "certops-jobs-evidence.test.js",
+        "name": "does not add executor job or evidence route handlers yet"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "requires a valid machine token with certops:events:write scope"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects oversized executor JSON before authentication or route handling"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "applies the dedicated pre-parser boundary to every exact machine write route"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "hides executor ingestion when CertOps is disabled before token validation or persistence"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "requires evidence write scope for aggregate executor evidence payloads"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects empty evidence operations before idempotency, audit, or job side effects"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "preserves private-key rejection precedence over empty evidence on every machine route"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "preserves private-key rejection precedence over the route's base scope on every machine route"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "fails closed when a combined empty-evidence key-material audit cannot be written"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "applies the machine-token rate limiter"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "is CSRF-exempt only for the executor machine-token namespace"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "supports per-job machine-token event and evidence routes with path job scope"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "persists lifecycle events through job services"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects eventType and status mismatches before any persistence"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "requires evidence scope before scanning or persisting evidence-bearing events"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "does not reopen terminal jobs when late lifecycle events arrive"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "logs stale active lifecycle events without regressing the job or duplicating retries"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "processes executor events atomically and idempotently"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "uses stable sanitized client semantics for idempotent retries"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "uses post-redaction evidence output for idempotency without persisting raw output"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "serializes concurrent different event IDs without terminal regression"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "resolves genuinely concurrent identical-payload requests to exactly one write, without deadlocking"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "resolves two different lifecycle events racing for the same job to exactly one terminal state, without deadlocking"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "scopes the same executor event ID independently by job and workspace"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "creates sanitized evidence and appends evidence.attached logs"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects malformed evidence artifactRefs before job log or evidence persistence"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "returns safe errors for missing jobs and malformed events"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "returns a safe 409 (not a 500) when a job.completed event targets a dry_run job"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects malformed IDs and metadata at the route boundary"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "enforces workspace isolation through the authenticated token workspace"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects private-key payloads before persistence"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "rejects server-owned metadata collisions before logs, evidence, audits, or idempotency records"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "redacts generic secrets in log and evidence metadata before persistence"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "redacts generic-secret field-name aliases without persisting client names or values"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "redacts cookie, header, token, and cloud-secret strings without losing public timeline context"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "records safe audit events for accepted, conflicting, and rejected evidence output"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "keeps event and evidence reporting available for work already in a paused workspace"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "refuses an executor terminal status on a job a CertOps agent currently holds"
+      },
+      {
+        "file": "certops-executor-events.test.js",
+        "name": "records a renewal-alert intent for an executor-reported renew failure"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "offers an issue job only to an agent that can bind evidence to a claim"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "gates a retrying renew against a still-provisioning certificate"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "still offers an ordinary renewal of an active certificate to an older agent"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "replaces rather than unions the declared capability set on a real heartbeat write"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "a downgraded agent that stops advertising signed-payload-b64-v1 never receives a v2 envelope"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "a downgraded agent that stops advertising evidence-claim-binding-v1 is never offered an issue job"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "does not offer a capability-gated job when the assertion is older than the freshness bound, with a test on both sides of the bound"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "writes a CERTOPS_AGENT_CAPABILITIES_CHANGED audit event on a real heartbeat capability change"
+      },
+      {
+        "file": "certops-issuance-claim-gating.test.js",
+        "name": "a migrated pre-existing agent row (capabilities_updated_at IS NULL) is never offered a gated job, and becomes eligible once a heartbeat sets the column"
+      },
+      {
+        "file": "certops-issuance-concurrency.test.js",
+        "name": "returns one certificate and one job when two requests race on a key"
+      },
+      {
+        "file": "certops-issuance-concurrency.test.js",
+        "name": "does not leave an orphan certificate when the job insert conflicts"
+      },
+      {
+        "file": "certops-issuance-concurrency.test.js",
+        "name": "keeps distinct keys independent under contention"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "opens the stream inside the claim and leaves the signed job untouched"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "answers a retried batch with the stored ack and never charges it twice"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "never overspends the shared daily quota under concurrent ingest"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "runs claims, ingest, reaper closes and both sweeps concurrently without deadlocking"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "closes, then abandons, streams whose claim ended without a result"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "keeps cursors monotonic across a retention purge"
+      },
+      {
+        "file": "certops-agent-job-logs.test.js",
+        "name": "stores nothing when retention is 0"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "allows members to read but only admins to change the workspace-local state"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "allows members to read but only admins to change the always-require-approval policy, and audits real transitions"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "leaves both settings unchanged when a combined update's second write fails atomically"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "rejects internal worker credentials from reading or changing settings"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "rejects worker settings key material before the session-user denial"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "blocks only new manual jobs while paused, preserves reads, and resumes cleanly"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "rejects invalid update input without changing state"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "keeps a same-request idempotent manual-job replay to one audit"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "exposes both workspace pause states independently of the global rollout"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "updates the pause and approval-policy fields together in one request"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "rejects private key material on settings before role checks even with rollout disabled"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "keeps machine event and evidence ingestion available for pre-existing work while paused"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "serializes concurrent opposite transitions with accurate prior state and audit history"
+      },
+      {
+        "file": "certops-workspace-kill-switch-api.test.js",
+        "name": "serializes real PostgreSQL pause and manual-job races in both commit orders"
+      }
+    ]
+  },
+  "worker": {
+    "files": [
+      "certops-agent-health-alerts-worker-cron.test.js",
+      "certops-renewal-path-health-real-topology.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level)"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "respects a real downtime_alerts_enabled = false agent: still flips offline, queues no alert"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "sweepAgentRecoveries queues a real recovered alert and deletes the down row, but ONLY once the down alert reached status='sent'"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "an agent with no open down alert_queue row at all is not a recovery candidate"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "PATCH alert-settings persists downtimeAlertsEnabled/contactGroupId on a real agent row, and GET /agents reflects it"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "rejects an unknown contactGroupId with 400 and leaves the real agent row unchanged"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "rejects an empty body with 400 (at least one of downtimeAlertsEnabled/contactGroupId is required)"
+      },
+      {
+        "file": "certops-agent-health-alerts-worker-cron.test.js",
+        "name": "a real downtimeAlertsEnabled=false set via the route is actually honored by the worker cron down-alert sweep"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case A (PINNED): agent_filesystem source whose discovery_agent_id resolves to a real online agent is Healthy with exactly one required dependency"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case A (PINNED, offline): the pinned agent is real but offline -> Unavailable/agent_offline, not open-claim fallback"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case A (PINNED, retired): the pinned agent has been retired -> permanent Unavailable/assigned_agent_retired, never falls through to open-claim"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case B (OPEN-CLAIM, single agent online): a non-agent_filesystem certificate with one matching declared selector is Healthy"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case B (OPEN-CLAIM, redundant, all online): two agents declaring the same selector -> Healthy, neither individually required"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case B->Degraded (OPEN-CLAIM, redundant, partial outage): one of two declaring agents offline -> Degraded/partial_location_outage"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case C (OPEN-CLAIM, all executors down): both declaring agents offline -> Unavailable/all_executors_offline"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "no agent declares the configured target selector -> Unavailable/no_execution_target"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "no target reference at all on an otherwise-real profile -> Unknown/topology_unknown"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "key_mode not agent-deployable -> renewalPathState is null with not_agent_deployable, never a fabricated Unavailable"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "no profile linked at all -> renewalPathState is null with no_profile"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "a real disabled certificate_profiles row -> renewalPathState is null with auto_renew_disabled, not a fabricated dependency failure"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "a real revoked managed_certificates row -> renewalPathState is null with certificate_retired"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "resolveRenewalPathsForWorkspace excludes revoked/decommissioned rows entirely (they never even appear in the batch)"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "listCertificatesDependentOnAgent and countCertificatesDependentPerAgent report a real agent's real dependents, including redundant (non-required) ones"
+      }
+    ]
+  },
+  "csr": {
+    "files": [
+      "certops-csr-workflow.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "keeps observations factual while name review blocks promotion"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "observes a certificate actually served by a host before promoting the CSR"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "keeps a monitor-backed certificate unchanged until CSR review, then active on re-observation"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "records a controller deployment without changing an existing certificate before name review"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "restarts a cancelled CSR and releases its exclusively owned provisioning certificate"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "keeps a shared provisioning certificate until the last CSR is cancelled"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "transfers a token's CSR workflow with its target and managed certificate"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "transfers a signed CSR and its tokenless provisioning certificate with a monitored target"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "transfers a completed CSR with its observed instance"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "rejects private PEM before creating a workflow or target"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "rejects retired fingerprints and records manual attestation without an instance"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "rejects a signed leaf owned by B when rotating A and keeps A unchanged"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "preserves an existing certificate until manager attestation promotes the new leaf"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "persists a B-owned observation and exposes a conflict without promoting A"
+      },
+      {
+        "file": "certops-csr-workflow.test.js",
+        "name": "reconciles other new workflows sharing a provisional fingerprint when one target observes it"
+      }
+    ]
+  },
+  "import-absence": {
+    "files": [
+      "import-cleanup-scan-lifecycle.test.js",
+      "import-cleanup-route.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "deletes a not-rediscovered token in a scope the scan reported complete"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "never touches a different instance of the same provider, even with colliding owner keys"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "All-Regions AWS scan only deletes the missing region's token"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "never touches a different Azure Key Vault when cleaning vault A"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "cleans complete Azure KV types while leaving an incomplete type untouched"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "Azure AD cleanup only removes the deleted app secret, not another app's"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "GCP incomplete secrets kind skips cleanup even for a secret missing from the scan"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "GCP complete scan still deletes a missing secret when a listed one had a version-lookup failure"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "never deletes anything from a sub-scope the scan reported incomplete"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "deletes everything in a scope when a fully complete scan legitimately finds zero items"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "GCP certificate sub-scope cleanup only touches the certificate kind, scoped by location dimension"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "GCP compute SSL cert cleanup skips an incomplete sub-scope"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "refuses to replay a scan_id for a second destructive cleanup"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "observation fence: never deletes a token observed after the cleanup-driving scan started"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "never touches legacy tokens with no provenance attribution"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "narrows Vault cleanup to the scanned mount, sparing an unscanned mount"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "does not confuse a KV secret at a PKI-shaped path with an actual PKI certificate"
+      },
+      {
+        "file": "import-cleanup-scan-lifecycle.test.js",
+        "name": "survives a rediscovery race: an older scan's cleanup must not delete a token a newer, concurrent scan just rediscovered"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "accepts the exact empty-items + camelCase-scanId payload the auto-sync worker sends and runs cleanup"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "normalizes a nested snake_case cleanup.scan_id as a defense-in-depth fallback"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "rejects empty items with no cleanup requested (no regression)"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "rejects empty items when cleanup is present but disabled (no regression)"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "Vault import route: accepts empty items + enabled cleanup with a valid scan_id and runs cleanup"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "Vault import route: attributes a newly imported item to the scan that discovered it"
+      },
+      {
+        "file": "import-cleanup-route.test.js",
+        "name": "Vault import route: rejects empty items with no cleanup requested (no regression)"
+      }
+    ]
+  },
+  "alerts": {
+    "files": [
+      "retired-certificate-alerts.integration.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "retired-certificate-alerts.integration.test.js",
+        "name": "deletes this certificate's unsent renewal-failure alerts on retire, including limit_exceeded, without dropping sibling expiry"
+      },
+      {
+        "file": "retired-certificate-alerts.integration.test.js",
+        "name": "delivers endpoint-health after the last shared-token sibling is retired"
+      },
+      {
+        "file": "retired-certificate-alerts.integration.test.js",
+        "name": "does not enqueue expiry alerts for a fully retired token, and still enqueues a live one"
+      },
+      {
+        "file": "retired-certificate-alerts.integration.test.js",
+        "name": "discards leftover renewal-failure delivery for a retired certificate while the shared token stays live"
+      },
+      {
+        "file": "retired-certificate-alerts.integration.test.js",
+        "name": "omits a fully retired token from the weekly digest"
+      }
+    ]
+  },
+  "renewal-health": {
+    "files": [
+      "certops-renewal-path-health-real-topology.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case A (PINNED): agent_filesystem source whose discovery_agent_id resolves to a real online agent is Healthy with exactly one required dependency"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case A (PINNED, offline): the pinned agent is real but offline -> Unavailable/agent_offline, not open-claim fallback"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case A (PINNED, retired): the pinned agent has been retired -> permanent Unavailable/assigned_agent_retired, never falls through to open-claim"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case B (OPEN-CLAIM, single agent online): a non-agent_filesystem certificate with one matching declared selector is Healthy"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case B (OPEN-CLAIM, redundant, all online): two agents declaring the same selector -> Healthy, neither individually required"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case B->Degraded (OPEN-CLAIM, redundant, partial outage): one of two declaring agents offline -> Degraded/partial_location_outage"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "Case C (OPEN-CLAIM, all executors down): both declaring agents offline -> Unavailable/all_executors_offline"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "no agent declares the configured target selector -> Unavailable/no_execution_target"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "no target reference at all on an otherwise-real profile -> Unknown/topology_unknown"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "key_mode not agent-deployable -> renewalPathState is null with not_agent_deployable, never a fabricated Unavailable"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "no profile linked at all -> renewalPathState is null with no_profile"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "a real disabled certificate_profiles row -> renewalPathState is null with auto_renew_disabled, not a fabricated dependency failure"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "a real revoked managed_certificates row -> renewalPathState is null with certificate_retired"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "resolveRenewalPathsForWorkspace excludes revoked/decommissioned rows entirely (they never even appear in the batch)"
+      },
+      {
+        "file": "certops-renewal-path-health-real-topology.test.js",
+        "name": "listCertificatesDependentOnAgent and countCertificatesDependentPerAgent report a real agent's real dependents, including redundant (non-required) ones"
+      }
+    ]
+  }
+}

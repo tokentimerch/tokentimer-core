@@ -49,9 +49,17 @@ The agent supports native Windows service installation. Its runtime differs from
   `HKLM:\SYSTEM\CurrentControlSet\Services\TokenTimerAgent\Environment`
   value so the service process inherits it as an environment variable, then
   deletes the on-disk `bootstrap.env` file. The agent itself rewrites that
-  registry value (dropping the token, keeping the config-dir entry) once
+  registry value (dropping the token and token-id entries, preserving the
+  config directory and unrelated service environment values) once
   registration succeeds, so the secret does not outlive its single-use
-  purpose by lingering in the registry after a successful exchange.
+  purpose by lingering in the registry after a successful exchange. The
+  caller's absolute config path must match the service's single config-dir
+  entry before any write. A manually run agent using another state directory
+  cannot rewrite the installed service's environment. Ambiguous native
+  renderings or an observed change between reads refuse the rewrite and
+  return a bounded cleanup reason; this best-effort cleanup does not fail
+  registration. Path spelling is normalized for separators/trailing slashes;
+  unproven case-only aliases are conservatively refused.
 - **A `windows-iis` target's `store` field is honored, not just validated.**
   `certreq -accept` has no switch that targets a store other than `My` for a
   machine-keyset request, so a non-default `store` (e.g. `WebHosting`) is

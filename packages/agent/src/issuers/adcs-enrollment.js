@@ -51,6 +51,16 @@ function decodeEnrollmentSnapshot(job) {
   if (!Number.isInteger(attempt) || attempt < 1) {
     return { ok: false, error: "enrollment.attempt must be an integer >= 1" };
   }
+  const terminalState = enrollment.terminalState;
+  const reconcileRequestId = enrollment.reconcileRequestId;
+  if (reconcileRequestId !== undefined &&
+      (!Number.isInteger(reconcileRequestId) || reconcileRequestId < 1 || reconcileRequestId > 0xffffffff || terminalState !== undefined)) {
+    return { ok: false, error: "enrollment.reconcileRequestId must be a bounded RequestId without terminal cleanup" };
+  }
+  if (terminalState !== undefined &&
+      !['expired', 'cancelled', 'abandoned'].includes(terminalState)) {
+    return { ok: false, error: 'enrollment.terminalState requires a terminal cleanup continuation' };
+  }
   const snapshotB64 = enrollment.snapshotB64;
   const snapshotSha256 = enrollment.snapshotSha256;
   if (typeof snapshotB64 !== "string" || snapshotB64.length === 0) {
@@ -81,7 +91,9 @@ function decodeEnrollmentSnapshot(job) {
   if (!snapshot || typeof snapshot !== "object" || snapshot.kind !== "adcs") {
     return { ok: false, error: "enrollment snapshot kind must be adcs" };
   }
-  return { ok: true, enrollmentId, attempt, snapshot, snapshotSha256 };
+  return { ok: true, enrollmentId, attempt, snapshot, snapshotSha256,
+    ...(terminalState ? { terminalState } : {}),
+    ...(reconcileRequestId !== undefined ? { reconcileRequestId } : {}) };
 }
 
 function mapSnapshotKeyAlgorithm(snapshot) {
