@@ -1045,6 +1045,11 @@
       "retired-scheduler-authoritative-scan": "integration",
       "retired-scheduler-final-admission": "integration",
       "retired-scheduler-owned-cleanup": "integration"
+    },
+    "windows-installer-first-rename-refusal": {
+      "windows-upgrade-directory-handle-owned": "e2e",
+      "windows-upgrade-first-rename-refusal-preserves-service": "e2e",
+      "windows-upgrade-rename-refusal-owned-cleanup": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1461,6 +1466,12 @@
       "postgres",
       "openssl",
       "exclusiveStack"
+    ],
+    "windows-installer-first-rename-refusal": [
+      "windows",
+      "system",
+      "installedAgent",
+      "api"
     ]
   },
   "suites": {
@@ -2503,6 +2514,11 @@
       "retired-scheduler-authoritative-scan",
       "retired-scheduler-final-admission",
       "retired-scheduler-owned-cleanup"
+    ],
+    "windows-installer-first-rename-refusal": [
+      "windows-upgrade-directory-handle-owned",
+      "windows-upgrade-first-rename-refusal-preserves-service",
+      "windows-upgrade-rename-refusal-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2590,6 +2606,7 @@
     "terminal-renewal-admission-api": "integration",
     "retirement-approval-api": "integration",
     "windows-acme-wrong-spki": "e2e",
-    "retired-identity-scheduler-api": "integration"
+    "retired-identity-scheduler-api": "integration",
+    "windows-installer-first-rename-refusal": "e2e"
   }
 }

@@ -540,6 +540,60 @@ function Copy-PackageTree {
     }
 }
 
+# Both directory renames belong to the same recovery boundary. In particular,
+# a sharing violation on the still-running predecessor must remove the copied
+# staging tree without changing the predecessor or restarting its service.
+function Activate-StagedPackage {
+    param(
+        [Parameter(Mandatory = $true)][string]$AppDirectory,
+        [Parameter(Mandatory = $true)][string]$StagingDirectory,
+        [Parameter(Mandatory = $true)][string]$PreviousDirectory
+    )
+    $ErrorActionPreference = 'Stop'
+    $appPath = [IO.Path]::GetFullPath($AppDirectory).TrimEnd('\')
+    $stagingPath = [IO.Path]::GetFullPath($StagingDirectory).TrimEnd('\')
+    $previousPath = [IO.Path]::GetFullPath($PreviousDirectory).TrimEnd('\')
+    if (-not [IO.Path]::IsPathRooted($AppDirectory) -or
+        -not $stagingPath.Equals("$appPath.staging.$PID", [StringComparison]::OrdinalIgnoreCase) -or
+        -not $previousPath.Equals("$appPath.previous.$PID", [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'refusing unexpected package swap paths'
+    }
+    foreach ($targetPath in @([IO.Path]::GetDirectoryName($appPath), $appPath, $stagingPath, $previousPath)) {
+        $item = Get-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+        if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $item.PSIsContainer)) {
+            throw 'refusing linked or non-directory package swap targets'
+        }
+    }
+    if (Test-Path -LiteralPath $PreviousDirectory) { throw 'refusing an existing package recovery directory' }
+    $previousMoved = $false
+    try {
+        if (Test-Path -LiteralPath $AppDirectory) {
+            Rename-Item -LiteralPath $AppDirectory -NewName (Split-Path -Leaf $PreviousDirectory) -ErrorAction Stop
+            $previousMoved = $true
+        }
+        Rename-Item -LiteralPath $StagingDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop
+    } catch {
+        $activationError = $_.Exception.Message
+        $recoveryErrors = @()
+        if ($previousMoved) {
+            try { Rename-Item -LiteralPath $PreviousDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop }
+            catch { $recoveryErrors += 'previous installation restoration failed' }
+        }
+        try {
+            $stagedItem = Get-Item -LiteralPath $StagingDirectory -Force -ErrorAction SilentlyContinue
+            if ($stagedItem) {
+                if (($stagedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $stagedItem.PSIsContainer) { throw 'staging ownership changed' }
+                Remove-Item -LiteralPath $StagingDirectory -Recurse -Force -ErrorAction Stop
+            }
+        } catch { $recoveryErrors += 'staging cleanup failed' }
+        if ($recoveryErrors.Count) {
+            throw "failed to activate the staged agent package; recovery incomplete ($($recoveryErrors -join '; ')); $activationError"
+        }
+        $previousOutcome = if ($previousMoved) { 'restored' } else { 'preserved' }
+        throw "failed to activate the staged agent package; the previous install was $previousOutcome ($activationError)"
+    }
+}
+
 Write-Log "Installing agent package from $PackageDir to $AppDir"
 if (-not $script:DryRun) {
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
@@ -559,16 +613,10 @@ if ($script:DryRun) {
         if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
         Fail "failed to stage the agent package; $AppDir was left untouched ($($_.Exception.Message))"
     }
-    if (Test-Path $script:AppPrevious) { Remove-Item -Recurse -Force $script:AppPrevious }
-    if (Test-Path $AppDir) {
-        Rename-Item -LiteralPath $AppDir -NewName (Split-Path -Leaf $script:AppPrevious)
-    }
     try {
-        Rename-Item -LiteralPath $script:AppStaging -NewName (Split-Path -Leaf $AppDir)
+        Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious
     } catch {
-        if (Test-Path $script:AppPrevious) { Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir) }
-        if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
-        Fail "failed to activate the staged agent package; the previous install was restored ($($_.Exception.Message))"
+        Fail $_.Exception.Message
     }
 }
 

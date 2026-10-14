@@ -2417,6 +2417,44 @@
         "distributionId": "ubuntu",
         "distributionVersion": "24.04"
       }
+    },
+    {
+      "id": "windows-first-rename-refusal-2022",
+      "kind": "host",
+      "suite": "windows-installer-first-rename-refusal",
+      "source": "tests/e2e/helpers/certops-windows-rename-refusal.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "packages/agent/scripts/install-agent.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/windows-real-journey.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-first-rename-refusal-2025",
+      "kind": "host",
+      "suite": "windows-installer-first-rename-refusal",
+      "source": "tests/e2e/helpers/certops-windows-rename-refusal.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "packages/agent/scripts/install-agent.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/windows-real-journey.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
     }
   ]
 }

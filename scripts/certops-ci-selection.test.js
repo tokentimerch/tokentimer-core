@@ -45,3 +45,16 @@ test("CertOps frontend paths trigger tooling with actual console authority tests
  for(const name of ["AgentShellConsole","RequireManagerRoute","WorkspaceContext","useCertOpsUrlState"])assert.ok(step.run.includes(`tests/unit/${name}.test.jsx`));
  assert.match(step.run,/^pnpm --dir apps\/dashboard test /);
 });
+
+// Supporting PowerShell filesystem coverage belongs in the existing selected
+// Windows lane; it must not silently depend on an opt-in full SCM journey.
+test("installer swap regression runs under Windows PowerShell 5.1 in the selective supporting lane",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ const step=workflow.jobs.windows.steps.find(item=>item.name==="Installer activation filesystem regression (supporting only)");
+ assert.ok(step);assert.equal(step.shell,"powershell");assert.equal(step.if,undefined);assert.notEqual(step["continue-on-error"],true);
+ assert.match(step.run,/PSVersionTable\.PSVersion\.Major -ne 5/);assert.match(step.run,/PSVersionTable\.PSVersion\.Minor -ne 1/);
+ assert.match(step.run,/& \.\/scripts\/certops-installer-swap\.test\.ps1/);
+ assert.deepEqual(selectFiles(["scripts/certops-installer-swap.test.ps1"]),{tooling:true,windows:true,stack:false,reason:"changed-files"});
+ assert.equal(selectFiles(["packages/agent/scripts/install-agent.ps1"]).windows,true);
+});

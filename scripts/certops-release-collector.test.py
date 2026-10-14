@@ -408,6 +408,20 @@ class CollectorTests(unittest.TestCase):
         self.assertNotIn("never-copy", json.dumps(reports))
         self.assertEqual(collector.extract_reports(self.archive("other.json", {"suite": "unknown"}), {"fixture"}, set()), [])
 
+    def test_first_rename_refusal_projection_requires_fault_and_preservation(self):
+        suite = "windows-installer-first-rename-refusal"
+        fields = ("nativeDirectoryHandleHeld", "nativeHandleIdentityMatched", "actualFirstRenameRefused", "stagingRemoved", "previousDirectoryAbsent", "installedFilesUnchanged", "configurationAndCredentialUnchanged", "sameRunningServicePid", "freshAuthenticatedHeartbeat", "trustedTlsUnchanged", "nativeHandleReleased", "ownedChildDrained")
+        facts = dict.fromkeys(fields, True)
+        result = collector.sanitized_report({"suite": suite, "nativeRenameRefusal": {**facts, "private": {"secret": "never-copy"}}}, {suite}, set())
+        self.assertEqual(result["nativeRenameRefusal"], facts)
+        self.assertNotIn("never-copy", json.dumps(result))
+        for field in fields:
+            for replacement in (False, {"secret": "never-copy"}):
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report({"suite": suite, "nativeRenameRefusal": {**facts, field: replacement}}, {suite}, set())
+        with self.assertRaises(ValueError):
+            collector.sanitized_report({"suite": suite}, {suite}, set())
+
     def test_download_limits(self):
         with self.assertRaises(ValueError):
             collector.extract_reports(b"x" * (collector.MAX_ARCHIVE + 1), set(), set())

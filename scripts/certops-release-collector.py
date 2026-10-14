@@ -324,6 +324,12 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Missing historical source upgrade preservation evidence")
                 bounded[key] = True
             result["sourceUpgrade"] = bounded
+        if value.get("suite") == "windows-installer-first-rename-refusal":
+            proof = value.get("nativeRenameRefusal")
+            fields = ("nativeDirectoryHandleHeld", "nativeHandleIdentityMatched", "actualFirstRenameRefused", "stagingRemoved", "previousDirectoryAbsent", "installedFilesUnchanged", "configurationAndCredentialUnchanged", "sameRunningServicePid", "freshAuthenticatedHeartbeat", "trustedTlsUnchanged", "nativeHandleReleased", "ownedChildDrained")
+            if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
+                raise ValueError("Incomplete native first-rename refusal evidence")
+            result["nativeRenameRefusal"] = dict.fromkeys(fields, True)
         if value.get("suite") == "windows-acme-wrong-spki":
             proof = value.get("nativeWrongSpki")
             if not isinstance(proof, dict):

@@ -13,6 +13,7 @@ function selectFiles(files){
   if(/^packages\/agent\//.test(file)){
    if(!/^packages\/agent\/scripts\/(host-gate(?:\.test)?\.js|.*(?:report|qualification).*\.js)$/.test(file)){selected.windows=true;selected.stack=true;}
   }
+  if(file==="scripts/certops-installer-swap.test.ps1")selected.windows=true;
   if(/^packages\/(?!agent\/)/.test(file))selected.stack=true;
   if(/^apps\/(api|worker)\//.test(file)||/^deploy\/compose\//.test(file)||/^tests\/(e2e|integration)\//.test(file))selected.stack=true;
   if(/^scripts\/certops-(api-qualification|stack-report|stack-reporter|linux-discovery-report)\.js$/.test(file))selected.stack=true;

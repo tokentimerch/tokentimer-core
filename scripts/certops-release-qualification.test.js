@@ -295,3 +295,25 @@ test("Windows host release proof requires complete CNG custody and same-port SNI
  const options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};assert.deepEqual(verifyMatrix([value],options),[]);
  for(const mutate of [v=>{delete v.report.nativeEnrollmentContention;},v=>{v.report.nativeEnrollmentContention.loserNativeCalls=1;},v=>{v.report.nativeEnrollmentContention.retryCertreqCalls=1;},v=>{v.report.nativeEnrollmentContention.sameNonExportableKey=false;},v=>{v.report.nativeEnrollmentContention.ownedChildrenStopped=false;},v=>{delete v.report.nativeSamePortSni;},v=>{v.report.nativeSamePortSni.hostnameCount=1;},v=>{v.report.nativeSamePortSni.peerRollbackPrimaryUnchanged=false;},v=>{v.report.nativeSamePortSni.ownedCleanupVerified=false;},v=>{delete v.report.cngCustody;},v=>{v.report.cngCustody.cases.pop();},v=>{v.report.cngCustody.cases[0].controlBytesZeroed=false;},v=>{v.report.cngCustody.privateExportBytesReported=true;},v=>{v.report.cngCustody.cases[0].privateExportHResult=0;}]){const bad=structuredClone(value);mutate(bad);assert.ok(verifyMatrix([bad],options).length);}
 });
+
+
+test("first-rename refusal requires actual held fault and preserved running predecessor", () => {
+  const suite = "windows-installer-first-rename-refusal", helper = require("../tests/e2e/helpers/certops-windows-rename-refusal");
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
+  const fields = ["nativeDirectoryHandleHeld", "nativeHandleIdentityMatched", "actualFirstRenameRefused", "stagingRemoved", "previousDirectoryAbsent", "installedFilesUnchanged", "configurationAndCredentialUnchanged", "sameRunningServicePid", "freshAuthenticatedHeartbeat", "trustedTlsUnchanged", "nativeHandleReleased", "ownedChildDrained"];
+  const facts = Object.fromEntries(fields.map(field => [field, true]));
+  assert.equal(helper.verifyProof(facts), true);
+  const value = suiteArtifact(suite, slot.source, { nativeRenameRefusal: facts });
+  value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  for (const field of fields) {
+    const bad = structuredClone(value); bad.report.nativeRenameRefusal[field] = false;
+    assert.ok(verifyMatrix([bad], options).length, field);
+  }
+  const missing = structuredClone(value); delete missing.report.nativeRenameRefusal;
+  assert.ok(verifyMatrix([missing], options).length);
+  const stale = structuredClone(value); stale.report.fixtureSources[0].sha256 = "0".repeat(64);
+  assert.ok(verifyMatrix([stale], options).length);
+});
