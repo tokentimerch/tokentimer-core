@@ -496,7 +496,7 @@ jobs:
   helm_smoke_test:
     name: Helm Smoke Test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
 
       - name: Checkout
@@ -522,7 +522,20 @@ jobs:
           helm install cnpg-operator cnpg/cloudnative-pg --namespace cnpg-system --create-namespace --version 0.23.0 --wait
 
       - name: Install TokenTimer
+        env:
+          TT_SMOKE_IMAGE_TAG: ci-${{ github.sha }}
         run: |
+
+         # Test this checkout, including unreleased migrations. Published tags
+         # are immutable release artifacts and cannot validate a new PR head.
+         for component in api dashboard worker; do
+           docker build -f "deploy/compose/Dockerfile.${component}" \
+             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+             -t "ghcr.io/tokentimerch/tokentimer-core-${component}:${TT_SMOKE_IMAGE_TAG}" .
+           kind load docker-image \
+             "ghcr.io/tokentimerch/tokentimer-core-${component}:${TT_SMOKE_IMAGE_TAG}" \
+             --name ephemeral-smoke-test-cluster
+         done
 
          helm lint ./deploy/helm \
           --set config.adminEmail=admin@example.com \
@@ -533,7 +546,10 @@ jobs:
            -f deploy/helm/ci/ci-values-smoke-test.yaml \
            --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
            --set api.env.NODE_ENV=development \
-           --set config.adminEmail=admin@example.com
+           --set config.adminEmail=admin@example.com \
+           --set-string api.image.tag="$TT_SMOKE_IMAGE_TAG" \
+           --set-string dashboard.image.tag="$TT_SMOKE_IMAGE_TAG" \
+           --set-string worker.image.tag="$TT_SMOKE_IMAGE_TAG"
 
       - name: Wait for workloads
         run: |
@@ -541,17 +557,22 @@ jobs:
 
       - name: Smoke Test API Service
         run: |
-          response=$(kubectl run smoke-test \
+          kubectl run smoke-test \
             --image=curlimages/curl:8.12.1 \
             --restart=Never \
             -n tokentimer \
             --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
-            --attach \
             --quiet \
             --command -- \
             curl -sS --connect-timeout 5 --max-time 10 \
             -w '\n%{http_code}\n' \
-            http://tokentimer-api:4000/health)
+            http://tokentimer-api:4000/health
+
+          # Read durable pod logs; --attach can miss output from a short-lived
+          # successful curl process and incorrectly report an empty response.
+          kubectl wait --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/smoke-test -n tokentimer --timeout=60s
+          response=$(kubectl logs smoke-test -n tokentimer)
 
           http_code=$(printf '%s\n' "$response" | tail -n 1)
           body=$(printf '%s\n' "$response" | sed '$d')
@@ -579,6 +600,7 @@ jobs:
           kubectl describe pods -n tokentimer || true
           kubectl logs deployment/tokentimer-api \
             -n tokentimer --all-containers=true --tail=100 || true
+          kubectl logs smoke-test -n tokentimer || true
           helm status tokentimer -n tokentimer || true
           helm status kube-prom-stack -n monitoring || true
           helm status cnpg-operator -n cnpg-system || true
