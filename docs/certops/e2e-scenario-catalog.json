@@ -481,8 +481,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Existing enrollment container refusal and subsequent same-key acceptance covered; multiprocess enrollment race/crash variants remain."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/enrollment-contention-fixture.js",
+      "remainingCoverage": "Mandatory supporting native source uses real separate processes and the supported enrollment lock around actual CNG CSR generation. The winner holds the lock; the loser must report ENROLLMENT_LOCKED with zero native calls. After release, retry must acquire the lock then refuse the existing container without certreq. Unchanged native KSP metadata, CSR/SPKI and independently verified signatures preserve exact non-exportable key custody. Only explicit native-callback completion/release and clean child exit authorize key removal; uncertain descendant drain fails and retains the key for disposable-VM reclamation. Source is not native execution evidence. This does not claim raw generateCsrViaCng is atomic; all enrollment crash phases and installed signed-job concurrency remain separately qualified."
     },
     {
       "id": "windows-cng.accept-match",
@@ -2004,8 +2004,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-governance-e2e.test.js; tests/e2e/certops-decommission-e2e.test.js",
-      "remainingCoverage": "Seven actual public API/PostgreSQL scenarios prove unknown/stored-copy acknowledgement atomicity, explicit terminal decommissioning and fresh real trusted TLS rediscovery/concurrent rescans without reactivation or duplicate history. Existing serving-TLS refusal remains mandatory. Native IIS/HTTP.sys observation permutations and edition governance require their separate qualification; no native removal is claimed."
+      "implementation": "tests/e2e/certops-governance-e2e.test.js; tests/e2e/certops-decommission-e2e.test.js; tests/e2e/certops-terminal-renewal-e2e.test.js",
+      "remainingCoverage": "Seven actual public API/PostgreSQL scenarios prove unknown/stored-copy acknowledgement atomicity, explicit terminal decommissioning and fresh real trusted TLS rediscovery/concurrent rescans without reactivation or duplicate history. Existing serving-TLS refusal remains mandatory. Native IIS/HTTP.sys observation permutations and edition governance require their separate qualification; no native removal is claimed. A separate six-case supporting API suite uses explicitly complete profile/key-mode prerequisites and genuine active manual positive controls, then public revoked/decommissioned retirement and trusted TLS rediscovery; manual and bulk renewal refuse terminal subjects with exact job/outbox/identity/token/audit preservation. Native key removal, Windows binding permutations and downstream edition policy remain separate qualification."
     },
     {
       "id": "governance.stop-managing",

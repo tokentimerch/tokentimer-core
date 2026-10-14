@@ -28,6 +28,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Manual certificate renewal now returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE` for revoked or decommissioned certificates, matching bulk renewal even after the certificate is observed serving again. A stored renewal profile cannot bypass operator retirement.
+
 - PowerDNS and OVH DNS challenge operations now refuse malformed record lookup responses before changing records or reporting successful cleanup, preserving unknown sibling values.
 - Windows agent fatal startup errors now finish pending native teardown and exit with code `1`, avoiding a native abort during registration conflicts.
 - Malformed successful Google Certificate Manager and Compute SSL certificate list responses no longer count as empty inventories, so cleanup preserves previously imported certificates.

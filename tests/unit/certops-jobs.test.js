@@ -3194,6 +3194,20 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
     };
   }
 
+  it("refuses retired manual/bulk subjects before profile or issuer materialization", async () => {
+    const { manualRenewalJobCreator } = require("../../apps/api/services/certops/jobs");
+    for (const status of ["revoked", "decommissioned"]) {
+      const create = manualRenewalJobCreator({
+        certificateId: MANUAL_RENEWAL_CERT_ID,
+        loadCertificate: () => ({ ...certificateRow(), status, profile_issuer_id: "retired-issuer", profile_public_metadata: null }),
+        createJob: () => assert.fail("A retired subject must not reach job admission"),
+      });
+      await assert.rejects(create({ client: {}, workspaceId: WORKSPACE_A, source: "api" }), {
+        code: "CERTOPS_CERTIFICATE_NOT_RENEWABLE",
+      });
+    }
+  });
+
   it("materializes the exact same payload the scheduler would build, when the manual request supplies no override", async () => {
     const { buildRenewalJobPayload } = require(
       path.resolve(

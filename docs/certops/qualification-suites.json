@@ -32,7 +32,8 @@
       "windows-installer-build-floor": "unit",
       "windows-discovery-http-sys-selectors": "real-host",
       "windows-cng-private-export-refusal": "real-host",
-      "windows-iis-shared-port-sni-isolation": "real-host"
+      "windows-iis-shared-port-sni-isolation": "real-host",
+      "windows-enrollment-lock-cng-contention": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -1011,6 +1012,14 @@
       "renew-toggle-resume-exactly-once": "integration",
       "renew-toggle-owned-cleanup": "integration",
       "renew-toggle-bulk-stored-profile-allowed": "integration"
+    },
+    "terminal-renewal-admission-api": {
+      "terminal-renewal-complete-profile-imports": "integration",
+      "terminal-renewal-active-positive-control": "integration",
+      "terminal-renewal-public-retirement": "integration",
+      "terminal-renewal-trusted-tls-rediscovery": "integration",
+      "terminal-renewal-manual-and-bulk-refusal": "integration",
+      "terminal-renewal-owned-cleanup": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1405,6 +1414,11 @@
       "postgres",
       "openssl",
       "exclusiveStack"
+    ],
+    "terminal-renewal-admission-api": [
+      "api",
+      "postgres",
+      "openssl"
     ]
   },
   "suites": {
@@ -1439,7 +1453,8 @@
       "windows-installer-build-floor",
       "windows-discovery-http-sys-selectors",
       "windows-cng-private-export-refusal",
-      "windows-iis-shared-port-sni-isolation"
+      "windows-iis-shared-port-sni-isolation",
+      "windows-enrollment-lock-cng-contention"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -2418,6 +2433,14 @@
       "renew-toggle-disabled-not-batch-starvation",
       "renew-toggle-resume-exactly-once",
       "renew-toggle-owned-cleanup"
+    ],
+    "terminal-renewal-admission-api": [
+      "terminal-renewal-complete-profile-imports",
+      "terminal-renewal-active-positive-control",
+      "terminal-renewal-public-retirement",
+      "terminal-renewal-trusted-tls-rediscovery",
+      "terminal-renewal-manual-and-bulk-refusal",
+      "terminal-renewal-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2501,6 +2524,7 @@
     "windows-historical-source-upgrade": "e2e",
     "linux-systemd-published-upgrade": "real-host",
     "decommission-lifecycle-api": "e2e",
-    "renewal-toggle-scheduler-api": "integration"
+    "renewal-toggle-scheduler-api": "integration",
+    "terminal-renewal-admission-api": "integration"
   }
 }

@@ -190,7 +190,13 @@
         "packages/agent/scripts/host/cng-export-fixture.js",
         "packages/agent/scripts/host/iis-shared-port-fixture.js",
         "packages/agent/scripts/host/iis-fixture.js",
-        "packages/agent/scripts/host/retention-fixture.js"
+        "packages/agent/scripts/host/retention-fixture.js",
+        "packages/agent/scripts/host/enrollment-contention-fixture.js",
+        "packages/agent/scripts/host/enrollment-lock-child.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js"
       ]
     },
     {
@@ -312,7 +318,13 @@
         "packages/agent/scripts/host/cng-export-fixture.js",
         "packages/agent/scripts/host/iis-shared-port-fixture.js",
         "packages/agent/scripts/host/iis-fixture.js",
-        "packages/agent/scripts/host/retention-fixture.js"
+        "packages/agent/scripts/host/retention-fixture.js",
+        "packages/agent/scripts/host/enrollment-contention-fixture.js",
+        "packages/agent/scripts/host/enrollment-lock-child.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js"
       ]
     },
     {
@@ -2139,6 +2151,22 @@
         "tests/e2e/helpers/certops-api-fixture.js",
         "apps/api/services/certops/renewalScheduler.js",
         "apps/api/services/certops/jobs.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "terminal-renewal-admission-api-ubuntu24",
+      "kind": "host",
+      "suite": "terminal-renewal-admission-api",
+      "source": "tests/e2e/certops-terminal-renewal-e2e.test.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/routes/certops.js"
       ],
       "environment": {
         "osFamily": "linux",

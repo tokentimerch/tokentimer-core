@@ -51,6 +51,7 @@ const CERTOPS_JOB_MODE_TERMINAL_INVALID =
   "CERTOPS_JOB_MODE_TERMINAL_INVALID";
 const CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE =
   "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE";
+const CERTOPS_CERTIFICATE_NOT_RENEWABLE = "CERTOPS_CERTIFICATE_NOT_RENEWABLE";
 const CERTOPS_RENEWAL_AUTO_RENEW_DISABLED = "CERTOPS_RENEWAL_AUTO_RENEW_DISABLED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
@@ -1457,6 +1458,7 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
   if (!SUBJECT_ID_UUID_PATTERN.test(String(certificateId || ""))) return null;
   const result = await db.query(
     `SELECT mc.id,
+            mc.status,
             mc.common_name,
             mc.subject_alt_names,
             mc.not_after,
@@ -1497,6 +1499,15 @@ async function materializeManualRenewalPayload({
   });
   if (!certificate) {
     throw serviceError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
+  }
+  // Factual rediscovery does not authorize renewal of an operator-retired
+  // identity. Check before profile materialization so manual and bulk admission
+  // report the same terminal policy even when custody/profile details differ.
+  if (["revoked", "decommissioned"].includes(certificate.status)) {
+    throw serviceError(
+      "Retired certificates cannot be renewed",
+      CERTOPS_CERTIFICATE_NOT_RENEWABLE,
+    );
   }
   if (certificate.profile_issuer_id) {
     throw serviceError(

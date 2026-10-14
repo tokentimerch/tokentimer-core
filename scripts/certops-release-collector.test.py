@@ -109,6 +109,13 @@ class CollectorTests(unittest.TestCase):
                 collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, **change}}, {suite}, set())
         missing = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
         self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
+        contention = {**dict.fromkeys(("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved"), True), "loserNativeCalls": 0, "loserCertreqCalls": 0, "retryCertreqCalls": 0, "winnerCertreqCalls": 1, "retryNativeCalls": 1, "privateRaw": "sentinel"}
+        projected = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeEnrollmentContention": contention}, {suite}, set())
+        self.assertEqual(projected["nativeEnrollmentContention"]["loserNativeCalls"], 0)
+        self.assertNotIn("sentinel", json.dumps(projected))
+        for bad in (True, "0", -1, 33):
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeEnrollmentContention": {**contention, "loserNativeCalls": bad}}, {suite}, set())
         self.assertEqual(len(result["cngCustody"]["cases"]), 10)
         self.assertNotIn("sentinel", json.dumps(result))
         for field in ("privateExportBytesWritten", "privateExportBytesReported"):

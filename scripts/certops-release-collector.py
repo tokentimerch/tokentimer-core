@@ -331,6 +331,16 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Invalid same-port SNI target inventory")
                 result["nativeSamePortSni"] = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My"}
                 result["nativeSamePortSni"].update({key: sni.get(key) is True for key in ("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified")})
+            contention = value.get("nativeEnrollmentContention")
+            if contention is not None:
+                if not isinstance(contention, dict):
+                    raise ValueError("Invalid native enrollment contention proof")
+                bounded = {key: contention.get(key) is True for key in ("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved")}
+                for key in ("loserNativeCalls", "loserCertreqCalls", "retryCertreqCalls", "winnerCertreqCalls", "retryNativeCalls"):
+                    if type(contention.get(key)) is not int or not 0 <= contention[key] <= 32:
+                        raise ValueError("Invalid native enrollment execution counter")
+                    bounded[key] = contention[key]
+                result["nativeEnrollmentContention"] = bounded
         if value.get("suite") == "linux-systemd-published-upgrade":
             proof = value.get("nativePublishedLinuxUpgrade")
             if not isinstance(proof, dict) or proof.get("baselineVersion") != "0.17.2" or proof.get("publishedAssetId") != 612562598 or proof.get("publishedArchiveSize") != 410054 or proof.get("publishedArchiveSha256") != "c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf" or proof.get("rollbackClaimed") is not False:

@@ -1440,6 +1440,19 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "21e91652de4520082f93",
+      "file": "tests/e2e/certops-terminal-renewal-e2e.test.js",
+      "line": 16,
+      "name": "public renew cannot revive retired fully profiled certificates after real rediscovery",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "core-certificate-api",
+      "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "0c14bc02d5f9753342d8",
       "file": "tests/e2e/certops-token-boundaries-e2e.test.js",
       "line": 17,

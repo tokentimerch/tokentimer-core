@@ -28,6 +28,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Renewal outbox and SMTP qualification](api/renewal-alert-qualification.md)
 - [Renewal path topology qualification](api/renewal-health-qualification.md)
 - [Scheduler and public admission capacity](api/scheduler-capacity-qualification.md)
+- [Terminal certificate renewal admission](api/terminal-renewal-admission.md)
 - [Native signing key rotation qualification](api/signing-rotation-qualification.md)
 - [Unmanaged discovery qualification](api/unmanaged-discovery-qualification.md)
 

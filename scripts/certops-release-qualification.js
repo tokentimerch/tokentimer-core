@@ -91,7 +91,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
         }
         if (slot.suite === "agent-log-maintenance-worker") require("./certops-log-maintenance-report").verify(artifact.report, root, candidateSha);
-        if (slot.suite === "windows-host") { require("../packages/agent/scripts/host/cng-export-fixture").verifyCustodyProof(artifact.report.cngCustody); require("../packages/agent/scripts/host/iis-shared-port-fixture").verifyIsolationFacts(artifact.report.nativeSamePortSni); }
+        if (slot.suite === "windows-host") { require("../packages/agent/scripts/host/cng-export-fixture").verifyCustodyProof(artifact.report.cngCustody); require("../packages/agent/scripts/host/iis-shared-port-fixture").verifyIsolationFacts(artifact.report.nativeSamePortSni); require("../packages/agent/scripts/host/enrollment-contention-fixture").verifyContentionFacts(artifact.report.nativeEnrollmentContention); }
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {
