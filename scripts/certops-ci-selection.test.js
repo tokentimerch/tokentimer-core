@@ -26,3 +26,22 @@ test("selector uses actual candidate diff and fails safely on missing history or
   for(const overrides of [{GITHUB_REF:"refs/pull/123/merge"},{GITHUB_SHA:before},{GITHUB_EVENT_NAME:"workflow_dispatch",CERTOPS_CI_LANE:"all || true"}]){const result=invoke({before,after},overrides);assert.notEqual(result.status,0);assert.equal(result.output,"");}
  }finally{fs.rmSync(root,{recursive:true});}
 });
+
+// CertOps UI authority changes require real component regressions, while native
+// browser journeys remain explicitly dispatched and frontend-only pushes avoid DB/Windows.
+test("CertOps frontend paths trigger tooling with actual console authority tests and no native lanes",()=>{
+ const path=require("node:path"),yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ const paths=workflow.on.push.paths;
+ const examples=[
+  ["apps/dashboard/src/components/certops/**","apps/dashboard/src/components/certops/AgentShellConsole.jsx"],
+  ["apps/dashboard/src/pages/certops/**","apps/dashboard/src/pages/certops/CertOpsJobs.jsx"],
+  ...["hooks/useCertOpsUrlState.js","components/RequireManagerRoute.jsx","utils/WorkspaceContext.jsx","utils/apiClient.js","utils/lastWorkspacePreference.js","App.jsx"].map(file=>[`apps/dashboard/src/${file}`,`apps/dashboard/src/${file}`]),
+  ...["AgentShellConsole","RequireManagerRoute","WorkspaceContext","useCertOpsUrlState"].map(name=>[`apps/dashboard/tests/unit/${name}.test.jsx`,`apps/dashboard/tests/unit/${name}.test.jsx`])
+ ];
+ for(const [pattern,file] of examples){assert.ok(paths.includes(pattern),pattern);assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});}
+ assert.equal(paths.includes("apps/dashboard/**"),false);
+ const step=workflow.jobs.tooling.steps.find(item=>item.name==="CertOps console and route authority regressions");assert.ok(step);
+ for(const name of ["AgentShellConsole","RequireManagerRoute","WorkspaceContext","useCertOpsUrlState"])assert.ok(step.run.includes(`tests/unit/${name}.test.jsx`));
+ assert.match(step.run,/^pnpm --dir apps\/dashboard test /);
+});

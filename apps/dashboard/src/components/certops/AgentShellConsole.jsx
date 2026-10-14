@@ -308,6 +308,9 @@ export default function AgentShellConsole({
           return String(a.id).localeCompare(String(b.id));
         });
     }
+    // A role change can withdraw text access while this console stays mounted.
+    // Authoritative status-only responses must also hide previously cached text.
+    if (payload?.linesVisible === false) return [];
     const fromApi = [...items]
       .sort((a, b) => {
         const aSeq = Number(a.seq) || 0;
@@ -337,7 +340,7 @@ export default function AgentShellConsole({
         sortMs: Date.parse(iso) || 0,
       };
     });
-  }, [items, seedLines, staticEntries, useStatic]);
+  }, [items, seedLines, staticEntries, useStatic, payload?.linesVisible]);
 
   useEffect(() => {
     if (useStatic) return undefined;
@@ -368,7 +371,8 @@ export default function AgentShellConsole({
           if (page?.nextCursor) cursor = page.nextCursor;
           pages += 1;
         } while (page?.hasMore && pages < MAX_PAGES_PER_TICK);
-        if (fresh.length > 0) setItems(current => [...current, ...fresh]);
+        if (page?.linesVisible === false) setItems([]);
+        else if (fresh.length > 0) setItems(current => [...current, ...fresh]);
         setPayload(page);
         setFailed(false);
         // Drain remaining pages even after the job finishes; logsComplete alone
@@ -381,8 +385,12 @@ export default function AgentShellConsole({
           return;
         }
         if (page?.hasMore) delay = 0;
-      } catch (_error) {
+      } catch (error) {
         if (cancelled) return;
+        if ([401, 403].includes(error?.response?.status)) {
+          setItems([]);
+          setPayload({ linesVisible: false, streams: [], logsComplete: false });
+        }
         setFailed(true);
         delay = ERROR_POLL_MS;
       }

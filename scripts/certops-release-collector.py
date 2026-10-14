@@ -275,6 +275,27 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
         if value.get("suite") == "native-agent-api":
+            timing = value.get("nativeDispatchTiming")
+            if not isinstance(timing, dict):
+                raise ValueError("Missing native dispatch timing evidence")
+            bounded_timing = {key: timing.get(key) is True for key in ("nativeClockRefusalObserved", "executionSuccessAbsent", "nonceUnconsumed", "freshClaimRecoverySucceeded", "credentialAndPinUnchanged")}
+            for key in ("fixtureLifetimeSeconds", "localToleranceMs", "heldMonotonicMs", "originalDispatchLifetimeSeconds", "leaseCallsBeforeRefusal", "expiredNonceResultStatus"):
+                if type(timing.get(key)) not in (int, float) or not 0 <= timing[key] <= 86400000:
+                    raise ValueError("Invalid native dispatch timing counter")
+                bounded_timing[key] = timing[key]
+            for key in ("issuedAt", "expiresAt", "releasedAt"):
+                if not isinstance(timing.get(key), str) or not re.fullmatch(r"[0-9TZ:.+\-]{16,40}", timing[key]):
+                    raise ValueError("Invalid native dispatch timing date")
+                bounded_timing[key] = timing[key]
+            for key in ("databaseDatesRewritten", "journalRewritten"):
+                if timing.get(key) is not False:
+                    raise ValueError("Native dispatch timing state rewritten")
+                bounded_timing[key] = False
+            for key, expected in (("clocks", "actual-host-monotonic-and-database"), ("fixture", "production-signer-short-lifetime-and-delayed-HTTP-delivery"), ("expiredNonceResultCode", "CERTOPS_AGENT_RESULT_NONCE_REJECTED"), ("actualServerJobState", "claimed"), ("actualRejectedOutbox", "dead-letter"), ("qualificationScope", "native-Linux-shortened-dispatch-fixture-not-stock-TTL-or-Windows-SCM")):
+                if timing.get(key) != expected:
+                    raise ValueError("Invalid native dispatch timing scope")
+                bounded_timing[key] = expected
+            result["nativeDispatchTiming"] = bounded_timing
             privacy = value.get("nativeChildOutputPrivacy")
             if not isinstance(privacy, dict) or privacy.get("executedChildren") != 2:
                 raise ValueError("Invalid native child output evidence")

@@ -986,6 +986,19 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "6272ef5cd1943f6dac4d",
+      "file": "tests/e2e/certops-csr-provisional-e2e.test.js",
+      "line": 37,
+      "name": "shared CSR ownership, cancellation and truthful installation evidence",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "core-certificate-api",
+      "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "0d8e07f560b3d7f255a2",
       "file": "tests/e2e/certops-derivation-failure-e2e.test.js",
       "line": 19,
@@ -1183,7 +1196,7 @@
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 31,
+      "line": 32,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",

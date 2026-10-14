@@ -14,6 +14,31 @@ The independent verifier requires the committed scenario/capability inventory, e
 
 Native execution results are recorded separately from the catalog's partial source mappings. A passing source/style check is not a passing host qualification.
 
-A focused local execution passed all nineteen scenarios with an actual Linux Node 24 container agent and the isolated API/PostgreSQL fixture, including command-policy refusal, cross-agent claim binding, durable replay and real console persistence after restart. The independently verified report binds the current fixture source; the disposable container and its temporary dependencies were removed on exit. Local worktree/baseline-SHA evidence cannot qualify the hosted Ubuntu lane or release matrix.
+A focused local execution passed all twenty scenarios with an actual Linux Node 24 container agent and the isolated API/PostgreSQL fixture, including command-policy refusal, cross-agent claim binding, durable replay, real console persistence after restart and the actual elapsed shortened-dispatch refusal/recovery case. The independently verified report binds the current fixture source; the disposable container and its temporary dependencies were removed on exit. Local worktree/baseline-SHA evidence cannot qualify the hosted Ubuntu lane or release matrix.
 
 The child-output confidentiality case runs genuine allowlisted Node validate/reload commands that emit generated test-only password, bearer and private-key-shaped sentinels to both stdout and stderr. Private owned receipts prove both children emitted output. Production reload handling intentionally withholds raw child output; the real agent console retains its benign execution markers, and authenticated logs, PostgreSQL evidence/results and parent console must contain none of the sentinels or raw child markers. This tests withholding, not a claim that child stdout is streamed or that a native certificate operation ran.
+
+### Real elapsed short dispatch expiry
+
+The timing case receives a genuine public noop claim, then uses the production
+signing service's explicit `nonceTtlSeconds: 2` fixture setting over the same
+claimed job, agent and attempt. Its owned transport holds that signed response
+for at least five monotonic seconds and sends a fresh actual HTTP Date header.
+The local supported clock tolerance is temporarily one millisecond, then the
+exact original configuration is restored. Host, CA and database clocks are
+never changed, and no persisted expiry/journal timestamps are rewritten.
+
+The actual native agent must refuse the stale signature window before its
+first lease or any execution-success evidence. Its policy rejection can be
+observed even though the server correctly refuses the now-expired result nonce
+with HTTP 409. The test requires the exact rejected outcome to survive in the
+production dead-letter outbox; it does not invent a server-side rejected job
+state (the original job remains claimed). A fresh ordinary claim must then
+succeed with the same credential and signing-key pin.
+
+The strict native report binds the timing helper's current source and records
+only bounded durations, public times, response codes and custody/recovery
+booleans. This is an actual elapsed **shortened signing fixture**, not proof of
+waiting through the stock long-lived dispatch window, changing the machine
+clock, or exercising Windows SCM timing. Portable proof-verifier tests are
+separate from native execution results.

@@ -144,7 +144,7 @@
         "core-disposable-api-postgres-openssl"
       ],
       "implementation": "tests/e2e/certops-public-import-e2e.test.js",
-      "remainingCoverage": "Actual public plain PEM, base64 and nested gzip private-key inputs are rejected422 before persistence and never echoed. Other binary container, depth/size and output/log channels need expanded qualified coverage."
+      "remainingCoverage": "Twelve focused public import API scenarios passed, including genuine OpenSSL-generated PKCS12/PFX, encrypted PKCS8 and private DER containers with independently verified key identity, base64url/hex/zlib wrapping and bounded nested/depth refusals. HTTP422 never echoes private material and identity/token counts remain unchanged. Actual browser private-key refusal and rendered diagnostic secret redaction are separately covered. Additional binary container formats, supported maximum-size boundaries and native provider/support-bundle output channels remain distinct qualification."
     },
     {
       "id": "inventory.unmanaged-observation",
@@ -1570,13 +1570,13 @@
     {
       "id": "csr.manual-attestation",
       "outcome": "Manual confirmation is audited attestation and never invents a live observed certificate instance.",
-      "status": "partial",
+      "status": "implemented",
       "evidenceLevel": "integration",
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
-      "remainingCoverage": "Real manualconfirmation API and publicfields tested; absenceofobservedinstances must be explicitly asserted."
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js; tests/e2e/certops-csr-provisional-e2e.test.js",
+      "implementationNotes": "Implemented for the declared API/PostgreSQL scope: public manual confirmation is audited with method manual, observedInstanceId remains null and independent stored-instance count stays zero. Actual endpoint observation is a separate outcome; this mapping does not claim native installation."
     },
     {
       "id": "csr.pending-review",
@@ -1592,24 +1592,24 @@
     {
       "id": "csr.identity-conflict",
       "outcome": "Existing/retired A-to-B identity collisions remain conflicts; name acknowledgement cannot transfer a real B-owned deployment to A.",
-      "status": "partial",
+      "status": "implemented",
       "evidenceLevel": "integration",
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
-      "remainingCoverage": "Actual twoidentity collision and retired fingerprint refusal tested; observedB-ownedinstance conflict further required."
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js; tests/e2e/certops-csr-provisional-e2e.test.js",
+      "implementationNotes": "Implemented for the declared API/PostgreSQL scope: existing and retired identity collisions refuse public requests with exact retired identity/token/workflow preservation; actual B-owned TLS observations remain B-owned after A name acknowledgement/reobservation, with A identity/token/expiry unchanged. No native custody or deployment qualification is implied."
     },
     {
       "id": "csr.cancel",
       "outcome": "Cancellation releases only unshared provisional state and does not delete unrelated identity/history/key material.",
-      "status": "partial",
+      "status": "implemented",
       "evidenceLevel": "integration",
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
-      "remainingCoverage": "API cancel/restart and completedcancelrefusal covered; sharedprovisionalidentity cleanup cases remain."
+      "implementation": "tests/e2e/certops-csr-lifecycle-e2e.test.js; tests/e2e/certops-csr-provisional-e2e.test.js",
+      "implementationNotes": "Implemented for the declared API/PostgreSQL scope: sibling and last-owner cancellation, repeated/concurrent requests, retained public history and audit, active identity/token preservation and unchanged offline private key bytes have independent oracles. The API never owns the offline private key; native enrollment cancellation is a separate outcome."
     },
     {
       "id": "csr.external-http01",
@@ -2160,7 +2160,7 @@
         "disposable-api-postgres"
       ],
       "implementation": "tests/e2e/certops-log-pagination-e2e.test.js",
-      "remainingCoverage": "Actual registered-agent diagnostics and authenticated opaque-cursor polling across initial/tail pages, empty-page reconnects, fresh live appends and duplicate replay/final stream closure preserve exact line order without backfill or invented job completion. Actual focused execution passed. Browser reconnect transport, multi-attempt retained history and native process-output paging remain separate qualification."
+      "remainingCoverage": "Actual registered-agent diagnostics and authenticated opaque-cursor polling across initial/tail pages, empty-page reconnects, fresh live appends and duplicate replay/final closure preserve exact line order. Actual Chromium offline/reconnect resumes live polling, renders a newly persisted line once and retains one copy of prior permitted history. Browser/PG focused execution passed. Multi-attempt retained history, large browser page draining and native process-output paging remain separate qualification."
     },
     {
       "id": "experience.log-access",
@@ -2171,7 +2171,7 @@
         "core-disposable-api-postgres"
       ],
       "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-boundaries-e2e.test.js",
-      "remainingCoverage": "Actual authenticated API job streams enforce viewer status-only access, claim ownership, route authority, secret scrubbing and pagination. Browser live console, support bundle and every interruption/terminal authorization boundary still require qualified E2E."
+      "remainingCoverage": "Actual authenticated API job streams enforce viewer status-only access, claim ownership, route authority, secret scrubbing and pagination. Five additional actual Chromium/API/PostgreSQL cases passed authorized rendered text with generated secrets redacted, manager-only route denial for a viewer whose browser session receives status metadata without lines, real offline/reconnect and exact-once append, and cached-text withdrawal after an authoritative status-only response to an already-open polling console. Role changes are explicit fixture prerequisites and protocol diagnostic lines are not installed-native-agent output. Support bundles, stopped-poll/completed-console role transitions and other interruption/terminal boundaries remain separately qualified."
     },
     {
       "id": "experience.log-pressure",

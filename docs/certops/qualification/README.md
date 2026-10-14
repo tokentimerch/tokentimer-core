@@ -10,10 +10,14 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 - [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
 - [Certificate audit history qualification](api/audit-history-qualification.md)
+- [Certificate workspace transfer and CSR lineage](api/certificate-transfer-qualification.md)
+- [Browser console authorization and reconnects](api/browser-console.md)
 - [Mixed eligible bulk renewal admission](api/bulk-eligible-qualification.md)
 - [Public CA capacity admission qualification](api/ca-capacity-qualification.md)
 - [CSR observation qualification](api/csr-observation-qualification.md)
+- [Shared CSR ownership and truthful installation evidence](api/csr-provisional-qualification.md)
 - [Certificate import metadata preservation](api/import-metadata-qualification.md)
+- [Public certificate import and private container refusal](api/public-import-qualification.md)
 - [Certificate-producing integration source qualification](api/integration-source-qualification.md)
 - [Public renewal issuer switch policy](api/issuer-switch-qualification.md)
 - [Multi-target filesystem deployment qualification](api/multi-target-deployment-qualification.md)
@@ -26,6 +30,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+- [Native store and HTTP.sys discovery selectors](windows/native-discovery-qualification.md)
 - [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)

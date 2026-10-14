@@ -13,11 +13,16 @@ vi.mock('../../src/components/certops/certopsJobsApi', () => ({
   listAgentJobLog: vi.fn(),
 }));
 
-function renderConsole(fetcher) {
+function renderConsole(fetcher, props = {}) {
   return render(
     <ChakraProvider>
       <DashboardThemeProvider>
-        <AgentShellConsole workspaceId='ws-1' jobId='job-1' fetcher={fetcher} />
+        <AgentShellConsole
+          workspaceId='ws-1'
+          jobId='job-1'
+          fetcher={fetcher}
+          {...props}
+        />
       </DashboardThemeProvider>
     </ChakraProvider>
   );
@@ -51,6 +56,47 @@ afterEach(() => {
 });
 
 describe('AgentShellConsole', () => {
+  it.each(['status-only', 'forbidden'])(
+    'withdraws cached text after an authoritative %s response',
+    async mode => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const fetcher = vi.fn().mockResolvedValueOnce({
+        items: [line(1, 'Previously authorized output')],
+        nextCursor: 'c1',
+        hasMore: false,
+        logsComplete: false,
+        streams: streaming,
+        linesVisible: true,
+        storageEnabled: true,
+      });
+      if (mode === 'forbidden')
+        fetcher.mockRejectedValue({ response: { status: 403 } });
+      else
+        fetcher.mockResolvedValue({
+          items: [],
+          streams: streaming,
+          nextCursor: 'c1',
+          hasMore: false,
+          logsComplete: false,
+          linesVisible: false,
+        });
+      renderConsole(fetcher, { seedLines: ['Previously authorized seed'] });
+      await screen.findByText(/Previously authorized output/);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/Previously authorized output/)
+        ).not.toBeInTheDocument()
+      );
+      expect(document.querySelectorAll('[data-shell-line]')).toHaveLength(0);
+      expect(
+        screen.queryByText(/Previously authorized seed/)
+      ).not.toBeInTheDocument();
+    }
+  );
+
   it('renders the POC terminal chrome and formats agent lines', async () => {
     const fetcher = vi.fn().mockResolvedValue({
       items: [line(1, 'Starting renew')],
@@ -76,9 +122,9 @@ describe('AgentShellConsole', () => {
     expect(
       toneForLine({ status: 'info', msg: 'deploying certificate to /x' })
     ).toBe('info');
-    expect(
-      toneForLine({ status: 'info', msg: 'ACME order succeeded' })
-    ).toBe('success');
+    expect(toneForLine({ status: 'info', msg: 'ACME order succeeded' })).toBe(
+      'success'
+    );
     expect(
       toneForLine({ status: 'error', msg: 'deploy failed: permission denied' })
     ).toBe('danger');

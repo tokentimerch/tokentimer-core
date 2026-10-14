@@ -91,6 +91,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
         }
         if (slot.suite === "native-agent-api") {
+          require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
           const privacy = artifact.report.nativeChildOutputPrivacy;
           if (!privacy || privacy.executedChildren !== 2 || !["stdoutEmitted", "stderrEmitted", "rawChildOutputWithheld", "genericExecutionMarkerPersisted", "jobSucceeded"].every(key => privacy[key] === true)) throw new Error("Native child-output confidentiality evidence incomplete");
           const cases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("native-agent-log-"));

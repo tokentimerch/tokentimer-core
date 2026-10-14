@@ -159,8 +159,15 @@ test("CSR authenticated API lifecycle", { timeout: 120000 }, async (t) => {
       assert.equal((await request(retirement, "POST", { status: "revoked" })).status, 428);
       const retired = await request(retirement, "POST", { expectedFingerprintSha256: fingerprint, status: "revoked", reason: "Qualification fixture lifecycle", acknowledgeUncertainty: true });
       assert.equal(retired.status, 200);
+      const retained = async () => (await pool.query(`SELECT
+        to_jsonb(cert) AS certificate,
+        (SELECT to_jsonb(token) FROM tokens token WHERE token.id=cert.token_id) AS token,
+        (SELECT COUNT(*)::int FROM certificate_csr_workflows workflow WHERE workflow.workspace_id=$1) AS workflows
+        FROM managed_certificates cert WHERE cert.workspace_id=$1 AND cert.id=$2`, [workspaceId, managedCertificateId])).rows[0];
+      const before = await retained(); assert.equal(before.certificate.status, "revoked");
       const refused = await request(route, "POST", { csrPem, existingCertificateId: managedCertificateId, target: { name: "Retired CSR refusal", type: "host" } });
       assert.equal(refused.status, 409); assert.equal(refused.body.code, "CERTOPS_CSR_IDENTITY_CONFLICT");
+      assert.deepEqual(await retained(), before, "Refusal must preserve the retired certificate, linked token and workflow inventory");
     });
     await gate.scenario("csr-api-anonymous-denial", async () => {
       assert.equal((await request(route, "GET", undefined, false)).status, 401);

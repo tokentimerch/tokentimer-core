@@ -26,3 +26,6 @@ Three larger manual matrices now also start with one selected cell:
 - Consuming servers: one Ubuntu `os` and one `service`, default `ubuntu-24.04` and `nginx`; explicitly choose `all` for both dimensions to run all six cells.
 
 A trusted candidate selection job validates these values against committed allowlists before constructing runner matrices. Arbitrary runner names, commands or extra dimensions are rejected. UI choices and defaults are regression-checked against the same definitions. The full release matrix is unchanged, so selecting one cell never qualifies its omitted environments.
+
+
+CertOps dashboard component/page changes and their route, workspace and API-client dependencies also select the cheap tooling lane. That lane runs the actual console, manager-route, workspace-context and CertOps URL-state component tests, including cached-text withdrawal after authority changes. These frontend-only paths do not select Windows hosts or the API stack. The real authenticated browser journeys remain manual qualification and mandatory release evidence; unrelated dashboard pages do not trigger CertOps qualification.

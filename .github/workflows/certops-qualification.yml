@@ -7,6 +7,18 @@ on:
       - 'packages/**'
       - 'apps/api/**'
       - 'apps/worker/**'
+      - 'apps/dashboard/src/components/certops/**'
+      - 'apps/dashboard/src/pages/certops/**'
+      - 'apps/dashboard/src/hooks/useCertOpsUrlState.js'
+      - 'apps/dashboard/src/components/RequireManagerRoute.jsx'
+      - 'apps/dashboard/src/utils/WorkspaceContext.jsx'
+      - 'apps/dashboard/src/utils/apiClient.js'
+      - 'apps/dashboard/src/utils/lastWorkspacePreference.js'
+      - 'apps/dashboard/src/App.jsx'
+      - 'apps/dashboard/tests/unit/AgentShellConsole.test.jsx'
+      - 'apps/dashboard/tests/unit/RequireManagerRoute.test.jsx'
+      - 'apps/dashboard/tests/unit/WorkspaceContext.test.jsx'
+      - 'apps/dashboard/tests/unit/useCertOpsUrlState.test.jsx'
       - 'tests/e2e/**'
       - 'scripts/qualification/**'
       - 'scripts/certops-*'
@@ -91,6 +103,8 @@ jobs:
           echo "$actionlint_directory" >> "$GITHUB_PATH"
       - name: Qualification framework and ownership regressions
         run: pnpm run test:certops:qualification
+      - name: CertOps console and route authority regressions
+        run: pnpm --dir apps/dashboard test tests/unit/AgentShellConsole.test.jsx tests/unit/RequireManagerRoute.test.jsx tests/unit/WorkspaceContext.test.jsx tests/unit/useCertOpsUrlState.test.jsx
       - name: Release collector regression tests
         run: pnpm run test:certops:release-collector
       - name: Current qualification security and inventory guards

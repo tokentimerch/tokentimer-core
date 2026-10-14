@@ -91,6 +91,9 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     await gate.scenario("windows-user-store-boundary", async () => {
       await require("./user-store-fixture").qualifyUserStoreBoundary({ powershell, workDir });
     }, { evidenceLevel: "real-host", oracle: "actual CurrentUser certificate presence and independent LocalMachine absence; product machine-store query excludes its thumbprint" });
+    await gate.scenario("windows-discovery-http-sys-selectors", async () => {
+      await require("./discovery-http-sys-fixture").qualifyHttpSysDiscovery({ powershell, run, workDir, gate });
+    }, { evidenceLevel: "real-host", oracle: "Independent native registry selectors and public DER agree with actual IPv4/IPv6/hostname HTTP.sys observations and automatically included bound WebHosting store; CCS unsupported" });
     await gate.scenario("windows-cng-csr", async () => {
       const { generateCsrViaCng, buildEnrollmentContainerName, acceptCertificateViaCng } = require("../../src/windows-cert-store");
       await assert.rejects(generateCsrViaCng({ commonName: "", altNames: [], jobId: require("node:crypto").randomUUID(), workDir }), /commonName/);
@@ -326,6 +329,6 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");
     }, { evidenceLevel: "real-host", oracle: "certificate absence and certutil KSP enumeration" });
-    await gate.finish({ requiredScenarios: ["windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    await gate.finish({ requiredScenarios: ["windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 119
+Total skips found: 120
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -81,6 +81,7 @@ Total skips found: 119
 | `tests/e2e/certops-csr-frozen-e2e.test.js` | 16 | signed CSR material freezes review until explicit cancel and restart | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-csr-lifecycle-e2e.test.js` | 25 | CSR authenticated API lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-csr-observation-e2e.test.js` | 17 | real TLS CSR observation defers changed names then promotes through acknowledgement | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-provisional-e2e.test.js` | 37 | shared CSR ownership, cancellation and truthful installation evidence | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-derivation-failure-e2e.test.js` | 19 | missing renewal derivation fields preserve real public certificate state | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-diagnostic-agent-e2e.test.js` | 16 | diagnostic agent kind fences ordinary work and preserves bootstrap idempotency | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-enrollment-policy-api-e2e.test.js` | 15 | public AD CS enrollment policy bounds and immutable snapshots | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -96,7 +97,7 @@ Total skips found: 119
 | `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 21 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-native-agent-e2e.test.js` | 31 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-native-agent-e2e.test.js` | 32 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-observe-only-e2e.test.js` | 16 | observe-only polling preserves queued work until explicit execution advertisement | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-pause-ingestion-e2e.test.js` | 19 | workspace pause blocks new work while retaining owned result ingestion | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-profile-issuer-switch-e2e.test.js` | 13 | public renewal issuer changes retain runnable policy and atomic audit | dynamic (this.skip() / t.skip()) | `no-host` |

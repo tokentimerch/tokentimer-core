@@ -75,6 +75,53 @@ test("public certificate import parsing, refusal and identity conservation", { t
       }
       assert.deepEqual(await counts(), before);
     });
+    // Generate real Windows interchange/key containers, rather than relying on
+    // ASN.1-shaped unit buffers. All private material stays in this owned fixture;
+    // requests must refuse it before persisting any certificate or token.
+    const containerPassword = crypto.randomBytes(24).toString("hex");
+    fs.writeFileSync(path.join(directory, "container-password"), containerPassword, { mode: 0o600 });
+    const containers = {};
+    const inventoryDigest = async () => crypto.createHash("sha256").update(JSON.stringify((await fixture.pool.query(`SELECT
+      (SELECT COALESCE(jsonb_agg(to_jsonb(cert) ORDER BY cert.id),'[]'::jsonb) FROM managed_certificates cert WHERE cert.workspace_id=$1) AS managed,
+      (SELECT COALESCE(jsonb_agg(to_jsonb(token) ORDER BY token.id),'[]'::jsonb) FROM tokens token WHERE token.workspace_id=$1) AS tokens,
+      (SELECT COALESCE(jsonb_agg(to_jsonb(identity) ORDER BY identity.id),'[]'::jsonb) FROM certops_certificate_identities identity WHERE identity.workspace_id=$1) AS identities`, [fixture.workspaceId])).rows[0])).digest("hex");
+    async function refuseContainer(material) {
+      const before = await counts(), beforeDigest = await inventoryDigest();
+      const response = await fixture.request(route, "POST", { certificatePem, metadata: { attachment: material } });
+      assert.equal(response.status, 422); assert.equal(response.body.code, "PRIVATE_KEY_MATERIAL_REJECTED");
+      const serialized = JSON.stringify(response.body);
+      const audit = JSON.stringify((await fixture.pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 ORDER BY id", [fixture.workspaceId])).rows);
+      for (const privateValue of [read("public.key"), containerPassword, ...Object.values(containers)]) {
+        assert.equal(serialized.includes(privateValue), false, "Private container bytes/password must not be reflected");
+        assert.equal(audit.includes(privateValue), false, "Private container bytes/password must not enter persisted audit metadata");
+      }
+      if (typeof material === "string") assert.equal(serialized.includes(material), false);
+      assert.deepEqual(await counts(), before, "Refused private material must not create or alter inventory");
+      assert.equal(await inventoryDigest(), beforeDigest, "Refusal must preserve all inventory row contents, including public metadata");
+    }
+    await gate.scenario("public-import-real-private-containers-refusal", async () => {
+      run(["pkcs8", "-topk8", "-nocrypt", "-in", "public.key", "-outform", "DER", "-out", "private.der"]);
+      run(["pkcs8", "-topk8", "-in", "public.key", "-outform", "DER", "-v2", "aes-256-cbc", "-passout", "file:container-password", "-out", "encrypted-private.der"]);
+      run(["pkcs12", "-export", "-inkey", "public.key", "-in", "public.crt", "-passout", "file:container-password", "-out", "private.pfx"]);
+      run(["pkcs12", "-in", "private.pfx", "-passin", "file:container-password", "-nocerts", "-noenc", "-out", "pfx-private.key"]);
+      const spki = (key) => crypto.createPublicKey(key).export({ format: "der", type: "spki" });
+      const expected = independent.publicKey.export({ format: "der", type: "spki" });
+      assert.deepEqual(spki(crypto.createPrivateKey({ key: fs.readFileSync(path.join(directory, "private.der")), format: "der", type: "pkcs8" })), expected);
+      assert.deepEqual(spki(crypto.createPrivateKey({ key: fs.readFileSync(path.join(directory, "encrypted-private.der")), format: "der", type: "pkcs8", passphrase: containerPassword })), expected);
+      assert.deepEqual(spki(crypto.createPrivateKey(read("pfx-private.key"))), expected, "Real PKCS12 must contain the actual matching private key");
+      for (const name of ["private.der", "encrypted-private.der", "private.pfx"]) containers[name] = fs.readFileSync(path.join(directory, name)).toString("base64");
+      for (const encoded of Object.values(containers)) await refuseContainer(encoded);
+    }, { oracle: "Actual OpenSSL PKCS12/encrypted and unencrypted PKCS8 with independently matching public SPKI; real HTTP422 and unchanged inventory" });
+    await gate.scenario("public-import-encoded-private-containers-refusal", async () => {
+      for (const encoded of [Buffer.from(read("public.key")).toString("base64url"), Buffer.from(read("public.key")).toString("hex"), zlib.deflateSync(fs.readFileSync(path.join(directory, "private.der"))).toString("base64")]) await refuseContainer(encoded);
+    });
+    await gate.scenario("public-import-bounded-ambiguous-private-refusal", async () => {
+      const nestedCompression = zlib.gzipSync(zlib.gzipSync(Buffer.from(read("public.key")))).toString("base64");
+      await refuseContainer(nestedCompression);
+      let deeplyNested = "public bounded sentinel";
+      for (let index = 0; index < 16; index++) deeplyNested = { nested: deeplyNested };
+      await refuseContainer(deeplyNested);
+    }, { oracle: "Actual route fails closed on bounded nested compression and scan-depth ambiguity, without large payloads, decompression bombs or inventory mutation" });
     await gate.scenario("public-import-exact-der-parser", async () => {
       run(["x509", "-in", "public.crt", "-outform", "DER", "-out", "public.der"]);
       const der = fs.readFileSync(path.join(directory, "public.der"));

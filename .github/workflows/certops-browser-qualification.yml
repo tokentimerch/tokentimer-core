@@ -46,6 +46,12 @@ jobs:
         run: |
           node scripts/certops-browser.js
           node scripts/certops-qualification-report.js qualification-results/browser.json
+      - name: Live console authority and real network reconnect
+        env:
+          CERTOPS_BROWSER_CONSOLE_REPORT: qualification-results/browser-console.json
+        run: |
+          node scripts/certops-browser-console.js
+          node scripts/certops-qualification-report.js qualification-results/browser-console.json
       - name: Stop owned fixture processes and stack
         if: always()
         run: |
@@ -55,5 +61,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: certops-browser-sanitized
-          path: qualification-results/browser.json
+          path: |
+            qualification-results/browser.json
+            qualification-results/browser-console.json
           if-no-files-found: error

@@ -184,7 +184,10 @@
       "environment": {
         "osFamily": "windows",
         "osVersion": "2022"
-      }
+      },
+      "requiredSources": [
+        "packages/agent/scripts/host/discovery-http-sys-fixture.js"
+      ]
     },
     {
       "id": "windows-acme-2022-rsa-2048",
@@ -299,7 +302,10 @@
       "environment": {
         "osFamily": "windows",
         "osVersion": "2025"
-      }
+      },
+      "requiredSources": [
+        "packages/agent/scripts/host/discovery-http-sys-fixture.js"
+      ]
     },
     {
       "id": "windows-acme-2025-rsa-2048",
@@ -1269,7 +1275,8 @@
       },
       "requiredSources": [
         "tests/e2e/helpers/certops-native-log-faults.js",
-        "tests/e2e/helpers/certops-native-log-privacy.js"
+        "tests/e2e/helpers/certops-native-log-privacy.js",
+        "tests/e2e/helpers/certops-native-dispatch-timing.js"
       ]
     },
     {
@@ -1960,6 +1967,24 @@
         "tests/e2e/helpers/certops-windows-output-privacy.js",
         "tests/e2e/windows-real-journey.js"
       ]
+    },
+    {
+      "id": "browser-agent-console-ubuntu24",
+      "kind": "host",
+      "suite": "browser-agent-console",
+      "source": "scripts/certops-browser-console.js",
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "api-csr-provisional",
+      "kind": "host",
+      "suite": "csr-provisional-api",
+      "source": "tests/e2e/certops-csr-provisional-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      }
     }
   ]
 }

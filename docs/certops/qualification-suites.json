@@ -29,7 +29,8 @@
       "windows-store-lock-worker-death": "real-host",
       "windows-store-lock-drain-timeout": "real-host",
       "windows-store-lock-process-death": "real-host",
-      "windows-installer-build-floor": "unit"
+      "windows-installer-build-floor": "unit",
+      "windows-discovery-http-sys-selectors": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -327,7 +328,10 @@
       "public-import-private-input-refusal": "integration",
       "public-import-exact-der-parser": "unit",
       "public-import-concurrent-conservation": "integration",
-      "public-import-cleanup": "integration"
+      "public-import-cleanup": "integration",
+      "public-import-real-private-containers-refusal": "integration",
+      "public-import-encoded-private-containers-refusal": "integration",
+      "public-import-bounded-ambiguous-private-refusal": "integration"
     },
     "profile-permissions-api": {
       "profile-manager-read-write-fence": "integration",
@@ -419,7 +423,12 @@
       "transfer-api-identity-conflict-atomic": "integration",
       "transfer-api-owned-certificate-move": "integration",
       "transfer-api-replay-source-fence": "integration",
-      "transfer-api-cleanup": "integration"
+      "transfer-api-cleanup": "integration",
+      "transfer-api-viewer-refusal": "integration",
+      "transfer-api-csr-lineage-created": "integration",
+      "transfer-api-csr-lineage-move": "integration",
+      "transfer-api-audit-history": "integration",
+      "transfer-api-csr-outside-token-refusal": "integration"
     },
     "dns-provider-host": {
       "dns-provider-present": "integration",
@@ -572,7 +581,8 @@
       "native-agent-log-lost-acknowledgement": "e2e",
       "native-agent-log-413-split": "e2e",
       "native-agent-log-413-drop-accounting": "e2e",
-      "native-agent-child-output-confidentiality": "e2e"
+      "native-agent-child-output-confidentiality": "e2e",
+      "native-agent-real-elapsed-dispatch-expiry": "e2e"
     },
     "csr-bound-observation-api": {
       "csr-bound-observation-public-target": "e2e",
@@ -935,6 +945,23 @@
     },
     "windows-native-child-output-privacy": {
       "windows-native-child-output-withheld": "e2e"
+    },
+    "browser-agent-console": {
+      "browser-console-authorized-redaction": "e2e",
+      "browser-console-offline-reconnect": "e2e",
+      "browser-console-viewer-status-only": "e2e",
+      "browser-console-authority-withdrawal": "e2e",
+      "browser-console-owned-cleanup": "e2e"
+    },
+    "csr-provisional-api": {
+      "csr-provisional-shared-public-import": "integration",
+      "csr-provisional-cancel-one-preserves-sibling": "integration",
+      "csr-provisional-last-cancel-releases-only-provisional": "integration",
+      "csr-provisional-concurrent-last-cancellations": "integration",
+      "csr-attestation-no-fabricated-observation": "integration",
+      "csr-provisional-real-observation-rebinds-siblings": "integration",
+      "csr-observed-foreign-owner-cannot-promote-selected-identity": "integration",
+      "csr-provisional-owned-cleanup": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1285,6 +1312,16 @@
       "scm",
       "api",
       "nativeAcme"
+    ],
+    "browser-agent-console": [
+      "browser",
+      "api",
+      "postgres"
+    ],
+    "csr-provisional-api": [
+      "api",
+      "postgres",
+      "openssl"
     ]
   },
   "suites": {
@@ -1316,7 +1353,8 @@
       "windows-store-lock-worker-death",
       "windows-store-lock-drain-timeout",
       "windows-store-lock-process-death",
-      "windows-installer-build-floor"
+      "windows-installer-build-floor",
+      "windows-discovery-http-sys-selectors"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -1614,7 +1652,10 @@
       "public-import-private-input-refusal",
       "public-import-exact-der-parser",
       "public-import-concurrent-conservation",
-      "public-import-cleanup"
+      "public-import-cleanup",
+      "public-import-real-private-containers-refusal",
+      "public-import-encoded-private-containers-refusal",
+      "public-import-bounded-ambiguous-private-refusal"
     ],
     "profile-permissions-api": [
       "profile-manager-read-write-fence",
@@ -1706,7 +1747,12 @@
       "transfer-api-identity-conflict-atomic",
       "transfer-api-owned-certificate-move",
       "transfer-api-replay-source-fence",
-      "transfer-api-cleanup"
+      "transfer-api-cleanup",
+      "transfer-api-viewer-refusal",
+      "transfer-api-csr-lineage-created",
+      "transfer-api-csr-lineage-move",
+      "transfer-api-audit-history",
+      "transfer-api-csr-outside-token-refusal"
     ],
     "dns-provider-host": [
       "dns-provider-present",
@@ -1859,7 +1905,8 @@
       "native-agent-log-lost-acknowledgement",
       "native-agent-log-413-split",
       "native-agent-log-413-drop-accounting",
-      "native-agent-child-output-confidentiality"
+      "native-agent-child-output-confidentiality",
+      "native-agent-real-elapsed-dispatch-expiry"
     ],
     "csr-bound-observation-api": [
       "csr-bound-observation-public-target",
@@ -2222,6 +2269,23 @@
     ],
     "windows-native-child-output-privacy": [
       "windows-native-child-output-withheld"
+    ],
+    "browser-agent-console": [
+      "browser-console-authorized-redaction",
+      "browser-console-offline-reconnect",
+      "browser-console-viewer-status-only",
+      "browser-console-authority-withdrawal",
+      "browser-console-owned-cleanup"
+    ],
+    "csr-provisional-api": [
+      "csr-provisional-shared-public-import",
+      "csr-provisional-cancel-one-preserves-sibling",
+      "csr-provisional-last-cancel-releases-only-provisional",
+      "csr-provisional-concurrent-last-cancellations",
+      "csr-attestation-no-fabricated-observation",
+      "csr-provisional-real-observation-rebinds-siblings",
+      "csr-observed-foreign-owner-cannot-promote-selected-identity",
+      "csr-provisional-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2297,6 +2361,8 @@
     "scheduler-capacity-api": "integration",
     "enterprise-adcs-elapsed-pending-real": "real-host",
     "agent-log-quota-api": "integration",
-    "windows-native-child-output-privacy": "e2e"
+    "windows-native-child-output-privacy": "e2e",
+    "browser-agent-console": "e2e",
+    "csr-provisional-api": "integration"
   }
 }

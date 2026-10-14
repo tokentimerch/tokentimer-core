@@ -43,6 +43,7 @@ const suites = [
   ["bootstrap-api-fences", "certops-bootstrap-fences-e2e.test.js", "CERTOPS_BOOTSTRAP_FENCES_REPORT"],
   ["membership-api-fences", "certops-membership-fences-e2e.test.js", "CERTOPS_MEMBERSHIP_REPORT"],
   ["job-decisions-api", "certops-job-decisions-e2e.test.js", "CERTOPS_JOB_DECISIONS_REPORT"],
+  ["csr-provisional-api", "certops-csr-provisional-e2e.test.js", "CERTOPS_CSR_PROVISIONAL_REPORT"],
   ["csr-api-lifecycle", "certops-csr-lifecycle-e2e.test.js", "CERTOPS_CSR_REPORT"],
   ["csr-api-algorithms", "certops-csr-algorithms-e2e.test.js", "CERTOPS_CSR_ALGORITHMS_REPORT"],
   ["csr-api-chain", "certops-csr-chain-e2e.test.js", "CERTOPS_CSR_CHAIN_REPORT"],

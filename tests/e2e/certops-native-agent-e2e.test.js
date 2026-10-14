@@ -18,7 +18,8 @@ const { createHostGate } = require("../../packages/agent/scripts/host-gate");
 const { createNativeLogFaults, cases: logFaultCases } = require("./helpers/certops-native-log-faults");
 const logFaults = createNativeLogFaults();
 const { qualifyNativeLogPrivacy } = require("./helpers/certops-native-log-privacy");
-const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-child-output-confidentiality", "native-agent-cleanup"];
+const { SCENARIO: timingScenario, createNativeDispatchTiming } = require("./helpers/certops-native-dispatch-timing");
+const scenarios = ["native-agent-registration", "native-agent-signed-noop", "native-agent-signed-dry-run", "native-agent-restart-state", "native-agent-untrusted-claims", "native-agent-initial-lease-failure", "native-agent-outbox-restart", "native-agent-corrupt-pin", "native-agent-observe-only", "native-agent-local-command-policy", "native-agent-cross-agent-binding", "native-agent-durable-replay", "native-agent-real-log-persistence", ...logFaultCases.map(([id]) => id), "native-agent-child-output-confidentiality", timingScenario, "native-agent-cleanup"];
 async function wait(check, timeout = 30000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 100)); }
@@ -38,6 +39,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
   const gate = createHostGate({ suite: "native-agent-api", evidenceLevel: "e2e", strict: true, reportPath: process.env.CERTOPS_NATIVE_AGENT_REPORT || process.env.CERTOPS_QUALIFICATION_REPORT, requiredCapabilities: ["api", "postgres", "native-node-agent"], fixtureSource: { file: "tests/e2e/certops-native-agent-e2e.test.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => ({ api: { available: (await fetch(new URL("/", baseUrl))).status === 200 }, postgres: { available: (await fixture.pool.query("SELECT 1")).rows.length === 1 }, "native-node-agent": { available: process.platform === "linux" && fs.existsSync(path.resolve(__dirname, "../../packages/agent/bin/tokentimer-agent.js")) } }) });
   gate.report.executionScope = "Unmodified native Node agent with real API signing leases results and persisted state; deliberate loopback transport faults; harmless noop jobs only";
   let mode = "normal", agent, proxy, ready = false, failure, cleanup = "failed";
+  let clockRejections=0;
   let rejected = 0, bindingRejected = 0, misdeliveredJob, capturedOwnJob, replayRejections = 0, heartbeatCount = 0, claimCount = 0, blockedResults = 0, blockedLeases = 0, leak = false;
   const heartbeatFacts = { declaredOperations: -1, lastStatus: 0, acceptedObserveOnly: 0 };
   const prohibited = new Set(), counters = new Map(), children = [];
@@ -68,6 +70,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
       if (/-----BEGIN [^-]*PRIVATE KEY-----/.test(text)) leak = true;
       const complete = text.split(/\r?\n/); tail = complete.pop().slice(-1024);
       rejected += complete.filter((line) => line.includes("claimed job failed signature verification")).length;
+      clockRejections+=complete.filter(line=>line.includes("rejected: clock_drift_suspected")).length;
       bindingRejected += complete.filter((line) => line.includes("agent-id binding gate rejected a claimed job")).length;
     };
     child.stdout.on("data", inspect); child.stderr.on("data", inspect); child.on("error", () => {}); return child;
@@ -82,6 +85,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
     }
     const response = await fixture.request(`${prefix}/jobs`, "POST", { operation: "noop", mode: modeValue }); assert.equal(response.status, 201); return response.body.job.id;
   }
+  const timing=createNativeDispatchTiming({fixture,agentRow,configDir,stop,start,wait,row,create,counters,getClockRejections:()=>clockRejections});
   try {
     await gate.preflight(); ready = true;
     proxy = http.createServer((request, response) => {
@@ -106,9 +110,11 @@ test("real native agent signed gates durable outbox restart and observe-only beh
         const upstream = http.request(new URL(request.url, baseUrl), { method: "POST", headers: { "content-type": "application/json", authorization: request.headers.authorization, "accept-encoding": "identity" }, timeout: 15000 }, (reply) => {
           const parts = []; let length = 0;
           reply.on("data", (chunk) => { length += chunk.length; if (length > 1048576) reply.destroy(); else parts.push(chunk); });
-          reply.on("end", () => {
+          reply.on("end", async () => {
             let output = Buffer.concat(parts);
             try {
+              timing.observedReply(request.url,parsed,reply.statusCode,output);
+              if(await timing.replied(request.url,reply.statusCode,output,respond))return;
               if (request.url.endsWith("/heartbeat")) { heartbeatFacts.lastStatus = reply.statusCode; if (reply.statusCode === 200 && Array.isArray(parsed.body?.supportedOperations) && parsed.body.supportedOperations.length === 0) heartbeatFacts.acceptedObserveOnly++; }
               if (request.url.endsWith("/claim") && faultMode === "normal" && !capturedOwnJob) {
                 const envelope = JSON.parse(output.toString());
@@ -135,7 +141,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
               }
               if (logFaults.replied(request.url, parsed, reply.statusCode, output, response)) return;
               respond(reply.statusCode, output);
-            } catch { respond(502); }
+            } catch(error) { timing.failed(error);respond(502); }
           }); reply.on("error", () => respond(502));
         });
         request.on("aborted", () => upstream.destroy()); response.on("close", () => { if (!response.writableFinished) upstream.destroy(); });
@@ -165,6 +171,7 @@ test("real native agent signed gates durable outbox restart and observe-only beh
       const after=await read();assert.deepEqual(after.items,persisted.items);assert.equal(after.logsComplete,true);
       assert.equal((await row(id)).attempt_count,1);
     },{oracle:"Actual native process console batches, authenticated API persistence and stream finalization survive real process restart; no diagnostic lines injected"});
+    await timing.qualify(gate);
     await logFaults.qualify({ gate, fixture, prefix, create, row, stop, start, wait, prohibited });
     await qualifyNativeLogPrivacy({ gate, fixture, prefix, configDir, root, stop, start, wait, row, prohibited });
     gate.report.fixtureSources.push({ file: "tests/e2e/helpers/certops-native-log-privacy.js", sha256: hashFile(path.join(__dirname, "helpers/certops-native-log-privacy.js")) });
