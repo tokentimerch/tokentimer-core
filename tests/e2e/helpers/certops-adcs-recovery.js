@@ -18,7 +18,7 @@ async function qualifyRecovery(context) {
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   const scheduler = require("../../../apps/api/services/certops/certificateEnrollments");
   const getEnrollment = async (id) => (await fixture.pool.query(
-    "SELECT state,operator_request_id AS request_id,next_poll_at,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId,id])).rows[0];
+    "SELECT state,request_id,next_poll_at,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId,id])).rows[0];
   function observe(item, requestId) {
     return JSON.parse(command("powershell.exe", ["-NoProfile","-NonInteractive","-File",
       path.resolve(__dirname,"../../../infra/certops-adcs/owned-request-observation.ps1"),

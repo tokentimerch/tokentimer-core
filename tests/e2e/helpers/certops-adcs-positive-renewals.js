@@ -20,7 +20,7 @@ async function qualifyPositiveRenewals({ gate, fixture, api, agentRowId, issuedF
       authorizedDnsNames: [item.domain], keyAlgorithm: item.algorithm, keySize: item.size });
     assert.equal(response.status, 201); const enrollmentId = response.body.enrollmentId; ownedEnrollmentIds.push(enrollmentId);
     assert.notEqual(enrollmentId, original.enrollmentId); await jobFinished(response.body.jobId);
-    const row = (await fixture.pool.query("SELECT state,operator_request_id AS request_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, enrollmentId])).rows[0];
+    const row = (await fixture.pool.query("SELECT state,request_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, enrollmentId])).rows[0];
     assert.equal(row.state, "installed");
     const leaf = await new Promise((resolve, reject) => {
       const socket = tls.connect({ host: "127.0.0.1", port, servername: item.domain, ca: tlsAuthority(authority), rejectUnauthorized: true }, () => {

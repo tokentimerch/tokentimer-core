@@ -21,7 +21,7 @@ async function qualifyPendingElapsed(context){
   assert.equal(await served(),observed.fingerprint256);
   const created=await fixture.request(`${api}/enrollments`,"POST",{issuerId,certificateId,agentId:agentRowId,target:{type:"windows-iis",reference:item.domain,store:"My",binding:{site,port,sniHost:item.domain}},authorizedDnsNames:[item.domain],keyAlgorithm:"rsa",keySize:2048,pendingTimeout:3600,pollInterval:60});assert.equal(created.status,201);
   const id=created.body.enrollmentId;ownedEnrollmentIds.push(id);const container=buildEnrollmentContainerName(id);
-  const row=async()=>(await fixture.pool.query("SELECT state,operator_request_id AS request_id,pending_since,next_poll_at,snapshot_bytes,snapshot_sha256,current_job_id,NOW() AS database_now FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,id])).rows[0];
+  const row=async()=>(await fixture.pool.query("SELECT state,request_id,pending_since,next_poll_at,snapshot_bytes,snapshot_sha256,current_job_id,NOW() AS database_now FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,id])).rows[0];
   const pending=await until(async()=>{const value=await row();return value.state==="pending_issuance"&&value.request_id?value:null;});
   const snapshot=JSON.parse(Buffer.from(pending.snapshot_bytes).toString("utf8"));assert.equal(snapshot.pendingTimeout,3600);assert.equal(snapshot.pollInterval,60);
   const initial=readEnrollmentJournal(configDir,id);assert.equal(initial.kind,"valid");assert.equal(initial.journal.state,"pending_issuance");assert.equal(initial.journal.containerName,container);

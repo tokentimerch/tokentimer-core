@@ -30,7 +30,7 @@ module.exports=async function runJournalPhaseExperiment(context){
   let observer,enrollmentId,serviceStopped=false,primaryError,recoveryPolicy;
   const reportPath=process.env.CERTOPS_ADCS_JOURNAL_PHASE_REPORT || "C:\\ttqualification\\journal-phase-experimental.json";
   const getJob=async id=>(await fixture.pool.query("SELECT status,error_message,lease_expires_at,lease_renewed_at,needs_operator_reconciliation FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,id])).rows[0];
-  const getEnrollment=async()=> (await fixture.pool.query("SELECT state,operator_request_id AS request_id,next_poll_at FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,enrollmentId])).rows[0];
+  const getEnrollment=async()=> (await fixture.pool.query("SELECT state,request_id,next_poll_at FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,enrollmentId])).rows[0];
   const observe=()=>JSON.parse(command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.resolve(repoRoot,"infra/certops-adcs/owned-request-observation.ps1"),"-CommonName",domain,"-Discover"]));
   try{
     assert.equal(observe().subjectRequestCount,0);

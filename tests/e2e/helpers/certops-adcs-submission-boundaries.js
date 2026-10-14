@@ -16,7 +16,7 @@ async function qualifySubmissionBoundaries(context) {
   const { gate, fixture, api, agentRowId, configDir, workDir, run, preflight, ps, command, until, jobFinished, ownedSites, ownedCertificateIds, ownedEnrollmentIds, ownedThumbprints, ownedFirewallRules, pendingRecoveryFixtures, tlsAuthority } = context;
   assert.equal(process.platform, "win32"); assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   const scheduler = require("../../../apps/api/services/certops/certificateEnrollments");
-  const getEnrollment = async id => (await fixture.pool.query("SELECT state,operator_request_id AS request_id,next_poll_at,last_error_code FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
+  const getEnrollment = async id => (await fixture.pool.query("SELECT state,request_id,next_poll_at,last_error_code FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
   const count = domain => Number(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.resolve(__dirname, "../../../infra/certops-adcs/ca-safety-flags.ps1"), "-Action", "request-count", "-RunId", run, "-CommonName", domain]));
   const served = (port, domain, authority) => new Promise((resolve, reject) => {
     const socket = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: tlsAuthority(authority), rejectUnauthorized: true }, () => {
