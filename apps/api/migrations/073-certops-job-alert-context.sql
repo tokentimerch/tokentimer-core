@@ -60,13 +60,52 @@ $$;
 
 CREATE OR REPLACE FUNCTION certops_guard_job_identity_start()
 RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE period_row RECORD; lifecycle TEXT;
+DECLARE period_row RECORD; identity_row RECORD; lifecycle TEXT;
 BEGIN
-  IF NEW.subject_type IS DISTINCT FROM 'managed_certificate' OR NEW.management_period_id IS NULL
-    OR NEW.operation NOT IN ('renew','deploy','reload') OR NEW.status NOT IN ('claimed','running') THEN
+  IF NEW.subject_type IS DISTINCT FROM 'managed_certificate'
+    OR NEW.operation NOT IN ('renew','deploy','reload') THEN
     RETURN NEW;
   END IF;
-  IF TG_OP='UPDATE' AND OLD.status IN ('claimed','running') THEN RETURN NEW; END IF;
+  IF TG_OP='UPDATE' AND OLD.status IN ('claimed','running') THEN
+    IF OLD.mode IS DISTINCT FROM 'dry_run' THEN
+      IF NEW.certificate_identity_id IS NOT NULL THEN
+        -- Completion may own a token/source row that retirement needs. Never
+        -- wait on an identity row in the reverse order. A busy retirement fence
+        -- is itself a reconciliation conflict; otherwise keep retirement from
+        -- starting until this short result transaction commits.
+        IF NOT pg_try_advisory_xact_lock_shared(hashtextextended(
+          'certops-identity-retirement:' || NEW.certificate_identity_id::text, 0)) THEN
+          lifecycle := 'revoked';
+        ELSE
+          SELECT lifecycle_status INTO lifecycle FROM certops_certificate_identities
+            WHERE workspace_id=NEW.workspace_id AND id=NEW.certificate_identity_id;
+        END IF;
+      ELSE
+        -- Historical NULL attribution cannot prove which association was
+        -- installed. Any retired association in this job's period is a conflict.
+        -- First provisioning with no fingerprint history remains unaffected.
+        FOR identity_row IN SELECT DISTINCT i.id FROM certops_certificate_identities i
+          JOIN certops_management_associations a ON a.identity_id=i.id AND a.workspace_id=i.workspace_id
+          WHERE a.workspace_id=NEW.workspace_id AND a.period_id=NEW.management_period_id
+          ORDER BY i.id LOOP
+          IF NOT pg_try_advisory_xact_lock_shared(hashtextextended(
+            'certops-identity-retirement:' || identity_row.id::text, 0)) THEN
+            lifecycle := 'revoked';
+          ELSE
+            SELECT lifecycle_status INTO lifecycle FROM certops_certificate_identities
+              WHERE workspace_id=NEW.workspace_id AND id=identity_row.id;
+          END IF;
+          EXIT WHEN lifecycle IN ('revoked','decommissioned');
+        END LOOP;
+      END IF;
+      IF lifecycle IN ('revoked','decommissioned') THEN
+        NEW.needs_operator_reconciliation := TRUE;
+        NEW.reconciliation_reason := COALESCE(NEW.reconciliation_reason, 'certificate_retirement_overlapped_execution');
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF NEW.management_period_id IS NULL OR NEW.status NOT IN ('claimed','running') THEN RETURN NEW; END IF;
   SELECT * INTO period_row FROM certops_management_periods
     WHERE id=NEW.management_period_id AND workspace_id=NEW.workspace_id FOR SHARE;
   -- The existing management-period guard owns closure and reconciliation.

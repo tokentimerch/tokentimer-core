@@ -618,6 +618,23 @@ async function retireCertificateIdentity({
   }
   const normalizedReason = reasonFor(reason);
   return inTransaction(client, async (tx) => {
+    if (status === "revoked") {
+      // Validate the immutable precondition before fencing completions. Acquire
+      // this fence before any identity/token row lock; completion may already
+      // own those rows and must never wait on retirement in the reverse order.
+      const proof = await tx.query(
+        "SELECT fingerprint_sha256 FROM certops_certificate_identities WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, identityId],
+      );
+      if (!proof.rows[0]) fail("CERTOPS_CERTIFICATE_NOT_FOUND", "Certificate not found");
+      if (proof.rows[0].fingerprint_sha256 !== fingerprint) {
+        fail("CERTOPS_IDENTITY_PRECONDITION_FAILED", "Certificate fingerprint changed; refresh and retry");
+      }
+      await tx.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('certops-identity-retirement:' || $1::uuid::text, 0))",
+        [identityId],
+      );
+    }
     const locked = await tx.query(
       `SELECT * FROM certops_certificate_identities
         WHERE workspace_id = $1 AND id = $2 FOR NO KEY UPDATE`,
@@ -809,6 +826,37 @@ async function retireCertificateIdentity({
           WHERE id IN (SELECT id FROM locked)`,
       [workspaceId, identityId],
     );
+    // Revocation must be recorded promptly even while an executor may still
+    // install or restore this fingerprint. Never steal its claim or lease.
+    // A result writer already holding the job is skipped here; the database
+    // result-transition guard records the conflict when that writer finishes.
+    const reconciliation = status === "revoked"
+      ? await tx.query(
+        `WITH eligible AS MATERIALIZED (
+          SELECT cj.id FROM certificate_jobs cj
+          WHERE cj.workspace_id = $1
+            AND cj.subject_type = 'managed_certificate'
+            AND cj.operation IN ('renew', 'deploy', 'reload')
+            AND cj.mode IS DISTINCT FROM 'dry_run'
+            AND cj.status IN ('claimed', 'running')
+            AND (cj.certificate_identity_id = $2 OR
+              (cj.certificate_identity_id IS NULL AND EXISTS (
+                SELECT 1 FROM certops_management_associations a
+                JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
+                WHERE a.workspace_id = $1 AND a.identity_id = $2
+                  AND (p.id = cj.management_period_id OR
+                    (cj.management_period_id IS NULL AND p.managed_certificate_id::text = cj.subject_id))
+              )))
+        ), locked AS MATERIALIZED (
+          SELECT j.id FROM certificate_jobs j WHERE j.id IN (SELECT id FROM eligible)
+          ORDER BY j.id FOR UPDATE SKIP LOCKED
+        )
+        UPDATE certificate_jobs SET needs_operator_reconciliation = TRUE,
+          reconciliation_reason = COALESCE(reconciliation_reason, 'certificate_retirement_overlapped_execution'),
+          updated_at = NOW() WHERE id IN (SELECT id FROM locked) RETURNING id`,
+        [workspaceId, identityId],
+      )
+      : { rowCount: 0 };
     // Historical jobs retain their identity when a source rotates. Clean up
     // only this identity's unsent alerts, including jobs on rotated sources.
     await suppressPendingRetiredCertificateAlerts(tx, {
@@ -864,6 +912,7 @@ async function retireCertificateIdentity({
           status,
           reason: normalizedReason,
           cancelledJobs: cancelled.rowCount,
+          reconciliationMarkedJobs: reconciliation.rowCount,
         }),
         workspaceId,
       ],

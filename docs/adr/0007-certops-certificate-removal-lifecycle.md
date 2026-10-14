@@ -105,7 +105,17 @@ Decommission is an operator declaration made with the best available evidence:
 fresh confirmed service use blocks it; stored copies or unknown visibility
 require a reason and explicit acknowledgment. Subsequent observations leave
 lifecycle unchanged and show the conflict. Revoked/decommissioned certificates
-with fresh presence remain visible by default.
+with fresh presence remain available through the Revoked and Decommissioned
+status filters, labeled **Still observed**.
+
+Revocation can be recorded while a mutating job is claimed or running. Such jobs
+retain their claim and lease and require operator reconciliation. A completion
+that overlaps retirement retains the executor's reported outcome but cannot
+clear the warning, even when revocation could not lock the in-flight job.
+Decommissioning remains blocked by a claimed or running mutation. Recording
+revocation does not stop an executor or perform certificate authority revocation;
+the operator must verify installed material and remove or replace the retired
+certificate where necessary.
 
 Historical source provenance comes from the management period's `source` and
 `source_ref` snapshots and survives physical source deletion or workspace

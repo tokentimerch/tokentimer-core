@@ -128,6 +128,9 @@ export function jobOperationLabel(operation) {
 
 /** Advisory line for a job needing manual reconciliation; reason is optional. */
 export function reconciliationAdvisoryText(reason) {
+  if (reason === 'certificate_retirement_overlapped_execution') {
+    return 'Certificate retirement overlapped this operation. Verify what is installed and remove or replace retired certificates where needed.';
+  }
   const suffix = reason ? ` (reason: ${reason})` : '';
   return `This job's side effects could not be confirmed and need manual review${suffix}.`;
 }

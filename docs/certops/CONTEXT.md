@@ -356,8 +356,13 @@ addendum to ADR-0007 supersedes its earlier source-row lifecycle description.
   Endpoint-down alerts are unchanged.
   Alert eligibility requires the job's immutable identity and database-captured
   token association. Unknown historical attribution or later relinking cannot
-  silently route an old failure to the current certificate or token. Payload
-  replacement assertions do not bypass retirement: an accepted replacement
+  silently route an old failure to the current certificate or token.
+  Claimed or running mutations are flagged for operator reconciliation when
+  their certificate is marked revoked, including concurrent completions. Their
+  claims, reported outcomes and evidence remain intact; decommissioning still
+  rejects an in-flight mutation. Recording revocation neither stops an executor
+  nor revokes the certificate at its CA. Payload replacement assertions do not
+  bypass retirement: an accepted replacement
   first acquires its own active fingerprint identity, which subsequent jobs use.
 - **Decommission** - blocked by fresh confirmed TLS or service-binding use.
   Stored copies and uncertain visibility require acknowledgment; later use
