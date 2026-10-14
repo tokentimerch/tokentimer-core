@@ -1,5 +1,6 @@
 import CertOpsBadge from './CertOpsBadge.jsx';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router';
 import {
   Box,
   Button,
@@ -120,6 +121,8 @@ function JobReasonChip({ advisory }) {
  * caused the pause.
  */
 export default function ExecutorJobsPanel({ certOpsPaused = false }) {
+  const location = useLocation();
+  const linkedJobId = new URLSearchParams(location.search).get('job');
   const { muted, border, dashboard, inputBg } = useDashboardTheme();
   const rowHoverBg = dashboard.table.rowHover;
   const expandedBg = dashboard.bg.nested;
@@ -149,7 +152,10 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
   const visibleFilterLabels = activeFilterLabels.filter(
     entry => entry.key !== 'q'
   );
-  const [expandedId, setExpandedId] = useState(null);
+  const [expandedId, setExpandedId] = useState(linkedJobId);
+  useEffect(() => {
+    setExpandedId(linkedJobId);
+  }, [linkedJobId, workspaceId]);
   const [createOpen, setCreateOpen] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState(null);
   const [searchResetSignal, setSearchResetSignal] = useState(0);
@@ -230,6 +236,18 @@ export default function ExecutorJobsPanel({ certOpsPaused = false }) {
           </HStack>
         }
       />
+      {linkedJobId && !jobs.some(job => job.id === linkedJobId) ? (
+        <Box mb={4} p={3} bg={expandedBg} borderRadius='md'>
+          <Text fontSize='sm' fontWeight='semibold' mb={2}>
+            Linked job
+          </Text>
+          <EvidenceTimeline
+            key={`${workspaceId}:${linkedJobId}`}
+            jobId={linkedJobId}
+            refreshToken={timelineRefreshToken}
+          />
+        </Box>
+      ) : null}
       {canManage && certOpsPaused ? (
         <Text fontSize='xs' color={muted} mb={2}>
           {PAUSED_CREATE_REASON} Approving and rejecting queued jobs stays

@@ -3319,7 +3319,7 @@ function DashboardView({
   // to gate deletion of managed cert tokens and to hide retired certs by default.
   // Empty/no-op when CertOps is disabled for the workspace. Several
   // sources may reference the same token; cross-fingerprint links require an
-  // explicit choice in CertOps and remain protected against hard deletion.
+  // explicit certificate choice and remain protected against hard deletion.
   const {
     byTokenId: managedByTokenId,
     resolved: certOpsResolved,
@@ -3353,18 +3353,18 @@ function DashboardView({
         return;
       }
       const resolution = getCertOpsForToken(id);
-      if (resolution.ambiguousLink) {
-        toast.error(AMBIGUOUS_CERTIFICATE_LINK_MESSAGE);
-        return;
-      }
       const cert = resolution.certificate;
-      if (cert) {
+      if (resolution.hasManagedLinks) {
         const token = (Array.isArray(tokens)
           ? tokens.find(t => t.id === id)
           : null) || {
           id,
         };
-        setRetireTarget({ token, certificate: cert });
+        setRetireTarget({
+          token,
+          certificate: cert,
+          certificates: managedByTokenId.get(Number(id)) || [],
+        });
         onRetireModalOpen();
         return;
       }
@@ -3373,6 +3373,7 @@ function DashboardView({
     [
       certOpsResolved,
       getCertOpsForToken,
+      managedByTokenId,
       onDeleteToken,
       onRetireModalOpen,
       refreshCertOps,
@@ -3381,8 +3382,7 @@ function DashboardView({
   );
 
   const handleRetireConfirm = useCallback(
-    async ({ status, reason, acknowledgeUncertainty }) => {
-      const cert = retireTarget?.certificate;
+    async ({ certificate: cert, status, reason, acknowledgeUncertainty }) => {
       if (!cert?.id) return;
       await retireCertificate(workspaceId, cert.id, {
         status,
@@ -3401,7 +3401,7 @@ function DashboardView({
         );
       } catch (_) {}
     },
-    [retireTarget, workspaceId, refreshCertOps, onRetireModalClose]
+    [workspaceId, refreshCertOps, onRetireModalClose]
   );
 
   const {
@@ -5887,6 +5887,7 @@ function DashboardView({
         onClose={onRetireModalClose}
         token={retireTarget?.token}
         certificate={retireTarget?.certificate}
+        certificates={retireTarget?.certificates}
         onRetire={handleRetireConfirm}
       />
     </Box>

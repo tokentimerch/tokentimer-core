@@ -32,7 +32,7 @@ function normalizeFingerprint(value) {
   return FINGERPRINT_PATTERN.test(fingerprint) ? fingerprint : null;
 }
 
-/** Free-text inventory search: CN/name/issuer plus hex fingerprint substrings. */
+/** Free-text inventory search over public certificate and source properties. */
 function normalizeCertificateSearchQuery(value) {
   const q = String(value || "")
     .trim()
@@ -137,6 +137,7 @@ async function listCertificateIdentities({
   q,
   sort,
   direction,
+  canReadTopology = false,
   client = pool,
 }) {
   const pageSize = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 50));
@@ -171,7 +172,20 @@ async function listCertificateIdentities({
     conditions.push(`(source = $${params.length} OR (kind = 'identity' AND EXISTS (
       SELECT 1 FROM certops_management_associations a
       JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
-      WHERE a.identity_id = candidates.id AND a.workspace_id = $1 AND p.source = $${params.length})))`);
+      WHERE a.identity_id = candidates.id AND a.workspace_id = $1 AND p.source = $${params.length}))
+      OR (kind = 'identity' AND EXISTS (
+        SELECT 1 FROM certificate_instances observed
+        WHERE observed.workspace_id = $1 AND observed.source = $${params.length}
+          AND certops_normalize_fingerprint(observed.observed_fingerprint_sha256) = candidates.fingerprint_sha256
+      )) OR (kind = 'identity' AND EXISTS (
+        SELECT 1 FROM certops_slot_observations observed
+        WHERE observed.workspace_id = $1 AND observed.source = $${params.length}
+          AND certops_normalize_fingerprint(observed.fingerprint_sha256) = candidates.fingerprint_sha256
+      )) OR (kind = 'identity' AND $${params.length} = 'endpoint_monitor' AND EXISTS (
+        SELECT 1 FROM certops_unmanaged_observations observed
+        WHERE observed.workspace_id = $1 AND observed.domain_monitor_id IS NOT NULL
+          AND observed.fingerprint_sha256 = candidates.fingerprint_sha256
+      )))`);
   }
   if (unmanagedOnly !== null)
     conditions.push(
@@ -185,7 +199,42 @@ async function listCertificateIdentities({
       position($${textParam} in lower(COALESCE(managed_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(issuer, ''))) > 0 OR
-      position($${textParam} in lower(COALESCE(source_ref, ''))) > 0
+      (${canReadTopology === true ? "TRUE" : "FALSE"} AND position($${textParam} in lower(COALESCE(source_ref, ''))) > 0) OR
+      position($${textParam} in lower(id::text)) > 0 OR
+      position($${textParam} in lower(COALESCE(managed_id::text, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(display_status, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(lifecycle_reason, ''))) > 0 OR
+      EXISTS (
+        SELECT 1 FROM managed_certificates searchable
+        WHERE searchable.workspace_id = $1 AND (
+          (kind = 'provisional' AND searchable.id = candidates.id) OR
+          (kind = 'identity' AND EXISTS (
+            SELECT 1 FROM certops_management_associations a
+            JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
+            WHERE a.workspace_id = $1 AND a.identity_id = candidates.id
+              AND p.managed_certificate_id = searchable.id
+          ))
+        ) AND EXISTS (
+          SELECT 1 FROM jsonb_each_text(certops_public_certificate_details(searchable) || jsonb_build_object(
+            'id', searchable.id, 'name', searchable.name, 'tokenId', searchable.token_id,
+            'profileId', searchable.profile_id, 'status', searchable.status,
+            'source', searchable.source, 'sourceRef', ${canReadTopology === true ? "searchable.source_ref" : "NULL"},
+            'keyReference', ${canReadTopology === true ? "searchable.key_reference" : "NULL"},
+            'deployedCertPath', ${canReadTopology === true ? "searchable.deployed_cert_path" : "NULL"},
+            'certificatePem', searchable.certificate_pem,
+            'deployedAgentId', searchable.deployed_agent_id,
+            'reconciliationReason', searchable.reconciliation_reason,
+            'keyMode', searchable.key_mode, 'createdAt', searchable.created_at,
+            'updatedAt', searchable.updated_at
+          )) property
+          WHERE position($${textParam} in lower(property.value)) > 0
+        )
+      ) OR EXISTS (
+        SELECT 1 FROM certops_identity_detail_history history
+        WHERE kind = 'identity' AND history.workspace_id = $1 AND history.identity_id = candidates.id
+          AND EXISTS (SELECT 1 FROM jsonb_each_text(history.certificate_details) property
+            WHERE position($${textParam} in lower(property.value)) > 0)
+      )
     )`;
     if (search.fingerprintNeedle) {
       params.push(search.fingerprintNeedle);

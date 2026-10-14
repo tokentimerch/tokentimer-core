@@ -326,6 +326,137 @@ describe('Dashboard page smoke tests', () => {
     await waitFor(() => expectTextPresent('LOGIN_SUCCESS'));
   });
 
+  it.each([
+    [
+      'CERTOPS_ISSUER_CREATED',
+      { issuerId: 'issuer-1', kind: 'adcs' },
+      ['Issuer: issuer-1', 'Kind: adcs'],
+    ],
+    [
+      'CERTOPS_ISSUER_PREFLIGHT_DISPATCHED',
+      { issuerId: 'issuer-1', jobId: 'job-1', agentId: 'agent-1' },
+      ['Issuer: issuer-1', 'Job: job-1', 'Agent: agent-1'],
+    ],
+    [
+      'CERTOPS_ISSUER_KEY_CONFIRMED',
+      { issuerId: 'issuer-1', version: 2, caKeySha256: 'pinned-key-hash' },
+      ['Issuer: issuer-1', 'Version: 2', 'CA key SHA-256: pinned-key-hash'],
+    ],
+    [
+      'CERTOPS_ENROLLMENT_CREATED',
+      { enrollmentId: 'enrollment-1', issuerId: 'issuer-1', jobId: 'job-1' },
+      ['Enrollment: enrollment-1', 'Issuer: issuer-1', 'Job: job-1'],
+    ],
+    [
+      'CERTOPS_ENROLLMENT_RECONCILE_PROPOSED',
+      { enrollmentId: 'enrollment-1', requestId: 0 },
+      ['Enrollment: enrollment-1', 'Request: 0'],
+    ],
+    [
+      'CERTOPS_ENROLLMENT_CANCELLED',
+      { enrollmentId: 'enrollment-1' },
+      ['Enrollment: enrollment-1'],
+    ],
+    [
+      'CERTOPS_ENROLLMENT_ABANDONED',
+      { enrollmentId: 'enrollment-1' },
+      ['Enrollment: enrollment-1'],
+    ],
+    [
+      'CERTOPS_AGENT_LOG_REJECTED',
+      {
+        jobId: 'job-1',
+        claimId: 'claim-1',
+        code: 'CERTOPS_AGENT_LOG_PRIVATE_MATERIAL',
+      },
+      [
+        'Job: job-1',
+        'Claim: claim-1',
+        'Code: CERTOPS_AGENT_LOG_PRIVATE_MATERIAL',
+      ],
+    ],
+    [
+      'CERTOPS_AGENT_ALERT_SETTINGS_UPDATED',
+      {
+        agentId: 'agent-1',
+        downtimeAlertsEnabled: false,
+        contactGroupId: null,
+      },
+      ['Agent: agent-1', 'Downtime alerts: disabled'],
+    ],
+    [
+      'CERTOPS_DIAGNOSTIC_AGENT_BOOTSTRAPPED',
+      {
+        agentId: 'agent-1',
+        requestId: 'request-1',
+        jobId: 'job-1',
+        credentialPrefix: 'ttagent_public',
+        signingKeyId: 'key-1',
+      },
+      [
+        'Agent: agent-1',
+        'Request: request-1',
+        'Job: job-1',
+        'Credential prefix: ttagent_public',
+        'Signing key: key-1',
+      ],
+    ],
+    [
+      'CERTOPS_RENEWAL_PROFILE_CREATED',
+      {
+        profileId: 'profile-1',
+        profileName: 'IIS renewal',
+        issuerId: 'issuer-1',
+        reference: 'iis | Store: WebHosting',
+      },
+      [
+        'Profile: profile-1',
+        'Profile name: IIS renewal',
+        'Issuer: issuer-1',
+        'Target: iis | Store: WebHosting',
+      ],
+    ],
+    [
+      'certops.enrollment.created',
+      { enrollmentId: 'enrollment-1', issuerId: 'issuer-1', jobId: 'job-1' },
+      ['Enrollment: enrollment-1', 'Issuer: issuer-1', 'Job: job-1'],
+    ],
+  ])(
+    'renders real metadata for %s',
+    async (action, metadata, expectedParts) => {
+      workspaceListMock.mockResolvedValue({
+        items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
+      });
+      alertGetAuditEventsMock.mockResolvedValue([
+        {
+          id: 'ev-adcs',
+          action,
+          occurred_at: new Date().toISOString(),
+          metadata,
+        },
+      ]);
+      renderWithProviders(<Audit {...baseProps} />);
+      await waitFor(() => {
+        for (const part of expectedParts)
+          expectTextPresent(
+            new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          );
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Expand audit event' })
+      );
+      for (const part of expectedParts) {
+        const colon = part.indexOf(':');
+        expect(
+          screen.getByText(part.slice(0, colon), { exact: true })
+        ).toBeInTheDocument();
+        expect(
+          screen.getAllByText(part.slice(colon + 2), { exact: true }).length
+        ).toBeGreaterThan(0);
+      }
+    }
+  );
+
   it('renders SSO audit metadata in Audit route', async () => {
     workspaceListMock.mockResolvedValue({
       items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],
@@ -379,7 +510,11 @@ describe('Dashboard page smoke tests', () => {
         action: 'CERTOPS_AGENT_BOOTSTRAP_TOKEN_CREATED',
         actor_display_name: 'Test User',
         workspace_name: 'Workspace',
-        metadata: { bootstrap_token_id: 'bt-1', name: 'ci-agent', status: 'active' },
+        metadata: {
+          bootstrap_token_id: 'bt-1',
+          name: 'ci-agent',
+          status: 'active',
+        },
       },
       {
         id: 'ev-certops-retired',
@@ -419,7 +554,10 @@ describe('Dashboard page smoke tests', () => {
         action: 'CERTOPS_SIGNING_KEY_ROTATION_COMPLETED',
         actor_display_name: 'Test User',
         workspace_name: 'Workspace',
-        metadata: { retired_signing_key_id: 'ttsk_old', active_signing_key_id: 'ttsk_new' },
+        metadata: {
+          retired_signing_key_id: 'ttsk_old',
+          active_signing_key_id: 'ttsk_new',
+        },
       },
     ]);
 
