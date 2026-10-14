@@ -6,8 +6,8 @@
 if (typeof process.send !== "function")
   throw new Error("Audit fixture requires an IPC parent");
 const path = require("node:path");
-const express = require("express");
 const api = path.resolve(__dirname, "../../../apps/api");
+const express = require(require.resolve("express", { paths: [api] }));
 const actors = JSON.parse(process.env.TT_AUDIT_TEST_ACTORS);
 const { pool } = require(path.join(api, "db/database"));
 const app = express();
