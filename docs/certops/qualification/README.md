@@ -1,0 +1,63 @@
+# CertOps qualification guides
+
+Start with the [qualification overview](../e2e-qualification.md). These runbooks distinguish implemented source, focused local checks and required native execution; a source mapping does not mean a scenario has qualified.
+
+Machine-readable specifications retain their stable locations: [scenario catalog](../e2e-scenario-catalog.json), [mandatory suite inventory](../qualification-suites.json), [release environment matrix](../release-qualification-matrix.json) and [skip mappings](../skip-qualification.generated.json).
+
+## API, inventory and worker behavior
+
+- [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
+- [Certificate audit history qualification](api/audit-history-qualification.md)
+- [Mixed eligible bulk renewal admission](api/bulk-eligible-qualification.md)
+- [Public CA capacity admission qualification](api/ca-capacity-qualification.md)
+- [CSR observation qualification](api/csr-observation-qualification.md)
+- [Certificate import metadata preservation](api/import-metadata-qualification.md)
+- [Certificate-producing integration source qualification](api/integration-source-qualification.md)
+- [Public renewal issuer switch policy](api/issuer-switch-qualification.md)
+- [Multi-target filesystem deployment qualification](api/multi-target-deployment-qualification.md)
+- [Queued renewal profile snapshot qualification](api/queued-profile-snapshot-qualification.md)
+- [Renewal outbox and SMTP qualification](api/renewal-alert-qualification.md)
+- [Renewal path topology qualification](api/renewal-health-qualification.md)
+- [Scheduler and public admission capacity](api/scheduler-capacity-qualification.md)
+- [Native signing key rotation qualification](api/signing-rotation-qualification.md)
+- [Unmanaged discovery qualification](api/unmanaged-discovery-qualification.md)
+
+## Windows and AD CS
+
+- [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
+- [Installed Windows agent qualification](windows/windows-real-journey.md)
+- [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
+- [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
+- [AD CS operator guide](../agent/adcs.md)
+
+## Linux agents and deployment
+
+- [Native certificate filesystem qualification](linux/filesystem-qualification.md)
+- [Real Linux ACME qualification](linux/linux-acme-qualification.md)
+- [Installed Linux agent qualification](linux/linux-systemd-qualification.md)
+- [Native Linux trust-store qualification](linux/linux-trust-qualification.md)
+- [Native Linux agent fault qualification](linux/native-agent-qualification.md)
+- [Native Linux consuming-server certificate reload qualification](linux/nginx-qualification.md)
+
+## DNS providers and ACME
+
+- [DNS provider error qualification](dns-acme/dns-provider-errors-qualification.md)
+- [Real DNS provider qualification](dns-acme/dns-provider-qualification.md)
+- [Real DNS-hook routing qualification](dns-acme/dns-routing-qualification.md)
+- [Real agent/API/ACME filesystem qualification](dns-acme/real-acme-qualification.md)
+
+## Kubernetes and cert-manager
+
+- [External HTTP-01 controller qualification](kubernetes/kubernetes-http01-qualification.md)
+- [Disposable Kubernetes qualification](kubernetes/kubernetes-qualification.md)
+- [Native Kubernetes public Secret fallback](kubernetes/kubernetes-secret-fallback-qualification.md)
+
+## Cloud and Enterprise
+
+- [Edition qualification stays tied to its composition](editions/edition-qualification.md)
+
+## Reports, skips and release qualification
+
+- [Certificate release qualification](reporting/release-qualification.md)
+- [Skip qualification ownership](reporting/skip-qualification.md)
+- [Supporting CertOps integration qualification](reporting/supporting-integration-qualification.md)
