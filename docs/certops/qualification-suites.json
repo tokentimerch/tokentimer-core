@@ -48,7 +48,8 @@
       "windows-native-orphan-open-enrollment-protected": "real-host",
       "windows-native-orphan-corrupt-journal-protected": "real-host",
       "windows-native-orphan-closed-journal-and-untracked-key": "real-host",
-      "windows-iis-ipv6-native-shadow-rollback": "real-host"
+      "windows-iis-ipv6-native-shadow-rollback": "real-host",
+      "windows-iis-ipv6-wildcard-shadow-rollback": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -1815,7 +1816,8 @@
       "windows-native-orphan-open-enrollment-protected",
       "windows-native-orphan-corrupt-journal-protected",
       "windows-native-orphan-closed-journal-and-untracked-key",
-      "windows-iis-ipv6-native-shadow-rollback"
+      "windows-iis-ipv6-native-shadow-rollback",
+      "windows-iis-ipv6-wildcard-shadow-rollback"
     ],
     "kubernetes-host": [
       "controller-owned-provision",

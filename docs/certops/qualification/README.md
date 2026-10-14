@@ -157,3 +157,5 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [Installed public IIS refusal](windows/installed-public-iis-refusal.md): real public deploy admission, installed-agent signed refusal, claim-bound failure audit and two protected CNG/IIS/TLS endpoints. All ten hosted Windows/key-profile cells remain unexecuted.
 
 - [IPv6 SNI shadow and rollback](windows/ipv6-sni-shadow-rollback.md): concrete IPv6 native failure/recovery with a separate preserved IPv4 sibling; native execution pending.
+
+- [IPv6 wildcard shadow and rollback](windows/ipv6-wildcard-shadow-rollback.md): separate [::] native scope and both-stack isolation prerequisites; native execution pending.

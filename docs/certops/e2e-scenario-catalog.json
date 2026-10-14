@@ -670,8 +670,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/ipv6-shadow-fixture.js",
-      "remainingCoverage": "Concrete IPv4 loopback shadow source remains in the SNI fixture. Mandatory supporting native source additionally owns a concrete IPv6 loopback SNI site and [::1] HTTP.sys shadow, requires real production VERIFY_FAILED plus successful rollback, independently restores the native hostname endpoint and trusted IPv6 TLS, and preserves a separate IPv4 sibling endpoint/TLS. Exact site IDs/protocol/flags/path and endpoint certificate/store/application identity gate cleanup; unresolved guards preserve borrowed keys. Native IPv6 execution remains pending. Wildcard IPv6/IPv4 shadow variants, additional client address combinations and installed-agent/public-job IPv6 coverage remain separate gaps."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/ipv6-shadow-fixture.js; packages/agent/scripts/host/ipv6-wildcard-fixture.js",
+      "remainingCoverage": "Concrete IPv4 loopback shadow source remains in the SNI fixture. Mandatory supporting native source additionally owns a concrete IPv6 loopback SNI site and [::1] HTTP.sys shadow, requires real production VERIFY_FAILED plus successful rollback, independently restores the native hostname endpoint and trusted IPv6 TLS, and preserves a separate IPv4 sibling endpoint/TLS. Exact site IDs/protocol/flags/path and endpoint certificate/store/application identity gate cleanup; unresolved guards preserve borrowed keys. Native IPv6 execution remains pending. A distinct mandatory IPv6 [::] wildcard source repeats real warning, failure, rollback and trusted IPv6 recovery with both-stack target-port availability and the same owned cleanup guard. Concrete-only evidence cannot satisfy its proof. Native wildcard execution remains pending. IPv4 wildcard shadows, additional client address combinations and installed-agent/public-job IPv6 coverage remain separate gaps."
     },
     {
       "id": "windows-iis.flags-preserved",

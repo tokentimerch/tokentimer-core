@@ -210,6 +210,12 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
         gate.report.fixtureSources ||= [];
         for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
       }, { evidenceLevel: "real-host", oracle: "Actual IPv6 HTTP.sys shadow causes real production verification failure and rollback; native endpoint and independently trusted IPv6 TLS recover, separate IPv4 sibling stays unchanged" });
+      if (gate) await gate.scenario("windows-iis-ipv6-wildcard-shadow-rollback", async () => {
+        const fixture = require("./ipv6-wildcard-fixture");
+        gate.report.nativeIpv6WildcardShadow = await fixture.qualifyIpv6Wildcard({ certificates, powershell, run, workDir });
+        fixture.verifyProof(gate.report.nativeIpv6WildcardShadow);
+        for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
+      }, { evidenceLevel: "real-host", oracle: "Actual IPv6 wildcard HTTP.sys shadow yields production verification failure and rollback; exact native hostname/trusted IPv6 TLS recover while separate IPv4 sibling stays unchanged" });
       if (gate) await gate.scenario("windows-iis-rollback-failure", async () => {
         // Remove only the owned predecessor's public store copy. Its exact
         // recorded CNG key remains owned and is deleted by outer teardown.

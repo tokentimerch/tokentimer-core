@@ -382,6 +382,16 @@ def browser_job_approval_fields(proof):
     return result
 
 
+def ipv6_wildcard_fields(proof):
+    """Native IPv6 wildcard only; no concrete-only or IPv4 wildcard substitution."""
+    flags = ['actualIpv6LoopbackAvailable', 'borrowedCertificatesVerified', 'actualIpv6ShadowObserved', 'productionPrecedenceWarning', 'actualProductionVerifyFailed', 'actualProductionRollback', 'nativeHostnameEndpointRestored', 'trustedIpv6ShadowObserved', 'trustedIpv6BaselineRecovered', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
+    if (not isinstance(proof, dict) or proof.get("scope") != 'native-ipv6-wildcard-sni-shadow-rollback-with-ipv4-sibling'
+            or proof.get("installedAgentQualified") is not False or proof.get("caQualified") is not False
+            or any(proof.get(key) is not True for key in flags)):
+        raise ValueError("Incomplete native IPv6 wildcard rollback evidence")
+    return {"scope": proof["scope"], "installedAgentQualified": False, "caQualified": False, **dict.fromkeys(flags, True)}
+
+
 def ipv6_shadow_fields(proof):
     """Concrete IPv6 native rollback only; no installed-agent or CA promotion."""
     flags = ['actualIpv6LoopbackAvailable', 'borrowedCertificatesVerified', 'actualIpv6ShadowObserved', 'productionPrecedenceWarning', 'actualProductionVerifyFailed', 'actualProductionRollback', 'nativeHostnameEndpointRestored', 'trustedIpv6ShadowObserved', 'trustedIpv6BaselineRecovered', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
@@ -1021,6 +1031,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeJournalReadRefusals"] = journal_acl_fields(value.get("nativeJournalReadRefusals"))
             result["nativeOrphanJournalProtection"] = orphan_journal_fields(value.get("nativeOrphanJournalProtection"))
             result["nativeIpv6SniShadow"] = ipv6_shadow_fields(value.get("nativeIpv6SniShadow"))
+            result["nativeIpv6WildcardShadow"] = ipv6_wildcard_fields(value.get("nativeIpv6WildcardShadow"))
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):

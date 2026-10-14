@@ -122,6 +122,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/journal-read-refusal-fixture").verifyProof(artifact.report.nativeJournalReadRefusals);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/orphan-journal-fixture").verifyProof(artifact.report.nativeOrphanJournalProtection);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-shadow-fixture").verifyProof(artifact.report.nativeIpv6SniShadow);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-wildcard-fixture").verifyProof(artifact.report.nativeIpv6WildcardShadow);
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {

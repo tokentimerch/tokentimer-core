@@ -13,6 +13,17 @@ const iis = require("../../src/windows-iis"),
   discovery = require("../../src/windows-discovery"),
   platform = require("../../src/platform");
 const SCOPE = "native-ipv6-sni-shadow-rollback-with-ipv4-sibling";
+const WILDCARD_SCOPE =
+  "native-ipv6-wildcard-sni-shadow-rollback-with-ipv4-sibling";
+function variantContract(variant) {
+  assert.ok(
+    variant === "concrete" || variant === "wildcard",
+    "Only explicit native IPv6 variants are supported",
+  );
+  return variant === "concrete"
+    ? { address: "[::1]", scope: SCOPE }
+    : { address: "[::]", scope: WILDCARD_SCOPE };
+}
 const SCENARIOS = Object.freeze(["windows-iis-ipv6-native-shadow-rollback"]);
 const FLAGS = Object.freeze([
   "actualIpv6LoopbackAvailable",
@@ -37,16 +48,19 @@ const REQUIRED_SOURCES = Object.freeze([
   "packages/agent/src/platform/index.js",
 ]);
 const guardName = ".preserve-ipv6-shadow.json";
-function verifyProof(p) {
+function verifyVariantProof(p, variant) {
   assert.deepEqual(
     Object.keys(p).sort(),
     ["scope", "installedAgentQualified", "caQualified", ...FLAGS].sort(),
   );
-  assert.equal(p.scope, SCOPE);
+  assert.equal(p.scope, variantContract(variant).scope);
   assert.equal(p.installedAgentQualified, false);
   assert.equal(p.caQualified, false);
   for (const key of FLAGS) assert.equal(p[key], true, key);
   return true;
+}
+function verifyProof(proof) {
+  return verifyVariantProof(proof, "concrete");
 }
 function assertCleanupSafe(root) {
   assert.equal(
@@ -81,11 +95,11 @@ function pem(c) {
   return `-----BEGIN CERTIFICATE-----\n${c.der}\n-----END CERTIFICATE-----\n`;
 }
 async function loopbackPort(host = "::1") {
-  const server = net.createServer();
+  const server = net.createServer((socket) => socket.destroy());
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(
-      { host, port: 0, ...(host === "::1" ? { ipv6Only: true } : {}) },
+      { host, port: 0, ...(host.includes(":") ? { ipv6Only: true } : {}) },
       resolve,
     );
   });
@@ -94,6 +108,26 @@ async function loopbackPort(host = "::1") {
     server.close((e) => (e ? reject(e) : resolve())),
   );
   return port;
+}
+async function assertPortAvailable(host, port) {
+  const server = net.createServer((socket) => socket.destroy());
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(
+      { host, port, ...(host.includes(":") ? { ipv6Only: true } : {}) },
+      resolve,
+    );
+  });
+  await new Promise((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+}
+async function siblingPort(excluded) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const port = await loopbackPort("127.0.0.1");
+    if (port !== excluded) return port;
+  }
+  throw new Error("Distinct isolated IPv4 sibling port unavailable");
 }
 function trustedThumb(host, port, cert) {
   return new Promise((resolve, reject) => {
@@ -182,12 +216,16 @@ function siteScript({ name, directory, information, sni }) {
   const escaped = directory.replace(/'/g, "''");
   return `Add-Type -Path "$env:SystemRoot\\System32\\inetsrv\\Microsoft.Web.Administration.dll";$m=[Microsoft.Web.Administration.ServerManager]::new();try{if($m.Sites['${name}']){throw 'Refuse pre-existing owned site name'};$s=$m.Sites.Add('${name}','https','${information}','${escaped}');$s.Bindings[0].SslFlags=${sni ? 1 : 0};$s.ServerAutoStart=$true;$m.CommitChanges();@{siteId=[long]$s.Id}|ConvertTo-Json -Compress}finally{$m.Dispose()}`;
 }
-async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative, workDir }) {
+async function qualifyIpv6ShadowVariant(
+  { certificates, powershell, run: executeNative, workDir },
+  variant,
+) {
+  const selectedVariant = variantContract(variant);
   assert.equal(process.platform, "win32");
   assertCleanupSafe(workDir);
   const [shadow, baseline, incoming] = certificatesForFixture(certificates),
-    port = await loopbackPort(),
-    siblingPort = await loopbackPort("127.0.0.1"),
+    port = await loopbackPort(variant === "wildcard" ? "::" : "::1"),
+    siblingPortValue = await siblingPort(port),
     nonce = crypto.randomUUID(),
     rootId = fileId(workDir),
     directory = fs.mkdtempSync(path.join(workDir, "ipv6-shadow-")),
@@ -208,8 +246,8 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
       sniHost: "localhost",
     },
     hostSelector = `hostnameport=localhost:${port}`,
-    v4Selector = `ipport=127.0.0.1:${siblingPort}`,
-    shadowSelector = `ipport=[::1]:${port}`,
+    v4Selector = `ipport=127.0.0.1:${siblingPortValue}`,
+    shadowSelector = `ipport=${selectedVariant.address}:${port}`,
     appIds = {
       host: crypto.randomUUID(),
       v4: crypto.randomUUID(),
@@ -220,8 +258,9 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
       directory,
       sites: [v6, v4],
       port,
-      siblingPort,
+      siblingPort: siblingPortValue,
       appIds,
+      shadowAddress: selectedVariant.address,
       borrowedThumbprints: [
         shadow.thumbprint,
         baseline.thumbprint,
@@ -294,7 +333,7 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
       appIds: [appIds.shadow],
     };
   const proof = {
-    scope: SCOPE,
+    scope: selectedVariant.scope,
     installedAgentQualified: false,
     caQualified: false,
   };
@@ -315,7 +354,11 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
     primary;
   try {
     owned();
-    assertNoPortConflicts(await listing(), [port, siblingPort]);
+    if (variant === "wildcard") {
+      await assertPortAvailable("::", port);
+      await assertPortAvailable("127.0.0.1", port);
+    }
+    assertNoPortConflicts(await listing(), [port, siblingPortValue]);
     for (const selector of [hostSelector, v4Selector, shadowSelector])
       assert.equal(
         await endpoint(selector),
@@ -337,7 +380,7 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
         siteScript({
           name: v4,
           directory,
-          information: `127.0.0.1:${siblingPort}:`,
+          information: `127.0.0.1:${siblingPortValue}:`,
           sni: false,
         }),
       ),
@@ -380,7 +423,7 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
       "Clean IPv6 SNI baseline must have no pre-existing shadow",
     );
     await expectTls("::1", port, baseline);
-    await expectTls("127.0.0.1", siblingPort, baseline);
+    await expectTls("127.0.0.1", siblingPortValue, baseline);
     run("netsh.exe", [
       "http",
       "add",
@@ -392,10 +435,10 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
     ]);
     assertOwnedEndpoint(await endpoint(shadowSelector), shadowPolicy);
     const warning = await iis.checkSniPrecedenceConflict({ binding });
-    assert.ok(warning?.includes(`ipport=[::1]:${port}`));
+    assert.ok(warning?.includes(shadowSelector));
     assert.ok(warning.includes(hostSelector));
     await expectTls("::1", port, shadow);
-    await expectTls("127.0.0.1", siblingPort, baseline);
+    await expectTls("127.0.0.1", siblingPortValue, baseline);
     const result = await iis.deployIisBinding({
       binding,
       certificatePem: pem(incoming),
@@ -419,12 +462,12 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
     assertOwnedEndpoint(restored, baselinePolicy);
     assertOwnedEndpoint(await endpoint(v4Selector), v4Policy);
     await expectTls("::1", port, shadow);
-    await expectTls("127.0.0.1", siblingPort, baseline);
+    await expectTls("127.0.0.1", siblingPortValue, baseline);
     assertOwnedEndpoint(await endpoint(shadowSelector), shadowPolicy);
     run("netsh.exe", ["http", "delete", "sslcert", shadowSelector]);
     assert.equal(await endpoint(shadowSelector), undefined);
     await expectTls("::1", port, baseline);
-    await expectTls("127.0.0.1", siblingPort, baseline);
+    await expectTls("127.0.0.1", siblingPortValue, baseline);
     Object.assign(
       proof,
       Object.fromEntries(
@@ -446,7 +489,7 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
         "Partial native setup preserves guard for owned host teardown",
       );
       ps(
-        `Add-Type -Path "$env:SystemRoot\\System32\\inetsrv\\Microsoft.Web.Administration.dll";$m=[Microsoft.Web.Administration.ServerManager]::new();try{foreach($entry in @(@{Name='${v6}';Id=${siteIds.v6};Flags=1;Binding='[::1]:${port}:localhost'},@{Name='${v4}';Id=${siteIds.v4};Flags=0;Binding='127.0.0.1:${siblingPort}:'})){$s=$m.Sites[$entry.Name];if(!$s -or [long]$s.Id -ne $entry.Id -or $s.Bindings.Count -ne 1 -or $s.Bindings[0].Protocol -cne 'https' -or [int]$s.Bindings[0].SslFlags -ne $entry.Flags -or $s.Bindings[0].BindingInformation -cne $entry.Binding -or $s.Applications['/'].VirtualDirectories['/'].PhysicalPath -cne '${directory.replace(/'/g, "''")}'){throw 'Foreign native site replacement; preserve borrowed custody'};$null=$s.Id};}finally{$m.Dispose()}`,
+        `Add-Type -Path "$env:SystemRoot\\System32\\inetsrv\\Microsoft.Web.Administration.dll";$m=[Microsoft.Web.Administration.ServerManager]::new();try{foreach($entry in @(@{Name='${v6}';Id=${siteIds.v6};Flags=1;Binding='[::1]:${port}:localhost'},@{Name='${v4}';Id=${siteIds.v4};Flags=0;Binding='127.0.0.1:${siblingPortValue}:'})){$s=$m.Sites[$entry.Name];if(!$s -or [long]$s.Id -ne $entry.Id -or $s.Bindings.Count -ne 1 -or $s.Bindings[0].Protocol -cne 'https' -or [int]$s.Bindings[0].SslFlags -ne $entry.Flags -or $s.Bindings[0].BindingInformation -cne $entry.Binding -or $s.Applications['/'].VirtualDirectories['/'].PhysicalPath -cne '${directory.replace(/'/g, "''")}'){throw 'Foreign native site replacement; preserve borrowed custody'};$null=$s.Id};}finally{$m.Dispose()}`,
       );
       for (const [selector, policy] of [
         [shadowSelector, shadowPolicy],
@@ -467,7 +510,7 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
         assert.equal(await endpoint(selector), undefined);
       }
       ps(
-        `Add-Type -Path "$env:SystemRoot\\System32\\inetsrv\\Microsoft.Web.Administration.dll";$m=[Microsoft.Web.Administration.ServerManager]::new();try{foreach($entry in @(@{Name='${v6}';Id=${siteIds.v6};Flags=1;Binding='[::1]:${port}:localhost'},@{Name='${v4}';Id=${siteIds.v4};Flags=0;Binding='127.0.0.1:${siblingPort}:'})){$s=$m.Sites[$entry.Name];if(!$s -or [long]$s.Id -ne $entry.Id -or $s.Bindings.Count -ne 1 -or $s.Bindings[0].Protocol -cne 'https' -or [int]$s.Bindings[0].SslFlags -ne $entry.Flags -or $s.Bindings[0].BindingInformation -cne $entry.Binding -or $s.Applications['/'].VirtualDirectories['/'].PhysicalPath -cne '${directory.replace(/'/g, "''")}'){throw 'Foreign native site replacement; preserve borrowed custody'};$m.Sites.Remove($s)};$m.CommitChanges()}finally{$m.Dispose()}`,
+        `Add-Type -Path "$env:SystemRoot\\System32\\inetsrv\\Microsoft.Web.Administration.dll";$m=[Microsoft.Web.Administration.ServerManager]::new();try{foreach($entry in @(@{Name='${v6}';Id=${siteIds.v6};Flags=1;Binding='[::1]:${port}:localhost'},@{Name='${v4}';Id=${siteIds.v4};Flags=0;Binding='127.0.0.1:${siblingPortValue}:'})){$s=$m.Sites[$entry.Name];if(!$s -or [long]$s.Id -ne $entry.Id -or $s.Bindings.Count -ne 1 -or $s.Bindings[0].Protocol -cne 'https' -or [int]$s.Bindings[0].SslFlags -ne $entry.Flags -or $s.Bindings[0].BindingInformation -cne $entry.Binding -or $s.Applications['/'].VirtualDirectories['/'].PhysicalPath -cne '${directory.replace(/'/g, "''")}'){throw 'Foreign native site replacement; preserve borrowed custody'};$m.Sites.Remove($s)};$m.CommitChanges()}finally{$m.Dispose()}`,
       );
       ps(
         `Add-Type -Path "$env:SystemRoot\\System32\\inetsrv\\Microsoft.Web.Administration.dll";$m=[Microsoft.Web.Administration.ServerManager]::new();try{if($m.Sites['${v6}'] -or $m.Sites['${v4}']){throw 'Owned IPv6 fixture sites remain'}}finally{$m.Dispose()}`,
@@ -513,10 +556,17 @@ async function qualifyIpv6Shadow({ certificates, powershell, run: executeNative,
       );
     }
   }
-  verifyProof(proof);
+  verifyVariantProof(proof, variant);
   return proof;
 }
+function qualifyIpv6Shadow(context) {
+  return qualifyIpv6ShadowVariant(context, "concrete");
+}
 module.exports = {
+  qualifyIpv6ShadowVariant,
+  verifyVariantProof,
+  variantContract,
+  WILDCARD_SCOPE,
   qualifyIpv6Shadow,
   verifyProof,
   assertCleanupSafe,
