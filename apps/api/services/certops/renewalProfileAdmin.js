@@ -1097,6 +1097,10 @@ async function listUpcomingRenewals({
          ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.workspace_id = $1
         AND mc.status NOT IN (${renewableStatusFilter})
+        AND NOT EXISTS (SELECT 1 FROM certops_certificate_identities identity
+          WHERE identity.workspace_id = mc.workspace_id
+            AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+            AND identity.lifecycle_status IN ('revoked', 'decommissioned'))
       ORDER BY ${orderBy}
       LIMIT $3 OFFSET $4`,
     [
@@ -1112,7 +1116,11 @@ async function listUpcomingRenewals({
     `SELECT COUNT(*)::int AS total
        FROM managed_certificates mc
       WHERE mc.workspace_id = $1
-        AND mc.status NOT IN (${renewableStatusFilter})`,
+        AND mc.status NOT IN (${renewableStatusFilter})
+        AND NOT EXISTS (SELECT 1 FROM certops_certificate_identities identity
+          WHERE identity.workspace_id = mc.workspace_id
+            AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+            AND identity.lifecycle_status IN ('revoked', 'decommissioned'))`,
     [workspaceId],
   );
 

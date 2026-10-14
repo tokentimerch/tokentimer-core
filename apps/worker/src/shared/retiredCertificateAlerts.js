@@ -12,6 +12,7 @@ const {
   isRetiredCertificateSuppressedAlertKey,
   parseCertRenewalFailedJobId,
   shouldSkipRetiredCertificateAlert,
+  loadRenewalAlertCertificate,
   shouldDiscardRetiredCertificateAlert,
 } = alertEligibility;
 
@@ -27,5 +28,6 @@ export {
   isRetiredCertificateSuppressedAlertKey,
   parseCertRenewalFailedJobId,
   shouldSkipRetiredCertificateAlert,
+  loadRenewalAlertCertificate,
   shouldDiscardRetiredCertificateAlert,
 };

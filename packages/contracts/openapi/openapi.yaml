@@ -3627,6 +3627,13 @@ paths:
         - $ref: "#/components/parameters/certOpsCertificateSourceFilterParam"
         - $ref: "#/components/parameters/certOpsCertificateExcludeRetiredParam"
         - in: query
+          name: includeObservedRetired
+          description: >-
+            With excludeRetired=true, retain retired identities with fresh
+            presence evidence, labeled as retired and still observed. They
+            remain excluded from status=active and active counters.
+          schema: { type: boolean, default: false }
+        - in: query
           name: unmanaged
           description: true selects identities with no open period; false selects currently managed identities.
           schema: { type: boolean }

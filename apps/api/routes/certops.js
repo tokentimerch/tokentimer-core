@@ -438,6 +438,7 @@ function handleCertOpsError(res, err) {
     return res.status(412).json({ error: err.message, code: err.code });
   }
   if (err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING" ||
+      err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
       err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE" ||
       err?.code === "CERTOPS_MANAGEMENT_ALREADY_OPEN") {
@@ -3493,6 +3494,7 @@ router.get(
         limit: req.query.limit, offset: req.query.offset,
         status: req.query.status, source: req.query.source,
         excludeRetired: req.query.excludeRetired === "true",
+        includeObservedRetired: req.query.includeObservedRetired,
         unmanaged: req.query.unmanaged,
         q: req.query.q,
         canReadTopology: req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager"),

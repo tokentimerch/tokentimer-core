@@ -1286,6 +1286,131 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       "pending",
     );
   });
+  it("suppresses a failed job for its retired identity after the source rotates", async () => {
+    const ws = await workspace(), tid = await token(ws);
+    const mc = await source(ws, A, { tokenId: tid });
+    const oldIdentity = await identity(ws, A);
+    const oldJob = await job(ws, mc, "failed");
+    await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2, identity_observed_at=clock_timestamp() WHERE id=$1", [mc.id, B]);
+    await retireCertificateIdentity({ workspaceId: ws, identityId: oldIdentity.id,
+      expectedFingerprintSha256: A, status: "revoked", reason: "Retire historical identity", client: db });
+    const { queueCertRenewalFailedAlert } = require("../../apps/api/services/certops/renewalFailureAlerts");
+    const outcome = await queueCertRenewalFailedAlert({ client: db, workspaceId: ws, job: oldJob });
+    assert.equal(outcome.reason, "certificate_retired");
+    assert.equal((await identity(ws, B)).lifecycle_status, "active");
+    const { enqueueOutboxEvent, OUTBOX_EVENT_TYPES } = require("../../apps/api/services/certops/outbox");
+    const event = await enqueueOutboxEvent({ client: db, workspaceId: ws,
+      eventType: OUTBOX_EVENT_TYPES.RENEWAL_ALERT_REQUESTED, dedupeKey: oldJob.id,
+      payload: { jobId: oldJob.id, operation: "renew", subjectType: "managed_certificate", subjectId: mc.id } });
+    const certopsWorker = await import("../../apps/worker/src/certops-worker.js");
+    const summary = await certopsWorker.drainCertOpsOutbox({ dbPool: db,
+      log: { debug() {}, info() {}, error() {} } });
+    assert.equal(summary.skipped, 1);
+    assert.deepEqual((await db.query("SELECT status,outcome_reason FROM certops_outbox WHERE id=$1", [event.id])).rows[0],
+      { status: "skipped", outcome_reason: "certificate_retired" });
+  });
+
+  it("retiring a shared token's displayed certificate projects the live sibling and retired rediscovery cannot overwrite it", async () => {
+    const ws = await workspace(), tid = await token(ws), ref = randomUUID();
+    const retiring = await source(ws, A, { tokenId: tid, sourceRef: ref, notAfter: "2027-01-01" });
+    await source(ws, B, { tokenId: tid, notAfter: "2027-05-01" });
+    await retireCertificateIdentity({ workspaceId: ws, identityId: (await identity(ws, A)).id,
+      expectedFingerprintSha256: A, status: "revoked", reason: "Shared certificate retired", client: db });
+    const read = async () => (await db.query("SELECT expiration::text,cert_lifecycle_status FROM tokens WHERE id=$1", [tid])).rows[0];
+    assert.deepEqual(await read(), { expiration: "2027-05-01", cert_lifecycle_status: "active" });
+    await upsertManagedCertificateByMonitorSource(db,
+      { fingerprintSha256: A, commonName: "retired.example", notAfter: "2027-01-01" },
+      { workspaceId: ws, source: "agent_filesystem", sourceRef: ref, tokenId: tid,
+        status: "discovered", observedAt: new Date(), reuseCertificateId: retiring.id }, 0);
+    assert.deepEqual(await read(), { expiration: "2027-05-01", cert_lifecycle_status: "active" });
+    assert.equal((await identity(ws, A)).lifecycle_status, "revoked");
+  });
+
+  it("removes only the retired identity's queued failures across source rotation and retains sent history", async () => {
+    const ws = await workspace(), tid = await token(ws);
+    const mc = await source(ws, A, { tokenId: tid });
+    const oldIdentity = await identity(ws, A), oldJob = await job(ws, mc, "failed");
+    await db.query("UPDATE managed_certificates SET fingerprint_sha256=$2, identity_observed_at=clock_timestamp() WHERE id=$1", [mc.id, B]);
+    const replacementJob = await job(ws, mc, "failed");
+    for (const [key, state] of [[`cert_renewal_failed:${oldJob.id}`, "pending"],
+      [`cert_renewal_failed:${replacementJob.id}`, "pending"], [`token_expiry:${tid}:poswin:7`, "pending"],
+      [`cert_renewal_failed:${oldJob.id}:sent-history`, "sent"]]) {
+      await db.query("INSERT INTO alert_queue(user_id,token_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,0,CURRENT_DATE,'[\"email\"]'::jsonb,$4)", [userId,tid,key,state]);
+    }
+    await retireCertificateIdentity({ workspaceId: ws, identityId: oldIdentity.id,
+      expectedFingerprintSha256: A, status: "revoked", reason: "Retire historical identity", client: db });
+    const keys = (await db.query("SELECT alert_key FROM alert_queue WHERE token_id=$1", [tid])).rows.map(row => row.alert_key);
+    assert.equal((await db.query("SELECT status,error_message FROM alert_queue WHERE alert_key=$1", [`cert_renewal_failed:${oldJob.id}`])).rows[0].error_message,
+      "Discarded: certificate revoked or decommissioned");
+    assert(keys.includes(`cert_renewal_failed:${replacementJob.id}`));
+    assert(keys.includes(`token_expiry:${tid}:poswin:7`));
+    assert(keys.includes(`cert_renewal_failed:${oldJob.id}:sent-history`));
+    assert.equal((await db.query("SELECT cert_lifecycle_status FROM tokens WHERE id=$1", [tid])).rows[0].cert_lifecycle_status, "active");
+    assert.equal((await db.query("SELECT count(*)::int AS count FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_CERTIFICATE_RETIRED'", [ws])).rows[0].count, 1);
+  });
+
+  it("rearms expiry windows after replacement without deleting alert or delivery history", async () => {
+    const ws = await workspace(), tid = await token(ws), ref = randomUUID();
+    const nextExpiry = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    await db.query(`INSERT INTO workspace_settings(workspace_id,email_alerts_enabled,contact_groups,default_contact_group_id)
+      VALUES($1,TRUE,'[{"id":"expiry-ops","email_contact_ids":["contact"]}]'::jsonb,'expiry-ops')
+      ON CONFLICT(workspace_id) DO UPDATE SET email_alerts_enabled=TRUE,
+        contact_groups=EXCLUDED.contact_groups,default_contact_group_id=EXCLUDED.default_contact_group_id`, [ws]);
+    await source(ws, A, { tokenId: tid, sourceRef: ref, notAfter: "2027-01-01" });
+    for (const [threshold, state] of [[7, "pending"], [30, "sent"]]) {
+      await db.query("INSERT INTO alert_queue(user_id,token_id,alert_key,threshold_days,due_date,channels,status) VALUES($1,$2,$3,$4,CURRENT_DATE,'[\"email\"]'::jsonb,$5)",
+        [userId,tid,`token_expiry:${tid}:poswin:${threshold}`,threshold,state]);
+    }
+    await upsertManagedCertificateByMonitorSource(db,
+      { fingerprintSha256: B, commonName: "replacement.example", notAfter: nextExpiry },
+      { workspaceId: ws, source: "agent_filesystem", sourceRef: ref, tokenId: tid,
+        status: "discovered", observedAt: new Date() }, 0);
+    const history = (await db.query("SELECT id,alert_key,status,error_message FROM alert_queue WHERE token_id=$1", [tid])).rows;
+    assert.equal(history.length, 2);
+    assert(history.every(row => row.alert_key.includes(":previous_expiration:2027-01-01:")));
+    assert.equal(history.find(row => row.alert_key.includes(":poswin:7:")).error_message, "Discarded: certificate expiry changed");
+    assert.equal(history.find(row => row.alert_key.includes(":poswin:30:")).error_message, null);
+    assert.equal((await db.query("SELECT count(*)::int AS count FROM alert_queue WHERE token_id=$1 AND alert_key NOT LIKE '%:previous_expiration:%'", [tid])).rows[0].count, 0);
+    const { spawnSync } = require("node:child_process");
+    const discovery = spawnSync(process.execPath, ["apps/worker/src/queue-manager.js"], {
+      cwd: require("node:path").resolve(__dirname, "../.."),
+      env: { ...process.env, NODE_ENV: "test", DB_NAME: dbName, ENABLE_METRICS: "false" },
+      encoding: "utf8", timeout: 30000,
+    });
+    assert.equal(discovery.status, 0, discovery.stderr || discovery.stdout);
+    assert.equal((await db.query("SELECT status FROM alert_queue WHERE alert_key=$1", [`token_expiry:${tid}:poswin:7`])).rows[0]?.status, "pending");
+    assert.equal((await db.query("SELECT count(*)::int AS count FROM alert_queue WHERE token_id=$1 AND alert_key LIKE '%:previous_expiration:%'", [tid])).rows[0].count, 2);
+  });
+
+  it("uses immutable retirement for inventory and scheduling while the source status cache is locked", async () => {
+    const ws = await workspace(), mc = await source(ws, A, { status: "active", notAfter: "2020-01-01" });
+    const id = await identity(ws, A);
+    await db.query("UPDATE certops_management_periods SET automation_enabled=TRUE WHERE managed_certificate_id=$1", [mc.id]);
+    await clients(async (locker, lifecycle) => {
+      await locker.query("BEGIN");
+      await locker.query("SELECT id FROM managed_certificates WHERE id=$1 FOR UPDATE", [mc.id]);
+      await lifecycle.query("BEGIN");
+      await retireCertificateIdentity({ workspaceId: ws, identityId: id.id,
+        expectedFingerprintSha256: A, status: "revoked", reason: "Retire while observed", client: lifecycle });
+      await lifecycle.query("COMMIT");
+      assert.equal((await db.query("SELECT status FROM managed_certificates WHERE id=$1", [mc.id])).rows[0].status, "active");
+      const active = await listManagedCertificates({ workspaceId: ws, excludeRetired: true, client: db });
+      assert.equal(active.items.length, 0);
+      const all = await listManagedCertificates({ workspaceId: ws, client: db });
+      assert.equal(all.items[0].status, "revoked");
+      assert.equal(all.items[0].identityId, id.id);
+      const { findCertificatesDueForRenewal } = require("../../apps/api/services/certops/renewalScheduler");
+      const due = await findCertificatesDueForRenewal({ db, thresholdDays: 30, terminalStatuses: ["failed", "cancelled", "succeeded"] });
+      assert(!due.some(row => row.id === mc.id));
+      await locker.query("ROLLBACK");
+    });
+    await db.query("UPDATE managed_certificates SET key_mode='agent-local' WHERE id=$1", [mc.id]);
+    const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
+    await assert.rejects(createCertificateJob({ client: db, workspaceId: ws,
+      operation: "renew", subjectType: "managed_certificate", subjectId: mc.id,
+      payload: {}, mode: "dry_run" }), { code: "CERTOPS_CERTIFICATE_RETIRED" });
+  });
+
   it("quota counts distinct managed identities plus provisionals, regardless of lifecycle", async () => {
     const ws = await workspace(2),
       first = await source(ws, A),
@@ -2519,6 +2644,19 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     assert.equal(detail.lifecycleStatus, "decommissioned");
     assert(detail.stillObserved);
     assert(detail.locationCount >= 1);
+    assert.equal((await listCertificateIdentities({ workspaceId: ws, excludeRetired: true, client: db })).pagination.total, 0);
+    const observedRetired = await listCertificateIdentities({ workspaceId: ws,
+      excludeRetired: true, includeObservedRetired: true, client: db });
+    assert.equal(observedRetired.pagination.total, 1);
+    assert.equal(observedRetired.items[0].lifecycleDisplay, "Decommissioned · Still observed");
+    assert.equal((await listCertificateIdentities({ workspaceId: ws, status: "active",
+      includeObservedRetired: true, client: db })).pagination.total, 0);
+    await stopManagingSource({ workspaceId: ws, periodId: (await period(mc)).id, client: db });
+    const observedAfterStop = await listCertificateIdentities({ workspaceId: ws,
+      excludeRetired: true, includeObservedRetired: true, unmanaged: false, client: db });
+    assert.equal(observedAfterStop.pagination.total, 1);
+    assert.equal(observedAfterStop.items[0].lifecycleStatus, "decommissioned");
+    assert.equal(observedAfterStop.items[0].managed, false);
   });
   it("late claimed results cannot update a re-added provisioning source or a rotated active source", async () => {
     const {

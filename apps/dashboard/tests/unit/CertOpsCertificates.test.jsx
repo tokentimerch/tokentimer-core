@@ -444,7 +444,7 @@ describe('CertOpsCertificates list states', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('hides a still-observed revoked certificate from the active inventory', () => {
+  it('keeps a retired still-observed certificate visible and clearly retired by default', () => {
     useCertOpsCertificatesMock.mockReturnValue(
       certState({
         certificates: [
@@ -466,6 +466,24 @@ describe('CertOpsCertificates list states', () => {
     renderPage();
 
     expect(screen.getByText('live.example.test')).toBeInTheDocument();
+    expect(screen.getByText('retired.example.test')).toBeInTheDocument();
+    expect(screen.getByText('Revoked · Still observed')).toBeInTheDocument();
+  });
+
+  it('excludes a stale retired row when the operator explicitly filters for Active', () => {
+    useCertOpsCertificatesMock.mockReturnValue(
+      certState({
+        certificates: [
+          certificate({
+            commonName: 'retired.example.test',
+            status: 'discovered',
+            lifecycleStatus: 'revoked',
+            stillObserved: true,
+          }),
+        ],
+      })
+    );
+    renderPage(['/?status=active']);
     expect(screen.queryByText('retired.example.test')).not.toBeInTheDocument();
   });
 
@@ -631,13 +649,18 @@ describe('CertOpsCertificates filters', () => {
         pagination: {
           limit: 1,
           offset: 0,
-          total: params?.status === 'revoked' || params?.status === 'decommissioned' ? 1 : 0,
+          total:
+            params?.status === 'revoked' || params?.status === 'decommissioned'
+              ? 1
+              : 0,
         },
       })
     );
     renderPage();
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Show retired \(2\)/ }));
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: /Show retired \(2\)/ })
+    );
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ excludeRetired: undefined })
@@ -657,7 +680,9 @@ describe('CertOpsCertificates filters', () => {
     );
     renderPage();
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Show unmanaged \(4\)/ }));
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: /Show unmanaged \(4\)/ })
+    );
 
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ unmanaged: undefined })
@@ -1390,7 +1415,17 @@ describe('CertOpsCertificates retired count badge', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Decommission' }));
 
     await vi.waitFor(() => {
-      expect(retireCertificateMock).toHaveBeenCalled();
+      expect(retireCertificateMock).toHaveBeenCalledWith(
+        'ws-1',
+        certificate().id,
+        expect.objectContaining({
+          identityId: certificate().identityId,
+          fingerprintSha256: certificate().fingerprintSha256,
+          status: 'decommissioned',
+          reason: 'Service removed',
+          acknowledgeUncertainty: true,
+        })
+      );
       expect(listCertificatesMock.mock.calls.length).toBeGreaterThan(
         callsBeforeRetire
       );

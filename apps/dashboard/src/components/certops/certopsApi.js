@@ -26,6 +26,7 @@ export async function listCertificates(
     status,
     source,
     excludeRetired,
+    includeObservedRetired,
     grouped = false,
     unmanaged,
     q,
@@ -38,6 +39,7 @@ export async function listCertificates(
   if (status) params.status = status;
   if (source) params.source = source;
   if (excludeRetired !== undefined) params.excludeRetired = excludeRetired;
+  if (includeObservedRetired === true) params.includeObservedRetired = true;
   if (unmanaged !== undefined) params.unmanaged = unmanaged;
   if (q) params.q = q;
   if (sort) params.sort = sort;
@@ -263,11 +265,10 @@ export async function cancelCsrWorkflow(workspaceId, csrId) {
 /**
  * Retire a managed certificate (soft lifecycle transition, not a row delete).
  *
- * Maps to POST /certops/certificates/:id/retire with `{ status, reason }` where
- * status is `revoked` or `decommissioned`. The backend
- * keeps the certificate row and its evidence and mirrors the status onto the
- * linked token; nothing is purged. The endpoint may not exist yet in the current
- * core build (see PR #47), so callers should handle a 404 gracefully.
+ * Uses the selected immutable identity and the displayed SHA-256 fingerprint
+ * as a precondition. The source route remains a compatibility fallback with
+ * the same precondition. This records CertOps lifecycle; it does not contact
+ * the certificate authority. History stays and live siblings remain active.
  * @returns {Promise<{ certificate: object }>}
  */
 export async function retireCertificate(
@@ -281,6 +282,15 @@ export async function retireCertificate(
     acknowledgeUncertainty = false,
   } = {}
 ) {
+  const expectedFingerprint = String(fingerprintSha256 || '')
+    .replace(/:/g, '')
+    .trim()
+    .toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedFingerprint)) {
+    throw new Error(
+      'A valid certificate SHA-256 fingerprint is required. Refresh the inventory and select the certificate again.'
+    );
+  }
   const res = await apiClient.post(
     identityId
       ? `${workspaceBase(workspaceId)}/certificate-identities/${encodeURIComponent(identityId)}/retire`
@@ -288,7 +298,7 @@ export async function retireCertificate(
     {
       status,
       reason,
-      expectedFingerprintSha256: fingerprintSha256,
+      expectedFingerprintSha256: expectedFingerprint,
       acknowledgeUncertainty,
     }
   );

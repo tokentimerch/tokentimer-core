@@ -64,13 +64,15 @@
           "id": "openapi-static",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
-          "status": "existing"
+          "status": "existing",
+          "sha256": "bb1cf20d4529886cff6a7ea2bd34e4ecce7a71a43eea9e4216f59e8ea31af857"
         },
         {
           "id": "integration-openapi-spec",
           "kind": "spec",
           "path": "packages/contracts/openapi/openapi.yaml",
-          "status": "existing"
+          "status": "existing",
+          "sha256": "bb1cf20d4529886cff6a7ea2bd34e4ecce7a71a43eea9e4216f59e8ea31af857"
         },
         {
           "id": "auth-route-compat-contract",
@@ -167,7 +169,8 @@
           "id": "certops-inventory-schema",
           "kind": "schema",
           "path": "packages/contracts/certops/certops-inventory.schema.json",
-          "status": "existing"
+          "status": "existing",
+          "sha256": "a3c239b458656b6704e10d7c02805663ccae978eb975330ecd70464a515af606"
         },
         {
           "id": "certops-job-payload-schema",

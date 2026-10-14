@@ -3388,6 +3388,7 @@ function DashboardView({
         status,
         reason,
         acknowledgeUncertainty,
+        identityId: cert.identityId,
         fingerprintSha256: cert.fingerprintSha256,
       });
       refreshCertOps();
@@ -3396,7 +3397,7 @@ function DashboardView({
       try {
         showSuccessMessage(
           status === 'revoked'
-            ? 'Certificate revoked.'
+            ? 'Certificate marked revoked in CertOps.'
             : 'Certificate decommissioned.'
         );
       } catch (_) {}

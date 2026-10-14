@@ -368,6 +368,8 @@ function toInventoryRecord(row) {
     schemaVersion: 1,
     id: row.id,
     workspaceId: row.workspace_id,
+    identityId: row.identity_id || null,
+    lifecycleStatus: row.lifecycle_status || null,
     tokenId: row.token_id,
     profileId: row.profile_id,
     status: row.status,
@@ -510,7 +512,7 @@ function managedCertificateFilterSql(filters = {}) {
   const status = normalizeCertificateStatusFilter(filters.status);
   if (status) {
     params.push(status);
-    conditions.push(`mc.status = $${params.length}`);
+    conditions.push(`${MANAGED_CERTIFICATE_STATUS_SQL} = $${params.length}`);
   }
 
   const source = normalizeCertificateSourceFilter(filters.source);
@@ -572,7 +574,7 @@ function managedCertificateFilterSql(filters = {}) {
     "excludeRetired",
   );
   if (excludeRetired === true) {
-    conditions.push(`mc.status NOT IN (${RETIRE_STATUS_SQL_LIST})`);
+    conditions.push(`${MANAGED_CERTIFICATE_STATUS_SQL} NOT IN (${RETIRE_STATUS_SQL_LIST})`);
   }
 
   return { where: conditions.join("\n        AND "), params };
@@ -831,7 +833,8 @@ async function ensureManagedCertificateToken(
 
 async function syncAcceptedCertificateToken(client, row) {
   const record = toInventoryRecord(row);
-  if (record?.tokenId && record.fingerprintSha256 && record.notAfter) {
+  if (record?.tokenId && record.fingerprintSha256 && record.notAfter &&
+      !isRetiredCertificateStatus(record.status)) {
     // Use the returned row: observation-ordering triggers may keep the prior
     // material instead of accepting a delayed observation.
     await updateCertificateTokenFacts({
@@ -1446,15 +1449,22 @@ async function countActiveManagedCertificates({ workspaceId }) {
   return countActiveManagedCertificatesWithClient(pool, workspaceId);
 }
 
+const MANAGED_CERTIFICATE_STATUS_SQL = `CASE
+  WHEN identity.lifecycle_status IN ('revoked', 'decommissioned') THEN identity.lifecycle_status
+  ELSE mc.status END`;
+
 const MANAGED_CERTIFICATE_LIST_FROM = `
        FROM managed_certificates mc
+       LEFT JOIN certops_certificate_identities identity
+         ON identity.workspace_id = mc.workspace_id
+        AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id`;
 
 const MANAGED_CERTIFICATE_SORTS = Object.freeze({
   certificate:
     "COALESCE(NULLIF(mc.common_name, ''), NULLIF((mc.subject_alt_names)[1], ''), NULLIF(mc.source_ref, ''), mc.id::text)",
-  status: "mc.status",
+  status: MANAGED_CERTIFICATE_STATUS_SQL,
   expiry: "mc.not_after",
   keyLocality: `CASE
     WHEN mc.key_mode = 'external-unknown' AND NULLIF(mc.key_reference, '') IS NOT NULL
@@ -1513,7 +1523,8 @@ async function listManagedCertificates(options = {}) {
 
   const pageParams = [...params, normalizedLimit, normalizedOffset];
   const result = await db.query(
-    `SELECT mc.*${MANAGED_CERTIFICATE_LIST_FROM}
+    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status,
+            ${MANAGED_CERTIFICATE_STATUS_SQL} AS status${MANAGED_CERTIFICATE_LIST_FROM}
       WHERE ${where}
       ORDER BY ${orderBy}
       LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
@@ -1532,10 +1543,10 @@ async function listManagedCertificates(options = {}) {
 
 async function getManagedCertificate({ workspaceId, certId }) {
   const result = await pool.query(
-    `SELECT *
-       FROM managed_certificates
-      WHERE workspace_id = $1
-        AND id = $2
+    `SELECT mc.*, identity.id AS identity_id, identity.lifecycle_status,
+            ${MANAGED_CERTIFICATE_STATUS_SQL} AS status${MANAGED_CERTIFICATE_LIST_FROM}
+      WHERE mc.workspace_id = $1
+        AND mc.id = $2
       LIMIT 1`,
     [workspaceId, certId],
   );
@@ -1704,55 +1715,70 @@ function unsentRetiredAlertStatusSql() {
 }
 
 /**
- * Drop undelivered alerts that no longer apply after a retire.
+ * Suppress undelivered alerts that no longer apply after a retire.
  *
  * Renewal-failure rows are keyed to the job's managed-certificate subject, so
- * they are deleted for this certificate even when a live sibling still shares
- * the token. Expiry rows are token-wide and are deleted only when the caller
- * sets suppressTokenExpiry (no live sibling remains). Sent rows stay so a
- * later re-queue cannot re-fire an already-sent threshold window.
+ * they are suppressed for this identity even when a live sibling shares the
+ * token. Lifecycle callers preserve discarded queue and delivery history;
+ * legacy cleanup callers may delete undelivered transport rows. Expiry
+ * suppression is token-wide only when no live sibling remains.
  */
 async function suppressPendingRetiredCertificateAlerts(
   client,
   {
     tokenId = null,
     certificateId = null,
+    identityId = null,
     workspaceId = null,
     suppressTokenExpiry = false,
+    preserveHistory = false,
   } = {},
 ) {
   const unsentSql = unsentRetiredAlertStatusSql();
   let deleted = 0;
+  const discardedIds = [];
 
-  if (certificateId) {
-    const renewalParams = [certificateId];
+  if (certificateId || identityId) {
+    const renewalParams = [identityId || certificateId];
     let workspaceClause = "";
     if (workspaceId) {
       workspaceClause = "AND cj.workspace_id = $2";
       renewalParams.push(workspaceId);
     }
     const renewal = await client.query(
-      `DELETE FROM alert_queue aq
-         USING certificate_jobs cj
+      `${preserveHistory ? `UPDATE alert_queue aq SET status = 'sent',
+            error_message = 'Discarded: certificate revoked or decommissioned',
+            next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
+         FROM` : "DELETE FROM alert_queue aq USING"} certificate_jobs cj
         WHERE aq.alert_key = '${CERT_RENEWAL_FAILED_ALERT_PREFIX}' || cj.id::text
           AND cj.subject_type = 'managed_certificate'
-          AND cj.subject_id = $1::text
+          AND ${identityId ? "cj.certificate_identity_id = $1::uuid" : "cj.subject_id = $1::text"}
           ${workspaceClause}
-          AND aq.status IN (${unsentSql})`,
+          AND aq.status IN (${unsentSql}) RETURNING aq.id`,
       renewalParams,
     );
     deleted += renewal.rowCount || 0;
+    discardedIds.push(...renewal.rows.map(row => String(row.id)));
   }
 
   if (suppressTokenExpiry && tokenId) {
     const expiry = await client.query(
-      `DELETE FROM alert_queue
-        WHERE token_id = $1
-          AND status IN (${unsentSql})
-          AND alert_key LIKE '${TOKEN_EXPIRY_ALERT_PREFIX}%'`,
+      `${preserveHistory ? `UPDATE alert_queue SET status = 'sent',
+          error_message = 'Discarded: certificate revoked or decommissioned',
+          next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()` : "DELETE FROM alert_queue"}
+        WHERE token_id = $1 AND status IN (${unsentSql})
+          AND alert_key LIKE '${TOKEN_EXPIRY_ALERT_PREFIX}%' RETURNING id`,
       [tokenId],
     );
     deleted += expiry.rowCount || 0;
+    discardedIds.push(...expiry.rows.map(row => String(row.id)));
+  }
+
+  if (discardedIds.length) {
+    await client.query(`UPDATE operational_notifications SET resolved_at=NOW(), updated_at=NOW()
+      WHERE category='delivery' AND resolved_at IS NULL
+        AND metadata->>'alert_queue_id' = ANY($1::text[])
+        AND ($2::uuid IS NULL OR workspace_id=$2::uuid)`, [discardedIds, workspaceId]);
   }
 
   return { deleted };
@@ -1803,6 +1829,17 @@ async function updateCertificateTokenFacts({
   const domains = certificateDomainsFor(certificate);
   const expiration = formatDateYmd(certificate.notAfter);
 
+  if (expiration) {
+    const previous = await client.query(
+      "SELECT expiration::text FROM tokens WHERE id=$1 AND workspace_id=$2 FOR NO KEY UPDATE",
+      [tokenId, workspaceId],
+    );
+    const oldExpiration = previous.rows[0]?.expiration;
+    if (oldExpiration && oldExpiration !== expiration) {
+      await archiveCertificateExpiryAlerts(client, { workspaceId, tokenId, expiration: oldExpiration });
+    }
+  }
+
   await client.query(
     `UPDATE tokens
         SET expiration = COALESCE($3, expiration),
@@ -1827,6 +1864,31 @@ async function updateCertificateTokenFacts({
       domains,
     ],
   );
+}
+
+// Keep completed delivery evidence while giving a replacement expiry its own
+// threshold windows. Unsent alerts for the previous expiry become discarded.
+async function archiveCertificateExpiryAlerts(client, { workspaceId, tokenId, expiration }) {
+  const archived = await client.query(
+    `UPDATE alert_queue SET
+       alert_key = alert_key || ':previous_expiration:' || $2 || ':' || id::text,
+       error_message = CASE WHEN status IN (${unsentRetiredAlertStatusSql()})
+         THEN 'Discarded: certificate expiry changed' ELSE error_message END,
+       next_attempt_at = NULL, delivery_claim_id = NULL,
+       status = CASE WHEN status IN (${unsentRetiredAlertStatusSql()}) THEN 'sent' ELSE status END,
+       updated_at = NOW()
+     WHERE token_id = $1 AND alert_key LIKE 'token_expiry:%'
+       AND alert_key NOT LIKE '%:previous_expiration:%'
+       AND EXISTS (SELECT 1 FROM tokens WHERE id=$1 AND workspace_id=$3)
+     RETURNING id`,
+    [tokenId, expiration, workspaceId],
+  );
+  if (archived.rows.length) {
+    await client.query(`UPDATE operational_notifications SET resolved_at=NOW(), updated_at=NOW()
+      WHERE workspace_id=$2 AND category='delivery' AND resolved_at IS NULL
+        AND metadata->>'alert_queue_id' = ANY($1::text[])`,
+      [archived.rows.map(row => String(row.id)), workspaceId]);
+  }
 }
 
 /**
@@ -1927,6 +1989,8 @@ module.exports = {
   tokenNameFor,
   toInstanceRecord,
   toInventoryRecord,
+  updateCertificateTokenFacts,
+  archiveCertificateExpiryAlerts,
   toTargetRecord,
   upsertAgentFilesystemInstance,
   upsertAgentFilesystemTarget,

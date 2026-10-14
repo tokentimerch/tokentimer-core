@@ -17,7 +17,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Revoked and decommissioned certificates stay out of the active certificate inventory even when they are still observed. The Including retired view still shows that a retired certificate is deployed.
+- Revoked and decommissioned certificates remain visible when still observed, clearly labeled as retired. They stay out of the Active filter, active counters, and automatic renewal. Lifecycle retirement records CertOps state; it does not revoke a certificate at its CA or remove installed copies.
 - The renewal schedule section is gone. Certificate rows show a CA capacity wait separately from the last renewal attempt, which is a job-status badge.
 - Renewal profiles list the issuer in its own column. Issuer and lead time both use an outline Change button, and profile details uses the same icon as the certificate inventory. AD CS issuers sit on the Renewals tab in the system settings card.
 - **AD CS enrollment on the Windows agent.** Jobs with issuer kind `adcs` enroll and renew IIS certificates from an enterprise CA. A succeeded preflight is stored on the issuer and lists the CA certificates an operator can confirm. The agent contacts a CA only when a local enrollment rule names that CA and template, and only when it has declared `adcs-enroll-v1`. Creating an issuer or profile does not issue a certificate by itself. **Operator guidance:** upgrade API and Windows agents together so a preflight verdict is saved, not only the job status.
@@ -25,7 +25,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Certificate tokens stay current after agent renewals and passive discovery, so inventory and expiry alerts use the renewed certificate's validity and public details.
+- Certificate tokens stay current after agent renewals and passive discovery. Retired rediscovery cannot replace a live sibling's details, failed renewals use the job's original fingerprint after rotation, and replacement expiry windows restart while past alerts and delivery history remain available.
 - Tokens linked to several certificate fingerprints can now open Retire from the asset inventory. Choose the certificate to revoke or decommission by its expiry and fingerprint; the other certificates keep their lifecycle status.
 - Control Center perpetual-asset and scoped-credential lists now show the rows already returned in `/control-center/stats` on first paint. The list hook could keep an empty seed after stats loaded, so the summary counts were right while the lists looked empty.
 - Opening a managed certificate from a job subject link now shows that certificate's Job history. The detail modal dropped the managed-certificate id on that deep-link path, so the history section never mounted.

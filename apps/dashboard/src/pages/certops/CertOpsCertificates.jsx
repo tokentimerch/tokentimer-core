@@ -348,6 +348,7 @@ export default function CertOpsCertificates() {
       status: filters.status || undefined,
       source: filters.source || undefined,
       excludeRetired,
+      includeObservedRetired: excludeRetired === true,
       unmanaged: showUnmanaged ? undefined : false,
       q: filters.q || undefined,
       sort: sort.key,
@@ -356,10 +357,21 @@ export default function CertOpsCertificates() {
   // Active only also hides a revoked or decommissioned row a stale server
   // still returned. An explicit status filter is left as the server sent it.
   const visibleCertificates = certificates.filter(item => {
-    if (!filters.status && !showRetired && isRetiredCertificate(item)) {
+    if (filters.status === 'active' && isRetiredCertificate(item)) return false;
+    if (
+      !filters.status &&
+      !showRetired &&
+      isRetiredCertificate(item) &&
+      !item.stillObserved
+    ) {
       return false;
     }
-    if (!showUnmanaged && item.managed === false) return false;
+    if (
+      !showUnmanaged &&
+      item.managed === false &&
+      !(isRetiredCertificate(item) && item.stillObserved)
+    )
+      return false;
     return true;
   });
   const searchIconColor = useColorModeValue(
@@ -561,7 +573,7 @@ export default function CertOpsCertificates() {
       });
       showSuccess(
         status === 'revoked'
-          ? 'Certificate revoked'
+          ? 'Certificate marked revoked in CertOps'
           : 'Certificate decommissioned'
       );
       setRetireTarget(null);

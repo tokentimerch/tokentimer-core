@@ -10,6 +10,9 @@ The inventory search matches public properties across all management sources:
 certificate and identity IDs, names, SANs, issuers, serial numbers, algorithms,
 validity dates, key modes, source types and references, and token/profile IDs.
 Source filters include observed locations as well as management provenance.
+Retired certificates with fresh presence evidence remain visible as **Revoked ·
+Still observed** or **Decommissioned · Still observed**. They never count as
+active; an explicit **Active** filter excludes them.
 **Show retired** includes revoked and decommissioned certificates; **Show
 unmanaged** includes identities without an open management period. Both controls
 remain available while their counts load or cannot be retrieved.
