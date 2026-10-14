@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 # install-agent.ps1 - install the TokenTimer CertOps Agent as a native Windows Service.
 #
 # This script installs FROM THE LOCAL PACKAGE DIRECTORY it lives in
@@ -614,14 +614,23 @@ function Get-PackageDirectoryIdentity {
         $ancestor = $next
     }
     $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
+    $priorNodeOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
+    $priorNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH','Process')
     try {
         $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
+        # Do not allow inherited preload/module search settings into this identity probe.
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process')
         # Built-in fs obtains the volume/file index, never package code. Passing
         # the literal path through an environment value avoids argv quoting.
         $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
         if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
         return ([string]$identity).Trim()
-    } finally { [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process') }
+    } finally {
+        [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$priorNodeOptions,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$priorNodePath,'Process')
+    }
 }
 
 function Remove-OwnedPackageStaging {

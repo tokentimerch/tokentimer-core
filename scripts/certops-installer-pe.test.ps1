@@ -36,6 +36,30 @@ function Must-Refuse {
  $cases.Add($Case)
 }
 try {
+ # A benign inherited preload must not run inside the built-in identity probe.
+ $preload=Join-Path $root 'benign-preload.cjs';$sentinel=Join-Path $root 'preload-ran'
+ [IO.File]::WriteAllText($preload,'require("node:fs").writeFileSync(process.env.CERTOPS_PE_PRELOAD_SENTINEL,"unexpected preload")')
+ $savedOptions=$env:NODE_OPTIONS;$savedPath=$env:NODE_PATH;$savedSentinel=$env:CERTOPS_PE_PRELOAD_SENTINEL
+ try {
+  $env:NODE_OPTIONS='--require="'+$preload.Replace('\','/')+'"';$env:NODE_PATH=Join-Path $root 'untrusted-modules';$env:CERTOPS_PE_PRELOAD_SENTINEL=$sentinel
+  $expectedOptions=$env:NODE_OPTIONS;$expectedPath=$env:NODE_PATH
+  # Positive control uses the same trusted runtime and exact inherited quoting.
+  & $script:NodeExe -e '0' | Out-Null
+  if($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $sentinel) -or [IO.File]::ReadAllText($sentinel) -ne 'unexpected preload'){throw 'Benign preload positive control did not execute'}
+  Remove-Item -LiteralPath $sentinel -Force -ErrorAction Stop
+
+  if((Get-PackageDirectoryIdentity -Directory $root) -ne $rootIdentity -or (Test-Path -LiteralPath $sentinel)){throw 'Identity probe inherited an executable preload'}
+  if($env:NODE_OPTIONS -cne $expectedOptions -or $env:NODE_PATH -cne $expectedPath){throw 'Identity probe did not restore inherited environment'}
+  $trustedNode=$script:NodeExe
+  try {
+   $script:NodeExe=Join-Path $root 'deliberately-absent-node.exe'
+   $failed=$false;try{Get-PackageDirectoryIdentity -Directory $root|Out-Null}catch{$failed=$true}
+   if(!$failed -or $env:NODE_OPTIONS -cne $expectedOptions -or $env:NODE_PATH -cne $expectedPath -or (Test-Path -LiteralPath $sentinel)){throw 'Identity probe failure did not restore inherited environment'}
+  }finally{$script:NodeExe=$trustedNode}
+
+ }finally{
+  [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$savedOptions,'Process');[Environment]::SetEnvironmentVariable('NODE_PATH',$savedPath,'Process');[Environment]::SetEnvironmentVariable('CERTOPS_PE_PRELOAD_SENTINEL',$savedSentinel,'Process')
+ }
  foreach($arch in @('AMD64','ARM64')){
   $tag=$arch.ToLowerInvariant();$other=if($arch -eq 'AMD64'){'arm64'}else{'amd64'}
   foreach($kind in @('tokentimer-agent-host','tokentimer-adcs-chain')){
