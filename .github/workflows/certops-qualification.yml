@@ -23,6 +23,7 @@ on:
       - 'tests/e2e/**'
       - 'scripts/qualification/**'
       - 'scripts/certops-*'
+      - 'scripts/test-support/arm64-scm-artifact.cjs'
       - 'scripts/certops_retention24h_collection.py'
       - 'infra/certops-adcs/**'
       - 'scripts/run-certops-tooling-tests.js'
