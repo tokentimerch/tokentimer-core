@@ -58,6 +58,48 @@ blocks decommissioning. Stored copies and uncertain visibility require a
 reason and acknowledgment. Rediscovery preserves lifecycle and can display
 **Revoked · Still observed** or **Decommissioned · Still observed**.
 
+## Renewal identities and the linked token
+
+The linked token is the asset row used for expiry alerts, Notes, and contact
+routing. The certificate identity is the exact public certificate, identified
+by its SHA-256 fingerprint. A renewal creates a new fingerprint even when the
+name or private key stays the same.
+
+For example, an agent renews certificate A to B. Its management source moves
+to B, and the linked token receives B's expiry and public certificate details
+while retaining its Notes and contact routing. A remains in certificate and
+management history. Those historical identities alone do not create extra
+current sources. However, another linked import or discovery source may still
+point to A; the token can then reference several different fingerprints.
+
+The token has one expiry date. Check each certificate's own validity and
+locations in Certificate Management when different fingerprints share it.
+
+## Retiring a certificate from a shared token
+
+1. Open **Retire** on the token in the asset inventory. When different
+   fingerprints are linked, choose **Certificate to retire** using its expiry
+   and fingerprint. Sources with the same fingerprint appear as one choice.
+2. Choose **Mark revoked** or **Decommission** and enter a reason. Decommission
+   also requires the visibility acknowledgment; confirmed service use still
+   blocks it.
+3. Verify the selected certificate's lifecycle in Certificate Management.
+   Other fingerprints keep their status. The token remains active, with expiry
+   alerts enabled, while another linked fingerprint is independently active.
+   Retiring the final active fingerprint updates the token's lifecycle and
+   suppresses its expiry alerts.
+
+**Earlier versions:** if the token action is disabled or reports multiple
+certificate identities, open Certificate Management, select the exact
+fingerprint, and use **Change lifecycle** there. Token details never choose a
+different fingerprint automatically.
+
+Ordinary renewal of a revoked or decommissioned fingerprint is blocked.
+Rediscovery of that same fingerprint preserves retirement. A replacement
+certificate with a new fingerprint can be accepted for the same source and
+update the same token to active with its replacement details; later renewals
+update it again. The retired fingerprint stays retired in history.
+
 ## Retained certificate details
 
 Stopping management keeps the certificate's linked token details and Notes.
