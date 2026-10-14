@@ -1078,6 +1078,15 @@
       "windows-two-unattended-natural-generations": "e2e",
       "windows-two-unattended-native-cutovers": "e2e",
       "windows-two-unattended-preserved-predecessors": "e2e"
+    },
+    "renewal-key-facts-api": {
+      "renewal-key-facts-parsed-control": "integration",
+      "renewal-key-facts-same-fingerprint-preserved": "integration",
+      "renewal-key-facts-rotation-clears-predecessor": "integration",
+      "renewal-key-facts-client-spki-not-authoritative": "integration",
+      "renewal-key-facts-public-leaf-restores": "integration",
+      "renewal-key-facts-result-replay-preserves": "integration",
+      "renewal-key-facts-owned-cleanup": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1525,6 +1534,11 @@
       "installedAgent",
       "api",
       "pebble"
+    ],
+    "renewal-key-facts-api": [
+      "api",
+      "postgres",
+      "openssl"
     ]
   },
   "suites": {
@@ -2600,6 +2614,15 @@
       "windows-two-unattended-natural-generations",
       "windows-two-unattended-native-cutovers",
       "windows-two-unattended-preserved-predecessors"
+    ],
+    "renewal-key-facts-api": [
+      "renewal-key-facts-parsed-control",
+      "renewal-key-facts-same-fingerprint-preserved",
+      "renewal-key-facts-rotation-clears-predecessor",
+      "renewal-key-facts-client-spki-not-authoritative",
+      "renewal-key-facts-public-leaf-restores",
+      "renewal-key-facts-result-replay-preserves",
+      "renewal-key-facts-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2692,6 +2715,7 @@
     "browser-retirement-visibility": "e2e",
     "windows-activation-second-rename": "e2e",
     "browser-certificate-audit": "e2e",
-    "windows-two-unattended-renewals": "e2e"
+    "windows-two-unattended-renewals": "e2e",
+    "renewal-key-facts-api": "integration"
   }
 }

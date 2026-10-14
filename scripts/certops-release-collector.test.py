@@ -30,6 +30,19 @@ def elapsed_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_renewal_key_facts_keep_only_committed_sources_not_public_leaf_or_claim_bodies(self):
+        suite = "renewal-key-facts-api"
+        matrix = json.loads((collector.ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+        slot = next(row for row in matrix["slots"] if row["suite"] == suite)
+        sources = [{"file": file, "sha256": "a" * 64} for file in slot["requiredSources"]]
+        report = {"suite": suite, "fixtureSource": sources[0], "fixtureSources": sources,
+                  "certificatePem": "sentinel", "spki": "sentinel", "claimBody": {"credential": "sentinel"}}
+        result = collector.sanitized_report(report, {suite}, set())
+        self.assertEqual(result["fixtureSources"], sources)
+        self.assertNotIn("sentinel", json.dumps(result))
+        report["fixtureSources"].append({"file": "uncommitted/secret.json", "sha256": "a" * 64})
+        self.assertEqual(collector.sanitized_report(report, {suite}, set())["fixtureSources"], sources[:6])
+
     def test_two_unattended_renewals_retains_exact_scope_not_raw_key_or_ledger_state(self):
         fields = ("automaticSourceAndRealMode", "naturallyDueGenerations", "distinctIdempotencyKeys", "leafAndSpkiChangedTwice", "nativeBindingMatchesLatest", "nativeKeyProfilesVerified", "persistedEvidenceBothCycles", "inventoryMatchesActualLeaf", "profileAndManagementLineagePreserved", "retentionLineageMatchesBothCutovers", "predecessorCustodyPreserved", "noExpiryOrClockOverrides")
         proof = {**dict.fromkeys(fields, True), "successfulAutomationCycles": 2, "expiryCleanupQualified": False,

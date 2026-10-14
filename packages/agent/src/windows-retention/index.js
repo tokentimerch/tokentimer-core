@@ -397,7 +397,12 @@ function readLedgerRow(ledgerDir, oldThumbprint) {
   } catch (err) {
     throw buildError(`ledger row at ${rowPath} is not valid JSON: ${err.message}`);
   }
-  return validateLedgerRow(parsed);
+  const row = validateLedgerRow(parsed);
+  // A corrupted payload must not redirect cleanup away from the named row.
+  if (row.oldThumbprint !== normalizeThumbprint(oldThumbprint)) {
+    throw buildError("ledger row thumbprint does not match its filename", "LEDGER_IDENTITY_MISMATCH");
+  }
+  return row;
 }
 
 /**

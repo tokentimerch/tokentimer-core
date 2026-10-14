@@ -1362,6 +1362,19 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "f1f402c8d2654796d4a3",
+      "file": "tests/e2e/certops-renewal-key-facts-e2e.test.js",
+      "line": 42,
+      "name": "renewal certificate changes invalidate unproven predecessor key facts",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "core-certificate-api",
+      "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "71f62331bfc03a91eff6",
       "file": "tests/e2e/certops-renewal-toggle-e2e.test.js",
       "line": 17,

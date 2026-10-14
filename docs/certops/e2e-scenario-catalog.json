@@ -22,7 +22,7 @@
         "core-disposable-api-postgres"
       ],
       "implementation": "tests/e2e/certops-inventory-lifecycle-e2e.test.js",
-      "remainingCoverage": "Realservedleafreplacement preserves oldobservations and distinct fingerprintidentities; broader issuer/target/version permutations remain."
+      "remainingCoverage": "Realservedleafreplacement preserves oldobservations and distinct fingerprintidentities; broader issuer/target/version permutations remain. Seven supporting API/PostgreSQL cases additionally require fingerprint-changing signed renewal evidence to clear predecessor PEM/SPKI/key/signature facts, preserve same-fingerprint facts, ignore unverified client SPKI, recover from an existing parsed public import and preserve facts on terminal result replay. This does not qualify native custody or change the evidence wire format."
     },
     {
       "id": "inventory.shared-fingerprint",

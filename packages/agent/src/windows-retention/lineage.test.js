@@ -80,6 +80,19 @@ test("missing malformed and unrelated history cannot select another live certifi
   assert.equal(resolve(), null);
 });
 
+test("a row named for one predecessor cannot authorize another certificate identity", async () => {
+  const directory = fixture();
+  persist(directory, row(B, C), A);
+  let nativeCalls = 0;
+  assert.throws(() => readLedgerRow(directory, A), /thumbprint does not match/);
+  await assert.rejects(sweepLedger({
+    ledgerDir: directory, retentionHours: 24,
+    gatherContext() { nativeCalls += 1; return eligibleFacts(); },
+    performCleanup() { nativeCalls += 1; },
+  }), /thumbprint does not match/);
+  assert.equal(nativeCalls, 0);
+});
+
 test("a cycle cannot return the original predecessor even when it is reported bound", () => {
   const directory = fixture();
   persist(directory, row(B, A));

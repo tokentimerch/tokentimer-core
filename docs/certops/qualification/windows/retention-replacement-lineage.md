@@ -12,6 +12,8 @@ ownership, preserve chronological cutover order, have no active recovery
 references and contain no future cutover time. Missing, malformed, cyclic,
 unrelated or overlong history fails closed. A removed intermediate row still
 records its verified cutover. History and retention clocks are never rewritten.
+The reader refuses a row whose thumbprint differs from its filename with
+`LEDGER_IDENTITY_MISMATCH`, before gathering native facts or deleting material.
 The final descendant must pass the existing exact-thumbprint TLS probe; this
 does not replace the original predecessor's ownership, binding, shared-key,
 recovery-reference or actual deadline checks.

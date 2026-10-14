@@ -2161,6 +2161,15 @@ async function refreshRenewedCertificateEvidence({
   await client.query(
     `UPDATE managed_certificates
         SET fingerprint_sha256 = $3, identity_observed_at = clock_timestamp(),
+            -- Claim-bound legacy verify evidence contains no parsed public leaf.
+            -- A different certificate cannot inherit the predecessor's key facts.
+            public_metadata = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3)
+              THEN public_metadata - ARRAY['parser','chainIndex','subject','subjectAltName','fingerprint512','publicKeyMetadata','signatureAlgorithmOid']::text[] ELSE public_metadata END,
+            certificate_pem = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE certificate_pem END,
+            spki_fingerprint_sha256 = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE spki_fingerprint_sha256 END,
+            public_key_algorithm = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE public_key_algorithm END,
+            public_key_size = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE public_key_size END,
+            signature_algorithm = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE signature_algorithm END,
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
             issuer = COALESCE($6, issuer),

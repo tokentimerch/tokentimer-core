@@ -2760,6 +2760,23 @@
         "measurement": "native",
         "keyProfile": "ec-p384"
       }
+    },
+    {
+      "id": "renewal-key-facts-api",
+      "kind": "host",
+      "suite": "renewal-key-facts-api",
+      "source": "tests/e2e/certops-renewal-key-facts-e2e.test.js",
+      "environment": {
+        "osFamily": "linux"
+      },
+      "requiredSources": [
+        "tests/e2e/certops-renewal-key-facts-e2e.test.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "tests/e2e/helpers/certops-registered-agent.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/inventory.js",
+        "apps/api/services/certops/parser.js"
+      ]
     }
   ]
 }
