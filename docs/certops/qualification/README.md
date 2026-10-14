@@ -11,6 +11,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 - [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
 - [Certificate audit history qualification](api/audit-history-qualification.md)
+- [Decommission acknowledgement and factual rediscovery](api/decommission-lifecycle.md)
 - [Certificate workspace transfer and CSR lineage](api/certificate-transfer-qualification.md)
 - [Browser console authorization and reconnects](api/browser-console.md)
 - [Mixed eligible bulk renewal admission](api/bulk-eligible-qualification.md)
@@ -32,6 +33,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+- [Native CNG export refusal and operational key custody](windows/cng-export-refusal-qualification.md)
+- [IIS SNI isolation between sites sharing one port](windows/shared-port-sni-qualification.md)
 - [Native store and HTTP.sys discovery selectors](windows/native-discovery-qualification.md)
 - [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
@@ -45,6 +48,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Real Linux ACME qualification](linux/linux-acme-qualification.md)
 - [Installed Linux agent qualification](linux/linux-systemd-qualification.md)
 - [Same-candidate Linux installer reapplication](linux/linux-systemd-reapply-qualification.md)
+- [Published Linux package upgrade and preserved service state](linux/linux-published-upgrade-qualification.md)
 - [Native Linux trust-store qualification](linux/linux-trust-qualification.md)
 - [Native Linux agent fault qualification](linux/native-agent-qualification.md)
 - [Native Linux consuming-server certificate reload qualification](linux/nginx-qualification.md)

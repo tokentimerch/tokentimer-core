@@ -18,6 +18,120 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_generic_top_fields_cannot_carry_nested_private_metadata(self):
+        keys = ("status", "strict", "schemaVersion", "startedAt", "finishedAt", "evidenceLevel", "artifactQualification", "qualificationStatus", "experimental", "candidateSha")
+        for key in keys:
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": "job-decisions-api", key: {"secret": "sentinel"}}, {"job-decisions-api"}, set())
+        for shape in ({"suite": "job-decisions-api"}, {"scope": "fixture-database"}, [{"scope": "fixture-stack", "name": "unknown", "type": "test:fail"}]):
+            report = shape[0] if isinstance(shape, list) else shape
+            report.update({"candidateSha": "sentinel", "artifactQualification": "sentinel", "experimental": False})
+            output = collector.sanitized_report(shape, {"job-decisions-api"}, {"fixture-stack"}, {"fixture-database"})
+            self.assertNotIn("sentinel", json.dumps(output))
+        output = collector.sanitized_report({"suite": "job-decisions-api", "status": "failed", "strict": False, "schemaVersion": 1, "candidateSha": None, "startedAt": "2026-02-30T12:00:00Z"}, {"job-decisions-api"}, set())
+        self.assertEqual(output["status"], "failed")
+        self.assertIs(output["strict"], False)
+        self.assertIsNone(output["candidateSha"])
+        self.assertEqual(output["startedAt"], "invalid")
+
+    def test_event_names_project_committed_cases_and_keep_unrecognized_failures(self):
+        scope = "agent-protocol-api-worker"
+        manifest = json.loads((collector.ROOT / "tests/e2e/agent-protocol-required-tests.json").read_text())
+        events = [{"scope": scope, "name": manifest["requiredTests"][0], "type": "test:pass"},
+                  {"scope": scope, "name": "password=sentinel", "type": "test:fail"},
+                  {"scope": scope, "name": {"secret": "sentinel"}, "type": "test:pass"}]
+        result = collector.sanitized_report(events, set(), {scope})
+        self.assertEqual(result[0]["name"], events[0]["name"])
+        self.assertEqual(result[1]["type"], "test:fail")
+        self.assertEqual(result[2]["type"], "invalid")
+        self.assertEqual(len(result), 3)
+        self.assertNotIn("sentinel", json.dumps(result))
+        parent = collector.sanitized_report([{"scope": scope, "name": "CertOps agent surface E2E", "type": "test:pass"}], set(), {scope})
+        self.assertEqual(parent[0]["type"], "test:pass")
+        group = json.loads((collector.ROOT / "tests/integration/certops-qualification-groups.json").read_text())["adcs"]
+        case = group["requiredTests"][0]
+        report = {"scope": "adcs-database-integration", "tests": [
+            {**case, "status": "pass"},
+            {"file": "private/sentinel", "name": "sentinel", "status": "fail"},
+            {"file": case["file"], "name": "sentinel", "status": "pass"}]}
+        result = collector.sanitized_report(report, set(), set(), {report["scope"]})
+        self.assertEqual(result["tests"][0], {**case, "status": "pass"})
+        self.assertEqual([row["status"] for row in result["tests"]], ["pass", "fail", "invalid"])
+        self.assertNotIn("sentinel", json.dumps(result))
+
+    def test_source_upgrade_cannot_claim_published_archive_or_drop_preservation(self):
+        fields = ("werPolicyPreserved", "schedulerHistoryPreserved", "distinctVersionObserved", "configurationPreserved", "credentialPreserved", "signingKeyPinPreserved", "sameAgentIdentity", "authenticatedCandidateHeartbeat", "candidateHelperActivated", "nonExportableCngKeyPreserved", "iisBindingPreserved", "trustedTlsPreserved", "serviceIdentityPreserved", "ownedFixtureRemoved")
+        facts = {**dict.fromkeys(fields, True), "provenance": "historical-source-build", "publishedArchiveUsedForInstallation": False,
+                 "historicalCommit": "a" * 40, "historicalArchiveSha256": "a" * 64, "historicalVersion": "0.17.2", "candidateVersion": "0.17.3",
+                 "historicalHelpers": {"amd64": "a" * 64, "arm64": "b" * 64, "secret": "sentinel"}, "rawCredential": "sentinel"}
+        suite = "windows-historical-source-upgrade"
+        value = {"suite": suite, "sourceUpgrade": facts, "cleanup": {"status": "passed", "rawError": "sentinel"}}
+        self.assertNotIn("sentinel", json.dumps(collector.sanitized_report(value, {suite}, set())))
+        for field in fields:
+            facts[field] = False
+            with self.assertRaises(ValueError):
+                collector.sanitized_report(value, {suite}, set())
+            facts[field] = True
+        facts["publishedArchiveUsedForInstallation"] = True
+        with self.assertRaises(ValueError):
+            collector.sanitized_report(value, {suite}, set())
+
+    def test_common_metadata_is_projected_for_every_report_kind(self):
+        source = {"file": "tests/e2e/certops-job-decisions-e2e.test.js", "sha256": "a" * 64, "rawSecret": "sentinel"}
+        environment = {"osFamily": "linux", "measurement": "native", "credential": {"password": "sentinel"}}
+        variants = [
+            {"suite": "job-decisions-api", "fixtureSource": source, "qualificationEnvironment": environment},
+            [{"scope": "fixture-scope", "fixtureSource": source, "qualificationEnvironment": environment}],
+            {"scope": "fixture-database", "fixtureSources": [source], "qualificationEnvironment": environment},
+        ]
+        for value in variants:
+            result = collector.sanitized_report(value, {"job-decisions-api"}, {"fixture-scope"}, {"fixture-database"})
+            self.assertNotIn("sentinel", json.dumps(result))
+            item = result[0] if isinstance(result, list) else result
+            self.assertEqual(item["qualificationEnvironment"], {"osFamily": "linux", "measurement": "native"})
+        for invalid in (["linux"], {"osFamily": ["linux"]}, {"keySize": True}, {"build": "password=sentinel"}):
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": "job-decisions-api", "qualificationEnvironment": invalid}, {"job-decisions-api"}, set())
+        with self.assertRaises(ValueError):
+            collector.sanitized_report({"suite": "job-decisions-api", "fixtureSource": {**source, "sha256": []}}, {"job-decisions-api"}, set())
+
+    def test_cng_custody_has_ten_bounded_profiles_and_no_exported_bytes(self):
+        suite = "windows-host"
+        fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
+        cases = [{"caseId": profile + "/" + store, **dict.fromkeys(fields, True), "privateExportHResult": -2146893813, "rawPrivateBlob": "sentinel"} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]
+        custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True, "cases": cases, "signature": "sentinel"}
+        sni = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My", **dict.fromkeys(("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified"), True), "privateConfig": "sentinel"}
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": sni}, {suite}, set())
+        self.assertEqual(result["nativeSamePortSni"]["siteCount"], 2)
+        self.assertTrue(result["nativeSamePortSni"]["peerRollbackPrimaryUnchanged"])
+        for change in ({"siteCount": True}, {"hostnameCount": 1}, {"certificateStore": "Other"}):
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, **change}}, {suite}, set())
+        missing = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
+        self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
+        self.assertEqual(len(result["cngCustody"]["cases"]), 10)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for field in ("privateExportBytesWritten", "privateExportBytesReported"):
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": suite, "cngCustody": {**custody, field: True}}, {suite}, set())
+        for change in ({"caseId": "foreign/My"}, {"privateExportHResult": 0}, {"privateExportHResult": "denied"}):
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": suite, "cngCustody": {**custody, "cases": [{**cases[0], **change}, *cases[1:]]}}, {suite}, set())
+
+    def test_published_linux_archive_provenance_is_exact_and_private_state_excluded(self):
+        suite = "linux-systemd-published-upgrade"
+        facts = {"baselineVersion": "0.17.2", "publishedAssetId": 612562598, "publishedArchiveSize": 410054,
+                 "publishedArchiveSha256": "c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf",
+                 "candidateVersion": "0.17.3", "candidateArchiveSha256": "a" * 64,
+                 "beforePid": 100, "afterPid": 101, "rollbackClaimed": False,
+                 "rawCredential": "sentinel", "rawConfig": {"private": "sentinel"}}
+        result = collector.sanitized_report({"suite": suite, "nativePublishedLinuxUpgrade": facts}, {suite}, set())
+        self.assertEqual(result["nativePublishedLinuxUpgrade"]["publishedAssetId"], 612562598)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for field, replacement in (("publishedAssetId", 1), ("publishedArchiveSha256", "a" * 64), ("candidateArchiveSha256", "bad"), ("beforePid", "100"), ("rollbackClaimed", True)):
+            with self.assertRaises(ValueError):
+                collector.sanitized_report({"suite": suite, "nativePublishedLinuxUpgrade": {**facts, field: replacement}}, {suite}, set())
+
     def test_native_reapplication_and_worker_maintenance_are_bounded(self):
         suite = "linux-systemd-reapply"
         value = {"suite": suite, "nativeInstallerReapply": {
@@ -222,7 +336,7 @@ class CollectorTests(unittest.TestCase):
             collector.extract_reports(output.getvalue(), set(), set())
 
     def test_database_report_keeps_failure_status_and_source_identity_without_error_payloads(self):
-        report = {"scope": "adcs-database-integration", "evidenceLevel": "integration", "fixtureSources": [{"file": "tests/integration/fixture.js", "sha256": "a" * 64}], "tests": [{"file": "fixture.js", "name": "fixture", "status": "fail", "error": "password=never-copy"}]}
+        report = {"scope": "adcs-database-integration", "evidenceLevel": "integration", "fixtureSources": [{"file": "tests/integration/certops-adcs-enrollments.test.js", "sha256": "a" * 64}], "tests": [{"file": "fixture.js", "name": "fixture", "status": "fail", "error": "password=never-copy"}]}
         result = collector.extract_reports(self.archive("adcs.json", report), set(), set(), {"adcs-database-integration"})
         self.assertEqual(result[0][1]["tests"][0]["status"], "fail")
         self.assertEqual(result[0][1]["fixtureSources"], report["fixtureSources"])

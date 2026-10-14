@@ -18,9 +18,9 @@ async function probeWerCustomDump({ workDir, powershell }) {
   const root = path.resolve(workDir);
   const relative = path.relative(path.resolve(process.env.RUNNER_TEMP), root);
   assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative), "probe root must be owned runner scratch");
-  const sourcePolicy = JSON.parse(powershell("$k=Get-Item -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\node.exe'; $flags=$null; if ($k.GetValueNames() -contains 'CustomDumpFlags') { if ([string]$k.GetValueKind('CustomDumpFlags') -ne 'DWord') { throw 'Unexpected custom dump flags kind' }; $flags=$k.GetValue('CustomDumpFlags') }; [pscustomobject]@{dumpType=$k.GetValue('DumpType');customFlags=$flags} | ConvertTo-Json -Compress"));
-  assert.equal(sourcePolicy.dumpType, 0, "expected actual installer custom-dump policy");
-  if (sourcePolicy.customFlags !== null) assert.ok(Number.isInteger(sourcePolicy.customFlags) && sourcePolicy.customFlags >= -2147483648 && sourcePolicy.customFlags <= 2147483647);
+  // Deliberately configure a custom dump for our renamed benign child only.
+  // Candidate installation neither reads nor writes node.exe's global policy.
+  const sourcePolicy = { dumpType: 0, customFlags: null };
   const scratch = fs.mkdtempSync(path.join(root, "benign-wer-probe-"));
   const folder = path.join(scratch, "dumps"); fs.mkdirSync(folder);
   // Isolate the WER application name as well as its output folder. Changing

@@ -658,8 +658,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Owned SNI hostnameport cutover/rollback with unrelated HTTPS binding unchanged covered; shared-port multi-name and full target matrix remain."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/iis-shared-port-fixture.js",
+      "remainingCoverage": "Mandatory supporting Windows host source creates two owned sites with distinct SNI hostnames on the same TCP port. Exact IIS coordinates/store/sslFlags/hash, independent HTTP.sys hostnameport selectors and authenticated TLS verify primary cutover/real bind-failure rollback preserve its sibling, then peer cutover/rollback preserve the primary, followed by same-certificate no-op verification and exact owned cleanup. Both Server2022/2025 report slots require the named case and current helper/oracle fingerprints. Native execution remains pending; installed-agent/public API multi-binding and additional target combinations remain separate coverage."
     },
     {
       "id": "windows-iis.ip-shadow",
@@ -2004,8 +2004,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-governance-e2e.test.js",
-      "remainingCoverage": "RealservingTLS prevents decommission despite acknowledgement; uncertain/stored-only conditions and lateruse further needed."
+      "implementation": "tests/e2e/certops-governance-e2e.test.js; tests/e2e/certops-decommission-e2e.test.js",
+      "remainingCoverage": "Seven actual public API/PostgreSQL scenarios prove unknown/stored-copy acknowledgement atomicity, explicit terminal decommissioning and fresh real trusted TLS rediscovery/concurrent rescans without reactivation or duplicate history. Existing serving-TLS refusal remains mandatory. Native IIS/HTTP.sys observation permutations and edition governance require their separate qualification; no native removal is claimed."
     },
     {
       "id": "governance.stop-managing",

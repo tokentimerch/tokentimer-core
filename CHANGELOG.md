@@ -37,6 +37,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- The Windows installer preserves existing Windows Error Reporting policy instead of writing `DumpType=0` and claiming dump suppression. That value selects a custom dump. **Operator guidance:** review existing `LocalDumps\node.exe` settings from earlier installs; Windows crash-dump containment remains unqualified.
 - DNS provider errors now redact reflected OAuth access tokens, signed assertions and request signatures, including network error messages. **Operator guidance:** upgrade agents using Azure DNS, Google Cloud DNS, Route53, OVH or Exoscale; review retained provider error logs if an upstream service reflected credentials.
 - Windows filesystem private-key deployment now applies a protected ACL before private bytes enter staging, backup or custody files. Paired idempotent replay also removes foreign grants on the existing deployed key. **Operator action:** upgrade the agent and redeploy existing filesystem certificate/key pairs to repair their key ACLs; review permissions on older private-key backups.
 - The `subfinder` binary in the API image is rebuilt with Go 1.26.9 and `golang.org/x/net` 0.60.0 (from Go 1.26.6 / x/net 0.57.0), clearing Critical/High HTTP/2 findings including [GO-2026-6612](https://pkg.go.dev/vuln/GO-2026-6612) / CVE-2026-78663. Companion pins move with the module graph (`golang.org/x/crypto` 0.57.0, `golang.org/x/sys` 0.48.0, `golang.org/x/text` 0.42.0). **Operator action:** rebuild the API image.

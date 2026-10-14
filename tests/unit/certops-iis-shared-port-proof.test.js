@@ -1,0 +1,8 @@
+"use strict";
+/* Portable checks for the native same-port SNI oracle, not IIS execution. A
+ * different hostname on the same port must remain a different target, and
+ * partial source reports must not qualify missing bidirectional isolation. */
+const {test}=require("node:test"),assert=require("node:assert/strict");
+const {verifyNativeBinding,verifyIsolationFacts}=require("../../packages/agent/scripts/host/iis-shared-port-fixture");
+test("same TCP port cannot collapse native SNI identity into its sibling",()=>{const target={port:24443,sniHost:"primary.localhost"},value={coordinates:"127.0.0.1:24443:primary.localhost",sslFlags:1,store:"MY",hash:"A".repeat(40)};assert.equal(verifyNativeBinding(value,target),true);for(const change of [{coordinates:"127.0.0.1:24443:peer.localhost"},{coordinates:"127.0.0.1:24443:"},{sslFlags:0},{store:"WebHosting"},{hash:"A".repeat(39)}])assert.throws(()=>verifyNativeBinding({...value,...change},target));});
+test("isolation proof requires both mutation directions and independently completed cleanup",()=>{const facts={siteCount:2,hostnameCount:2,certificateStore:"My",twoSitesSamePort:true,distinctHostnameSelectors:true,primaryCutoverPeerUnchanged:true,primaryRollbackPeerUnchanged:true,peerCutoverPrimaryUnchanged:true,peerRollbackPrimaryUnchanged:true,sameCertificateReplayVerified:true,independentAuthenticatedTls:true,ownedCleanupVerified:true};assert.equal(verifyIsolationFacts(facts),true);for(const change of [{hostnameCount:1},{siteCount:1},{primaryRollbackPeerUnchanged:false},{peerRollbackPrimaryUnchanged:false},{independentAuthenticatedTls:false},{ownedCleanupVerified:false}])assert.throws(()=>verifyIsolationFacts({...facts,...change}));});

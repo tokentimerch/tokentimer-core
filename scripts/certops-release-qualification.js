@@ -91,6 +91,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               typeof evidence.certificateUid !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(evidence.certificateUid) || BigInt(evidence.originalResourceVersion) > BigInt(evidence.compactedRevision) || BigInt(evidence.observedResourceVersion) <= BigInt(evidence.compactedRevision)) throw new Error("Native watch compaction and recovery evidence incomplete");
         }
         if (slot.suite === "agent-log-maintenance-worker") require("./certops-log-maintenance-report").verify(artifact.report, root, candidateSha);
+        if (slot.suite === "windows-host") { require("../packages/agent/scripts/host/cng-export-fixture").verifyCustodyProof(artifact.report.cngCustody); require("../packages/agent/scripts/host/iis-shared-port-fixture").verifyIsolationFacts(artifact.report.nativeSamePortSni); }
+        if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {
           require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
@@ -141,6 +143,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               evidence.allowedWrite !== true || evidence.deniedError !== "EROFS" || evidence.samePeerDacMode !== "0777" ||
               !Number.isInteger(evidence.nonRootUid) || evidence.nonRootUid <= 0) throw new Error("Native systemd write-path isolation evidence incomplete");
         }
+        if (slot.suite === "windows-historical-source-upgrade") require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "windows-native-child-output-privacy") require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "enterprise-adcs-elapsed-pending-real") require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "core-api-migration-upgrade") {

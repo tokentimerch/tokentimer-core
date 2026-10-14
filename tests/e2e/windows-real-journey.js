@@ -75,6 +75,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   let journeyFailure;
   let werSnapshot;
   let werTouched = false;
+  const readWerPolicy = () => JSON.parse(ps("$p='HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\node.exe'; $exists=Test-Path $p; $v=$null; $kind=$null; if ($exists) { $k=Get-Item $p; if ($k.GetValueNames() -contains 'DumpType') { $v=$k.GetValue('DumpType',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $kind=[string]$k.GetValueKind('DumpType') } }; [pscustomobject]@{exists=$exists;value=$v;kind=$kind} | ConvertTo-Json -Compress"));
   let installerFixture;
   let candidateRoot;
   const errors = [];
@@ -175,20 +176,20 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       fs.writeFileSync(initialInstaller, "\uFEFF" + historicalInstallerSource.replace(fixedRoot, `$InstallRoot = '${workDir.replace(/'/g, "''")}'`));
       initialHost = path.join(historicalRoot, "bin/tokentimer-agent-host-amd64.exe");
     }
-    werSnapshot = JSON.parse(ps("$p='HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\node.exe'; $exists=Test-Path $p; $v=$null; $kind=$null; if ($exists) { $k=Get-Item $p; if ($k.GetValueNames() -contains 'DumpType') { $v=$k.GetValue('DumpType',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $kind=[string]$k.GetValueKind('DumpType') } }; [pscustomobject]@{exists=$exists;value=$v;kind=$kind} | ConvertTo-Json -Compress"));
-    assert.ok(werSnapshot.kind === null || werSnapshot.kind === "DWord", "refuse to overwrite a non-DWORD existing WER DumpType");
+    werSnapshot = readWerPolicy();
+    if (initialInstaller !== installerFixture) assert.ok(werSnapshot.kind === null || werSnapshot.kind === "DWord", "refuse a historical installer overwrite of non-DWORD WER policy");
     if (werSnapshot.kind === "DWord") assert.ok(Number.isInteger(werSnapshot.value) && werSnapshot.value >= -2147483648 && werSnapshot.value <= 2147483647);
     // Receipt exists before invoking a script that may fail after creating
-    // its service or setting WER policy. This root and service are ours.
+    // its service. Only the historical installer may change WER policy; the
+    // candidate must preserve it. This root and service are ours.
     fs.writeFileSync(path.join(workDir, "installer-ownership.json"), JSON.stringify({ service: "TokenTimerAgent", root: workDir, wer: werSnapshot }));
     serviceOwned = true;
-    werTouched = true;
+    werTouched = initialInstaller !== installerFixture;
     const installed = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", initialInstaller,
       "--api-url", baseUrl, "--workspace-id", String(workspaceId), "--allow-insecure-local-http", "--no-trust-store"],
     { encoding: "utf8", timeout: 180000, env: nativeCommandEnvironment("powershell.exe", { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: plaintextToken }) });
     assert.equal(installed.status, 0, "checked candidate product installer failed on owned root");
-    assert.equal(ps("[string](Get-ItemPropertyValue -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\node.exe' -Name DumpType)"), "0",
-      "measure actual installer WER custom-dump policy; zero does not qualify suppression");
+    if (!werTouched) assert.deepEqual(readWerPolicy(), werSnapshot, "Candidate installer must preserve existing WER policy");
     if (process.env.CERTOPS_WER_EXPERIMENTAL_PROBE === "1") {
       const probe = await require(path.join(repoRoot, "packages/agent/scripts/host/wer-abort-probe")).probeWerCustomDump({ workDir, powershell: ps });
       console.log(JSON.stringify({ werDiagnostic: probe }));
@@ -203,7 +204,14 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.equal(/TOKENTIMER_AGENT_BOOTSTRAP_TOKEN(?:=|_ID=)/.test(environmentAfterRegistration), false, "bootstrap credentials must be scrubbed after registration");
     if (historicalEvidence) {
       await waitUntil(async () => (await pool.query("SELECT 1 FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2 AND agent_version=$3 AND last_seen_at IS NOT NULL", [workspaceId, agentId, historicalEvidence.version])).rows.length);
-      await waitUntil(() => fs.existsSync(path.join(configDir, "signing-key-pin.json")));
+      await require("./helpers/certops-windows-source-upgrade").qualifySourceUpgrade({ workDir, repoRoot, ps, waitUntil, reportDirectory, historicalEvidence, candidateVersion, migrate: async () => {
+      const historyJob=await require(path.join(repoRoot,"apps/api/services/certops/jobs")).createCertificateJob({client:pool,workspaceId,operation:"noop",source:"api",mode:"dry_run",requestedByUserId:userId});
+      ownedJobs.push(historyJob.id);
+      const historySql="SELECT id,status,operation,mode,completed_at,claimed_by_agent_id,result_metadata FROM certificate_jobs WHERE workspace_id=$1 AND id=$2";
+      const historicalJob=await waitUntil(async()=>{const row=(await pool.query(historySql,[workspaceId,historyJob.id])).rows[0];if(["failed","rejected","cancelled"].includes(row?.status))throw new Error("Historical agent did not complete genuine scheduled noop");return row?.status==="succeeded"?row:null;});
+      assert.equal((await pool.query("SELECT 1 FROM certops_agents WHERE id=$1 AND workspace_id=$2 AND agent_id=$3",[historicalJob.claimed_by_agent_id,workspaceId,agentId])).rows.length,1,"Historical scheduled job must belong to this actual registered service agent");
+      await waitUntil(() => fs.existsSync(path.join(configDir,"signing-key-pin.json")));
+      const migrationWerPolicy=readWerPolicy();
       const historicalCredential = fs.readFileSync(path.join(configDir, "credential"));
       const historicalConfig = fs.readFileSync(path.join(configDir, "config.json"));
       const historicalPin = fs.readFileSync(path.join(configDir, "signing-key-pin.json"));
@@ -213,14 +221,15 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
         "--api-url", baseUrl, "--workspace-id", String(workspaceId), "--allow-insecure-local-http", "--no-trust-store"],
       { encoding: "utf8", timeout: 180000, env: nativeCommandEnvironment("powershell.exe", { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: migratedBootstrap.plaintextToken }) });
       assert.ifError(migrated.error); assert.equal(migrated.status, 0, "distinct historical-source version upgrade must succeed");
+      assert.deepEqual(readWerPolicy(),migrationWerPolicy,"Candidate upgrade must preserve existing legacy WER policy without claiming dump suppression");
       assert.deepEqual(fs.readFileSync(path.join(configDir, "credential")), historicalCredential);
       assert.deepEqual(fs.readFileSync(path.join(configDir, "config.json")), historicalConfig);
       assert.deepEqual(fs.readFileSync(path.join(configDir, "signing-key-pin.json")), historicalPin, "upgrade must preserve the actual operational signing-key pin");
       assert.deepEqual(fs.readFileSync(path.join(workDir, "app/bin/tokentimer-agent-host-amd64.exe")), fs.readFileSync(host));
       await waitUntil(async () => (await pool.query("SELECT 1 FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2 AND agent_version=$3 AND last_seen_at>$4", [workspaceId, agentId, candidateVersion, historicalSeen])).rows.length);
-      fs.writeFileSync(path.join(reportDirectory, `windows-historical-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`), JSON.stringify({ ...historicalEvidence,
-        candidateVersion, actualVersionMigration: true, credentialPreserved: true, configurationPreserved: true,
-        signingKeyPinPreserved: true, authenticatedCandidateHeartbeat: true }));
+      assert.deepEqual((await pool.query(historySql,[workspaceId,historyJob.id])).rows[0],historicalJob,"Upgrade must preserve actual previously completed scheduler history");
+      return { werPolicyPreserved:true,schedulerHistoryPreserved:true, distinctVersionObserved:true, credentialPreserved:true, configurationPreserved:true, signingKeyPinPreserved:true, sameAgentIdentity:true, authenticatedCandidateHeartbeat:true, candidateHelperActivated:true };
+      } });
     }
     await require("./windows-adoption-retention-journey")({ pool, baseUrl, workspaceId, agentId, configDir, workDir, repoRoot, domain: adoptionDomain, keyProfile, caEndpoint: caEndpoint.href, caRoots: roots.map(root => root.pem), ps, command });
     const client = await pool.connect();
@@ -466,10 +475,11 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       await cleanup(async () => { if (spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status === 0) { command("sc.exe", ["delete", "TokenTimerAgent"]); await waitUntil(() => spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status !== 0, 20000); } });
     }
     if (werTouched) await cleanup(async () => {
-      assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain WER protection while the owned service remains");
+      assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "Restore historical installer policy only after owned service removal");
       const snapshotLiteral = JSON.stringify(werSnapshot).replace(/'/g, "''");
       ps(`$s=ConvertFrom-Json '${snapshotLiteral}'; $p='HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\node.exe'; if (!$s.exists) { if (Test-Path $p) { Remove-Item -LiteralPath $p -Recurse -Force } } elseif ($null -eq $s.kind) { Remove-ItemProperty -LiteralPath $p -Name DumpType -ErrorAction SilentlyContinue } else { $v=$s.value; switch ($s.kind) { 'Binary' { $v=[byte[]]$v } 'MultiString' { $v=[string[]]$v } 'DWord' { $v=[int]$v } 'QWord' { $v=[long]$v } }; (Get-Item $p).SetValue('DumpType',$v,[Microsoft.Win32.RegistryValueKind]$s.kind) }`);
     });
+    if (!werTouched && werSnapshot) await cleanup(async () => { assert.deepEqual(readWerPolicy(), werSnapshot, "Candidate lifecycle must preserve operator WER policy"); });
     await cleanup(async () => { for (const response of heldResponses) response.destroy(); dnsProxy.closeAllConnections(); await new Promise((resolve) => dnsProxy.close(resolve)); });
     if (siteOwned) await cleanup(async () => { ps(`Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { Remove-Website -Name '${site}' }; & netsh.exe http show sslcert hostnameport=${domain}:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert hostnameport=${domain}:${port} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Owned binding cleanup failed' } }`); });
     const receipts = path.join(configDir, "windows-cert-store", "issued-containers");

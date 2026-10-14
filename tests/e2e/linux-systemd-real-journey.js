@@ -58,6 +58,8 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   const manager = spawnSync("systemctl", ["is-system-running"], { encoding: "utf8", timeout: 10000 });
   assert.ok(["running", "degraded"].includes(manager.stdout.trim()), "a live systemd manager is required");
   const installer = path.join(repoRoot, "packages/agent/scripts/install-agent.sh");
+  const published = process.env.CERTOPS_LINUX_PUBLISHED_INPUTS ? require("../../scripts/certops-linux-published-package").loadManifest(process.env.CERTOPS_LINUX_PUBLISHED_INPUTS) : null;
+  const firstInstaller = published ? path.join(published.baseline.directory,"scripts/install-agent.sh") : installer;
   const nodeBinary = fs.realpathSync(process.execPath);
   assert.equal(nodeBinary.includes("\n") || nodeBinary.includes('"'), false);
   const stateDir = `${ROOT}/state`;
@@ -85,7 +87,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     // on the image differs from actions/setup-node. ProtectHome remains intact.
     fs.writeFileSync(`${DROPINS}/99-qualification.conf`, `[Service]\nExecStartPre="${nodeBinary}" "${writeFixture.probe}" "${writeFixture.allowed}" "${writeFixture.denied}"\nExecStart=\nExecStart="${nodeBinary}" ${ROOT}/app/bin/tokentimer-agent.js\n`, { mode: 0o644 });
     const { plaintextToken } = await createBootstrap();
-    command("sh", [installer, "--api-url", baseUrl, "--workspace-id", workspaceId,
+    command("sh", [firstInstaller, "--api-url", baseUrl, "--workspace-id", workspaceId,
       "--allow-insecure-local-http", "--no-trust-store", "--write-path", writeFixture.allowed], {
       env: { ...process.env, PATH: `${path.dirname(nodeBinary)}:/usr/sbin:/usr/bin:/sbin:/bin`,
         TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: plaintextToken },
@@ -153,7 +155,8 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     identity();
     await waitFor(async () => Date.parse(await lastSeen()) > Date.parse(seenBeforeCrash), "recovered service authenticates again");
     assert.equal(digest(credential), originalCredential);
-    await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
+    if(published) await require("./helpers/linux-systemd-published-upgrade").qualifyPublishedUpgrade({published,pool,workspaceId,userId,agentId,baseUrl,repoRoot,nodeBinary,writeFixture,command,waitFor,mainPid,identity,lastSeen,createBootstrap,uid,gid});
+    else await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
     const { retireAgent } = require("../../apps/api/services/certops/agentRegistry");
     await retireAgent({ client: pool, workspaceId, agentId, retiredBy: userId, reason: "disposable installer qualification" });
     await waitFor(() => mainPid() === 0, "actual API retirement stops the installed service");

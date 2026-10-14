@@ -1,6 +1,7 @@
 /**
  * Entry point for installed Linux agent qualification on an owned GitHub-hosted VM.
- * certops-linux-systemd.yml authorizes native installer/systemd and write-path changes.
+ * certops-linux-systemd.yml and certops-linux-published-upgrade.yml authorize
+ * native installer/systemd and write-path changes on their disposable runners.
  * The child journey must emit every mandatory case; cleanup uses the separately proved
  * unit/process ownership receipt. This must not run on a shared developer machine. */
 "use strict";
@@ -28,7 +29,10 @@ async function main() {
   });
   assert.equal(result.status, 0, "real Linux installer/systemd suite failed");
   const writeReport=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-writepath.json","utf8"));assert.equal(writeReport.suite,"linux-systemd-writepath");assert.deepEqual(require("./certops-qualification-report").verifyReport(writeReport,["linux-systemd-native-writepath-allowed-peer-erofs","linux-systemd-native-writepath-owned-cleanup"]),[]);
+  if(process.env.CERTOPS_LINUX_PUBLISHED_INPUTS){const upgrade=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-published-upgrade.json","utf8"));assert.equal(upgrade.suite,"linux-systemd-published-upgrade");assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(upgrade.nativePublishedLinuxUpgrade);}
+  else {
   const reapplyReport=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-reapply.json","utf8"));assert.equal(reapplyReport.suite,"linux-systemd-reapply");assert.deepEqual(require("./certops-qualification-report").verifyReport(reapplyReport),[]);require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(reapplyReport.nativeInstallerReapply);
+  }
   console.log(JSON.stringify(verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope)));
 }
 module.exports = { main, journey };

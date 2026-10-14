@@ -16,6 +16,9 @@ function environmentFor(site) {
   if (site.file === "packages/agent/src/issuers/adcs-enrollment.test.js" && /pins a CA cert/.test(site.name)) return "openssl-fixtures";
   if (site.reason === "unimplemented") return "unsupported-feature";
   if (/tests\/e2e\/certops-agent-e2e/.test(text)) return "core-protocol-stack";
+  // The runner is the execution inventory. New registered API suites inherit
+  // its declared prerequisites instead of falling into an unowned name heuristic.
+  if (require("./certops-api-qualification").suites.some(([, file]) => site.file === `tests/e2e/${file}`)) return "core-certificate-api";
   if (/tests\/e2e\/certops-(csr|inventory|governance|trust-api|jobs-api|credentials-api|profiles-api|token-boundaries|agent-logs-api|agent-log-boundaries|agent-lease-api|shared-sources|adcs-gates-api)/.test(text)) return "core-certificate-api";
   if (/tests\/integration\//.test(text)) return "core-postgres-integration";
   if (/host\/windows-host|installer-smoke/.test(text)) return "windows-elevated";

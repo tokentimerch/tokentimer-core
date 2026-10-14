@@ -22,9 +22,9 @@ jobs:
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'published-windows-baseline'
           New-Item -ItemType Directory -Path $output | Out-Null
-          gh release download v0.17.2 --repo tokentimerch/tokentimer-core --pattern 'tokentimer-agent-0.17.2.tgz*' --dir $output
+          gh release download v0.17.3 --repo tokentimerch/tokentimer-core --pattern 'tokentimer-agent-0.17.3.tgz*' --dir $output
           if ($LASTEXITCODE) { throw 'Public baseline assets unavailable' }
-          node scripts/certops-windows-published-baseline.js "$output\tokentimer-agent-0.17.2.tgz" "$output\tokentimer-agent-0.17.2.tgz.sha256" qualification-results/windows-published-baseline.json
+          node scripts/certops-windows-published-baseline.js "$output\tokentimer-agent-0.17.3.tgz" "$output\tokentimer-agent-0.17.3.tgz.sha256" qualification-results/windows-published-baseline.json
           if ($LASTEXITCODE) { throw 'Strict published Windows upgrade preflight failed; inspect public-only prerequisite report' }
       - name: Preserve public-only baseline readiness report
         if: always()

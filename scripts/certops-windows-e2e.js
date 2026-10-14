@@ -27,6 +27,11 @@ async function main() {
     const privacy=JSON.parse(fs.readFileSync(`qualification-results/windows-output-privacy-${keyProfile}.json`,"utf8"));
     assert.deepEqual(require("./certops-qualification-report").verifyReport(privacy),[]);
     require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(privacy);
+    if (process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE) {
+      const upgrade=JSON.parse(fs.readFileSync("qualification-results/windows-source-upgrade.json","utf8"));
+      assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);
+      require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(upgrade);
+    }
     verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
     console.log("Windows installed-agent qualification report verified");
   });

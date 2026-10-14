@@ -5,7 +5,7 @@ on:
       historical_upgrade:
         description: Upgrade from verified v0.17.2 historical source build; does not qualify its incomplete published package
         type: boolean
-        default: false
+        default: true
       wer_probe:
         description: Experimental benign SYSTEM abort positive control; never qualifies dump suppression
         type: boolean
@@ -74,14 +74,14 @@ jobs:
           cache: false
       - run: pnpm install --frozen-lockfile
       - name: Checkout immutable historical release source
-        if: inputs.historical_upgrade
+        if: inputs.historical_upgrade && matrix.key_profile == 'rsa-2048'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: 6c902405c7b5d229e2f47b4d5436d780e91c5e17
           path: qualification-historical-source
           persist-credentials: false
       - name: Verify historical release tag and build its own Windows package
-        if: inputs.historical_upgrade
+        if: inputs.historical_upgrade && matrix.key_profile == 'rsa-2048'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -158,11 +158,13 @@ jobs:
           $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $action = New-ScheduledTaskAction -Execute $powershellPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $env:GITHUB_WORKSPACE
           $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
+          # Native test: 18min; producer: 20min. Leave three minutes for producer
+          # finalization before receipt timeout, then one minute before task termination.
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 24)
           Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
           try {
             Start-ScheduledTask -TaskName $taskName
-            $deadline = [DateTime]::UtcNow.AddMinutes(14)
+            $deadline = [DateTime]::UtcNow.AddMinutes(23)
             while (!(Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 2 }
             if (!(Test-Path -LiteralPath $receipt)) { throw 'SYSTEM qualification exceeded its deadline' }
             if ((Get-Content -LiteralPath $receipt -Raw).Trim() -ne '0') { throw 'SYSTEM installed-agent qualification failed; inspect sanitized report' }
@@ -191,5 +193,5 @@ jobs:
             qualification-results/windows-adoption-${{ matrix.key_profile }}.json
             qualification-results/windows-output-privacy-${{ matrix.key_profile }}.json
             qualification-results/windows-candidate-${{ matrix.key_profile }}.json
-            qualification-results/windows-historical-${{ matrix.key_profile }}.json
+            qualification-results/windows-source-upgrade.json
           if-no-files-found: error

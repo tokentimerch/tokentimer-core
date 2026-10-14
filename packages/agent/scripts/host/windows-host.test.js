@@ -58,6 +58,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
   const containers = [];
   const acceptedCertificates = [];
   const acceptedStores = new Map();
+  const custodyCertificates = [];
   try {
     await gate.scenario("windows-discovery-fingerprint", async () => {
       const receipt = path.join(workDir, "discovery.receipt").replace(/'/g, "''");
@@ -145,6 +146,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         assert.equal(key.exportPolicy, "None");
         assert.equal(key.provider, "Microsoft Software Key Storage Provider");
         assert.equal(key.size, Number(algorithm.match(/(\d+)$/)[1]), "native key size must match requested algorithm");
+        custodyCertificates.push({algorithm,store,thumbprint:issuedThumbprint,containerName});
         if (store !== "My") assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${issuedThumbprint}')`), "False", "mirror must not leave duplicate My certificate");
       }
       await gate.scenario("windows-native-chain-verdicts", async () => {
@@ -154,6 +156,9 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         powershell(`$p='Cert:\\LocalMachine\\Root\\${caThumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Owned signing root remains' }`);
       }
     }, { evidenceLevel: "real-host", oracle: "certutil KSP key enumeration and independent .NET accepted certificate private-key container/export policy" });
+    await gate.scenario("windows-cng-private-export-refusal", async () => {
+      await require("./cng-export-fixture").qualifyCngExportRefusal({powershell,records:custodyCertificates,containers,workDir,gate});
+    }, {evidenceLevel:"real-host",oracle:"All five key profiles in My/WebHosting sign an independent public nonce, refuse actual PKCS8 private export while same-provider/profile controls export and clear their buffers; native custody remains unchanged and exact controls are removed"});
     await gate.scenario("windows-trust-anchor-lifecycle", async () => {
       const { distributeTrust, revokeTrust } = require("../../src/trust-store");
       const pem = fs.readFileSync(path.join(workDir, "ca.pem"), "utf8");
@@ -220,6 +225,11 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     await gate.scenario("windows-iis-sni-flags", async () => {
       await require("./iis-fixture").qualifyIis({ powershell, run, workDir, sni: true, gate });
     }, { evidenceLevel: "real-host", oracle: "SNI TLS fingerprint, hostnameport netsh binding and preserved sslFlags" });
+    await gate.scenario("windows-iis-shared-port-sni-isolation", async () => {
+      gate.report.nativeSamePortSni = await require("./iis-shared-port-fixture").qualifySamePortSni({ powershell, run, workDir });
+      gate.report.fixtureSources ||= [];
+      for (const file of ["packages/agent/scripts/host/iis-shared-port-fixture.js", "packages/agent/scripts/host/iis-fixture.js"]) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+    }, { evidenceLevel: "real-host", oracle: "Two real IIS sites on one port retain distinct hostnameport selectors, exact native metadata/hash and authenticated TLS; each target cutover/rollback preserves its sibling and exact fixture cleanup succeeds" });
     await gate.scenario("windows-iis-http-sys-flags", async () => {
       await require("./iis-fixture").qualifyIis({ powershell, run, workDir, nativeFlags: true });
     }, { evidenceLevel: "real-host", oracle: "independent HTTP.sys registry DefaultFlags and certificate hash, plus served TLS across rebind and rollback" });
@@ -329,6 +339,6 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");
     }, { evidenceLevel: "real-host", oracle: "certificate absence and certutil KSP enumeration" });
-    await gate.finish({ requiredScenarios: ["windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    await gate.finish({ requiredScenarios: ["windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

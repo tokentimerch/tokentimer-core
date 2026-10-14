@@ -23,9 +23,8 @@
 #   5. Installs a native Windows Service (sc.exe / New-Service; no NSSM or
 #      other third-party service wrapper) running as LocalSystem per
 #      ADR-0012 decision 11, then starts it.
-#   6. Sets the Windows Error Reporting LocalDumps DumpType=0 for node.exe
-#      (ADR-0012 decision 19: core dumps are disabled by a named,
-#      explicit mechanism, not an unspecified machine-wide default).
+#   6. Preserves existing Windows Error Reporting policy. DumpType=0 is a
+#      custom dump, not suppression; Windows dump containment remains unqualified.
 #   7. On an upgrade (the service already exists), health-checks the
 #      restarted service and rolls back to the previous app version, with
 #      the credential and configuration preserved and its ACL re-asserted,
@@ -772,40 +771,17 @@ if ($script:DryRun) {
     Write-Host "[dry-run] sc.exe create/config $ServiceName binPath= $binPath start= auto obj= LocalSystem"
     Write-Host "[dry-run] sc.exe failure $ServiceName reset= 86400 actions= restart/5000"
     Write-Host "[dry-run] set HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Environment"
-    Write-Host "[dry-run] set HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\node.exe DumpType=0"
+    Write-Host "[dry-run] preserve existing Windows Error Reporting policy"
     Write-Host "[dry-run] (re)start $ServiceName and health-check it"
     Write-Log ""
     Write-Log "Dry run complete. No changes were made."
     exit 0
 }
 
-# --------------------------------------- Windows Error Reporting dump suppression
-# ADR-0012 decision 19: core dumps must be disabled for the production
-# agent by a named, platform-specific mechanism, not an unspecified
-# "disabled" claim, since a crash dump is an alternate, unlocked copy of
-# process memory that no in-process buffer discipline can prevent. This
-# was previously documented in ADR-0012 but never implemented; a real-host
-# verification pass found the gap.
-#
-# WER's LocalDumps key is scoped by executable *file name*, not full path,
-# and Windows has no path-scoped equivalent. node.exe is the process that
-# actually runs the agent's key-handling JS code; the windows-service-host
-# shim (see windows-service-host/) is a thin SCM adapter that spawns
-# node.exe as its child and never itself holds key bytes, so suppressing
-# dumps only for the service-host executable would not protect the
-# process that matters. Setting this for node.exe suppresses WER dumps for
-# any node.exe process on this host, not only this agent's -- an accepted
-# trade-off per decision 10's own established principle that a
-# narrow-but-ineffective control is worse than a broad-but-deterministic
-# one. An operator who needs WER dumps for an unrelated Node service on
-# the same host should not colocate it with this agent.
-function Set-WindowsDumpSuppression {
-    param([string]$ExeName)
-    $key = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$ExeName"
-    New-Item -Path $key -Force | Out-Null
-    New-ItemProperty -Path $key -Name "DumpType" -PropertyType DWord -Value 0 -Force | Out-Null
-}
-Invoke-Step "set WER LocalDumps DumpType=0 for node.exe" { Set-WindowsDumpSuppression -ExeName "node.exe" }
+# Preserve operator WER policy. Microsoft's LocalDumps DumpType=0 selects a
+# custom dump and may enable collection; it does not disable dumps. Do not
+# rewrite the machine-wide node.exe policy or infer containment from a registry
+# value. Native crash containment remains a separate qualification requirement.
 
 $serviceExisted = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
 if (-not $serviceExisted) {
@@ -875,7 +851,8 @@ if (-not $healthy) {
 }
 
 Write-Log ""
-Write-Log "Install complete. Crash dumps (WER LocalDumps) are suppressed for node.exe on this host."
+Write-Log "Install complete. Existing Windows Error Reporting policy was preserved."
+Write-Log "Windows crash-dump containment is not qualified."
 Write-Log "Next steps:"
 Write-Log "  1. Check the service:      Get-Service $ServiceName"
 Write-Log "  2. Confirm registration in the dashboard (CertOps > Agent fleet):"

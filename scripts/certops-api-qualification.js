@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { verifyReport } = require("./certops-qualification-report");
 const suites = [
+  ["decommission-lifecycle-api", "certops-decommission-e2e.test.js", "CERTOPS_DECOMMISSION_REPORT"],
   ["bulk-eligible-api", "certops-bulk-eligible-e2e.test.js", "CERTOPS_BULK_ELIGIBLE_REPORT"],
   ["import-metadata-api", "certops-import-metadata-e2e.test.js", "CERTOPS_IMPORT_METADATA_REPORT"],
   ["adcs-enrollment-policy-api", "certops-enrollment-policy-api-e2e.test.js", "CERTOPS_ADCS_POLICY_API_REPORT"],

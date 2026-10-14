@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 121
+Total skips found: 122
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -82,6 +82,7 @@ Total skips found: 121
 | `tests/e2e/certops-csr-lifecycle-e2e.test.js` | 25 | CSR authenticated API lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-csr-observation-e2e.test.js` | 17 | real TLS CSR observation defers changed names then promotes through acknowledgement | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-csr-provisional-e2e.test.js` | 37 | shared CSR ownership, cancellation and truthful installation evidence | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-decommission-e2e.test.js` | 27 | decommission acknowledgement and factual rediscovery preserve operator lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-derivation-failure-e2e.test.js` | 19 | missing renewal derivation fields preserve real public certificate state | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-diagnostic-agent-e2e.test.js` | 16 | diagnostic agent kind fences ordinary work and preserves bootstrap idempotency | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-enrollment-policy-api-e2e.test.js` | 15 | public AD CS enrollment policy bounds and immutable snapshots | dynamic (this.skip() / t.skip()) | `no-host` |

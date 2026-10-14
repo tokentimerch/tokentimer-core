@@ -24,3 +24,14 @@ test("platform and stack candidate cells remain distinct", () => {
 test("committed ownership mapping matches actual scanner sites", () => {
   assert.deepEqual(check(require("../docs/certops/skip-qualification.generated.json")), []);
 });
+
+test("every registered API suite has explicit skip ownership without qualifying execution", () => {
+  const sites = require("./certops-api-qualification").suites.map(([, file]) => ({ file: `tests/e2e/${file}`, line: 1, name: "inventory fixture", kind: "dynamic", reason: "no-host" }));
+  for (const site of generate(sites).sites) {
+    assert.equal(site.environment, "core-certificate-api");
+    assert.equal(site.executionStatus, "not-qualified");
+    assert.equal(site.workflowStatus, "file-selected-not-qualified");
+  }
+  assert.equal(environmentFor({ file: "tests/e2e/unregistered-fixture.test.js", name: "unknown fixture", reason: "no-host" }), "prerequisite-review");
+  assert.equal(environmentFor({ ...sites[0], reason: "unimplemented" }), "unsupported-feature");
+});

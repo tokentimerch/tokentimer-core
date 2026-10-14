@@ -33,29 +33,43 @@ The fixture polls every two seconds and sends heartbeats and Windows discovery
 updates every five seconds, preserving headroom under the unchanged production
 machine-token rate limit. Slower fixture traffic does not relax server policy.
 
-Select `historical_upgrade=true` to start with the genuine `v0.17.2` source
-at immutable commit `6c902405c7b5d229e2f47b4d5436d780e91c5e17`. The workflow
-requires GitHub's valid verification of its signed tag object before building
-both Windows service-host architectures exclusively from that historical
-checkout. Its original JavaScript and installer are packaged by its own
-historical packer. The installed agent must register and report version
-`0.17.2`, then the candidate installer upgrades it before the certificate
-journey. Exact credential, operator configuration and operational signing-key
-pin bytes must survive, and a newer authenticated heartbeat must report the
-candidate version. A separate public-only report records
-`provenance=historical-source-build` and the immutable commit and package
-digests. This qualifies distinct-version migration when executed; it does
-not qualify the published historical archive.
+The default `historical_upgrade=true` runs the RSA-2048 source-upgrade lane
+on each selected Server version; choose `windows_server=all` for the two
+mandatory release slots. Other key profiles retain the ordinary candidate
+journey. Set the option false only for a partial run: its missing upgrade
+report cannot satisfy the full release matrix.
 
-The published [v0.17.2 release](https://github.com/tokentimerch/tokentimer-core/releases/tag/v0.17.2)
-agent archive has verified digest
-`c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf`, matching
-its public checksum sidecar. Its Windows installer requires native service
-hosts that are absent from that archive. The latest published `v0.17.3`
-archive has the same omission. The manual
-`certops-windows-published-baseline.yml` preflight therefore fails explicitly
-for that immutable baseline and preserves a public-only blocked report;
-substituting candidate binaries into a published archive is prohibited.
+The predecessor is genuine `v0.17.2` source at immutable commit
+`6c902405c7b5d229e2f47b4d5436d780e91c5e17`. GitHub must verify its signed
+tag object before both native helper architectures are compiled exclusively
+from that checkout and packed with its original JavaScript and installer.
+The actual historical SYSTEM service registers, reports its historical
+version, and completes a genuine scheduled dry-run noop. The candidate
+installer must preserve that completed job, exact credential/configuration/
+signing-pin bytes, same registered identity, and independently measured
+non-exportable machine CNG key, IIS binding and authenticated TLS endpoint.
+That certificate is an explicitly owned operator fixture, not a claim that
+the historical agent performed native issuance. Candidate helper bytes and
+a newer authenticated candidate-version heartbeat prove activation. Existing
+legacy WER policy must remain unchanged; this does not prove dump suppression.
+
+`windows-source-upgrade.json` is a strict independently required report
+with `provenance=historical-source-build`, source/package/helper digests,
+and verified owned fixture cleanup. Its two OS slots qualify distinct-version
+source migration only when actually executed. Native execution remains pending.
+
+The latest published [v0.17.3 release](https://github.com/tokentimerch/tokentimer-core/releases/tag/v0.17.3)
+archive has verified SHA-256
+`ec74ed8e1026b7a76b50e0ddc843ee8dc42d1283923ff01be11603069f94c6bb`,
+matching both GitHub asset metadata and its public checksum sidecar. Actual
+archive inspection on 2026-10-14 found neither native service-host executable,
+although its Windows installer requires them. The manual
+`certops-windows-published-baseline.yml` preflight therefore fails before
+any lab installation and retains a public blocked report. A genuinely complete
+published predecessor is still required for published-package upgrade
+qualification; rebuilding that source or adding candidate helpers cannot
+satisfy it. This blocked packaging prerequisite is separate from the executable
+source-upgrade matrix slots.
 Current candidate package tests freshly build both helpers and require their
 presence and architectures. Archive checksums and a signed source tag do
 not establish a signed executable or release-asset attestation.
@@ -84,9 +98,9 @@ Before uninstall, the actual API agent identity is retired. A newly logged
 native host retirement exit 86 must correspond to SCM's clean exit status,
 and no service process may appear over five explicitly configured recovery
 intervals, despite failure recovery being enabled.
-The fixture records the previous node.exe WER policy before installation,
-measures its actual `DumpType=0` setting, and restores that policy only after
-the owned service has been removed. Recovery is disabled before deliberate
+The fixture records the previous node.exe WER policy before installation.
+Candidate installation must preserve it; a historical predecessor's policy
+change is restored only after the owned service has been removed. Recovery is disabled before deliberate
 startup and hard-crash cases so native observations cannot race an automatic
 restart.
 
@@ -95,7 +109,7 @@ custom dump](https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user
 so observing that registry value does not prove suppression. The optional
 `wer_probe` workflow input is an experimental positive control. It copies the
 native Node binary under a unique executable name, verifies identical bytes,
-mirrors the custom-dump policy into an owned WER key and output folder, and
+sets an explicit custom-dump policy in an owned WER key and output folder, and
 aborts only a fresh benign child with a minimal environment. It must observe
 a nonempty custom dump, then delete all dump bytes and its key. No agent,
 API, database, bootstrap, DNS or job configuration is passed to that child;

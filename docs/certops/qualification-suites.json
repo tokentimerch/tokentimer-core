@@ -30,7 +30,9 @@
       "windows-store-lock-drain-timeout": "real-host",
       "windows-store-lock-process-death": "real-host",
       "windows-installer-build-floor": "unit",
-      "windows-discovery-http-sys-selectors": "real-host"
+      "windows-discovery-http-sys-selectors": "real-host",
+      "windows-cng-private-export-refusal": "real-host",
+      "windows-iis-shared-port-sni-isolation": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -981,6 +983,25 @@
       "log-maintenance-disabled-retention-worker-purge": "integration",
       "log-maintenance-purge-idempotency": "integration",
       "log-maintenance-owned-cleanup": "integration"
+    },
+    "windows-historical-source-upgrade": {
+      "windows-source-upgrade-state-preserved": "e2e"
+    },
+    "linux-systemd-published-upgrade": {
+      "linux-published-baseline-executes-job": "real-host",
+      "linux-published-upgrade-preserves-state": "real-host",
+      "linux-published-upgrade-reuses-authority": "real-host",
+      "linux-published-upgrade-preserves-job-history": "real-host",
+      "linux-published-upgrade-owned-restoration": "real-host"
+    },
+    "decommission-lifecycle-api": {
+      "decommission-public-import-no-observation": "e2e",
+      "decommission-uncertain-refusal-atomic": "e2e",
+      "decommission-explicit-acknowledgement": "e2e",
+      "decommission-stored-copy-acknowledgement": "e2e",
+      "decommission-real-tls-rediscovery": "e2e",
+      "decommission-concurrent-rescans-preserve-terminal": "e2e",
+      "decommission-owned-cleanup": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1350,6 +1371,25 @@
       "api",
       "postgres",
       "workerProcess"
+    ],
+    "windows-historical-source-upgrade": [
+      "windows",
+      "system",
+      "scm",
+      "api",
+      "historicalSource"
+    ],
+    "linux-systemd-published-upgrade": [
+      "linux",
+      "systemd",
+      "publishedArchive",
+      "candidateArchive"
+    ],
+    "decommission-lifecycle-api": [
+      "api",
+      "postgres",
+      "openssl",
+      "native-filesystem"
     ]
   },
   "suites": {
@@ -1382,7 +1422,9 @@
       "windows-store-lock-drain-timeout",
       "windows-store-lock-process-death",
       "windows-installer-build-floor",
-      "windows-discovery-http-sys-selectors"
+      "windows-discovery-http-sys-selectors",
+      "windows-cng-private-export-refusal",
+      "windows-iis-shared-port-sni-isolation"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -2333,6 +2375,25 @@
       "log-maintenance-disabled-retention-worker-purge",
       "log-maintenance-purge-idempotency",
       "log-maintenance-owned-cleanup"
+    ],
+    "windows-historical-source-upgrade": [
+      "windows-source-upgrade-state-preserved"
+    ],
+    "linux-systemd-published-upgrade": [
+      "linux-published-baseline-executes-job",
+      "linux-published-upgrade-preserves-state",
+      "linux-published-upgrade-reuses-authority",
+      "linux-published-upgrade-preserves-job-history",
+      "linux-published-upgrade-owned-restoration"
+    ],
+    "decommission-lifecycle-api": [
+      "decommission-public-import-no-observation",
+      "decommission-uncertain-refusal-atomic",
+      "decommission-explicit-acknowledgement",
+      "decommission-stored-copy-acknowledgement",
+      "decommission-real-tls-rediscovery",
+      "decommission-concurrent-rescans-preserve-terminal",
+      "decommission-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2412,6 +2473,9 @@
     "browser-agent-console": "e2e",
     "csr-provisional-api": "integration",
     "linux-systemd-reapply": "real-host",
-    "agent-log-maintenance-worker": "integration"
+    "agent-log-maintenance-worker": "integration",
+    "windows-historical-source-upgrade": "e2e",
+    "linux-systemd-published-upgrade": "real-host",
+    "decommission-lifecycle-api": "e2e"
   }
 }

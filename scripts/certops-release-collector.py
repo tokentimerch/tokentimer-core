@@ -6,6 +6,7 @@ and delegates qualification to the committed matrix. It neither runs native labs
 nor enables AD CS, and experimental/supporting reports cannot fill native slots.
 """
 import io
+from datetime import datetime
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -24,7 +25,7 @@ WORKFLOWS = {
         "certops-qualification.yml", "certops-real-acme.yml",
         "certops-browser-qualification.yml", "certops-kubernetes-qualification.yml",
         "certops-kubernetes-http01-qualification.yml",
-        "certops-windows-e2e.yml", "certops-linux-systemd.yml",
+        "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
         "certops-renewal-alert-qualification.yml",
@@ -124,9 +125,63 @@ def migration_evidence(value):
     return result
 
 
+def declared_sources():
+    slots = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())["slots"]
+    declared = {source for slot in slots for source in slot.get("requiredSources", [])}
+    declared.update(slot["source"] for slot in slots if "source" in slot)
+    groups = json.loads((ROOT / "tests/integration/certops-qualification-groups.json").read_text())
+    declared.update("tests/integration/" + file for group in groups.values() for file in group["files"])
+    return declared
+
+
+def source_fingerprint(value):
+    if (not isinstance(value, dict) or value.get("file") not in declared_sources()
+            or not isinstance(value.get("sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["sha256"])):
+        raise ValueError("Invalid committed source fingerprint")
+    return {"file": value["file"], "sha256": value["sha256"]}
+
+
+def public_environment(value):
+    """Project measured, bounded facts; never retain arbitrary probe metadata."""
+    if not isinstance(value, dict):
+        raise ValueError("Invalid qualification environment")
+    patterns = {
+        "osFamily": r"windows|linux", "measurement": r"native",
+        "osVersion": r"[0-9][A-Za-z0-9_.+-]{0,95}|desktop-[0-9]{1,8}|unsupported",
+        "distribution": r"[A-Za-z0-9_.-]{1,40}",
+        "distributionId": r"[a-z0-9_.-]{1,32}",
+        "distributionVersion": r"[0-9][A-Za-z0-9_.-]{0,31}",
+        "nativeLanguage": r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,3}",
+        "identity": r"LocalSystem|uid:[0-9]{1,10}",
+        "build": r"[0-9]{1,8}",
+        "keyProfile": r"rsa-(?:2048|3072|4096)|ec-p(?:256|384)",
+        "keyAlgorithm": r"rsa|ecdsa", "executionSurface": r"host|container|disposable-container|disposable-vm",
+        "libc": r"glibc|musl|unknown", "architecture": r"x64|arm64|ia32",
+        "dnsProvider": r"[a-z][a-z0-9-]{0,31}",
+    }
+    result = {}
+    for key, pattern in patterns.items():
+        if key not in value:
+            continue
+        raw = value[key]
+        if not isinstance(raw, str):
+            raise ValueError("Invalid qualification environment field type")
+        if key == "identity" and not re.fullmatch(pattern, raw):
+            continue  # Host-only administrators are not a release identity claim.
+        if not re.fullmatch(pattern, raw):
+            raise ValueError("Invalid qualification environment field")
+        result[key] = raw
+    for key, allowed in (("productType", (1, 2, 3)), ("keySize", (256, 384, 2048, 3072, 4096))):
+        if key in value:
+            if type(value[key]) is not int or value[key] not in allowed:
+                raise ValueError("Invalid native environment numeric field")
+            result[key] = value[key]
+    return result
+
+
 def supporting_sources(value):
-    declared = {source for slot in json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())["slots"]
-                for source in slot.get("requiredSources", [])}
+    declared = declared_sources()
     if not isinstance(value, list) or len(value) > 32:
         raise ValueError("Invalid supporting source inventory")
     result = []
@@ -139,7 +194,7 @@ def supporting_sources(value):
     return result
 
 
-def sanitized_report(value, suites, scopes, database_scopes=()):
+def _sanitized_report(value, suites, scopes, database_scopes=()):
     if isinstance(value, dict) and value.get("scope") in database_scopes:
         keys = ("scope", "candidateSha", "evidenceLevel", "qualificationEnvironment",
                 "fixtureSources", "artifactQualification", "qualificationStatus", "experimental")
@@ -152,6 +207,11 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                 "requiredScenarios", "missingCapabilities", "missingScenarios",
                 "fixtureSource", "qualificationEnvironment", "artifactQualification", "qualificationStatus", "experimental")
         result = {key: value[key] for key in keys if key in value}
+        if "cleanup" in value:
+            cleanup = value["cleanup"]
+            if not isinstance(cleanup, dict) or cleanup.get("status") not in ("passed", "failed", "not-run"):
+                raise ValueError("Invalid owned cleanup evidence")
+            result["cleanup"] = {"status": cleanup["status"]}
         contract = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
         known_ids = contract["suites"].get(value["suite"], [])
         known_caps = contract["requiredCapabilities"].get(value["suite"], [])
@@ -201,6 +261,26 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Invalid pending elapsed scope")
                 bounded[key] = expected
             result["nativePendingElapsed"] = bounded
+        if value.get("suite") == "windows-historical-source-upgrade":
+            facts = value.get("sourceUpgrade")
+            if not isinstance(facts, dict) or facts.get("provenance") != "historical-source-build" or facts.get("publishedArchiveUsedForInstallation") is not False:
+                raise ValueError("Invalid historical source upgrade provenance")
+            bounded = {"provenance": "historical-source-build", "publishedArchiveUsedForInstallation": False}
+            for key, expression in (("historicalCommit", r"[a-f0-9]{40}"), ("historicalArchiveSha256", r"[a-f0-9]{64}"), ("historicalVersion", r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]{1,80})?"), ("candidateVersion", r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]{1,80})?")):
+                if not isinstance(facts.get(key), str) or not re.fullmatch(expression, facts[key]):
+                    raise ValueError("Invalid historical source upgrade identity")
+                bounded[key] = facts[key]
+            bounded["historicalHelpers"] = {}
+            for arch in ("amd64", "arm64"):
+                digest = facts.get("historicalHelpers", {}).get(arch)
+                if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                    raise ValueError("Invalid historical helper fingerprint")
+                bounded["historicalHelpers"][arch] = digest
+            for key in ("werPolicyPreserved", "schedulerHistoryPreserved", "distinctVersionObserved", "configurationPreserved", "credentialPreserved", "signingKeyPinPreserved", "sameAgentIdentity", "authenticatedCandidateHeartbeat", "candidateHelperActivated", "nonExportableCngKeyPreserved", "iisBindingPreserved", "trustedTlsPreserved", "serviceIdentityPreserved", "ownedFixtureRemoved"):
+                if facts.get(key) is not True:
+                    raise ValueError("Missing historical source upgrade preservation evidence")
+                bounded[key] = True
+            result["sourceUpgrade"] = bounded
         if value.get("suite") == "windows-native-child-output-privacy":
             for key in ("actualStdoutAndStderrEmission", "actualDelegatedSuccess", "actualAcmeSuccessLogObserved", "actualHttpUploadsSecretFree", "persistedLogsEvidenceResultsSecretFree", "scmConsoleSecretFree"):
                 result[key] = value.get(key) is True
@@ -228,6 +308,45 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Invalid worker log maintenance counter")
                 bounded[key] = facts[key]
             result["maintenance"] = bounded
+        if value.get("suite") == "windows-host":
+            custody = value.get("cngCustody")
+            if not isinstance(custody, dict) or custody.get("privateExportBytesWritten") is not False or custody.get("privateExportBytesReported") is not False:
+                raise ValueError("Invalid CNG private-export byte boundary")
+            cases = custody.get("cases")
+            if not isinstance(cases, list) or len(cases) != 10:
+                raise ValueError("Incomplete CNG profile/store custody inventory")
+            bounded_cases = []
+            for case in cases:
+                if not isinstance(case, dict) or not isinstance(case.get("caseId"), str) or not re.fullmatch(r"(?:rsa-(?:2048|3072|4096)|ec-p(?:256|384))/(?:My|WebHosting)", case["caseId"]):
+                    raise ValueError("Invalid CNG custody case identity")
+                if type(case.get("privateExportHResult")) is not int or not -2147483648 <= case["privateExportHResult"] < 0:
+                    raise ValueError("Invalid native CNG export refusal code")
+                bounded = {"caseId": case["caseId"], "privateExportHResult": case["privateExportHResult"]}
+                bounded.update({key: case.get(key) is True for key in ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")})
+                bounded_cases.append(bounded)
+            result["cngCustody"] = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": custody.get("workDirectoryUnchanged") is True, "cases": bounded_cases}
+            sni = value.get("nativeSamePortSni")
+            if sni is not None:
+                if not isinstance(sni, dict) or type(sni.get("siteCount")) is not int or sni["siteCount"] != 2 or type(sni.get("hostnameCount")) is not int or sni["hostnameCount"] != 2 or sni.get("certificateStore") != "My":
+                    raise ValueError("Invalid same-port SNI target inventory")
+                result["nativeSamePortSni"] = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My"}
+                result["nativeSamePortSni"].update({key: sni.get(key) is True for key in ("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified")})
+        if value.get("suite") == "linux-systemd-published-upgrade":
+            proof = value.get("nativePublishedLinuxUpgrade")
+            if not isinstance(proof, dict) or proof.get("baselineVersion") != "0.17.2" or proof.get("publishedAssetId") != 612562598 or proof.get("publishedArchiveSize") != 410054 or proof.get("publishedArchiveSha256") != "c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf" or proof.get("rollbackClaimed") is not False:
+                raise ValueError("Invalid published Linux upgrade provenance")
+            bounded = {key: proof[key] for key in ("baselineVersion", "publishedAssetId", "publishedArchiveSize", "publishedArchiveSha256", "rollbackClaimed")}
+            if not isinstance(proof.get("candidateVersion"), str) or not re.fullmatch(r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", proof["candidateVersion"]):
+                raise ValueError("Invalid candidate archive version")
+            if not isinstance(proof.get("candidateArchiveSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", proof["candidateArchiveSha256"]):
+                raise ValueError("Invalid candidate archive digest")
+            bounded.update({key: proof[key] for key in ("candidateVersion", "candidateArchiveSha256")})
+            bounded.update({key: proof.get(key) is True for key in ("publishedFilesVerified", "baselineJobExecuted", "candidateFilesVerified", "configBytesPreserved", "credentialBytesPreserved", "sameRegistration", "bootstrapUnconsumed", "freshHeartbeat", "candidateJobExecuted", "oldJobHistoryUnchanged", "oldReplayEntryPreserved", "privatePermissionsPreserved", "originalConfigRestored")})
+            for key in ("beforePid", "afterPid"):
+                if type(proof.get(key)) is not int or not 1 < proof[key] <= 2147483647:
+                    raise ValueError("Invalid published upgrade process identity")
+                bounded[key] = proof[key]
+            result["nativePublishedLinuxUpgrade"] = bounded
         if value.get("suite") == "linux-systemd-reapply":
             proof = value.get("nativeInstallerReapply")
             if not isinstance(proof, dict) or proof.get("installation") != "same-candidate-reapplication":
@@ -371,6 +490,105 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                  "file": event.get("fixtureSource", {}).get("file", "")}
                 for event in value]
     return None
+
+
+def committed_case_names(scope, kind):
+    slots = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())["slots"]
+    matching = [slot for slot in slots if slot["kind"] == kind and slot["suite"] == scope]
+    if kind == "database":
+        groups = json.loads((ROOT / "tests/integration/certops-qualification-groups.json").read_text())
+        return {(case["file"], case["name"]) for slot in matching
+                for case in groups[slot["requiredGroup"]]["requiredTests"]}
+    names = set()
+    for slot in matching:
+        # Node reports static describe containers in addition to mandatory test cases.
+        # Their names must come from the committed source, never artifact strings.
+        source = (ROOT / slot["source"]).read_text()
+        names.update(re.findall(r'\bdescribe\(\s*["\']([^"\'\r\n]{1,200})["\']', source))
+        names.update(slot.get("requiredTests", []))
+        if "requiredInventory" in slot:
+            names.update(json.loads((ROOT / slot["requiredInventory"]).read_text())["requiredTests"])
+    return names
+
+
+def project_case_metadata(result):
+    """Retain unknown/failing cases as invalid evidence without their raw names."""
+    if isinstance(result, list):
+        for event in result:
+            known = isinstance(event.get("name"), str) and event["name"] in committed_case_names(event.get("scope"), "stack")
+            if not known:
+                event["name"] = "[unrecognized]"
+            if event.get("type") not in ("test:pass", "test:fail") or (not known and event.get("type") == "test:pass"):
+                event["type"] = "invalid"
+            for key in ("skip", "todo"):
+                if key in event and type(event[key]) is not bool:
+                    raise ValueError("Invalid stack execution flags")
+    elif isinstance(result, dict) and "tests" in result:
+        known = committed_case_names(result.get("scope"), "database")
+        for case in result["tests"]:
+            recognized = isinstance(case.get("file"), str) and isinstance(case.get("name"), str) and (case["file"], case["name"]) in known
+            if not recognized:
+                case["file"] = "[unrecognized]"
+                case["name"] = "[unrecognized]"
+            if case.get("status") not in ("pass", "fail", "pending") or (not recognized and case.get("status") == "pass"):
+                case["status"] = "invalid"
+    return result
+
+
+def project_common_fields(report, suites, scopes, database_scopes):
+    """Validate known scalar fields before collected artifacts are written."""
+    enums = {
+        "status": {"passed", "failed", "skipped", "running"},
+        "evidenceLevel": {"unit", "integration", "real-host", "e2e"},
+        "artifactQualification": {"workflow-checkout-source", "local-worktree-source-baseline-sha-only"},
+        "qualificationStatus": {"qualified", "not-qualified"},
+        "suite": set(suites), "scope": set(scopes) | set(database_scopes),
+    }
+    for key, allowed in enums.items():
+        if key in report:
+            if not isinstance(report[key], str):
+                raise ValueError("Invalid qualification scalar field type")
+            if report[key] not in allowed:
+                report[key] = "invalid"
+    for key in ("strict", "experimental"):
+        if key in report and type(report[key]) is not bool:
+            raise ValueError("Invalid qualification boolean field")
+    if "schemaVersion" in report and (type(report["schemaVersion"]) is not int or not 0 <= report["schemaVersion"] <= 100):
+        raise ValueError("Invalid qualification schema version")
+    if "candidateSha" in report:
+        raw = report["candidateSha"]
+        if raw is not None and not isinstance(raw, str):
+            raise ValueError("Invalid qualification candidate identity type")
+        if isinstance(raw, str) and not re.fullmatch(r"[a-f0-9]{40}", raw):
+            report["candidateSha"] = "invalid"
+    for key in ("startedAt", "finishedAt"):
+        if key not in report:
+            continue
+        raw = report[key]
+        if not isinstance(raw, str):
+            raise ValueError("Invalid qualification timestamp type")
+        try:
+            if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z", raw):
+                raise ValueError("Timestamp format")
+            datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            report[key] = "invalid"
+    return report
+
+
+def sanitized_report(value, suites, scopes, database_scopes=()):
+    result = _sanitized_report(value, suites, scopes, database_scopes)
+    for report in result if isinstance(result, list) else [result]:
+        if not isinstance(report, dict):
+            continue
+        project_common_fields(report, suites, scopes, database_scopes)
+        if "qualificationEnvironment" in report:
+            report["qualificationEnvironment"] = public_environment(report["qualificationEnvironment"])
+        if "fixtureSource" in report:
+            report["fixtureSource"] = source_fingerprint(report["fixtureSource"])
+        if "fixtureSources" in report:
+            report["fixtureSources"] = supporting_sources(report["fixtureSources"])
+    return project_case_metadata(result)
 
 
 def extract_reports(raw, suites, scopes, database_scopes=()):
