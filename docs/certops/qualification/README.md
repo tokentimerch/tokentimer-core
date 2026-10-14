@@ -145,3 +145,5 @@ The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separate
 - [Native ARM64 candidate packaged service-host mock-child lifecycle](windows/arm64-packaged-scm.md)
 
 - [Pending request across same-key root CA renewal](adcs/pending-same-key-ca-renewal.md): actual pending custody and same-request continuation; native execution pending.
+
+- [ARM64 installed agent/API](windows/arm64-installed-agent-api.md): original canonical installer, real signed jobs, file-plan/discovery scope and explicit pinned x64-emulated PostgreSQL; native execution pending.

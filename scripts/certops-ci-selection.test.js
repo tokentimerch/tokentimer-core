@@ -108,3 +108,5 @@ test("SAN public temporary file controls select cheap Windows without the domain
 });
 
 test("ARM64 native fixture changes select supporting tooling without dispatching AMD64 or paid labs",()=>{for(const file of ["scripts/certops-arm64-scm-runtime.js","scripts/certops-arm64-scm-native.ps1","scripts/certops-arm64-scm-proof.js",".github/workflows/certops-windows-arm64-scm.yml",".github/workflows/certops-windows-arm64-host.yml"]){const result=selectFiles([file]);assert.equal(result.tooling,true);assert.equal(result.windows,false);assert.equal(result.stack,false);}});
+
+test("bounded ARM64 installed source selects tooling and retains explicit manual native dispatch",()=>{for(const file of ["tests/e2e/helpers/certops-arm64-installed-journey.js","scripts/certops-arm64-installed-agent.js","scripts/certops-arm64-installed-driver.ps1","scripts/certops-arm64-postgres.js","scripts/certops-arm64-postgres-lock.json",".github/workflows/certops-windows-arm64-agent.yml"]){const result=selectFiles([file]);assert.equal(result.tooling,true);assert.equal(result.windows,false);assert.equal(result.stack,false);}});

@@ -1232,6 +1232,12 @@
       "windows-arm64-scm-start-stop-restart": "real-host",
       "windows-arm64-scm-failure-recovery-and-retirement": "real-host",
       "windows-arm64-scm-exact-owned-cleanup": "real-host"
+    },
+    "windows-arm64-installed-agent": {
+      "windows-arm64-product-install-and-registration": "e2e",
+      "windows-arm64-signed-noop-and-certificate-file-plan": "e2e",
+      "windows-arm64-my-native-discovery-and-restart": "e2e",
+      "windows-arm64-installed-agent-owned-cleanup": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1729,6 +1735,12 @@
       "windows",
       "native-arm64",
       "optIn"
+    ],
+    "windows-arm64-installed-agent": [
+      "windows",
+      "native-arm64",
+      "system",
+      "api"
     ]
   },
   "suites": {
@@ -2958,6 +2970,12 @@
       "windows-arm64-scm-start-stop-restart",
       "windows-arm64-scm-failure-recovery-and-retirement",
       "windows-arm64-scm-exact-owned-cleanup"
+    ],
+    "windows-arm64-installed-agent": [
+      "windows-arm64-product-install-and-registration",
+      "windows-arm64-signed-noop-and-certificate-file-plan",
+      "windows-arm64-my-native-discovery-and-restart",
+      "windows-arm64-installed-agent-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3057,6 +3075,7 @@
     "windows-installer-cli-second-rename": "e2e",
     "windows-arm64-cng-runtime": "real-host",
     "windows-domain-adcs-retention24h": "real-host",
-    "windows-arm64-packaged-scm": "real-host"
+    "windows-arm64-packaged-scm": "real-host",
+    "windows-arm64-installed-agent": "e2e"
   }
 }

@@ -28,7 +28,7 @@ WORKFLOWS = {
         "certops-browser-qualification.yml", "certops-kubernetes-qualification.yml",
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
-        "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml",
+        "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml", "certops-windows-arm64-agent.yml",
         "certops-windows-fixed-root.yml",
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
@@ -550,6 +550,35 @@ def installed_handoff_fields(event):
     return {"nativeInstalledStateHandoff": {key: value[key] for key in ("scope", *flags)}}
 
 
+def arm64_installed_fields(value):
+    """Closed actual installed agent scope, distinct from issuance/IIS and native PG."""
+    proof = value.get("nativeArm64InstalledAgent")
+    flags = ['canonicalRootAndServiceInitiallyAbsent', 'originalCandidateInstallerUnchanged', 'actualNativeArm64NodePwshAndPackagedHost', 'actualLocalSystemAgentChild', 'publicBootstrapExchangedAndScrubbed', 'authenticatedRegistrationAndHeartbeat', 'actualSignedNoopCompleted', 'actualSignedCertificateDryRunPlan', 'claimBoundPersistedEvidence', 'nativeMyCertificateObservedByAgent', 'exactProtectedMyCustodyUnchanged', 'restartCreatedFreshOwnedProcesses', 'authenticatedHeartbeatAfterRestart', 'configurationCredentialSigningPinPreserved', 'unmodifiedProductUninstall', 'retainedOwnedProcessesDrained', 'completeMachineWideSurvivorGuardBeforeDeletion', 'exactNativeCertificateAndKeyRemoved', 'exactServiceRegistryAndOwnedRootsAbsent']
+    excluded = ("issuanceQualified", "iisQualified", "serverQualified", "publicCertificateAdmissionQualified")
+    keys = {"scope", "architecture", "productType", "build", "certificateDryRunTarget", "postgresArchitecture", "postgresExecution", "postgresVersion", "postgresArchiveSha256", "candidateArchiveSha256", "hostSha256", "certificateFingerprint", "jobIds", "claimIds", "agentRowId", "serviceCreatedDryRun", *flags, *excluded}
+    if not isinstance(proof, dict) or set(proof) != keys or proof.get("scope") != 'native-windows11-arm64-installed-agent-api-signed-file-plan-and-my-discovery' or proof.get("architecture") != "arm64" or type(proof.get("productType")) is not int or proof["productType"] != 1 or any(proof.get(flag) is not True for flag in flags) or any(proof.get(flag) is not False for flag in excluded) or proof.get("serviceCreatedDryRun") is not True:
+        raise ValueError("Missing actual native ARM64 installed-agent scope")
+    if not isinstance(proof.get("build"), str) or not re.fullmatch(r"[0-9]{5,6}", proof["build"]) or int(proof["build"]) < 22000:
+        raise ValueError("Native ARM64 desktop required")
+    lock = json.loads((ROOT / "scripts/certops-arm64-postgres-lock.json").read_text(encoding="utf-8"))
+    if any(proof.get(key) != expected for key, expected in (("certificateDryRunTarget", "file-path"), ("postgresArchitecture", "x64"), ("postgresExecution", "windows11-x64-emulation"), ("postgresVersion", lock["version"]), ("postgresArchiveSha256", lock["sha256"]))):
+        raise ValueError("Unqualified certificate target or PostgreSQL dependency")
+    for key in ("candidateArchiveSha256", "hostSha256", "certificateFingerprint"):
+        if not isinstance(proof.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", proof[key]):
+            raise ValueError("Invalid actual candidate/native certificate fingerprint")
+    uuid = r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+    if not isinstance(proof.get("agentRowId"), str) or not re.fullmatch(uuid, proof["agentRowId"]):
+        raise ValueError("Invalid actual registered agent")
+    for key in ("jobIds", "claimIds"):
+        rows = proof.get(key)
+        if not isinstance(rows, list) or len(rows) != 2 or any(not isinstance(row, str) or not re.fullmatch(uuid, row) for row in rows) or len(set(rows)) != 2:
+            raise ValueError("Two distinct actual signed jobs/claims required")
+    environment = value.get("qualificationEnvironment", {})
+    if value.get("platform") != "win32" or value.get("architecture") != "arm64" or type(environment.get("productType")) is not int or any(environment.get(key) != expected for key, expected in (("osFamily", "windows"), ("productType", 1), ("architecture", "arm64"), ("identity", "LocalSystem"), ("osVersion", "desktop-" + proof["build"]), ("measurement", "native"))) or value.get("cleanup", {}).get("status") != "passed":
+        raise ValueError("Native installed report lacks exact desktop/SYSTEM/cleanup binding")
+    return {"platform": "win32", "architecture": "arm64", "nativeArm64InstalledAgent": {**proof, "jobIds": list(proof["jobIds"]), "claimIds": list(proof["claimIds"])}}
+
+
 def arm64_scm_fields(value):
     """Closed measured packaged-host/mock-child scope; no raw command/path receipts."""
     proof = value.get("nativeArm64Scm")
@@ -711,6 +740,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                                if isinstance(item, dict)]
         if value.get("suite") == "windows-domain-adcs-retention24h":
             result["nativeRetention24h"] = retention24h_fields(value)
+        if value.get("suite") == "windows-arm64-installed-agent":
+            result.update(arm64_installed_fields(value))
         if value.get("suite") == "windows-arm64-packaged-scm":
             result.update(arm64_scm_fields(value))
         if value.get("suite") == "windows-arm64-cng-runtime":
