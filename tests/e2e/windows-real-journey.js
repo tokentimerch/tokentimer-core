@@ -693,6 +693,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   } finally {
     // Missing/tampered receipts cannot release unresolved in-memory process ownership.
     require("./helpers/certops-windows-owned-process").assertCleanupSafe(workDir);
+    require("./helpers/certops-windows-rename-refusal").assertCleanupSafe(workDir);
+    require("./helpers/certops-windows-second-rename").assertCleanupSafe(workDir);
     // Refuse all public/native cleanup after an owned-root replacement.
     installedPaths.assertOwnedRoot(installedPathReceipt);
     // Unknown signed work or shadow ownership must preserve certificate/key,

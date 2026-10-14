@@ -57,3 +57,14 @@ contract regressions reject missing/false custody, heartbeat or cleanup oracles
 and any assertion of full installer CLI coverage. Full installed-service cases
 remain pending their hosted native runs; no Windows qualification pass is implied
 by these supporting checks.
+
+The native holder now starts suspended inside an exclusively retained Windows
+Job Object before any fixture code executes. The parent independently verifies
+native image, creation time and SID before resume, then reads actual running
+arguments. A durable original-file-identity-bound holder guard and in-memory
+ownership registry block all parent cleanup until actual wrapper closure and
+verified zero-member native job drainage. Emergency drainage keeps the scenario
+failed even when cleanup becomes safe; no PID-only termination fallback exists.
+The shared benign process regression exercises these boundaries with public
+temporary files and an actual descendant, without service or certificate actions.
+Native installed-agent qualification remains pending.

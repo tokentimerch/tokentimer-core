@@ -75,6 +75,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify literal installer filesystem paths without native service mutation
         run: node --test packages/agent/scripts/host/windows-installed-paths-filesystem.test.js scripts/certops-windows-installed-paths.test.js
+      - name: Verify actual benign retained-job process containment
+        run: node --test packages/agent/scripts/host/windows-contained-process.test.js
       - name: Checkout immutable historical release source
         if: inputs.historical_upgrade && matrix.key_profile == 'rsa-2048'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd

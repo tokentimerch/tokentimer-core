@@ -68,6 +68,9 @@ function nativeEnvironment(environment = process.env) {
   }
   return values;
 }
+function childEnvironment(provided, inherited = process.env) {
+  return nativeEnvironment(provided === undefined ? inherited : provided);
+}
 function nativeObservation(processId) {
   pid(processId);
   const script = `$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${processId}';if(!$p-or!$p.ExecutablePath-or!$p.CommandLine){throw 'Complete native identity unavailable'};$o=Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid;if($o.ReturnValue-ne 0){throw 'Native owner unavailable'};[pscustomobject]@{pid=[int]$p.ProcessId;parentPid=[int]$p.ParentProcessId;creationTime=$p.CreationDate.ToUniversalTime().ToString('o');executablePath=[string]$p.ExecutablePath;commandLine=[string]$p.CommandLine;sid=[string]$o.Sid}|ConvertTo-Json -Compress`;
@@ -228,7 +231,7 @@ async function startContainedNativeProcess({
   executable,
   args,
   argsForWrapper,
-  environment = {},
+  environment,
   workDir,
   maxLifetimeMs = 300000,
   expectedSid,
@@ -410,7 +413,7 @@ async function startContainedNativeProcess({
     cwd: root,
   };
   write("owner.json", JSON.stringify(manifest));
-  const nativeEnv = nativeEnvironment({ ...process.env, ...environment });
+  const nativeEnv = childEnvironment(environment);
   const child = spawn(
     powershell,
     [
@@ -522,17 +525,18 @@ async function startContainedNativeProcess({
         return null;
       }
     });
-    for (const field of [
-      "pid",
-      "parentPid",
-      "executablePath",
-      "commandLine",
-      "sid",
-    ])
+    for (const field of ["pid", "parentPid", "commandLine", "sid"])
       assert.ok(
         actual[field] === started[field],
-        "Independent running native identity differs",
+        `Independent running native ${field} differs`,
       );
+    assert.ok(
+      path.win32.isAbsolute(actual.executablePath) &&
+        path.win32.isAbsolute(started.executablePath) &&
+        path.win32.normalize(actual.executablePath).toLowerCase() ===
+          path.win32.normalize(started.executablePath).toLowerCase(),
+      "Independent running native image differs",
+    );
     assert.equal(
       actual.creationTime.slice(0, 26),
       started.creationTime.slice(0, 26),
@@ -566,5 +570,6 @@ module.exports = {
   verifyStarted,
   verifyClosed,
   nativeEnvironment,
+  childEnvironment,
   REQUIRED_SOURCES,
 };

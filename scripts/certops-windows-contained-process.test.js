@@ -19,6 +19,25 @@ test("native Windows PowerShell never inherits PowerShell Core module paths", ()
   });
   assert.equal(original.PSModulePath, "foreign-modules");
 });
+test("supplied child environment is complete and cannot inherit unrelated secrets", () => {
+  const inherited = {
+    PATH: "native-path",
+    UNRELATED_SECRET_SENTINEL: "must-not-enter-child",
+    PSModulePath: "foreign",
+  };
+  assert.deepEqual(
+    helper.childEnvironment(
+      { PATH: "owned-native-path", OWNED_TOKEN: "private-explicit" },
+      inherited,
+    ),
+    { PATH: "owned-native-path", OWNED_TOKEN: "private-explicit" },
+  );
+  assert.deepEqual(helper.childEnvironment(undefined, inherited), {
+    PATH: "native-path",
+    UNRELATED_SECRET_SENTINEL: "must-not-enter-child",
+  });
+  assert.deepEqual(helper.childEnvironment({}, inherited), {});
+});
 test("Windows argv encoder preserves spaces Unicode literal brackets quotes and terminal slashes", () => {
   assert.equal(
     helper.commandLine("C:\\Windows\\powershell.exe", [

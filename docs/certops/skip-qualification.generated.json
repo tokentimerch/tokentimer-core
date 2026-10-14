@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "windows-native-process-containment": {
+      "capabilities": [
+        "windows",
+        "powershell",
+        "cim",
+        "native-job-object"
+      ],
+      "owner": "Owned benign process containment regression",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "windows-powershell-filesystem": {
       "capabilities": [
         "windows",
@@ -97,6 +108,19 @@
     }
   },
   "sites": [
+    {
+      "id": "5ab9b5ab6871aa7ef958",
+      "file": "packages/agent/scripts/host/windows-contained-process.test.js",
+      "line": 55,
+      "name": "real owned JobObject preserves suspended identity and drains an actual descendant",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "windows-native-process-containment",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
     {
       "id": "4d3605ce26faa1d8bbfb",
       "file": "packages/agent/scripts/host/windows-host.test.js",

@@ -9,7 +9,9 @@ const assert = require("node:assert/strict"),
   path = require("node:path"),
   crypto = require("node:crypto"),
   tls = require("node:tls");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
+const contained = require("./certops-windows-contained-process");
+const renameGuard = require("./certops-windows-rename-guard");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const requiredScenarios = [
   "windows-activation-second-rename-restores-predecessor",
@@ -23,6 +25,8 @@ const requiredSources = [
   "scripts/certops-installer-second-rename-support.js",
   "scripts/certops-installer-swap.test.ps1",
   "tests/e2e/windows-real-journey.js",
+  ...contained.REQUIRED_SOURCES,
+  "tests/e2e/helpers/certops-windows-rename-guard.js",
 ];
 const factFields = [
   "childIdentityVerifiedBeforeActivation",
@@ -84,22 +88,31 @@ function powershell(script) {
       "-NoProfile",
       "-NonInteractive",
       "-EncodedCommand",
-      Buffer.from(script, "utf16le").toString("base64"),
+      Buffer.from(
+        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);" + script,
+        "utf16le",
+      ).toString("base64"),
     ],
-    { encoding: "utf8", windowsHide: true, timeout: 15000, maxBuffer: 65536 },
+    {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 15000,
+      maxBuffer: 65536,
+      env: contained.nativeEnvironment(),
+    },
   );
   assert.ifError(r.error);
   assert.equal(r.status, 0, "Owned PowerShell observation failed");
   return r.stdout.trim();
 }
-function nativeIdentity(child, token, driver) {
+function nativeIdentity(processId, token, driver, parentProcessId) {
   const result = JSON.parse(
     powershell(
-      `$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${child.pid}';if(!$p){throw 'Owned driver is absent'};@{pid=$p.ProcessId;parentPid=$p.ParentProcessId;created=$p.CreationDate.ToUniversalTime().ToString('o');executable=$p.ExecutablePath;command=$p.CommandLine}|ConvertTo-Json -Compress`,
+      `$p=Get-CimInstance Win32_Process -Filter 'ProcessId=${processId}';if(!$p){throw 'Owned driver is absent'};@{pid=$p.ProcessId;parentPid=$p.ParentProcessId;created=$p.CreationDate.ToUniversalTime().ToString('o');executable=$p.ExecutablePath;command=$p.CommandLine}|ConvertTo-Json -Compress`,
     ),
   );
-  assert.equal(result.pid, child.pid);
-  assert.equal(result.parentPid, process.pid);
+  assert.equal(result.pid, processId);
+  assert.equal(result.parentPid, parentProcessId);
   assert.equal(
     path.resolve(result.executable).toLowerCase(),
     path
@@ -167,61 +180,74 @@ async function runActivationFault({
       .filter((key) => process.env[key] !== undefined)
       .map((key) => [key, process.env[key]]),
   );
-  const child = spawn(
-    executable,
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      driver,
-      "-Installer",
-      installer,
-      "-PackageDirectory",
-      packageDir,
-      "-OwnedRoot",
-      workDir,
-      "-ReceiptPrefix",
-      prefix,
-      "-GoPath",
-      go,
-      "-ReleasePath",
-      release,
-      "-Token",
-      token,
-      "-OwnerProcessId",
-      String(process.pid),
-    ],
-    { env, stdio: "ignore", windowsHide: true },
-  );
-  let closed = false,
+  const holderGuard = renameGuard.createGuard(workDir, "second-rename");
+  let child,
+    resource,
+    rootPid,
+    exit,
+    closed = false,
     identity,
     restored,
     primary,
-    drained = false;
-  const exit = new Promise((resolve) => {
-    child.once("error", () => {
-      closed = true;
-      resolve({ error: true });
+    drained = false,
+    guardReleased = false;
+  const launch = async () => {
+    resource = await contained.startContainedNativeProcess({
+      executable,
+      workDir,
+      maxLifetimeMs: 300000,
+      environment: env,
+      argsForWrapper: (wrapperPid) => [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        driver,
+        "-Installer",
+        installer,
+        "-PackageDirectory",
+        packageDir,
+        "-OwnedRoot",
+        workDir,
+        "-ReceiptPrefix",
+        prefix,
+        "-GoPath",
+        go,
+        "-ReleasePath",
+        release,
+        "-Token",
+        token,
+        "-OwnerProcessId",
+        String(wrapperPid),
+      ],
+      onCreated(value) {
+        resource = value;
+        child = value.wrapper;
+        holderGuard.attach(child);
+        exit = new Promise((resolve) =>
+          child.once("close", (code, signal) => {
+            closed = true;
+            resolve({ code, signal });
+          }),
+        );
+      },
     });
-    child.once("close", (code, signal) => {
-      closed = true;
-      resolve({ code, signal });
-    });
-  });
-  const staged = () => `${app}.staging.${child.pid}`,
-    previous = () => `${app}.previous.${child.pid}`;
+    rootPid = resource.rootIdentity.pid;
+  };
+  const staged = () => `${app}.staging.${rootPid}`,
+    previous = () => `${app}.previous.${rootPid}`;
   try {
+    await launch();
     assert.ok(
-      Number.isInteger(child.pid) && child.pid > 0,
+      Number.isInteger(rootPid) && rootPid > 0,
       "Owned driver failed spawn",
     );
     // Capture independently before reading any child-created ownership receipt.
     identity = await until(() => {
       assert.equal(closed, false);
       try {
-        return nativeIdentity(child, token, driver);
+        return nativeIdentity(rootPid, token, driver, child.pid);
       } catch {
         return null;
       }
@@ -235,7 +261,10 @@ async function runActivationFault({
       );
       return fs.existsSync(prefix + ".restored.json");
     });
-    assert.deepEqual(nativeIdentity(child, token, driver), identity);
+    assert.deepEqual(
+      nativeIdentity(rootPid, token, driver, child.pid),
+      identity,
+    );
     restored = JSON.parse(fs.readFileSync(prefix + ".restored.json", "utf8"));
     assert.equal(restored.phase, "restored");
     assert.equal(restored.token, token);
@@ -246,8 +275,8 @@ async function runActivationFault({
     assert.match(restored.stagingId, /^[a-f0-9]{8}:[a-f0-9]{16}$/);
     assert.notEqual(restored.originalId, restored.stagingId);
     assert.deepEqual(restored.renameEvents, [
-      ["app", `app.previous.${child.pid}`],
-      [`app.previous.${child.pid}`, "app"],
+      ["app", `app.previous.${rootPid}`],
+      [`app.previous.${rootPid}`, "app"],
     ]);
     assert.equal(restored.shareMask, 3);
     assert.equal(
@@ -301,21 +330,21 @@ async function runActivationFault({
       assert.equal(fs.existsSync(staged()), false);
       assert.equal(fs.existsSync(previous()), false);
       assert.deepEqual(inventory(app), before);
+      const nativeDrain = await resource.stopAndDrain();
+      assert.equal(nativeDrain.launchOccurred, true);
+      assert.equal(nativeDrain.rootExitCode, 0);
+      holderGuard.complete(true);
+      guardReleased = true;
     } catch (error) {
-      if (!closed && identity) {
+      if (resource && !guardReleased) {
         try {
-          assert.deepEqual(nativeIdentity(child, token, driver), identity);
-          const killed = spawnSync(
-            "taskkill.exe",
-            ["/PID", String(child.pid), "/T", "/F"],
-            { stdio: "ignore", windowsHide: true, timeout: 10000 },
-          );
-          assert.equal(killed.status, 0);
-          await until(() => closed, 10000);
+          await resource.stopAndDrain();
+          holderGuard.complete(true);
+          guardReleased = true;
         } catch (cleanup) {
           error = new AggregateError(
             [error, cleanup],
-            "Owned activation process could not be verified and drained",
+            "Owned activation job did not drain; preserve fixture",
           );
         }
       }
@@ -542,7 +571,12 @@ async function qualifySecondRename(context) {
   if (primary) throw primary;
   return gate.report;
 }
+function assertCleanupSafe(workDir) {
+  renameGuard.assertCleanupSafe(workDir, "second-rename");
+  contained.assertCleanupSafe(workDir);
+}
 module.exports = {
+  assertCleanupSafe,
   runActivationFault,
   qualifySecondRename,
   verifyProof,

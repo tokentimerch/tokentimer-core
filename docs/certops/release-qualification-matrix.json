@@ -296,7 +296,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -354,7 +363,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -412,7 +430,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -470,7 +497,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -528,7 +564,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -651,7 +696,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -709,7 +763,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -767,7 +830,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -825,7 +897,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -883,7 +964,16 @@
         "scripts/certops-windows-e2e.js",
         "packages/agent/scripts/install-agent.ps1",
         "tests/e2e/helpers/certops-windows-owned-process.js",
-        "tests/e2e/helpers/certops-windows-owned-process.ps1"
+        "tests/e2e/helpers/certops-windows-owned-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-refusal.js",
+        "tests/e2e/helpers/certops-windows-directory-hold.ps1",
+        "scripts/certops-installer-swap.test.ps1",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js",
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "tests/e2e/helpers/certops-windows-second-rename-driver.ps1",
+        "scripts/certops-installer-second-rename-support.js"
       ]
     },
     {
@@ -4043,7 +4133,10 @@
         "tests/e2e/helpers/certops-windows-directory-hold.ps1",
         "packages/agent/scripts/install-agent.ps1",
         "scripts/certops-installer-swap.test.ps1",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js"
       ],
       "environment": {
         "osFamily": "windows",
@@ -4062,7 +4155,10 @@
         "tests/e2e/helpers/certops-windows-directory-hold.ps1",
         "packages/agent/scripts/install-agent.ps1",
         "scripts/certops-installer-swap.test.ps1",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js"
       ],
       "environment": {
         "osFamily": "windows",
@@ -4100,7 +4196,10 @@
         "packages/agent/scripts/install-agent.ps1",
         "scripts/certops-installer-second-rename-support.js",
         "scripts/certops-installer-swap.test.ps1",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js"
       ],
       "environment": {
         "osFamily": "windows",
@@ -4121,7 +4220,10 @@
         "packages/agent/scripts/install-agent.ps1",
         "scripts/certops-installer-second-rename-support.js",
         "scripts/certops-installer-swap.test.ps1",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "tests/e2e/helpers/certops-windows-rename-guard.js"
       ],
       "environment": {
         "osFamily": "windows",

@@ -20,8 +20,10 @@ const schedulerWorkflow = ".github/workflows/certops-scheduler-capacity-qualific
 
 const windowsPathFile = "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js";
 const windowsPathWorkflow = ".github/workflows/certops-windows-e2e.yml";
+const windowsContainedFile = "packages/agent/scripts/host/windows-contained-process.test.js";
 function environmentFor(site) {
   if (site.file === windowsPathFile) return "windows-powershell-filesystem";
+  if (site.file === windowsContainedFile) return "windows-native-process-containment";
   const text = `${site.file} ${site.name}`;
   if (site.file === "packages/agent/src/config/config.test.js" && /re-asserts 0700/.test(site.name)) return "linux-filesystem";
   if (site.file === "packages/agent/src/issuers/adcs-enrollment.test.js" && /pins a CA cert/.test(site.name)) return "openssl-fixtures";
@@ -40,6 +42,7 @@ function environmentFor(site) {
   return "prerequisite-review";
 }
 const environments = {
+  "windows-native-process-containment": {capabilities:["windows","powershell","cim","native-job-object"],owner:"Owned benign process containment regression",workflow:windowsPathWorkflow,status:"candidate-environment-not-qualified"},
   "windows-powershell-filesystem": { capabilities: ["windows", "powershell", "owned-temporary-filesystem"], owner: "Windows installer path supporting controls", workflow: windowsPathWorkflow, status: "candidate-environment-not-qualified" },
   "core-exclusive-scheduler-api": { capabilities: ["postgres", "core-api", "openssl", "disposable-stack", "exclusive-scheduler-stack"], owner: "Exclusive scheduler API qualification", workflow: schedulerWorkflow, status: "candidate-environment-not-qualified" },
   "windows-elevated": { capabilities: ["windows", "elevated"], owner: "Windows qualification", workflow: ".github/workflows/certops-qualification.yml", status: "candidate-environment-not-qualified" },
@@ -60,8 +63,8 @@ function generate(sites = scanner.buildInventory()) {
     const key = `${site.file}\n${site.name}\n${site.kind}`;
     const occurrence = (occurrences.get(key) || 0) + 1; occurrences.set(key, occurrence);
     const exclusive = exclusiveSchedulerFiles.has(site.file);
-    const windowsPath = site.file === windowsPathFile;
-    const workflowConfigured = windowsPath ? fs.readFileSync(path.join(__dirname,"..",windowsPathWorkflow),"utf8").includes(`node --test ${windowsPathFile}`) : exclusive ? schedulerWorkflowText.includes(`node --test ${site.file}`) : workflowText.includes(site.file) || (workflowText.includes("scripts/certops-api-qualification.js") && apiFiles.has(site.file));
+    const windowsPath = site.file === windowsPathFile || site.file === windowsContainedFile;
+    const workflowConfigured = windowsPath ? fs.readFileSync(path.join(__dirname,"..",windowsPathWorkflow),"utf8").includes(`node --test ${site.file}`) : exclusive ? schedulerWorkflowText.includes(`node --test ${site.file}`) : workflowText.includes(site.file) || (workflowText.includes("scripts/certops-api-qualification.js") && apiFiles.has(site.file));
     return { id: crypto.createHash("sha256").update(`${key}\n${occurrence}`).digest("hex").slice(0, 20), ...site, environment: environmentFor(site), workflow: workflowConfigured ? (windowsPath ? windowsPathWorkflow : exclusive ? schedulerWorkflow : ".github/workflows/certops-qualification.yml") : null, workflowStatus: workflowConfigured ? "file-selected-not-qualified" : "exact-site-execution-not-configured", executionStatus: "not-qualified", classificationStatus: "candidate-needs-review" };
   }) };
 }
