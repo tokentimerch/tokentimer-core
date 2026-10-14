@@ -70,6 +70,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
 - [AD CS operator guide](../agent/adcs.md)
 - [Native uncertain submission, acknowledged recovery and safe abandonment](adcs/uncertain-abandon.md)
+- [AD CS renewal, discovery and retention coordinates in WebHosting](adcs/webhosting-renewal.md)
+- [Native AD CS per-issuer capacity and genuine approval release](adcs/native-issuer-capacity.md)
 - [Two native AD CS renewal generations through default scheduler sweeps](adcs/two-unattended-renewals.md)
 - [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
 - [Experimental new IIS binding before durable completion](adcs/bound-install-recovery-experiment.md)
@@ -125,3 +127,7 @@ The [resident domain retention journey](windows/resident-domain-retention24h.md)
 The [retention controller lifecycle](windows/retention24h-controller-lifecycle.md) documents immutable artifact readback, the bounded resource lease, independent finalization and cleanup.
 
 The [Windows ACME key rotation policy](windows/acme-key-rotation-policy.md) requires fresh CNG keys; its public refusal journey preserves existing native custody and trusted TLS.
+
+The [HTTP.sys client-certificate policy fixture](windows/http-sys-client-policy.md) measures native revocation and usage settings across real cutover and rollback without claiming a client-auth handshake.
+
+The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separates actual candidate path/protocol behavior from lab-built CMC and reference Go verifier qualification.

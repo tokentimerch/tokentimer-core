@@ -261,7 +261,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       for (const file of ["packages/agent/scripts/host/iis-shared-port-fixture.js", "packages/agent/scripts/host/iis-fixture.js"]) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
     }, { evidenceLevel: "real-host", oracle: "Two real IIS sites on one port retain distinct hostnameport selectors, exact native metadata/hash and authenticated TLS; each target cutover/rollback preserves its sibling and exact fixture cleanup succeeds" });
     await gate.scenario("windows-iis-http-sys-flags", async () => {
-      await require("./iis-fixture").qualifyIis({ powershell, run, workDir, nativeFlags: true });
+      await require("./iis-fixture").qualifyIis({ powershell, run, workDir, nativeFlags: true, gate });
     }, { evidenceLevel: "real-host", oracle: "independent HTTP.sys registry DefaultFlags and certificate hash, plus served TLS across rebind and rollback" });
     await gate.scenario("windows-store-lock-worker-death", async () => {
       await require("./store-lock-death-fixture").qualifyStoreLockDeath({ workDir });
@@ -316,7 +316,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       }
     }, { evidenceLevel: "real-host", oracle: "independent Node processes contend on actual filesystem store locks; not certificate deployment E2E" });
     await gate.scenario("windows-release-package", async () => {
-      await require("./package-fixture").qualifyPackage({ powershell, run, workDir });
+      await require("./package-fixture").qualifyPackage({ powershell, run, workDir, gate });
     }, { evidenceLevel: "real-host", oracle: "actual product release archive, native SHA256, independently parsed amd64/arm64 PE headers, isolated imports and tamper rejection; unsigned candidate, not signed release provenance" });
     await gate.scenario("windows-scm-lifecycle", async () => {
       const output = run(process.execPath, ["--test", "--test-reporter=tap", "--test-name-pattern", "Windows service lifecycle smoke", path.resolve(__dirname, "../installer-smoke.test.js")], { env: { ...process.env, CERTOPS_QUALIFICATION_STRICT: "1" }, timeout: 300000 });
@@ -339,6 +339,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     }
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
+      require("./packaged-helper-runtime-fixture").assertCleanupSafe(workDir);
       const receipt = path.join(workDir, "discovery.receipt");
       if (!/^[A-F0-9]{40}$/.test(thumbprint || "") && fs.existsSync(receipt)) thumbprint = fs.readFileSync(receipt, "utf8").trim();
       if (thumbprint) assert.match(thumbprint, /^[A-F0-9]{40}$/);
@@ -378,6 +379,18 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");
     }, { evidenceLevel: "real-host", oracle: "certificate absence and certutil KSP enumeration" });
-    await gate.finish({ requiredScenarios: ["windows-state-config-read-denied", "windows-state-credential-read-denied", "windows-state-signing-pin-read-denied", "windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    // Add the actual current source pairs emitted by both new native fixtures.
+    // Earlier fixtures append overlapping dependencies, so deduplicate only here
+    // after all successful scenarios and owned cleanup have completed.
+    for (const definition of [require("./iis-client-settings-fixture"), require("./packaged-helper-runtime-fixture")]) {
+      gate.report.fixtureSources ||= [];
+      for (const file of definition.REQUIRED_SOURCES) {
+        const sha256 = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex");
+        const prior = gate.report.fixtureSources.find(source => source.file === file);
+        if (prior) assert.equal(prior.sha256, sha256, "Native source changed during qualification");
+        else gate.report.fixtureSources.push({ file, sha256 });
+      }
+    }
+    await gate.finish({ requiredScenarios: ["windows-state-config-read-denied", "windows-state-credential-read-denied", "windows-state-signing-pin-read-denied", "windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-iis-client-revocation-policy-preservation", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-packaged-chain-runtime-protocol-refusal", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

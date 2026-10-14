@@ -107,6 +107,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-certificate-dry-run") require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(artifact.report.nativeCertificateDryRun);
         if (slot.suite === "windows-host") require("./certops-native-key-survivor-proof").verifyProof(artifact.report.nativeKeySurvivors);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/cng-key-usage-proof").verifyProof(artifact.report.nativeKeyUsage);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/iis-client-settings-fixture").verifyProof(artifact.report.nativeHttpSysClientSettings);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/packaged-helper-runtime-fixture").verifyProof(artifact.report.nativePackagedChainRuntime);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").verifyAtomicProof(artifact.report.nativeRetentionAtomicReplace);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-elapsed-fixture").verifyElapsedProof(artifact.report.nativeElapsedRetention);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
@@ -129,6 +131,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
+          require("../tests/e2e/helpers/certops-adcs-webhosting-renewal").verifyProof(artifact.report.nativeWebHostingRenewal);
           require("../tests/e2e/helpers/certops-adcs-algorithm-boundaries").verifyProof(artifact.report.nativeAlgorithmBoundaries);
           require("../tests/e2e/helpers/certops-adcs-cmc-signature-copy").verifyProof(artifact.report.nativeCmcBoundaries);
           require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(artifact.report.nativeBrowserAdcs);

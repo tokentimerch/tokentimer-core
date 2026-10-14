@@ -214,7 +214,21 @@
         "packages/agent/scripts/host/cng-key-usage-proof.js",
         "packages/agent/scripts/host/retention-reference-fixture.js",
         "packages/agent/scripts/host/state-read-refusal-fixture.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "packages/agent/scripts/host/iis-client-settings-fixture.js",
+        "packages/agent/scripts/host/windows-host.test.js",
+        "packages/agent/src/windows-iis/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/verify/fixtures/chain-leaf.crt.pem",
+        "packages/agent/scripts/host/packaged-helper-runtime-fixture.js",
+        "packages/agent/scripts/host/package-fixture.js",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/windows-service-host/main.go",
+        "packages/agent/windows-service-host/host.go",
+        "packages/agent/windows-service-host/console_windows.go",
+        "packages/agent/windows-service-host/service_windows.go",
+        "packages/agent/reference/adcs-chain/go.mod",
+        "packages/agent/reference/adcs-chain/go.sum"
       ]
     },
     {
@@ -480,7 +494,21 @@
         "packages/agent/scripts/host/cng-key-usage-proof.js",
         "packages/agent/scripts/host/retention-reference-fixture.js",
         "packages/agent/scripts/host/state-read-refusal-fixture.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "packages/agent/scripts/host/iis-client-settings-fixture.js",
+        "packages/agent/scripts/host/windows-host.test.js",
+        "packages/agent/src/windows-iis/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/verify/fixtures/chain-leaf.crt.pem",
+        "packages/agent/scripts/host/packaged-helper-runtime-fixture.js",
+        "packages/agent/scripts/host/package-fixture.js",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/windows-service-host/main.go",
+        "packages/agent/windows-service-host/host.go",
+        "packages/agent/windows-service-host/console_windows.go",
+        "packages/agent/windows-service-host/service_windows.go",
+        "packages/agent/reference/adcs-chain/go.mod",
+        "packages/agent/reference/adcs-chain/go.sum"
       ]
     },
     {
@@ -785,7 +813,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -865,7 +904,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -945,7 +995,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -1025,7 +1086,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -1105,7 +1177,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -1185,7 +1268,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -1265,7 +1359,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -1345,7 +1450,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -1425,7 +1541,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {
@@ -2042,7 +2169,18 @@
         "infra/certops-adcs/safety-cases.json",
         "packages/agent/src/issuers/adcs-safety.js",
         "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
-        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/inventory.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/discovery/windows.js",
+        "packages/agent/src/windows-retention/index.js",
+        "tests/e2e/helpers/certops-adcs-capacity.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalCapacity.js",
+        "apps/api/services/certops/jobs.js",
+        "apps/api/services/certops/jobApprovals.js"
       ]
     },
     {

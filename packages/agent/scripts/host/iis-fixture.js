@@ -101,6 +101,11 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     }
     await expectServed(unrelatedPort, certificates[0].thumbprint);
     await expectServed(port, certificates[0].thumbprint, servername);
+    if (nativeFlags && gate) await gate.scenario("windows-iis-client-revocation-policy-preservation", async () => {
+      const helper = require("./iis-client-settings-fixture");
+      gate.report.nativeHttpSysClientSettings = await helper.qualifyClientSettings({ binding, certificates, powershell, run, unrelatedPort, expectServed, pem });
+      helper.verifyProof(gate.report.nativeHttpSysClientSettings);
+    }, { evidenceLevel: "real-host", oracle: "Raw HTTP.sys check-mode/timer DWORDs survive genuine owned cutover and native rollback; independent trusted TLS and unrelated endpoint remain unchanged, without a client-auth handshake claim" });
     if (gate && !sni && !nativeFlags) await gate.scenario("windows-iis-unsupported-targets", () => require("./unsupported-target-fixture").qualifyUnsupportedTargets({ binding, certificatePem: pem(certificates[1]), thumbprints: certificates.map(certificate => certificate.thumbprint), powershell, expectServed, originalThumbprint: certificates[0].thumbprint }), { evidenceLevel: "real-host", oracle: "Actual native-platform executor refuses unsupported standalone IIS deploy and multiple SNI renewal destinations; independently read owned store and binding metadata plus live TLS stay unchanged" });
     const result = await deployIisBinding({ binding, certificatePem: pem(certificates[1]), verifyTimeoutMs: 15000 });
     fs.writeFileSync(path.join(directory, "deploy.json"), JSON.stringify(result));

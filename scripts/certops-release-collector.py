@@ -249,6 +249,41 @@ def windows_public_issuance(value):
     return result
 
 
+def adcs_capacity_fields(proof):
+    flags = ("freshConfirmedIssuer", "actualPostConfirmationPreflight", "sixConcurrentPublicRequests", "fivePersistedPendingApprovals", "sixthTransactionRolledBack", "noCaRequestsBeforeApproval", "noNativeKeysBeforeApproval", "distinctAuthorizedApprover", "firstNativeCompletionFreesSlot", "refusedSubjectReenteredPublicly", "twoClaimBoundNativeInstallations", "twoDistinctOwnedCaRequests", "twoNonexportableMachineKeys", "twoNativeIisAndTrustedTls", "fourUnapprovedJobsPubliclyRejected", "approvalSettingRestored")
+    if not isinstance(proof, dict) or proof.get("scope") != "actual-native-adcs-per-issuer-five-public-approvals-and-terminal-release" or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete native AD CS capacity evidence")
+    result = {"scope": proof["scope"], **dict.fromkeys(flags, True)}
+    for field, expected in (("cap", 5), ("initialAccepted", 5), ("initialRefused", 1), ("nativeCompleted", 2)):
+        if type(proof.get(field)) is not int or proof[field] != expected:
+            raise ValueError("Invalid native AD CS capacity count")
+        result[field] = expected
+    uuid = r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+    for field, pattern in (("requestIds", r"[1-9][0-9]{0,9}"), ("fingerprints", r"[a-f0-9]{64}"), ("enrollmentIds", uuid), ("jobIds", uuid)):
+        values = proof.get(field)
+        if not isinstance(values, list) or len(values) != 2 or any(not isinstance(value, str) or not re.fullmatch(pattern, value) for value in values) or len(set(values)) != 2:
+            raise ValueError("Invalid distinct native AD CS capacity identities")
+        result[field] = list(values)
+    if any(int(value) > 0xffffffff for value in result["requestIds"]):
+        raise ValueError("Invalid native AD CS capacity request bound")
+    return result
+
+
+def webhosting_fields(proof):
+    flags = ("publicIssueAndRenewInstalled","twoIndependentCaRequests","freshSerialSpkiAndKey","webHostingProtectedCustody","myCopiesAbsent","exactNativeIisAndHttpSysStore","trustedSniTls","installedDiscoveryInventory","immutableAcceptedStore","predecessorRetentionStorePreserved","storeQualifiedCleanupRegistered")
+    if (not isinstance(proof, dict) or proof.get("scope") != "real-adcs-webhosting-issue-and-fresh-key-manual-renewal" or proof.get("store") != "WebHosting" or proof.get("expiryCleanupQualified") is not False or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Incomplete native WebHosting renewal evidence")
+    result = {"scope": proof["scope"], "store": "WebHosting", "expiryCleanupQualified": False, **dict.fromkeys(flags, True)}
+    for field, pattern in (("requestIds", r"[1-9][0-9]{0,9}"), ("fingerprints", r"[a-f0-9]{64}")):
+        values = proof.get(field)
+        if not isinstance(values, list) or len(values) != 2 or any(not isinstance(value, str) or not re.fullmatch(pattern, value) for value in values) or len(set(values)) != 2:
+            raise ValueError("Invalid distinct native WebHosting generations")
+        result[field] = list(values)
+    if any(int(value) > 0xffffffff for value in result["requestIds"]):
+        raise ValueError("Invalid native WebHosting CA request bound")
+    return result
+
+
 def retention24h_fields(value):
     """Public native-day proof only; timer/prepare/source fixtures cannot qualify."""
     proof = value.get("nativeRetention24h")
@@ -560,6 +595,31 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
         if value.get("suite") == "windows-host":
+            runtime = value.get("nativePackagedChainRuntime")
+            runtime_flags = ("candidateHelperDigestMatched", "literalUnicodeSpaceBracketPath", "defaultPackagedResolverUsed", "nativeMetadataPositiveBeforeFault", "actualCandidateWrongProtocolPeUsed", "realBridgeRefusedWrongProtocol", "ownedChildClosedBeforeRestore", "exactOriginalFileIdentityRestored", "nativeMetadataPositiveAfterRestore")
+            if (not isinstance(runtime, dict) or runtime.get("scope") != "extracted-candidate-native-chain-metadata-path-and-protocol-refusal"
+                    or runtime.get("metadataOnly") is not True or runtime.get("architecture") != "amd64"
+                    or any(runtime.get(key) is not False for key in ("serviceInstalled", "cmcPackagedQualified", "nativeGoVerifierPackagedQualified"))
+                    or any(runtime.get(flag) is not True for flag in runtime_flags)
+                    or any(not isinstance(runtime.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", runtime[key]) for key in ("chainHelperSha256", "wrongProtocolHostSha256"))
+                    or runtime["chainHelperSha256"] == runtime["wrongProtocolHostSha256"]):
+                raise ValueError("Incomplete extracted candidate native chain runtime proof")
+            result["nativePackagedChainRuntime"] = {key: runtime[key] for key in ("scope", "metadataOnly", "serviceInstalled", "cmcPackagedQualified", "nativeGoVerifierPackagedQualified", "architecture", "chainHelperSha256", "wrongProtocolHostSha256", *runtime_flags)}
+            settings = value.get("nativeHttpSysClientSettings")
+            flags = ("nativeNondefaultSettingsObserved", "actualProductionCutover", "publicCandidateAbsentBeforeRollback", "actualNativeRollbackSucceeded", "rawSettingsPreservedAfterCutoverAndRollback", "trustedTlsVerifiedAfterEveryTransition", "unrelatedEndpointPreserved", "originalCertificateRestored")
+            expected = (("revocation-cached-no-usage", 65542, 3600, 5000), ("no-revocation-normal-usage", 5, 120, 7000))
+            if (not isinstance(settings, dict) or settings.get("scope") != "native-http-sys-client-policy-preservation-not-client-auth-handshake"
+                    or settings.get("clientAuthHandshakeQualified") is not False
+                    or not isinstance(settings.get("cases"), list) or len(settings["cases"]) != 2):
+                raise ValueError("Missing bounded native HTTP.sys client policy preservation")
+            projected = []
+            for item, values in zip(settings["cases"], expected):
+                if (not isinstance(item, dict) or item.get("id") != values[0]
+                        or any(type(item.get(key)) is not int or item[key] != target for key, target in zip(("checkMode", "freshness", "retrievalTimeout"), values[1:]))
+                        or any(item.get(flag) is not True for flag in flags)):
+                    raise ValueError("Incomplete native HTTP.sys client policy case")
+                projected.append({key: item[key] for key in ("id", "checkMode", "freshness", "retrievalTimeout", *flags)})
+            result["nativeHttpSysClientSettings"] = {"scope": settings["scope"], "clientAuthHandshakeQualified": False, "cases": projected}
             usage = value.get("nativeKeyUsage")
             if (not isinstance(usage, dict) or usage.get("scope") != "native-copied-csr-x509-usage-and-cng-signing-permission"
                     or usage.get("copiedActualCsrExtensions") is not True
@@ -717,6 +777,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            result["nativeAdcsCapacity"] = adcs_capacity_fields(value.get("nativeAdcsCapacity"))
+            result["nativeWebHostingRenewal"] = webhosting_fields(value.get("nativeWebHostingRenewal"))
             result["nativeAlgorithmBoundaries"] = algorithm_boundaries_fields(value.get("nativeAlgorithmBoundaries"))
             result["nativeCmcBoundaries"] = cmc_boundaries_fields(value.get("nativeCmcBoundaries"))
             foreign = value.get("nativeForeignSpkiCandidate")

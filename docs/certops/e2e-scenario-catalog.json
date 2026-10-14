@@ -530,7 +530,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "WebHosting issue acceptance and absence of duplicate My copy covered; non-default renewal/discovery/retention and every supported store remain."
+      "remainingCoverage": "Native source now adds two public AD CS enrollments for one isolated WebHosting identity, fresh protected keys, exact IIS/HTTP.sys store binding, trusted TLS, actual installed discovery ingestion, immutable acceptance receipts and predecessor retention store coordinates. Supporting ownership/cleanup and proof adversaries pass; native execution remains pending. Expiry-based deletion in a non-default store and additional supported stores/issuer permutations remain separate qualification."
     },
     {
       "id": "windows-cng.store-concurrency",
@@ -554,7 +554,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "All four Go modules require zero skips. Fresh candidate package verifies both helper digests and PE architectures independently; actual native chain helper checks PEM/DER parity, missing/malformed public input, wrong CA pin, unavailable revocation and genuinely expired/not-yet-valid leaves. Authenticated release signatures, ARM64 native execution and additional candidate CMC/verifier integration fault variants remain; the separate signed-response decoder tampering source does not establish packaged-helper integration or signed CMC renewal. Native execution evidence is pending. A separate strict Windows 11 ARM64 desktop CNG runtime source now requires native Node/PowerShell/Go and fresh chain-helper execution, two real CNG CSR/accepted-leaf/export-refusal profiles and exact owned cleanup. Native ARM64 execution remains pending; this bounded source does not cover ARM64 installed-service, packaged CMC/verifier, IIS, Server or domain qualification."
+      "remainingCoverage": "All four Go modules require zero skips. Fresh candidate package verifies both helper digests and PE architectures independently; actual native chain helper checks PEM/DER parity, missing/malformed public input, wrong CA pin, unavailable revocation and genuinely expired/not-yet-valid leaves. Mandatory extracted-candidate chain/store-query runtime source now uses spaces, Unicode and literal brackets, independently matches helper digests, refuses an actually executed wrong-protocol candidate service-host PE through the real production bridge, drains its exact child and restores original file identity before a fresh positive native metadata query. Native execution remains pending. The default package ships host and chain binaries; domain CMC is separately built under reference/adcs-cmc/dist and remains a release packaging prerequisite for AD CS enablement. The production signing verifier is JavaScript; reference Go verifier qualification is distinct. Authenticated external release signatures and ARM64 native package execution remain unqualified; signed-response decoding does not implement signed CMC renewal. A separate strict Windows 11 ARM64 desktop CNG runtime source now requires native Node/PowerShell/Go and fresh chain-helper execution, two real CNG CSR/accepted-leaf/export-refusal profiles and exact owned cleanup. Native ARM64 execution remains pending; this bounded source does not cover ARM64 installed-service, packaged CMC/verifier, IIS, Server or domain qualification."
     },
     {
       "id": "windows-cng.provider-ground-truth",
@@ -683,7 +683,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "IIS sslFlags and native HTTP.sys disableHTTP2/disableLegacyTLS DefaultFlags bits/hash survive actual rebind/rollback; every client-cert/revocation/per-connection flag remains."
+      "remainingCoverage": "IIS sslFlags and native HTTP.sys disableHTTP2/disableLegacyTLS DefaultFlags bits/hash have native rebind/rollback source. Two mandatory IP-binding policy profiles additionally require independently read DefaultSslCertCheckMode bits for client-certificate revocation, cached-only revocation and usage checking, nonzero freshness/retrieval timers, real production cutover, actual native bind-failure rollback and original-certificate restoration, with trusted TLS and unrelated endpoint metadata preserved. Source and adversarial proof checks are implemented; native execution remains pending. This does not qualify a client-certificate authentication handshake, CRL/OCSP retrieval, every per-connection flag or all HTTP.sys version combinations."
     },
     {
       "id": "windows-iis.noop-redeploy",
@@ -1145,7 +1145,7 @@
         "ca-capacity-api"
       ],
       "implementation": "tests/e2e/certops-ca-capacity-e2e.test.js",
-      "remainingCoverage": "Six public issuance cases and six mixed bulk admission cases passed against actual API/PostgreSQL: concurrent reservations at the shared per-CA cap, endpoint canonicalization, independent CA admission, atomic failed reservation, successful job replay, requester rejection releasing a slot, and heterogeneous bulk renewal sharing issuance reservations. Jobs remain pending approval and complete linked renewal profiles are seeded prerequisites. Actual scheduler-to-manual/bulk capacity interaction, visible waiting/worker recovery and CA/native execution remain distinct qualification gaps. Separate strict scheduler-capacity-api source/workflow now implements actual SQL NOW due selection, five issuance reservations blocking automatic creation, concurrent sweep single-slot release, bulk shared admission, pause and resume. All six scheduler cases passed against an independently owned actual API/database, with strict report verification and complete fixture destruction; hosted/native qualification remains pending."
+      "remainingCoverage": "Six public issuance cases and six mixed bulk admission cases passed against actual API/PostgreSQL: concurrent reservations at the shared per-CA cap, endpoint canonicalization, independent CA admission, atomic failed reservation, successful job replay, requester rejection releasing a slot, and heterogeneous bulk renewal sharing issuance reservations. Jobs remain pending approval and complete linked renewal profiles are seeded prerequisites. Actual scheduler-to-manual/bulk capacity interaction, visible waiting/worker recovery and CA/native execution remain distinct qualification gaps. Separate strict scheduler-capacity-api source/workflow now implements actual SQL NOW due selection, five issuance reservations blocking automatic creation, concurrent sweep single-slot release, bulk shared admission, pause and resume. All six scheduler cases passed against an independently owned actual API/database, with strict report verification and complete fixture destruction; hosted/native qualification remains pending. Separate native AD CS source now reserves five real public pending approvals on one fresh confirmed issuer, refuses a sixth atomically, uses a distinct manager to approve two genuine CA/CNG/IIS/trusted-TLS installations and proves successful completion releases capacity for the originally refused subject. Four unapproved requests are publicly rejected and original approval policy restored. Source and pure proof checks are implemented; native forest execution remains pending."
     },
     {
       "id": "renewal.path-health",
@@ -1412,7 +1412,7 @@
         "windows-elevated-native"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Native Windows chain source covers actual wrong CA pin, expired/not-yet-valid leaf and malformed public material; enterprise source covers native revocation and deferred validation. Both host executions remain pending. Foreign RequestId/SPKI/name/template reconciliation and borrowed-identity installation refusals still require complete native paths."
+      "remainingCoverage": "Native Windows chain source covers wrong CA pin, expired/not-yet-valid leaf and malformed public material. Domain sources additionally cover actual unknown and foreign-requester retrieval, same-requester other-enrollment SPKI refusal in read-only candidate search, issued-template mismatch, revocation and deferred validation. The read-only SPKI case does not qualify public uncertain-state recovery or borrowed-certificate installation. Native executions and remaining name/identity cross-products remain pending."
     },
     {
       "id": "adcs-safety.cmc-locale",
@@ -1446,7 +1446,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native source isolates real LDAP CRL outage, requires validation_deferred with old TLS/owned key retained, removes the fault and continues the same CA request/key. Host execution is pending; persistent validation_expired and OCSP/HTTP distribution fault variants remain."
+      "remainingCoverage": "Native source isolates real LDAP CRL outage, preserves outgoing trusted TLS and the owned key, removes the fault and continues the same CA request. A separate configured five-minute validation_expired source waits real monotonic time, preserves the committed deadline through a SYSTEM restart and restoration of the default policy, then requires exact unaccepted-key cleanup without CA resubmission. Native execution, default 24-hour elapsed expiry, and OCSP/HTTP distribution fault variants remain pending."
     },
     {
       "id": "adcs-safety.ca-key-reuse",
@@ -2118,7 +2118,7 @@
         "core-real-dashboard-disposable-stack"
       ],
       "implementation": "scripts/certops-browser.js",
-      "remainingCoverage": "ActualCorewizard missingagent/preflight gate tested; actualdomain safeconfirm/enrollment/reconcilebrowserjourneys remain."
+      "remainingCoverage": "The Core browser wizard missing-agent/preflight gate has executed. Mandatory domain browser source now covers issuer creation, actual native preflight, safe CA confirmation, existing-inventory profile attachment, default scheduler enrollment, installed enrollment visibility and exact owned cleanup. Native browser execution remains pending. Browser pending-approval, continuation/reconciliation and restricted Abandon variants remain; first-issue and generic manual AD CS renewal UI are not claimed."
     },
     {
       "id": "experience.browser-settings",

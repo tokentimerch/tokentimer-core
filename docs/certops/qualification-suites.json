@@ -40,7 +40,9 @@
       "windows-retention-all-closed-respects-real-deadline": "real-host",
       "windows-state-config-read-denied": "real-host",
       "windows-state-credential-read-denied": "real-host",
-      "windows-state-signing-pin-read-denied": "real-host"
+      "windows-state-signing-pin-read-denied": "real-host",
+      "windows-iis-client-revocation-policy-preservation": "real-host",
+      "windows-packaged-chain-runtime-protocol-refusal": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -279,7 +281,13 @@
       "adcs-real-template-key-rsa2048-below-template3072-refused": "real-host",
       "adcs-real-template-key-rsa3072-below-template4096-refused": "real-host",
       "adcs-real-template-key-ec256-on-p384-schema-three-refused": "real-host",
-      "adcs-real-template-key-ec256-on-p384-schema-four-refused": "real-host"
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused": "real-host",
+      "adcs-real-webhosting-issued-renewed-native-custody": "real-host",
+      "adcs-real-webhosting-discovery-and-retention-coordinates": "real-host",
+      "adcs-real-capacity-five-public-approvals": "real-host",
+      "adcs-real-capacity-sixth-atomic-refusal": "real-host",
+      "adcs-real-capacity-native-issuance-releases-slot": "real-host",
+      "adcs-real-capacity-approval-policy-restored": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -592,7 +600,13 @@
       "adcs-real-template-key-rsa2048-below-template3072-refused": "real-host",
       "adcs-real-template-key-rsa3072-below-template4096-refused": "real-host",
       "adcs-real-template-key-ec256-on-p384-schema-three-refused": "real-host",
-      "adcs-real-template-key-ec256-on-p384-schema-four-refused": "real-host"
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused": "real-host",
+      "adcs-real-webhosting-issued-renewed-native-custody": "real-host",
+      "adcs-real-webhosting-discovery-and-retention-coordinates": "real-host",
+      "adcs-real-capacity-five-public-approvals": "real-host",
+      "adcs-real-capacity-sixth-atomic-refusal": "real-host",
+      "adcs-real-capacity-native-issuance-releases-slot": "real-host",
+      "adcs-real-capacity-approval-policy-restored": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1712,7 +1726,9 @@
       "windows-retention-all-closed-respects-real-deadline",
       "windows-state-config-read-denied",
       "windows-state-credential-read-denied",
-      "windows-state-signing-pin-read-denied"
+      "windows-state-signing-pin-read-denied",
+      "windows-iis-client-revocation-policy-preservation",
+      "windows-packaged-chain-runtime-protocol-refusal"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -1951,7 +1967,13 @@
       "adcs-real-template-key-rsa2048-below-template3072-refused",
       "adcs-real-template-key-rsa3072-below-template4096-refused",
       "adcs-real-template-key-ec256-on-p384-schema-three-refused",
-      "adcs-real-template-key-ec256-on-p384-schema-four-refused"
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused",
+      "adcs-real-webhosting-issued-renewed-native-custody",
+      "adcs-real-webhosting-discovery-and-retention-coordinates",
+      "adcs-real-capacity-five-public-approvals",
+      "adcs-real-capacity-sixth-atomic-refusal",
+      "adcs-real-capacity-native-issuance-releases-slot",
+      "adcs-real-capacity-approval-policy-restored"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2264,7 +2286,13 @@
       "adcs-real-template-key-rsa2048-below-template3072-refused",
       "adcs-real-template-key-rsa3072-below-template4096-refused",
       "adcs-real-template-key-ec256-on-p384-schema-three-refused",
-      "adcs-real-template-key-ec256-on-p384-schema-four-refused"
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused",
+      "adcs-real-webhosting-issued-renewed-native-custody",
+      "adcs-real-webhosting-discovery-and-retention-coordinates",
+      "adcs-real-capacity-five-public-approvals",
+      "adcs-real-capacity-sixth-atomic-refusal",
+      "adcs-real-capacity-native-issuance-releases-slot",
+      "adcs-real-capacity-approval-policy-restored"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

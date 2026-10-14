@@ -25,7 +25,7 @@ function verifyPeArchitecture(file, expected) {
   assert.equal(bytes.readUInt32LE(offset), 0x00004550);
   assert.equal(bytes.readUInt16LE(offset + 4), expected, "helper architecture does not match its package filename");
 }
-async function qualifyPackage({ powershell, run, workDir }) {
+async function qualifyPackage({ powershell, run, workDir, gate }) {
   const packageRoot = path.resolve(__dirname, "../..");
   const artifactDir = path.join(workDir, "release-package");
   const { main: pack, assertNoPrivateKeyMaterial } = require("../pack-release");
@@ -53,6 +53,15 @@ async function qualifyPackage({ powershell, run, workDir }) {
   { cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, NODE_PATH: "" } });
   assert.equal(probe.status, 0, "shipped native modules must import outside the repository without installed dependencies");
   assert.match(probe.stdout, /isolated-shipped-imports-ok/);
+  assert.equal(typeof gate?.scenario, "function", "Packaged runtime qualification requires the actual host gate");
+  await gate.scenario("windows-packaged-chain-runtime-protocol-refusal", async () => {
+    const helper = require("./packaged-helper-runtime-fixture");
+    gate.report.nativePackagedChainRuntime = await helper.qualifyPackagedHelperRuntime({ extractedRoot: root, artifactDir,
+      expectedChainSha256: sha256(path.join(packageRoot, "bin/tokentimer-adcs-chain-amd64.exe")),
+      expectedHostSha256: sha256(path.join(packageRoot, "bin/tokentimer-agent-host-amd64.exe")) });
+    helper.verifyProof(gate.report.nativePackagedChainRuntime);
+  }, { evidenceLevel: "real-host", oracle: "Actual extracted candidate bridge/native metadata query from Unicode, space and literal-bracket paths, actual wrong-protocol candidate PE refusal, owned child close and exact original file restoration followed by a fresh successful native query; no CMC/verifier/service qualification" });
+
   const state = path.join(artifactDir, "malformed-config-state");
   fs.mkdirSync(state);
   const credential = path.join(state, "credential");
