@@ -505,8 +505,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Malformed PEM refusal covered; wrong SPKI/template/algorithm and broken association matrix remain."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; tests/e2e/helpers/certops-windows-wrong-leaf.js; scripts/certops-csr-certificate-key.test.js",
+      "remainingCoverage": "Mandatory installed Windows ACME source returns a genuine owned CA-issued predecessor leaf for a fresh CNG CSR and requires signed renewal failure before acceptance, exact unaccepted-key absence, unchanged predecessor custody/binding/trusted TLS/profile and restored configuration across five key profiles on Server2022/2025. Portable actual OpenSSL RSA/EC own-key, same-algorithm and cross-algorithm wrong-key controls pass; actual executor regression requires zero accept/bind calls and exact owned key cleanup. Native sidecars have not executed. AD CS template/algorithm constraints have separate native sources; broader broken-association and issuer permutations remain."
     },
     {
       "id": "windows-cng.no-export",
@@ -1958,8 +1958,8 @@
       "requiredEnvironments": [
         "linux-api-postgresql"
       ],
-      "implementation": "tests/e2e/certops-jobs-api-e2e.test.js; tests/e2e/certops-job-decisions-e2e.test.js",
-      "remainingCoverage": "Bulk, scheduler and trust approval creation plus native execution dispatch pause require qualified execution evidence. Actual manual approval/hash binding, rejection while paused, viewer refusal and one-decision history are covered."
+      "implementation": "tests/e2e/certops-jobs-api-e2e.test.js; tests/e2e/certops-job-decisions-e2e.test.js; tests/e2e/certops-retirement-approval-e2e.test.js",
+      "remainingCoverage": "Bulk, scheduler and trust approval creation plus native execution dispatch pause require qualified execution evidence. Actual manual approval/hash binding, rejection while paused, viewer refusal and one-decision history are covered. Seven actual public API/PostgreSQL registered-protocol cases add an independently signed active-renewal positive control, ordered retirement/approval cancellation, three concurrent pairs for each retired status, repeated actual claim refusal, zero retired attempts/evidence and preserved terminal identity/token/one retirement audit. Complete linked profiles are disclosed prerequisites; concurrent requests do not force a deterministic database-lock interleaving and no installed-agent/CA execution is claimed."
     },
     {
       "id": "governance.pause",
@@ -2004,8 +2004,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-governance-e2e.test.js; tests/e2e/certops-decommission-e2e.test.js; tests/e2e/certops-terminal-renewal-e2e.test.js",
-      "remainingCoverage": "Seven actual public API/PostgreSQL scenarios prove unknown/stored-copy acknowledgement atomicity, explicit terminal decommissioning and fresh real trusted TLS rediscovery/concurrent rescans without reactivation or duplicate history. Existing serving-TLS refusal remains mandatory. Native IIS/HTTP.sys observation permutations and edition governance require their separate qualification; no native removal is claimed. A separate six-case supporting API suite uses explicitly complete profile/key-mode prerequisites and genuine active manual positive controls, then public revoked/decommissioned retirement and trusted TLS rediscovery; manual and bulk renewal refuse terminal subjects with exact job/outbox/identity/token/audit preservation. Native key removal, Windows binding permutations and downstream edition policy remain separate qualification."
+      "implementation": "tests/e2e/certops-governance-e2e.test.js; tests/e2e/certops-decommission-e2e.test.js; tests/e2e/certops-terminal-renewal-e2e.test.js; tests/e2e/certops-retired-scheduler-e2e.test.js",
+      "remainingCoverage": "Seven actual public API/PostgreSQL scenarios prove unknown/stored-copy acknowledgement atomicity, explicit terminal decommissioning and fresh real trusted TLS rediscovery/concurrent rescans without reactivation or duplicate history. Existing serving-TLS refusal remains mandatory. Native IIS/HTTP.sys observation permutations and edition governance require their separate qualification; no native removal is claimed. A separate six-case supporting API suite uses explicitly complete profile/key-mode prerequisites and genuine active manual positive controls, then public revoked/decommissioned retirement and trusted TLS rediscovery; manual and bulk renewal refuse terminal subjects with exact job/outbox/identity/token/audit preservation. Native key removal, Windows binding permutations and downstream edition policy remain separate qualification. A deterministic owned row-lock case also verifies authoritative retired-identity renewal refusal while the inventory cache remains stale, before and after real TLS rediscovery. A separate five-scenario exclusive API/PostgreSQL scheduler suite reproduces stale-cache automatic pickup, requires real SQL NOW scans/disabled counts to exclude terminal identities and rejects stale pre-retirement execution snapshots at final transactional admission; complete profiles/key mode are explicit prerequisites, with genuine active automation positive control and no native execution claim."
     },
     {
       "id": "governance.stop-managing",

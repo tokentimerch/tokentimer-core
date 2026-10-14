@@ -60,6 +60,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const workDir = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "certops-windows-journey-"));
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
   let outputPrivacy;
+  let publicSession, publicIssuanceFacts, publicIssueInput;
+  const publicIssueProofPath=path.join(repoRoot,"qualification-results",`windows-public-issue-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(publicIssueProofPath),false,"Refuse stale public admission proof");
   const domain = `certops-${crypto.randomBytes(6).toString("hex")}.example.test`;
   const adoptionDomain = `certops-adopt-${crypto.randomBytes(6).toString("hex")}.example.test`;
   const site = `CertOps-${crypto.randomUUID()}`;
@@ -232,14 +235,12 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       } });
     }
     await require("./windows-adoption-retention-journey")({ pool, baseUrl, workspaceId, agentId, configDir, workDir, repoRoot, domain: adoptionDomain, keyProfile, caEndpoint: caEndpoint.href, caRoots: roots.map(root => root.pem), ps, command });
-    const client = await pool.connect();
-    let outcome;
-    try {
-      await client.query("BEGIN"); await client.query("SELECT id FROM workspaces WHERE id=$1 FOR SHARE", [workspaceId]);
-      outcome = await require(path.join(repoRoot, "apps/api/services/certops/issuance")).createCertificateIssuanceJob({ client, workspaceId, requestedByUserId: userId, source: "api", mode: "real", idempotencyKey: crypto.randomUUID(), payload: { ...keyProfile, sans: [domain], target: { type: "windows-iis", reference: domain, store: "My", binding: { site, port, sniHost: domain } }, commandRef: "qualification-acmesh", caEndpoint: caEndpoint.href, acmeKind: "acme.sh", dnsProvider: "pebble-challtestsrv", dnsZone: "example.test" } });
-      await client.query("COMMIT");
-    } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-    const job = outcome.job || outcome; certificateId = job.subjectId || job.subject_id; ownedJobs.push(job.id);
+    publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl);
+    const publicAdmission = require("./helpers/certops-windows-public-issuance");
+    const input = publicIssueInput = publicAdmission.buildPublicWindowsIssue({ workspaceId, keyProfile, domain, site, port, caEndpoint: caEndpoint.href });
+    const admitted = await publicAdmission.admitPublicWindowsIssue({ baseUrl, pool, workspaceId, session: publicSession, input, ownedJobs });
+    publicIssuanceFacts = admitted.facts;
+    const job = admitted.job; certificateId = job.subjectId;
     assert.ok(job.id && certificateId);
     await waitUntil(async () => { const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [job.id])).rows[0]; if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Windows real job terminated ${row.status}`); return row?.status === "succeeded"; });
     const observed = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate()); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Independent IIS TLS timeout"))); });
@@ -251,6 +252,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.equal(Number(ps(`$c=Get-Item 'Cert:\\LocalMachine\\My\\${thumbprint}'; $k=$null; try { $k=${privateKeyGetter}; $k.KeySize } finally { if ($k) { $k.Dispose() }; $c.Dispose() }`)), keyProfile.keySize);
     assert.ok(command("netsh.exe", ["http", "show", "sslcert", `hostnameport=${domain}:${port}`]).toLowerCase().includes(thumbprint.toLowerCase()));
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, job.id])).rows.length, "agent result evidence must persist");
+    publicIssuanceFacts.nativeJobSucceeded = true;
+    publicIssuanceFacts.nativeCngIisTrustedTlsVerified = true;
     const credentialFile = path.join(configDir, "credential");
     for (const protectedPath of [configDir, credentialFile]) {
       assert.equal(ps(`$a=Get-Acl -LiteralPath '${protectedPath.replace(/'/g, "''")}'; if (!$a.AreAccessRulesProtected) { throw 'Inherited service state ACL' }; foreach ($r in $a.Access) { if ($r.AccessControlType -eq 'Allow') { $sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; if ($sid -notin @('S-1-5-18','S-1-5-32-544')) { throw 'Unexpected service state trustee' } } }; 'restricted'`),
@@ -374,11 +377,12 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.ok(Date.parse(managed.not_after) <= Date.now() + (managed.renew_before_days || 30) * 86400000, "disposable Pebble leaf must naturally fall within the renewal window");
     const automation = await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE", [workspaceId, certificateId]);
     assert.equal(automation.rows.length, 1, "derived profile must enable the active management period");
+    await require("./helpers/certops-windows-wrong-leaf").qualifyWrongLeaf({publicSession,pool,workspaceId,agentId,certificateId,configDir,workDir,repoRoot,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil,ownedJobs});
     const worker = await import(require("node:url").pathToFileURL(path.join(repoRoot, "apps/worker/src/certops-worker.js")).href);
     const schedulerEnv = { ...process.env, CERTOPS_ENABLED: "true" };
     for (const [name, settings] of Object.entries(worker.CERTOPS_SWEEP_CONFIG)) schedulerEnv[settings.enableEnv] = name === "renewal-scheduler" ? "true" : "false";
     await worker.runCertOpsMaintenance({ dbPool: pool, env: schedulerEnv });
-    const renewalJob = await waitUntil(async () => (await pool.query("SELECT id,status,payload FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' ORDER BY created_at DESC LIMIT 1", [workspaceId, String(certificateId)])).rows[0]);
+    const renewalJob = await waitUntil(async () => (await pool.query("SELECT id,status,payload FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation' ORDER BY created_at DESC LIMIT 1", [workspaceId, String(certificateId)])).rows[0]);
     ownedJobs.push(renewalJob.id);
     assert.ok(renewalJob.payload?.renewalProfile, "worker renewal must carry persisted renewal profile");
     await waitUntil(async () => { const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [renewalJob.id])).rows[0]; if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Windows real renewal terminated ${row.status}`); return row?.status === "succeeded"; });
@@ -482,6 +486,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if (!werTouched && werSnapshot) await cleanup(async () => { assert.deepEqual(readWerPolicy(), werSnapshot, "Candidate lifecycle must preserve operator WER policy"); });
     await cleanup(async () => { for (const response of heldResponses) response.destroy(); dnsProxy.closeAllConnections(); await new Promise((resolve) => dnsProxy.close(resolve)); });
     if (siteOwned) await cleanup(async () => { ps(`Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { Remove-Website -Name '${site}' }; & netsh.exe http show sslcert hostnameport=${domain}:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert hostnameport=${domain}:${port} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Owned binding cleanup failed' } }`); });
+    // A lost HTTP response may precede tracking the actual admitted job. Recover
+    // only this run's exact public idempotency identity before native cleanup.
+    if(publicIssueInput)await cleanup(async()=>{const rows=(await pool.query("SELECT id,subject_id FROM certificate_jobs WHERE workspace_id=$1 AND idempotency_key=$2",[workspaceId,publicIssueInput.body.idempotencyKey])).rows;assert.ok(rows.length<=1);for(const row of rows){if(!ownedJobs.includes(row.id))ownedJobs.push(row.id);if(certificateId)assert.equal(row.subject_id,certificateId);else certificateId=row.subject_id;}});
     const receipts = path.join(configDir, "windows-cert-store", "issued-containers");
     if (fs.existsSync(receipts)) for (const file of fs.readdirSync(receipts)) await cleanup(async () => {
       const record = JSON.parse(fs.readFileSync(path.join(receipts, file), "utf8"));
@@ -508,8 +515,13 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     for (const root of roots) await cleanup(async () => ps(`$p='Cert:\\LocalMachine\\${root.store}\\${root.thumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Fixture CA trust remains' }`));
     for (const jobId of ownedJobs) for (const table of ["certificate_evidence", "certops_agent_job_log", "certificate_job_log", "certificate_jobs"]) await cleanup(() => pool.query(`DELETE FROM ${table} WHERE workspace_id=$1 AND ${table === "certificate_jobs" ? "id" : "job_id"}=$2`, [workspaceId, jobId]));
     if (certificateId) await cleanup(() => pool.query("DELETE FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [workspaceId, certificateId]));
+    if (publicSession) await cleanup(async () => { assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM certificate_jobs WHERE requested_by_user_id=$1",[publicSession.userId])).rows[0].count,0,"Retain owned actor until all requesting jobs are removed"); await publicSession.cleanup(); if (publicIssuanceFacts) publicIssuanceFacts.ownedActorCleanup = true; });
     if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
+    if (!journeyFailure && errors.length === 0) {
+      require("./helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(publicIssuanceFacts);
+      fs.writeFileSync(publicIssueProofPath,JSON.stringify(publicIssuanceFacts),{flag:"wx"});
+    }
     if (errors.length) throw new AggregateError(journeyFailure ? [journeyFailure, ...errors] : errors, "Windows real journey owned cleanup failed", { cause: journeyFailure });
   }
 };

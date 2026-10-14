@@ -28,7 +28,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Manual certificate renewal now returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE` for revoked or decommissioned certificates, matching bulk renewal even after the certificate is observed serving again. A stored renewal profile cannot bypass operator retirement.
+- Windows ACME issue and renewal jobs refuse returned certificates whose public key differs from their CNG CSR before acceptance or IIS cutover (`ACME_CERTIFICATE_KEY_MISMATCH`).
+- Manual and automatic renewal now honor revoked or decommissioned identity lifecycle even while inventory updates leave cached status behind or endpoints still serve the certificate. Manual renewal returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE`, matching bulk per-item refusals.
 
 - PowerDNS and OVH DNS challenge operations now refuse malformed record lookup responses before changing records or reporting successful cleanup, preserving unknown sibling values.
 - Windows agent fatal startup errors now finish pending native teardown and exit with code `1`, avoiding a native abort during registration conflicts.

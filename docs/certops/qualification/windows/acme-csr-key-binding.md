@@ -1,0 +1,9 @@
+# ACME response key binding before Windows acceptance
+
+The Windows ACME executor compares the returned X.509 leaf public key with its own freshly generated CNG CSR before calling certificate acceptance. A valid certificate for another pending machine key does not establish this job's key ownership. Mismatched or unreadable public keys produce `ACME_CERTIFICATE_KEY_MISMATCH`; the job's never-accepted key follows the existing owned orphan cleanup path.
+
+The installed Windows journey adds a signed public renewal whose owned command-profile fault returns the genuinely CA-issued predecessor leaf for a different new CNG CSR. It records the actual public CSR and native container inventory before returning the leaf. The failed job must remove only its new unaccepted key, preserve the predecessor's native key association/export policy/public certificate, HTTP.sys binding, trusted served TLS, stored renewal profile and protected credential, then restore the exact operator configuration and service. This tests response substitution at the executor boundary; it does not claim that the raw acceptance helper accepts an expected-key argument or rejects every other machine key.
+
+The `windows-acme-wrong-spki` report and its mandatory `windows-acme-wrong-spki-before-accept` case run for each existing Windows Server/key-profile lane. Reports contain bounded public facts and source hashes. Public CSR copies remain inside the owned temporary fixture and are excluded from uploaded artifacts.
+
+Portable checks use real OpenSSL RSA and EC CSRs/certificates, including same-algorithm different keys, cross-algorithm mismatches and malformed inputs. The actual executor regression verifies rejection before acceptance or IIS mutation and deletion of exactly its generated fixture container. Native installed-agent execution remains pending; these portable checks do not qualify Windows CNG, SCM or IIS behavior.

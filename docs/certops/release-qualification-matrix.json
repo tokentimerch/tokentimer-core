@@ -217,7 +217,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -238,7 +240,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -259,7 +263,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -280,7 +286,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -301,7 +309,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -345,7 +355,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -366,7 +378,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -387,7 +401,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -408,7 +424,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -429,7 +447,9 @@
         "tests/e2e/helpers/certops-windows-capability-refresh.js",
         "tests/e2e/helpers/certops-windows-output-child.js",
         "tests/e2e/helpers/certops-windows-output-privacy.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "tests/e2e/helpers/certops-windows-public-issuance.js",
+        "tests/e2e/helpers/certops-api-fixture.js"
       ]
     },
     {
@@ -2166,7 +2186,231 @@
       "requiredSources": [
         "tests/e2e/helpers/certops-api-fixture.js",
         "apps/api/services/certops/jobs.js",
-        "apps/api/routes/certops.js"
+        "apps/api/routes/certops.js",
+        "apps/api/services/certops/certificateIdentity.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "retirement-approval-api-ubuntu24",
+      "kind": "host",
+      "suite": "retirement-approval-api",
+      "source": "tests/e2e/certops-retirement-approval-e2e.test.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "tests/e2e/helpers/certops-registered-agent.js",
+        "apps/api/services/certops/certificateIdentity.js",
+        "apps/api/services/certops/agentDispatch.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2022-rsa-2048",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2022-rsa-3072",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-3072"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2022-rsa-4096",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-4096"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2022-ec-p256",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p256"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2022-ec-p384",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p384"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2025-rsa-2048",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2025-rsa-3072",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-3072"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2025-rsa-4096",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "rsa-4096"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2025-ec-p256",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p256"
+      }
+    },
+    {
+      "id": "windows-wrong-spki-2025-ec-p384",
+      "kind": "host",
+      "suite": "windows-acme-wrong-spki",
+      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-wrong-leaf.js",
+        "tests/e2e/helpers/certops-windows-wrong-leaf-child.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/src/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "keyProfile": "ec-p384"
+      }
+    },
+    {
+      "id": "retired-identity-scheduler-api-ubuntu24",
+      "kind": "host",
+      "suite": "retired-identity-scheduler-api",
+      "source": "tests/e2e/certops-retired-scheduler-e2e.test.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/jobs.js"
       ],
       "environment": {
         "osFamily": "linux",

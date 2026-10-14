@@ -4743,6 +4743,12 @@ async function executeWindowsIisRenewJob({
     if (issuance.outcome !== "issued") {
       return { ...resultForUnissuedOutcome(issuance), keyRotated: null };
     }
+    // A valid tool-returned leaf can belong to another pending machine key.
+    // Refuse it before certreq acceptance; leaving certificatePem unset also
+    // permits definitive cleanup of this job's never-accepted CNG container.
+    if (!require("./issuers/csr-certificate-key").certificateMatchesCsr(csrResult.csrPem, issuance.certificatePem)) {
+      return { status: "failed", keyRotated: null, errorMessage: "ACME_CERTIFICATE_KEY_MISMATCH: returned certificate does not match this enrollment CSR" };
+    }
     certificatePem = issuance.certificatePem;
   } finally {
     // Unlike the file-based path, there is no staged private key to worry

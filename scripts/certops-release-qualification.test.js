@@ -27,6 +27,14 @@ test("a complete mandatory matrix cannot promote incomplete feature specificatio
   assert.ok(validateQualificationSummary({ ...summary, catalogCoverage: { ...coverage, implementationStatus: "all-specifications-implemented" } }, catalog).length);
 });
 const specification = { schemaVersion: 1, slots: [{ id: "fixture", kind: "host", suite: "job-decisions-api", source, environment }] };
+
+test("cheap matrix validation refuses growth beyond the reviewed collection ceiling", () => {
+  const committed = require("../docs/certops/release-qualification-matrix.json");
+  const slots = [...committed.slots];
+  while (slots.length < 512) slots.push({ ...committed.slots[0], id: `collection-boundary-${slots.length}`, environment: { ...committed.slots[0].environment, fixtureIndex: slots.length } });
+  assert.deepEqual(validateMatrix({ ...committed, slots }), []);
+  assert.match(validateMatrix({ ...committed, slots: [...slots, { ...slots[0], id: "over-budget" }] }).join("\n"), /512-slot collection policy/);
+});
 test("dedicated elapsed-pending release slot requires actual-hour evidence", () => {
   const suite = "enterprise-adcs-elapsed-pending-real";
   const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
@@ -228,6 +236,38 @@ test("stack matrix validates exact mandatory journey names and refuses skipped o
     assert.ok(verifyMatrix([{ ...stack, events: [{ ...event, ...mutation }] }], { candidateSha, specification }).length);
   }
 });
+test("Windows wrong-SPKI sidecars require preaccept custody and configuration restoration", () => {
+  const suite = "windows-acme-wrong-spki";
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
+  const proof = Object.fromEntries(["actualSignedRenewalFailed", "actualCsrDiffersFromReturnedLeaf", "genuineCaIssuedLeafReused", "rejectedUnacceptedKeyRemoved", "predecessorCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "storedProfileUnchanged", "configurationRestored"].map(field => [field, true]));
+  const value = suiteArtifact(suite, slot.source, { nativeWrongSpki: proof });
+  value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  for (const field of Object.keys(proof)) { const bad = structuredClone(value); bad.report.nativeWrongSpki[field] = false; assert.ok(verifyMatrix([bad], options).length); }
+  const missing = structuredClone(value); delete missing.report.nativeWrongSpki; assert.ok(verifyMatrix([missing], options).length);
+});
+
+test("Windows native stack slots require public admission proof beyond service-created jobs", () => {
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.kind === "stack" && row.suite === "real-agent-windows-acme-iis/rsa-2048");
+  const names = [...require(path.join(root, slot.requiredInventory)).requiredTests, ...slot.requiredTests];
+  const digest = file => crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex");
+  const events = names.map(name => ({ type: "test:pass", name, file: slot.source, scope: slot.suite, candidateSha, qualificationEnvironment: { ...slot.environment, measurement: "native" }, artifactQualification: "workflow-checkout-source", fixtureSource: { file: slot.source, sha256: digest(slot.source) }, fixtureSources: slot.requiredSources.map(file => ({ file, sha256: digest(file) })), skip: false, todo: false }));
+  const value = { kind: "stack", suite: slot.suite, environment: events[0].qualificationEnvironment, events };
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.ok(verifyMatrix([value], options).length);
+  const facts = { anonymousAdmissionRefused: true, viewerAdmissionRefused: true, authorizedAdmissionCreated: true, idempotentSameJob: true, publicRequesterPreserved: true, serverDerivedOsStoreKeyMode: true, publicPayloadPreserved: true, nativeJobSucceeded: true, nativeCngIisTrustedTlsVerified: true, ownedActorCleanup: true, anonymousStatus: 401, viewerStatus: 403, createStatus: 201, replayStatus: 201, source: "api", mode: "real", authorizedRole: "workspace_manager" };
+  events.at(-1).windowsPublicIssuance = facts;
+  assert.deepEqual(verifyMatrix([value], options), []);
+  for (const change of [{ ownedActorCleanup: false }, { serverDerivedOsStoreKeyMode: false }, { source: "automation" }, { authorizedRole: "admin" }, { viewerStatus: 201 }, { idempotentSameJob: false }]) {
+    const bad = structuredClone(value); Object.assign(bad.events.at(-1).windowsPublicIssuance, change);
+    assert.ok(verifyMatrix([bad], options).length);
+  }
+  const stale = structuredClone(value); stale.events[0].fixtureSources = stale.events[0].fixtureSources.filter(row => row.file !== "tests/e2e/helpers/certops-windows-public-issuance.js");
+  assert.ok(verifyMatrix([stale], options).length);
+});
+
 test("database matrix requires every committed case and source digest without promoting supporting evidence", () => {
   const definition = require("../tests/integration/certops-qualification-groups.json").adcs;
   const suite = "adcs-database-integration";

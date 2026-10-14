@@ -14,6 +14,7 @@ const output = path.join(__dirname, "../docs/certops/skip-qualification.generate
 const exclusiveSchedulerFiles = new Set([
   "tests/e2e/certops-scheduler-capacity-e2e.test.js",
   "tests/e2e/certops-renewal-toggle-e2e.test.js",
+  "tests/e2e/certops-retired-scheduler-e2e.test.js",
 ]);
 const schedulerWorkflow = ".github/workflows/certops-scheduler-capacity-qualification.yml";
 

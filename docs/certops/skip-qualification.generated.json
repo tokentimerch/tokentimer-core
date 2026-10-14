@@ -1401,6 +1401,32 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "75423f2b138644a6bf37",
+      "file": "tests/e2e/certops-retired-scheduler-e2e.test.js",
+      "line": 38,
+      "name": "automatic renewal cannot revive an authoritative retired identity behind a stale source",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "core-exclusive-scheduler-api",
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
+      "id": "326c960757b083e31001",
+      "file": "tests/e2e/certops-retirement-approval-e2e.test.js",
+      "line": 36,
+      "name": "operator retirement fences concurrent approvals and actual registered-agent dispatch",
+      "kind": "dynamic (this.skip() / t.skip())",
+      "reason": "no-host",
+      "environment": "core-certificate-api",
+      "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "95a3a1ef54582e6edf86",
       "file": "tests/e2e/certops-scheduler-capacity-e2e.test.js",
       "line": 13,
@@ -1442,7 +1468,7 @@
     {
       "id": "21e91652de4520082f93",
       "file": "tests/e2e/certops-terminal-renewal-e2e.test.js",
-      "line": 16,
+      "line": 39,
       "name": "public renew cannot revive retired fully profiled certificates after real rediscovery",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",

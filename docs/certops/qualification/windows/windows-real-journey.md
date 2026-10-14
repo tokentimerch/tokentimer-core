@@ -15,6 +15,19 @@ server/algorithm combinations. At most two runner jobs execute concurrently.
 Individual selections qualify only their selected environments; the complete
 release matrix requires reports from every server/algorithm combination.
 
+Initial issuance uses the authenticated public workspace jobs endpoint. A separate
+owned fixture login first receives viewer membership: anonymous and viewer POSTs
+must fail without creating any job or issuance inventory identity. The same login
+then receives `workspace_manager` membership and submits the real issue request;
+its identical replay must return the same job and certificate. PostgreSQL checks
+independently require `source=api`, the actual requesting user, and server-derived
+`os-store-managed` key custody. Fixture SQL provisions users/memberships only;
+it does not create issuance jobs or bypass approval settings. The existing signed
+installed-agent execution, CNG, IIS and authenticated TLS oracles remain mandatory.
+The parent journey report retains only bounded admission and cleanup facts and
+requires the current helper source hashes. Supporting public API checks have run
+for all five profiles; the Windows native journey remains pending.
+
 Each selected job also produces `windows-output-privacy-<key-profile>.json`.
 An owned command-profile launcher emits generated test-only password, bearer
 and private-key-shaped sentinels to actual child stdout and stderr, then

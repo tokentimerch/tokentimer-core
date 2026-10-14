@@ -7,7 +7,7 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 124
+Total skips found: 126
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
@@ -112,10 +112,12 @@ Total skips found: 124
 | `tests/e2e/certops-renewal-toggle-e2e.test.js` | 17 | disabled automatic renewal preserves manual admission and SQL batch fairness | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-result-fences-e2e.test.js` | 16 | real result API rejects forged nonce and attempt before consuming an owned lease | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-retired-observation-e2e.test.js` | 22 | fresh TLS observation cannot reactivate a retired identity | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-retired-scheduler-e2e.test.js` | 38 | automatic renewal cannot revive an authoritative retired identity behind a stale source | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-retirement-approval-e2e.test.js` | 36 | operator retirement fences concurrent approvals and actual registered-agent dispatch | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-scheduler-capacity-e2e.test.js` | 13 | SQL clock scheduler shares public issuance capacity and pause fences | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-shared-sources-e2e.test.js` | 22 | shared served fingerprint keeps source history and management accounting | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-signing-rotation-native-e2e.test.js` | 15 | isolated operator signing rotation adopts native pins and fences incomplete fleet completion | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-terminal-renewal-e2e.test.js` | 16 | public renew cannot revive retired fully profiled certificates after real rediscovery | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-terminal-renewal-e2e.test.js` | 39 | public renew cannot revive retired fully profiled certificates after real rediscovery | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-token-boundaries-e2e.test.js` | 17 | scoped machine token expiry and revocation through executor HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-trust-api-e2e.test.js` | 20 | trust approval and workspace pause through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-trust-multiple-e2e.test.js` | 13 | independent public trust anchors remain scoped through concurrent approval and retirement | dynamic (this.skip() / t.skip()) | `no-host` |

@@ -4134,13 +4134,13 @@ describe("windows-iis renew job (os-store-managed)", () => {
    * separately deploys a chain/intermediate file, so a single leaf is
    * all any test here needs).
    */
-  function makeCertbotStub({ exitCode = 0 } = {}) {
+  function makeCertbotStub({ exitCode = 0, certificatePem = FIXTURE_NEW_CERT_PEM } = {}) {
     const calls = [];
     function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
       const at = args.indexOf("--cert-path");
       if (at !== -1) {
-        fs.writeFileSync(args[at + 1], FIXTURE_NEW_CERT_PEM, { mode: 0o600 });
+        fs.writeFileSync(args[at + 1], certificatePem, { mode: 0o600 });
       }
       const error =
         exitCode === 0
@@ -4188,9 +4188,10 @@ describe("windows-iis renew job (os-store-managed)", () => {
       let stderr = "";
       if (file === "certreq.exe" && args[2] === "-new") {
         const reqPath = args[args.length - 1];
+        calls.at(-1).generatedContainer = fs.readFileSync(args[args.length - 2], "utf8").match(/KeyContainer = "([^"]+)"/)[1];
         fs.writeFileSync(
           reqPath,
-          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          require("./keys").generateCsr({ keyPath: path.join(__dirname, "verify/fixtures/leaf.key.pem"), subject: { commonName: "iis.example.com" }, altNames: ["iis.example.com"] }).csrPem,
           "utf8",
         );
       } else if (file === "certreq.exe" && args[2] === "-accept") {
@@ -4281,7 +4282,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     );
   }
 
-  async function runIisRenew({ job, windowsOpts = {}, acmeExitCode = 0 }) {
+  async function runIisRenew({ job, windowsOpts = {}, acmeExitCode = 0, certificatePem }) {
     const client = createRecordingClient();
     const windowsExecFileImpl = makeWindowsExecStub(windowsOpts);
     const outcome = await executeJob({
@@ -4291,7 +4292,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext({
-        acmeExecFileImpl: makeCertbotStub({ exitCode: acmeExitCode }),
+        acmeExecFileImpl: makeCertbotStub({ exitCode: acmeExitCode, certificatePem }),
         windowsExecFileImpl,
         windowsConnectImpl: makeConnectStub(),
       }),
@@ -4306,6 +4307,19 @@ describe("windows-iis renew job (os-store-managed)", () => {
 
     assert.equal(outcome.status, "succeeded");
     assert.equal(outcome.keyRotated, null);
+  });
+
+  it("rejects another real public key before acceptance or binding and cleans the unaccepted job key", async () => {
+    const wrong = fs.readFileSync(path.join(__dirname, "verify/fixtures/chain-leaf.crt.pem"), "utf8");
+    const { outcome, windowsExecFileImpl } = await runIisRenew({ job: makeJob(), certificatePem: wrong });
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /^ACME_CERTIFICATE_KEY_MISMATCH:/);
+    assert.equal(windowsExecFileImpl.calls.some(call => call.file === "certreq.exe" && call.args.includes("-accept")), false);
+    assert.equal(windowsExecFileImpl.calls.some(call => call.file === "netsh.exe" && call.args.includes("add")), false);
+    const deleted = windowsExecFileImpl.calls.filter(call => call.file === "certutil.exe" && call.args.includes("-delkey"));
+    assert.equal(deleted.length, 1);
+    assert.match(deleted[0].args.at(-1), /^tokentimer-certificate-iis-[a-f0-9]{8}$/);
+    assert.equal(deleted[0].args.at(-1), windowsExecFileImpl.calls.find(call => call.generatedContainer).generatedContainer);
   });
 
   it("reports a claim-bound validation.passed/step=verify evidence item carrying fingerprintSha256 and validTo, so control-plane reconciliation (reconcileProvisionedCertificate / refreshRenewedCertificateEvidence) can promote or refresh the certificate row", async () => {
@@ -4542,7 +4556,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,
-          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          require("./keys").generateCsr({ keyPath: path.join(__dirname, "verify/fixtures/leaf.key.pem"), subject: { commonName: "iis.example.com" }, altNames: ["iis.example.com"] }).csrPem,
           "utf8",
         );
         process.nextTick(() => callback(null, "", ""));
@@ -4635,7 +4649,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,
-          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          require("./keys").generateCsr({ keyPath: path.join(__dirname, "verify/fixtures/leaf.key.pem"), subject: { commonName: "iis.example.com" }, altNames: ["iis.example.com"] }).csrPem,
           "utf8",
         );
         process.nextTick(() => callback(null, "", ""));

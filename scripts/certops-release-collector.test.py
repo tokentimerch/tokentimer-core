@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 import unittest
 import zipfile
+import tempfile
+from contextlib import redirect_stdout
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 
@@ -18,6 +22,88 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_main_collects_more_than_old_run_and_report_limits_without_network(self):
+        candidate = "a" * 40
+        run_ids = list(range(1, 202))
+        coverage = {"implementationStatus": "incomplete"}
+        summary = {"schemaVersion": 1, "status": "passed", "candidateSha": candidate,
+                   "mandatoryEnvironments": 201, "qualificationScope": "committed-mandatory-matrix",
+                   "allFeaturesQualified": False, "catalogCoverage": coverage}
+        calls = []
+        def download(url, token=None, redirect=False):
+            calls.append(url)
+            if url.endswith("/zip"): return b"owned-fixture-archive"
+            if "/artifacts?" in url:
+                run_id = int(url.split("/runs/")[1].split("/")[0])
+                return json.dumps({"total_count": 1, "artifacts": [{"id": run_id, "size_in_bytes": 21}]}).encode()
+            return b"{}"
+        with tempfile.TemporaryDirectory(prefix="certops-collector-budget-") as directory:
+            root = Path(directory)
+            (root / "docs/certops").mkdir(parents=True)
+            (root / "docs/certops/release-qualification-matrix.json").write_text(json.dumps({"slots": [{"kind": "host", "suite": "fixture"}] * 201}))
+            with patch.object(collector, "ROOT", root), patch.dict(collector.os.environ, {"CERTOPS_RELEASE_CANDIDATE": candidate, "CERTOPS_RELEASE_RUN_IDS": json.dumps(run_ids), "GITHUB_REPOSITORY": "owner/repo", "GITHUB_TOKEN": "offline-fixture"}), patch.object(collector, "download", side_effect=download), patch.object(collector, "validate_run"), patch.object(collector, "catalog_coverage", return_value=coverage), patch.object(collector, "extract_reports", return_value=[(".json", {"suite": "fixture"})]), patch.object(collector.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(summary))) as verifier:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    collector.main()
+                self.assertEqual(output.getvalue().strip(), "Committed mandatory matrix passed; full feature specifications remain separately tracked")
+                self.assertEqual(len(verifier.call_args.args[0][3:]), 201)
+                result = json.loads((root / "qualification-results/release-collection/summary.json").read_text())
+                self.assertEqual(result["collectedReports"], 201)
+                self.assertEqual(result["status"], "passed")
+                self.assertEqual(len([url for url in calls if url.endswith("/zip")]), 201)
+
+    def test_collection_budgets_follow_committed_growth_with_absolute_caps(self):
+        self.assertEqual(collector.collection_limits(1), {"runs": 100, "archives": 200, "reports": 200})
+        for slots in (201, 256, 512):
+            limits = collector.collection_limits(slots)
+            for budget in limits.values():
+                self.assertGreaterEqual(budget, slots * 2)
+                self.assertLessEqual(budget, collector.MAX_COLLECTION_ITEMS)
+            collector.validate_run_ids(list(range(1, slots + 1)), limits)
+        for invalid in (0, -1, 513, 1024, True, 201.0, "201", None):
+            with self.assertRaises(ValueError): collector.collection_limits(invalid)
+        matrix = json.loads((collector.ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+        self.assertGreaterEqual(collector.collection_limits(len(matrix["slots"]))["reports"], len(matrix["slots"]))
+
+    def test_growth_preserves_run_identity_and_independent_download_bounds(self):
+        limits = collector.collection_limits(201)
+        for invalid in ([], [1, 1], [True], [-1], [0], [1.0], ["1"], list(range(1, limits["runs"] + 2))):
+            with self.assertRaises(ValueError): collector.validate_run_ids(invalid, limits)
+        self.assertEqual(collector.MAX_ARCHIVE, 20 * 1024 * 1024)
+        self.assertEqual(collector.MAX_REPORT, 2 * 1024 * 1024)
+        self.assertEqual(collector.MAX_TOTAL_DOWNLOAD, 512 * 1024 * 1024)
+        self.assertEqual(collector.MAX_ARTIFACTS_PER_RUN, 100)
+
+    def test_windows_wrong_spki_only_retains_required_custody_booleans(self):
+        fields = ("actualSignedRenewalFailed", "actualCsrDiffersFromReturnedLeaf", "genuineCaIssuedLeafReused", "rejectedUnacceptedKeyRemoved", "predecessorCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "storedProfileUnchanged", "configurationRestored")
+        proof = {**dict.fromkeys(fields, True), "rawCsr": "sentinel", "rawKeyReceipt": {"secret": "sentinel"}}
+        suite = "windows-acme-wrong-spki"
+        value = {"suite": suite, "nativeWrongSpki": proof}
+        result = collector.sanitized_report(value, {suite}, set())
+        self.assertNotIn("sentinel", json.dumps(result))
+        self.assertEqual(result["nativeWrongSpki"], dict.fromkeys(fields, True))
+        for field in fields:
+            proof[field] = False
+            with self.assertRaises(ValueError): collector.sanitized_report(value, {suite}, set())
+            proof[field] = True
+
+    def test_windows_public_admission_preserves_only_bounded_measured_facts(self):
+        fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
+        facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
+        scope = "real-agent-windows-acme-iis/rsa-2048"
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts}
+        output = collector.sanitized_report([event], set(), {scope})
+        self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
+        self.assertNotIn("sentinel", json.dumps(output))
+        for field in fields:
+            facts[field] = False
+            with self.assertRaises(ValueError):
+                collector.sanitized_report([event], set(), {scope})
+            facts[field] = True
+        facts["viewerStatus"] = {"secret": "sentinel"}
+        with self.assertRaises(ValueError):
+            collector.sanitized_report([event], set(), {scope})
+
     def test_generic_top_fields_cannot_carry_nested_private_metadata(self):
         keys = ("status", "strict", "schemaVersion", "startedAt", "finishedAt", "evidenceLevel", "artifactQualification", "qualificationStatus", "experimental", "candidateSha")
         for key in keys:

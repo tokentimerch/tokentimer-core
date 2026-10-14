@@ -8,6 +8,10 @@ const fs = require("node:fs");
 
 function verifyReport(report, expectedScenarios, { expectedSha = process.env.GITHUB_SHA } = {}) {
   if (!report || typeof report !== "object" || Array.isArray(report)) return ["Invalid report object"];
+  // Direct CLI verification must fail too when a newly registered suite omits
+  // required classifications; a separate CI metadata check is not sufficient.
+  const metadata = require("../docs/certops/qualification-suites.json");
+  if (require("./certops-qualification-suites").validateSuites(metadata).length) return ["Invalid committed qualification suite contract"];
   expectedScenarios ??= require("../docs/certops/qualification-suites.json").suites[report.suite];
   const errors = [];
   const knownScenario = id => Array.isArray(expectedScenarios) && expectedScenarios.includes(id) ? id : "[unrecognized]";

@@ -27,12 +27,18 @@ async function main() {
     const privacy=JSON.parse(fs.readFileSync(`qualification-results/windows-output-privacy-${keyProfile}.json`,"utf8"));
     assert.deepEqual(require("./certops-qualification-report").verifyReport(privacy),[]);
     require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(privacy);
+    const wrongSpki = JSON.parse(fs.readFileSync(`qualification-results/windows-wrong-spki-${keyProfile}.json`, "utf8"));
+    assert.equal(wrongSpki.suite, "windows-acme-wrong-spki");
+    assert.deepEqual(require("./certops-qualification-report").verifyReport(wrongSpki), []);
+    require("../tests/e2e/helpers/certops-windows-wrong-leaf").verifyProof(wrongSpki.nativeWrongSpki);
     if (process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE) {
       const upgrade=JSON.parse(fs.readFileSync("qualification-results/windows-source-upgrade.json","utf8"));
       assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);
       require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(upgrade);
     }
     verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
+    const journeyEvent=fs.readFileSync(report,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.name===journey);
+    require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(journeyEvent.windowsPublicIssuance);
     console.log("Windows installed-agent qualification report verified");
   });
 }

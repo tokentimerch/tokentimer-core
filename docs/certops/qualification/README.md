@@ -29,6 +29,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Renewal path topology qualification](api/renewal-health-qualification.md)
 - [Scheduler and public admission capacity](api/scheduler-capacity-qualification.md)
 - [Terminal certificate renewal admission](api/terminal-renewal-admission.md)
+- [Authoritative retirement and automatic renewal](api/retired-scheduler-admission.md)
+- [Retirement, approval and dispatch races](api/retirement-approval-qualification.md)
 - [Native signing key rotation qualification](api/signing-rotation-qualification.md)
 - [Unmanaged discovery qualification](api/unmanaged-discovery-qualification.md)
 
@@ -39,6 +41,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native store and HTTP.sys discovery selectors](windows/native-discovery-qualification.md)
 - [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
+- [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
 - [AD CS operator guide](../agent/adcs.md)

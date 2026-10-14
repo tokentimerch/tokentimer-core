@@ -1019,7 +1019,32 @@
       "terminal-renewal-public-retirement": "integration",
       "terminal-renewal-trusted-tls-rediscovery": "integration",
       "terminal-renewal-manual-and-bulk-refusal": "integration",
-      "terminal-renewal-owned-cleanup": "integration"
+      "terminal-renewal-owned-cleanup": "integration",
+      "terminal-renewal-authoritative-retirement-refusal": "integration"
+    },
+    "retirement-approval-api": {
+      "retirement-approval-active-signed-control": "integration",
+      "retirement-before-approval-refusal": "integration",
+      "retirement-after-approval-cancels": "integration",
+      "retirement-approval-concurrent-revocation": "integration",
+      "retirement-approval-concurrent-decommission": "integration",
+      "retirement-approval-dispatch-fence": "integration",
+      "retirement-approval-owned-cleanup": "integration"
+    },
+    "windows-acme-wrong-spki": {
+      "windows-acme-wrong-spki-before-accept": "e2e"
+    },
+    "retired-scheduler-active-positive": "integration",
+    "retired-scheduler-real-retirement-cache-lag": "integration",
+    "retired-scheduler-authoritative-scan": "integration",
+    "retired-scheduler-final-admission": "integration",
+    "retired-scheduler-owned-cleanup": "integration",
+    "retired-identity-scheduler-api": {
+      "retired-scheduler-active-positive": "integration",
+      "retired-scheduler-real-retirement-cache-lag": "integration",
+      "retired-scheduler-authoritative-scan": "integration",
+      "retired-scheduler-final-admission": "integration",
+      "retired-scheduler-owned-cleanup": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1419,6 +1444,23 @@
       "api",
       "postgres",
       "openssl"
+    ],
+    "retirement-approval-api": [
+      "api",
+      "postgres",
+      "openssl"
+    ],
+    "windows-acme-wrong-spki": [
+      "windows",
+      "system",
+      "api",
+      "installedAgent"
+    ],
+    "retired-identity-scheduler-api": [
+      "api",
+      "postgres",
+      "openssl",
+      "exclusiveStack"
     ]
   },
   "suites": {
@@ -2438,9 +2480,29 @@
       "terminal-renewal-complete-profile-imports",
       "terminal-renewal-active-positive-control",
       "terminal-renewal-public-retirement",
+      "terminal-renewal-authoritative-retirement-refusal",
       "terminal-renewal-trusted-tls-rediscovery",
       "terminal-renewal-manual-and-bulk-refusal",
       "terminal-renewal-owned-cleanup"
+    ],
+    "retirement-approval-api": [
+      "retirement-approval-active-signed-control",
+      "retirement-before-approval-refusal",
+      "retirement-after-approval-cancels",
+      "retirement-approval-concurrent-revocation",
+      "retirement-approval-concurrent-decommission",
+      "retirement-approval-dispatch-fence",
+      "retirement-approval-owned-cleanup"
+    ],
+    "windows-acme-wrong-spki": [
+      "windows-acme-wrong-spki-before-accept"
+    ],
+    "retired-identity-scheduler-api": [
+      "retired-scheduler-active-positive",
+      "retired-scheduler-real-retirement-cache-lag",
+      "retired-scheduler-authoritative-scan",
+      "retired-scheduler-final-admission",
+      "retired-scheduler-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2525,6 +2587,9 @@
     "linux-systemd-published-upgrade": "real-host",
     "decommission-lifecycle-api": "e2e",
     "renewal-toggle-scheduler-api": "integration",
-    "terminal-renewal-admission-api": "integration"
+    "terminal-renewal-admission-api": "integration",
+    "retirement-approval-api": "integration",
+    "windows-acme-wrong-spki": "e2e",
+    "retired-identity-scheduler-api": "integration"
   }
 }

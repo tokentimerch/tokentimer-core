@@ -30,6 +30,9 @@ function validateQualificationSummary(summary, specification = catalog) {
 function validateMatrix(specification = matrix) {
   const errors = [];
   if (specification?.schemaVersion !== 1 || !Array.isArray(specification.slots) || !specification.slots.length) return ["Invalid committed release matrix"];
+  // Match the collector's reviewed 512-slot/1024-item ceiling before any
+  // qualification lab starts; collection headroom grows below this bound.
+  if (specification.slots.length > 512) return ["Committed release matrix exceeds 512-slot collection policy"];
   const ids = new Set(); const identities = new Set();
   for (const slot of specification.slots) {
     if (!slot?.id || ids.has(slot.id)) { errors.push("Duplicate or missing matrix slot identity"); continue; } ids.add(slot.id);
@@ -144,6 +147,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               !Number.isInteger(evidence.nonRootUid) || evidence.nonRootUid <= 0) throw new Error("Native systemd write-path isolation evidence incomplete");
         }
         if (slot.suite === "windows-historical-source-upgrade") require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(artifact.report, { expectedSha: candidateSha });
+        if (slot.suite === "windows-acme-wrong-spki") require("../tests/e2e/helpers/certops-windows-wrong-leaf").verifyProof(artifact.report.nativeWrongSpki);
         if (slot.suite === "windows-native-child-output-privacy") require("../tests/e2e/helpers/certops-windows-output-privacy").verifyPrivacyReport(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "enterprise-adcs-elapsed-pending-real") require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
         if (slot.suite === "core-api-migration-upgrade") {
@@ -156,6 +160,11 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
       } else if (slot.kind === "stack") {
+        if (slot.suite.startsWith("real-agent-windows-acme-iis/")) {
+          const native = entries.filter(entry => entry.name === "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence");
+          if (native.length !== 1 || native[0].type !== "test:pass") throw new Error("Actual Windows native journey evidence missing");
+          require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(native[0].windowsPublicIssuance);
+        }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);
       } else if (slot.kind === "database") {

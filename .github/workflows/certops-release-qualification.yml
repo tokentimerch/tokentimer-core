@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       run_ids:
-        description: JSON array of completed qualification run IDs for the entire environment matrix
+        description: Unique completed run IDs as JSON; budget grows with committed matrix (absolute maximum 1024)
         required: true
         type: string
 permissions:

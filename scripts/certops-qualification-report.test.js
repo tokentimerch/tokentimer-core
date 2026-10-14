@@ -74,6 +74,23 @@ test("committed suites require unique scenarios and exhaustive evidence classifi
   assert.ok(validateSuites({ schemaVersion: 1, suites: { fixture: ["native"] } }).length >= 2);
 });
 
+test("a complete execution report cannot pass with missing committed classifications", () => {
+  const metadata = require("../docs/certops/qualification-suites.json");
+  const suite = "terminal-renewal-admission-api", candidateSha = "a".repeat(40), time = new Date().toISOString();
+  const report = { schemaVersion: 1, suite, candidateSha, evidenceLevel: metadata.suiteEvidenceLevels[suite], strict: true, status: "passed", startedAt: time, finishedAt: time,
+    requiredScenarios: metadata.suites[suite], missingScenarios: [], requiredCapabilities: metadata.requiredCapabilities[suite], missingCapabilities: [],
+    capabilities: Object.fromEntries(metadata.requiredCapabilities[suite].map(name => [name, { available: true }])),
+    scenarios: metadata.suites[suite].map(id => ({ id, status: "passed", evidenceLevel: metadata.scenarioEvidenceLevels[suite][id], startedAt: time, finishedAt: time })),
+  };
+  assert.deepEqual(verifyReport(report, undefined, { expectedSha: candidateSha }), []);
+  const id = metadata.suites[suite][0], level = metadata.scenarioEvidenceLevels[suite][id];
+  try {
+    delete metadata.scenarioEvidenceLevels[suite][id];
+    assert.deepEqual(verifyReport(report, undefined, { expectedSha: candidateSha }), ["Invalid committed qualification suite contract"]);
+  } finally { metadata.scenarioEvidenceLevels[suite][id] = level; }
+  assert.deepEqual(verifyReport(report, undefined, { expectedSha: candidateSha }), []);
+});
+
 test("API runner binds reports to the current selected source file", () => {
   const { verifySource } = require("./certops-api-qualification");
   const fs = require("node:fs");

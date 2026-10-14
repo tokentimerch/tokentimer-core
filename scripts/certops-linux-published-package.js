@@ -6,7 +6,9 @@
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),{spawnSync}=require("node:child_process");
 const baseline=Object.freeze({tag:"v0.17.2",version:"0.17.2",assetId:612562598,size:410054,sha256:"c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf",url:"https://github.com/tokentimerch/tokentimer-core/releases/download/v0.17.2/tokentimer-agent-0.17.2.tgz"});
 const sha=file=>crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-function run(args){const result=spawnSync(process.platform==="win32"?"tar.exe":"tar",args,{encoding:"utf8",timeout:60000,maxBuffer:4*1024*1024});assert.ifError(result.error);assert.equal(result.status,0,"Release archive inspection/extraction failed");return result.stdout;}
+// Git's tar treats Windows drive letters as remote archive syntax. Bind the
+// native Windows tool even when Git supplies OpenSSL earlier on PATH.
+function run(args){const tar=process.platform==="win32"?path.join(process.env.SystemRoot,"System32","tar.exe"):"tar";const result=spawnSync(tar,args,{encoding:"utf8",timeout:60000,maxBuffer:4*1024*1024});assert.ifError(result.error);assert.equal(result.status,0,"Release archive inspection/extraction failed");return result.stdout;}
 function validateMembers(members){assert.ok(members.length>0);assert.equal(new Set(members).size,members.length,"Duplicate archive members are refused");for(const name of members)assert.ok(name.startsWith("package/")&&!name.includes("\\")&&!name.split("/").includes("..")&&!/[\x00-\x1f]/.test(name),"Unsafe release archive member");}
 // Read every regular file without following links. Names/hashes come from a
 // separately extracted verified archive, never from the caller's source tree.

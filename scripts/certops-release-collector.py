@@ -47,6 +47,30 @@ WORKFLOWS = {
 }
 MAX_ARCHIVE = 20 * 1024 * 1024
 MAX_REPORT = 2 * 1024 * 1024
+MAX_TOTAL_DOWNLOAD = 512 * 1024 * 1024
+MAX_ARTIFACTS_PER_RUN = 100
+MAX_MATRIX_SLOTS = 512
+MAX_COLLECTION_ITEMS = 1024
+
+
+def collection_limits(slot_count):
+    """Grow collection headroom with committed coverage, never with remote input.
+
+    Absolute item/byte caps remain independent of the matrix. More than 512
+    slots requires an explicit reviewed collection-policy change before labs.
+    """
+    if type(slot_count) is not int or not 1 <= slot_count <= MAX_MATRIX_SLOTS:
+        raise ValueError("Committed matrix slot count exceeds collection policy")
+    return {"runs": max(100, slot_count * 2),
+            "archives": max(200, slot_count * 2),
+            "reports": max(200, slot_count * 2)}
+
+
+def validate_run_ids(run_ids, limits):
+    if (not isinstance(run_ids, list) or not 1 <= len(run_ids) <= limits["runs"]
+            or any(type(item) is not int or item < 1 for item in run_ids)
+            or len(set(run_ids)) != len(run_ids)):
+        raise ValueError("Run IDs must be a bounded unique JSON array of positive integers")
 
 
 def catalog_coverage():
@@ -194,6 +218,25 @@ def supporting_sources(value):
     return result
 
 
+def windows_public_issuance(value):
+    if not isinstance(value, dict):
+        raise ValueError("Invalid Windows public issuance evidence")
+    result = {}
+    for field in ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup"):
+        if value.get(field) is not True:
+            raise ValueError("Incomplete Windows public issuance evidence")
+        result[field] = True
+    for field, allowed in (("anonymousStatus", (401, 403)), ("viewerStatus", (403,)), ("createStatus", (201,)), ("replayStatus", (201,))):
+        if type(value.get(field)) is not int or value[field] not in allowed:
+            raise ValueError("Invalid Windows public issuance status")
+        result[field] = value[field]
+    for field, expected in (("source", "api"), ("mode", "real"), ("authorizedRole", "workspace_manager")):
+        if value.get(field) != expected:
+            raise ValueError("Invalid Windows public issuance provenance")
+        result[field] = expected
+    return result
+
+
 def _sanitized_report(value, suites, scopes, database_scopes=()):
     if isinstance(value, dict) and value.get("scope") in database_scopes:
         keys = ("scope", "candidateSha", "evidenceLevel", "qualificationEnvironment",
@@ -281,6 +324,14 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Missing historical source upgrade preservation evidence")
                 bounded[key] = True
             result["sourceUpgrade"] = bounded
+        if value.get("suite") == "windows-acme-wrong-spki":
+            proof = value.get("nativeWrongSpki")
+            if not isinstance(proof, dict):
+                raise ValueError("Missing Windows wrong-SPKI evidence")
+            fields = ("actualSignedRenewalFailed", "actualCsrDiffersFromReturnedLeaf", "genuineCaIssuedLeafReused", "rejectedUnacceptedKeyRemoved", "predecessorCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "storedProfileUnchanged", "configurationRestored")
+            if any(proof.get(field) is not True for field in fields):
+                raise ValueError("Incomplete Windows wrong-SPKI evidence")
+            result["nativeWrongSpki"] = dict.fromkeys(fields, True)
         if value.get("suite") == "windows-native-child-output-privacy":
             for key in ("actualStdoutAndStderrEmission", "actualDelegatedSuccess", "actualAcmeSuccessLogObserved", "actualHttpUploadsSecretFree", "persistedLogsEvidenceResultsSecretFree", "scmConsoleSecretFree"):
                 result[key] = value.get(key) is True
@@ -496,6 +547,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
         keys = ("type", "name", "candidateSha", "scope", "skip", "todo",
                 "fixtureSource", "qualificationEnvironment", "artifactQualification", "qualificationStatus", "experimental")
         return [{**{key: event[key] for key in keys if key in event},
+                 **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
                  **({"fixtureSources": supporting_sources(event["fixtureSources"])} if "fixtureSources" in event else {}),
                  "file": event.get("fixtureSource", {}).get("file", "")}
                 for event in value]
@@ -663,9 +715,9 @@ def main():
     run_ids = json.loads(os.environ.get("CERTOPS_RELEASE_RUN_IDS", "[]"))
     if not re.fullmatch(r"[a-f0-9]{40}", candidate) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not token:
         raise ValueError("Explicit candidate, repository and read-only workflow token required")
-    if not isinstance(run_ids, list) or not 1 <= len(run_ids) <= 100 or any(type(item) is not int or item < 1 for item in run_ids) or len(set(run_ids)) != len(run_ids):
-        raise ValueError("Run IDs must be a bounded unique JSON array of positive integers")
     matrix = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+    limits = collection_limits(len(matrix["slots"]))
+    validate_run_ids(run_ids, limits)
     suites = {slot["suite"] for slot in matrix["slots"] if slot["kind"] == "host"}
     scopes = {slot["suite"] for slot in matrix["slots"] if slot["kind"] == "stack"}
     database_scopes = {slot["suite"] for slot in matrix["slots"] if slot["kind"] == "database"}
@@ -681,11 +733,11 @@ def main():
             endpoint = f"https://api.github.com/repos/{repository}/actions/runs/{run_id}"
             validate_run(json.loads(download(endpoint, token)), candidate, repository)
             data = json.loads(download(endpoint + "/artifacts?per_page=100", token))
-            if data.get("total_count", 0) > 100:
+            if data.get("total_count", 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError("Artifact inventory exceeds explicit bound")
             for artifact in data.get("artifacts", []):
                 archive_count += 1
-                if archive_count > 200:
+                if archive_count > limits["archives"]:
                     raise ValueError("Collection artifact count exceeds limit")
                 if artifact.get("expired"):
                     raise ValueError("Selected candidate artifact has expired")
@@ -694,10 +746,10 @@ def main():
                     raise ValueError("Artifact identity or size is invalid")
                 raw = download(f"https://api.github.com/repos/{repository}/actions/artifacts/{artifact_id}/zip", token, redirect=True)
                 downloaded_bytes += len(raw)
-                if downloaded_bytes > 512 * 1024 * 1024:
+                if downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                     raise ValueError("Collection total download size exceeds limit")
                 for suffix, report in extract_reports(raw, suites, scopes, database_scopes):
-                    if len(files) >= 200:
+                    if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"
                     destination.write_text(json.dumps(report) if suffix == ".json" else "\n".join(json.dumps(item) for item in report), encoding="utf-8")
