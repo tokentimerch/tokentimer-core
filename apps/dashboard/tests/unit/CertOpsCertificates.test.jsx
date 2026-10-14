@@ -703,7 +703,7 @@ describe('CertOpsCertificates filters', () => {
 
     expect(
       screen.getByPlaceholderText(
-        'Search certificates, fingerprints, issuers...'
+        'Search certificate IDs, names, SANs, serials, issuers...'
       )
     ).toHaveValue('534CE368D766B353');
     expect(useCertOpsCertificatesMock).toHaveBeenLastCalledWith(
@@ -1344,14 +1344,14 @@ describe('CertOpsCertificates retired count badge', () => {
     ).not.toBeChecked();
   });
 
-  it('does not show a retired checkbox while the probe is still loading', () => {
+  it('keeps the retired checkbox available while its count is loading', () => {
     listCertificatesMock.mockImplementation(() => new Promise(() => {}));
 
     renderPage();
 
     expect(
       screen.queryByRole('checkbox', { name: /Show retired/ })
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
   });
 
   it('re-probes the retired count after a certificate is retired', async () => {

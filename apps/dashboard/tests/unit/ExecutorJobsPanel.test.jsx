@@ -107,6 +107,18 @@ function renderPanel(props = {}, initialEntries = ['/']) {
   );
 }
 
+it('opens the job from a deep link even outside the current page and filters', async () => {
+  useCertOpsJobsMock.mockReturnValue(jobsState());
+  renderPanel({}, ['/certops/jobs?job=linked-job&status=failed&offset=40']);
+  await waitFor(() => expect(useCertOpsJobTimelineMock).toHaveBeenCalledWith('linked-job', expect.anything()));
+});
+
+it('expands a linked job already on the page', async () => {
+  useCertOpsJobsMock.mockReturnValue(jobsState({ jobs: [job()] }));
+  renderPanel({}, ['/certops/jobs?job=job-1']);
+  await waitFor(() => expect(document.querySelector('[aria-expanded="true"]')).toBeTruthy());
+});
+
 function jobsState(overrides = {}) {
   return {
     enabled: true,

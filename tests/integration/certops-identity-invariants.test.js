@@ -276,6 +276,13 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       const c = await db.connect();
       await c.query("BEGIN");
       try {
+        if (migration.version === 72) {
+          fixture.auditBefore = (await c.query(`INSERT INTO audit_events(action,workspace_id,metadata,occurred_at)
+            SELECT action,$1,'{"enrollmentId":"historic-enrollment","requestId":0}'::jsonb,'2026-10-01T12:00:00Z'
+            FROM unnest(ARRAY['certops.issuer.created','certops.issuer.preflight_dispatched','certops.issuer.key_confirmed',
+              'certops.enrollment.created','certops.enrollment.reconcile_proposed','certops.enrollment.cancelled',
+              'certops.enrollment.abandoned','certops.agent_log.rejected']) action RETURNING *`, [fixture.ws])).rows;
+        }
         if (migration.version === 62) {
           await assert.rejects(c.query(migration.sql), { code: "23502" });
           await c.query("ROLLBACK");
@@ -302,6 +309,21 @@ describe("CertOps identity invariants on PostgreSQL", function () {
     await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);
     await admin.end();
   });
+  it("normalizes legacy audit reads without changing immutable metadata or timestamps", async () => {
+    const { auditActionSql } = require("../../apps/api/services/audit");
+    const ids = fixture.auditBefore.map(row => row.id);
+    const after = (await db.query(`SELECT ae.*, ${auditActionSql("ae.action")} AS action FROM audit_events ae WHERE id=ANY($1::bigint[]) ORDER BY id`, [ids])).rows;
+    for (const row of fixture.auditBefore) {
+      const normalized = after.find(item => item.id === row.id);
+      assert.deepEqual(normalized, { ...row, action: row.action.toUpperCase().replaceAll('.', '_') });
+    }
+    assert.deepEqual((await db.query("SELECT * FROM audit_events WHERE id=ANY($1::bigint[]) ORDER BY id", [ids])).rows, fixture.auditBefore);
+    for (const row of after) {
+      const filtered = await db.query(`SELECT id FROM audit_events ae WHERE workspace_id=$1 AND ${auditActionSql("ae.action")}=$2`, [fixture.ws,row.action]);
+      assert.equal(filtered.rows[0].id, row.id);
+    }
+  });
+
   it("upgrades representative pre-v62 history without guessing lifecycle or historical job identity", async () => {
     assert.equal((await identity(fixture.ws, A)).lifecycle_status, "revoked");
     assert.equal((await identity(fixture.ws, B)).lifecycle_status, "active");
@@ -2100,6 +2122,89 @@ describe("CertOps identity invariants on PostgreSQL", function () {
       0,
     );
   });
+  it("filters grouped inventory by Windows observation source", async () => {
+    const ws = await workspace();
+    const mc = await source(ws, A, { source: "import" });
+    const target = (await db.query(`INSERT INTO certificate_targets(workspace_id,name,target_type)
+      VALUES($1,'Windows host','host') RETURNING id`, [ws])).rows[0].id;
+    await db.query(`INSERT INTO certificate_instances(workspace_id,managed_certificate_id,target_id,source,observed_fingerprint_sha256,observed_at)
+      VALUES($1,$2,$3,'agent_windows',$4,NOW())`, [ws, mc.id, target, A]);
+    const page = await listCertificateIdentities({ workspaceId: ws, source: "agent_windows", client: db });
+    assert.equal(page.pagination.total, 1);
+    assert.equal(page.items[0].managedCertificateId, mc.id);
+  });
+
+  it("searches every associated managed certificate's public properties", async () => {
+    const ws = await workspace();
+    const first = await source(ws, A, { name: "primary" });
+    const other = await source(ws, A, { name: "secondary" });
+    await db.query(`UPDATE managed_certificates SET subject_alt_names=ARRAY['alt.search.test'],
+      serial_number='serial-search-123', public_key_algorithm='ecdsa-search',
+      public_key_size=384, key_mode='agent-local', key_reference='file://private-topology-marker' WHERE id=$1`, [other.id]);
+    for (const q of [first.id, other.id, "alt.search.test", "serial-search-123", "ecdsa-search", "384", "agent-local"]) {
+      const page = await listCertificateIdentities({ workspaceId: ws, q, client: db });
+      assert.equal(page.pagination.total, 1, q);
+      assert.equal(page.items[0].identityId, (await identity(ws, A)).id);
+    }
+    assert.equal((await listCertificateIdentities({ workspaceId: await workspace(), q: other.id, client: db })).pagination.total, 0);
+    assert.equal((await listCertificateIdentities({ workspaceId: ws, q: 'private-topology-marker', client: db })).pagination.total, 0);
+    assert.equal((await listCertificateIdentities({ workspaceId: ws, q: 'private-topology-marker', canReadTopology: true, client: db })).pagination.total, 1);
+  });
+
+  it("transfers several tokens with managed certificate histories atomically", async () => {
+    const { transferTokenAssociations } = require("../../apps/api/services/workspaceTokenTransfer");
+    const from = await workspace(), to = await workspace();
+    const t1 = await token(from), t2 = await token(from);
+    const one = await source(from, A, { tokenId: t1 });
+    const two = await source(from, B, { tokenId: t2 });
+    const j1 = await job(from, one, "succeeded"), j2 = await job(from, two);
+    const issuer = (await db.query(`INSERT INTO certificate_issuers(workspace_id,kind,name) VALUES($1,'adcs','Transfer CA') RETURNING id`, [from])).rows[0].id;
+    const enrollment = (await db.query(`INSERT INTO certificate_enrollments(workspace_id,certificate_id,issuer_id,issuer_version,state,snapshot_bytes,snapshot_sha256,deploy_target,current_job_id)
+      VALUES($1,$2,$3,1,'installed','snapshot',$4,'{}',$5) RETURNING id`, [from,one.id,issuer,A,j1.id])).rows[0].id;
+    await db.query("UPDATE certificate_jobs SET enrollment_id=$1 WHERE id=$2", [enrollment,j1.id]);
+    for (const j of [j1, j2]) {
+      await db.query(`INSERT INTO certops_agent_log_job_state(workspace_id,job_id,next_ingest_order) VALUES($1,$2,7)`, [from, j.id]);
+      const claim = randomUUID();
+      await db.query(`INSERT INTO certops_agent_log_stream(workspace_id,job_id,claim_id,agent_id,attempt_number,status)
+        VALUES($1,$2,$3,$4,1,'final')`, [from, j.id, claim, randomUUID()]);
+      await db.query(`INSERT INTO certops_agent_job_log(workspace_id,job_id,claim_id,seq,ts,level,step,message,fields,content_hash,ingest_order)
+        VALUES($1,$2,$3,1,NOW(),'info','verify','Certificate verified','{"result":"verified"}',$4,7)`, [from,j.id,claim,A]);
+    }
+    const c = await db.connect();
+    try {
+      await c.query("BEGIN");
+      const result = await transferTokenAssociations(c, { tokenIds: [t1,t2], fromWorkspaceId: from, toWorkspaceId: to, targetOwnerId: userId });
+      assert.equal(result.movedCertificates, 2);
+      await c.query("COMMIT");
+    } finally { await c.query("ROLLBACK"); c.release(); }
+    assert.equal((await listCertificateIdentities({ workspaceId: to, client: db })).pagination.total, 2);
+    assert.equal((await db.query("SELECT COUNT(*)::int n FROM tokens WHERE workspace_id=$1", [to])).rows[0].n, 2);
+    assert.equal((await db.query("SELECT COUNT(*)::int n FROM certops_agent_log_stream WHERE workspace_id=$1", [to])).rows[0].n, 2);
+    assert.equal((await db.query("SELECT SUM(next_ingest_order)::int n FROM certops_agent_log_job_state WHERE workspace_id=$1", [to])).rows[0].n, 14);
+    const logs = (await db.query("SELECT message,fields,ingest_order FROM certops_agent_job_log WHERE workspace_id=$1", [to])).rows;
+    assert.equal(logs.length, 2);
+    assert(logs.every(row => row.message === "Certificate verified" && row.fields.result === "verified" && Number(row.ingest_order) === 7));
+    assert.equal((await db.query("SELECT enrollment_id FROM certificate_jobs WHERE id=$1", [j1.id])).rows[0].enrollment_id, null);
+    assert.equal((await db.query("SELECT workspace_id FROM certificate_enrollments WHERE id=$1", [enrollment])).rows[0].workspace_id, from);
+  });
+
+  it("refuses transfer during an active AD CS enrollment without moving any token", async () => {
+    const { transferTokenAssociations } = require("../../apps/api/services/workspaceTokenTransfer");
+    const from = await workspace(), to = await workspace(), tid = await token(from);
+    const mc = await source(from, A, { tokenId: tid });
+    const issuer = (await db.query(`INSERT INTO certificate_issuers(workspace_id,kind,name) VALUES($1,'adcs','Pending CA') RETURNING id`, [from])).rows[0].id;
+    const enrollment = (await db.query(`INSERT INTO certificate_enrollments(workspace_id,certificate_id,issuer_id,issuer_version,state,snapshot_bytes,snapshot_sha256,deploy_target)
+      VALUES($1,$2,$3,1,'pending_issuance','snapshot',$4,'{}') RETURNING id`, [from,mc.id,issuer,A])).rows[0].id;
+    const c = await db.connect();
+    try {
+      await c.query("BEGIN");
+      await assert.rejects(transferTokenAssociations(c, { tokenIds: [tid], fromWorkspaceId: from, toWorkspaceId: to }),
+        error => error.code === 'TRANSFER_CONFLICT' && error.details[0].enrollment_id === enrollment);
+      await c.query("ROLLBACK");
+    } finally { await c.query("ROLLBACK"); c.release(); }
+    assert.equal((await db.query("SELECT workspace_id FROM tokens WHERE id=$1", [tid])).rows[0].workspace_id, from);
+  });
+
   it("workspace transfers deduplicate independently, retain closed provenance and admit destination management", async () => {
     const from = await workspace(),
       to = await workspace(1),

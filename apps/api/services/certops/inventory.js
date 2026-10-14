@@ -61,6 +61,7 @@ const MANAGED_CERTIFICATE_SOURCES = new Set([
   "auto_sync",
   "cert_manager",
   "agent_filesystem",
+  "agent_windows",
   "agent_issuance",
 ]);
 const AUTO_RENEW_DISABLED_PROFILE_STATUS_SQL_LIST = "'disabled', 'archived'";

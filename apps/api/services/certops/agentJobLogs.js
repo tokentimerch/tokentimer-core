@@ -835,7 +835,7 @@ async function applyIngest(client, { workspaceId, agentRowId, jobId, body, env, 
       await writeAudit({
         actorUserId: null,
         subjectUserId: null,
-        action: "certops.agent_log.rejected",
+        action: "CERTOPS_AGENT_LOG_REJECTED",
         targetType: "certificate_job",
         targetId: null,
         workspaceId,

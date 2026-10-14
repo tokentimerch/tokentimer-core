@@ -5,6 +5,7 @@ Short index for operators and engineers.
 ## Current system behavior
 
 - Domain language and product invariants: [CONTEXT.md](CONTEXT.md).
+- AD CS and execution-console audit actions and metadata: [audit-events.md](audit-events.md).
 - Dashboard: Certificate operations tabs are Jobs, Certificates, Renewals, Agents, and Settings. AD CS issuers, preflight, pinning, enrollment status, and AD CS renewal profiles live under **Renewals**.
 - Microsoft AD CS operator guide (states, allowlists, troubleshooting): [agent/adcs.md](agent/adcs.md).
 - Agent task index: [agent.md](agent.md).

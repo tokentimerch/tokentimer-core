@@ -4,6 +4,18 @@ CertOps shows one certificate per SHA-256 fingerprint in a workspace. A
 certificate can appear at several locations and be registered through several
 integrations without creating separate certificate entries.
 
+## Inventory filters and search
+
+The inventory search matches public properties across all management sources:
+certificate and identity IDs, names, SANs, issuers, serial numbers, algorithms,
+validity dates, key modes, source types and references, and token/profile IDs.
+Source filters include observed locations as well as management provenance.
+**Show retired** includes revoked and decommissioned certificates; **Show
+unmanaged** includes identities without an open management period. Both controls
+remain available while their counts load or cannot be retrieved.
+Key references and deployment paths are searchable only for roles allowed to
+read them. Workspace viewers cannot infer those values through search results.
+
 ## Observed locations
 
 This section answers **“Where has this certificate been seen?”** Each endpoint,

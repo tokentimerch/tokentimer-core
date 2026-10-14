@@ -3495,6 +3495,7 @@ router.get(
         excludeRetired: req.query.excludeRetired === "true",
         unmanaged: req.query.unmanaged,
         q: req.query.q,
+        canReadTopology: req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager"),
         sort: req.query.sort, direction: req.query.direction,
       });
       const enriched = await withRenewalState({

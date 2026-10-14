@@ -326,6 +326,24 @@ describe('Dashboard page smoke tests', () => {
     await waitFor(() => expectTextPresent('LOGIN_SUCCESS'));
   });
 
+  it.each([
+    'CERTOPS_ISSUER_CREATED', 'CERTOPS_ISSUER_PREFLIGHT_DISPATCHED',
+    'CERTOPS_ISSUER_KEY_CONFIRMED', 'CERTOPS_ENROLLMENT_CREATED',
+    'CERTOPS_ENROLLMENT_RECONCILE_PROPOSED', 'CERTOPS_ENROLLMENT_CANCELLED',
+    'CERTOPS_ENROLLMENT_ABANDONED', 'CERTOPS_AGENT_LOG_REJECTED',
+    'CERTOPS_AGENT_ALERT_SETTINGS_UPDATED', 'CERTOPS_DIAGNOSTIC_AGENT_BOOTSTRAPPED', 'CERTOPS_RENEWAL_PROFILE_CREATED',
+    'certops.enrollment.created',
+  ])('renders metadata for %s', async action => {
+    workspaceListMock.mockResolvedValue({ items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }] });
+    alertGetAuditEventsMock.mockResolvedValue([{ id: 'ev-adcs', action, occurred_at: new Date().toISOString(),
+      metadata: { issuerId: 'issuer-public-id', enrollmentId: 'enrollment-public-id', requestId: 0, jobId: 'job-public-id', version: 2, caKeySha256: 'pinned-key-hash' } }]);
+    renderWithProviders(<Audit {...baseProps} />);
+    await waitFor(() => expectTextPresent(/Enrollment: enrollment-public-id/));
+    expectTextPresent(/Issuer: issuer-public-id/);
+    expectTextPresent(/Request: 0/);
+    expectTextPresent(/CA key SHA-256: pinned-key-hash/);
+  });
+
   it('renders SSO audit metadata in Audit route', async () => {
     workspaceListMock.mockResolvedValue({
       items: [{ id: 'ws-1', name: 'Workspace', role: 'admin' }],

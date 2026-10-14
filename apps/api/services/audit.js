@@ -1,5 +1,25 @@
 const { pool } = require("../db/database");
 
+const LEGACY_CERTOPS_AUDIT_ACTIONS = Object.freeze(Object.fromEntries([
+  "certops.issuer.created", "certops.issuer.preflight_dispatched",
+  "certops.issuer.key_confirmed", "certops.enrollment.created",
+  "certops.enrollment.reconcile_proposed", "certops.enrollment.cancelled",
+  "certops.enrollment.abandoned", "certops.agent_log.rejected",
+].map(action => [action, action.toUpperCase().replaceAll(".", "_")])));
+
+function normalizeAuditAction(action) {
+  return Object.hasOwn(LEGACY_CERTOPS_AUDIT_ACTIONS, action)
+    ? LEGACY_CERTOPS_AUDIT_ACTIONS[action] : action;
+}
+
+// Audit rows are immutable. Normalize only the known legacy actions in reads,
+// including filters and exports; preserve the original stored event verbatim.
+function auditActionSql(column) {
+  if (column !== "action" && column !== "ae.action") throw new Error("Invalid audit action column");
+  return `CASE ${column} ${Object.entries(LEGACY_CERTOPS_AUDIT_ACTIONS)
+    .map(([legacy, canonical]) => `WHEN '${legacy}' THEN '${canonical}'`).join(" ")} ELSE ${column} END`;
+}
+
 /**
  * Write an audit event to the database
  * @param {Object} params - Audit event parameters
@@ -46,7 +66,7 @@ async function writeAudit({
     [
       actorUserId,
       subjectUserId,
-      action,
+      normalizeAuditAction(action),
       targetType,
       safeTargetId,
       channel,
@@ -56,4 +76,4 @@ async function writeAudit({
   );
 }
 
-module.exports = { writeAudit };
+module.exports = { writeAudit, normalizeAuditAction, auditActionSql };
