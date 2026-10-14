@@ -89,6 +89,7 @@ import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
 import { retireCertificate } from './components/certops/certopsApi.js';
 import {
   resolveTokenCertificate,
+  isRetiredStatus,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './components/certops/certopsFormat.js';
 import {
@@ -4380,8 +4381,11 @@ function DashboardView({
 
   const isTokenRetired = useCallback(
     token => {
-      return resolveTokenCertificate(managedByTokenId.get(Number(token?.id)))
-        .allRetired;
+      return (
+        isRetiredStatus(token?.cert_lifecycle_status) ||
+        resolveTokenCertificate(managedByTokenId.get(Number(token?.id)))
+          .allRetired
+      );
     },
     [managedByTokenId]
   );
@@ -4396,7 +4400,10 @@ function DashboardView({
   const scopedLoadedTokens = useMemo(
     () =>
       showRetired
-        ? allLoadedTokens
+        ? allLoadedTokens.map(token => ({
+            ...token,
+            __managedCertificatesRetired: isTokenRetired(token),
+          }))
         : allLoadedTokens.filter(token => !isTokenRetired(token)),
     [allLoadedTokens, isTokenRetired, showRetired]
   );
@@ -4430,16 +4437,18 @@ function DashboardView({
           managedByTokenId.get(Number(token.id))
         );
         const managedCert = resolution.certificate;
-        const retired = resolution.allRetired;
+        const retired =
+          isRetiredStatus(token.cert_lifecycle_status) || resolution.allRetired;
         if (retired && !showRetired) continue;
         const status = getDashboardStatusMeta(token.expiresAt).key;
         const matchesStatus =
           statusFilter === 'all' ||
-          statusFilter === status ||
-          (statusFilter === 'due' && status === 'due-soon') ||
-          (statusFilter === 'critical' &&
-            (status === 'critical' || status === 'expired')) ||
-          (statusFilter === 'healthy' && status === 'healthy');
+          (!retired &&
+            (statusFilter === status ||
+              (statusFilter === 'due' && status === 'due-soon') ||
+              (statusFilter === 'critical' &&
+                (status === 'critical' || status === 'expired')) ||
+              (statusFilter === 'healthy' && status === 'healthy')));
         if (matchesStatus) {
           dedupe.set(
             String(token.id),
