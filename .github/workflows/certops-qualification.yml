@@ -25,6 +25,7 @@ on:
       - 'scripts/certops-*'
       - 'infra/certops-adcs/**'
       - 'scripts/run-certops-tooling-tests.js'
+      - 'scripts/run-certops-collector-tests.js'
       - 'scripts/ci-guards/**'
       - 'scripts/generate-skip-inventory.cjs'
       - 'tests/qualification/**'

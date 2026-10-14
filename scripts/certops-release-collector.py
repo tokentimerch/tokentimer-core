@@ -26,6 +26,8 @@ WORKFLOWS = {
         "certops-browser-qualification.yml", "certops-kubernetes-qualification.yml",
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
+        "certops-windows-arm64-cng.yml",
+        "certops-windows-fixed-root.yml",
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
         "certops-renewal-alert-qualification.yml",
@@ -279,6 +281,57 @@ def installed_handoff_fields(event):
     return {"nativeInstalledStateHandoff": {key: value[key] for key in ("scope", *flags)}}
 
 
+def arm64_runtime_fields(value):
+    """Retain only closed native desktop/CNG facts; never raw host inventories."""
+    proof = value.get("nativeArm64CngRuntime")
+    flags = ("csrSignatureVerified", "csrPublicKeyMatchesLeaf", "dnsSanVerified", "keyUsageVerified", "publicLeafSignatureVerified", "nativeAssociationVerified", "nativeSignatureVerified", "protectedExportDenied", "exportableControlSucceeded", "privateBuffersZeroed", "custodyUnchanged", "machineStoreReferenceFound", "exactReferenceExcluded", "ownedArtifactsAbsent")
+    proof_keys = {"scope", "architecture", "helperPeMachine", "helperSha256", "helperExecuted", "serverQualified", "iisQualified", "domainAdcsQualified", "privateCaKeyPersisted", "cleanupCompleted", "cases"}
+    if not isinstance(proof, dict) or set(proof) != proof_keys or proof.get("scope") != "native-windows11-arm64-cng-public-fixture":
+        raise ValueError("Missing closed native ARM64 CNG proof")
+    architecture = proof.get("architecture")
+    arch_keys = {"productType", "build", "cpuArchitectures", "platform", "nodeArchitecture", "powershellArchitecture", "goHostArchitecture", "goHostOs", "nodePeMachine", "powershellPeMachine", "goPeMachine", "certreqPeMachine", "certutilPeMachine", "administrator"}
+    if not isinstance(architecture, dict) or set(architecture) != arch_keys:
+        raise ValueError("Invalid native ARM64 architecture evidence")
+    if type(architecture.get("productType")) is not int or architecture["productType"] != 1 or architecture.get("administrator") is not True:
+        raise ValueError("ARM64 lane requires actual desktop administrator")
+    if not isinstance(architecture.get("build"), str) or not re.fullmatch(r"[0-9]{5,6}", architecture["build"]) or int(architecture["build"]) < 22000:
+        raise ValueError("ARM64 lane requires actual Windows 11")
+    cpus = architecture.get("cpuArchitectures")
+    if not isinstance(cpus, list) or not 1 <= len(cpus) <= 64 or any(type(cpu) is not int or cpu != 12 for cpu in cpus):
+        raise ValueError("ARM64 processor measurement unavailable")
+    for field, expected in (("platform", "win32"), ("nodeArchitecture", "arm64"), ("powershellArchitecture", "arm64"), ("goHostArchitecture", "arm64"), ("goHostOs", "windows")):
+        if architecture.get(field) != expected:
+            raise ValueError("Emulated runtime cannot qualify ARM64")
+    for field in ("nodePeMachine", "powershellPeMachine", "goPeMachine", "certreqPeMachine", "certutilPeMachine"):
+        if type(architecture.get(field)) is not int or architecture[field] != 0xaa64:
+            raise ValueError("Mixed PE architectures cannot qualify ARM64")
+    if (value.get("platform") != "win32" or value.get("architecture") != "arm64" or json.dumps(value.get("nativeArchitectureProbe"), sort_keys=True) != json.dumps(architecture, sort_keys=True)
+            or value.get("qualificationEnvironment") != {"osFamily": "windows", "osVersion": f"desktop-{architecture['build']}", "productType": 1, "measurement": "native", "architecture": "arm64"}):
+        raise ValueError("Native ARM64 desktop identity disagrees with report")
+    for field in ("serverQualified", "iisQualified", "domainAdcsQualified", "privateCaKeyPersisted"):
+        if proof.get(field) is not False:
+            raise ValueError("ARM64 proof exceeded desktop CNG scope")
+    if proof.get("helperExecuted") is not True or proof.get("cleanupCompleted") is not True or type(proof.get("helperPeMachine")) is not int or proof["helperPeMachine"] != 0xaa64:
+        raise ValueError("Actual helper runtime and cleanup are mandatory")
+    if not isinstance(proof.get("helperSha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", proof["helperSha256"]):
+        raise ValueError("Missing current ARM64 helper digest")
+    cases = proof.get("cases")
+    if not isinstance(cases, list) or len(cases) != 2 or any(not isinstance(case, dict) for case in cases):
+        raise ValueError("Both ARM64 CNG profiles are mandatory")
+    if not all(isinstance(case.get("profile"), str) for case in cases) or sorted(case["profile"] for case in cases) != ["ec-p256", "rsa-2048"]:
+        raise ValueError("Duplicate or missing ARM64 CNG profile")
+    for case in cases:
+        if set(case) != {*flags, "profile", "chainVerdict", "wrongPinVerdict", "malformedVerdict", "storesScanned", "privateExportHResult"} or any(case.get(field) is not True for field in flags):
+            raise ValueError("Incomplete closed ARM64 CNG observations")
+        if case.get("chainVerdict") != "revocation_unknown" or case.get("wrongPinVerdict") != "ca_key_changed" or case.get("malformedVerdict") != "invalid":
+            raise ValueError("ARM64 chain verdict scope mismatch")
+        if type(case.get("storesScanned")) is not int or not 1 <= case["storesScanned"] <= 512:
+            raise ValueError("ARM64 machine-store enumeration unavailable")
+        if type(case.get("privateExportHResult")) is not int or not -2147483648 <= case["privateExportHResult"] < 0:
+            raise ValueError("ARM64 native export denial unavailable")
+    return {"platform": "win32", "architecture": "arm64", "nativeArchitectureProbe": dict(architecture), "nativeArm64CngRuntime": {**proof, "architecture": dict(architecture), "cases": [dict(case) for case in cases]}}
+
+
 def _sanitized_report(value, suites, scopes, database_scopes=()):
     if isinstance(value, dict) and value.get("scope") in database_scopes:
         keys = ("scope", "candidateSha", "evidenceLevel", "qualificationEnvironment",
@@ -312,6 +365,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                                 ("id", "status", "evidenceLevel", "startedAt", "finishedAt")
                                 if key in item} for item in value.get("scenarios", [])
                                if isinstance(item, dict)]
+        if value.get("suite") == "windows-arm64-cng-runtime":
+            result.update(arm64_runtime_fields(value))
         for scenario in result["scenarios"]:
             if scenario.get("id") not in known_ids:
                 scenario["id"] = "[unrecognized]"
@@ -667,6 +722,50 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     or abandon["actualLeaseWaitMs"] + 1000 < abandon["leaseRemainingAtFaultMs"]):
                 raise ValueError("Invalid actual lease recovery timing")
             result["nativeUncertainAbandon"].update({key: abandon[key] for key in timing})
+            ambiguity = value.get("nativeUncertainOperatorAmbiguity")
+            ambiguity_flags = ("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "originalOrphanPreserved", "recoveryPolicyUnchanged", "operatorCreatedSameCsrAmbiguity", "nativeCaOwnershipVerified", "automaticAttachmentRefused", "unacceptedKeyPreserved", "unrelatedTrustedTlsPreserved", "publicExplicitReconcileAudited", "exactSelectedRequestInstalled", "claimBoundVerification", "sameProtectedMachineKeyInstalled", "unusedOwnedRequestRevoked", "unusedLeafNeverAccepted")
+            ambiguity_counts = ("caRequestsAfterOperatorSubmissions", "caRequestsAfterAmbiguousRecovery", "caRequestsAfterExplicitRecovery")
+            if (not isinstance(ambiguity, dict)
+                    or ambiguity.get("scope") != "native-zero-request-uncertainty-with-operator-created-same-csr-ambiguity"
+                    or ambiguity.get("fixtureOrigin") != "operator-created-two-real-system-submissions-of-the-same-public-csr"
+                    or ambiguity.get("resolvedIssuingCaAddress") != "10.64.0.4"
+                    or any(ambiguity.get(key) is not True for key in ambiguity_flags)
+                    or type(ambiguity.get("caRequestsAtFault")) is not int or ambiguity["caRequestsAtFault"] != 0
+                    or any(type(ambiguity.get(key)) is not int or ambiguity[key] != 2 for key in ambiguity_counts)):
+                raise ValueError("Invalid native operator-created uncertain ambiguity evidence")
+            bounded_ambiguity = {key: ambiguity[key] for key in ("scope", "fixtureOrigin", "resolvedIssuingCaAddress", "caRequestsAtFault", *ambiguity_flags, *ambiguity_counts)}
+            if (any(type(ambiguity.get(key)) is not int or not 0 <= ambiguity[key] <= 900000 for key in timing)
+                    or ambiguity["recoveryWaitBudgetMs"] != ambiguity["leaseRemainingAtFaultMs"] + 90000
+                    or ambiguity["actualLeaseWaitMs"] + 1000 < ambiguity["leaseRemainingAtFaultMs"] + 60000
+                    or ambiguity["actualLeaseWaitMs"] > ambiguity["recoveryWaitBudgetMs"] + 1000):
+                raise ValueError("Invalid native ambiguity actual lease/grace timing")
+            bounded_ambiguity.update({key: ambiguity[key] for key in timing})
+            for key, pattern in (("enrollmentId", uuid_pattern), ("containerName", r"tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"), ("csrSpkiSha256", r"[a-f0-9]{64}"), ("csrSha256", r"[a-f0-9]{64}")):
+                if not isinstance(ambiguity.get(key), str) or not re.fullmatch(pattern, ambiguity[key]):
+                    raise ValueError("Invalid native ambiguity identity")
+                bounded_ambiguity[key] = ambiguity[key]
+            if ambiguity["containerName"] != "tokentimer-enr-" + ambiguity["enrollmentId"]:
+                raise ValueError("Native ambiguity key ownership mismatch")
+            floor = ambiguity.get("reconcileSearchFrom")
+            if type(floor) is not int or not 1 <= floor <= 0xffffffff or type(ambiguity.get("scanWindowSize")) is not int or ambiguity["scanWindowSize"] != 16:
+                raise ValueError("Invalid native ambiguity actual scan window")
+            bounded_ambiguity.update({"reconcileSearchFrom": floor, "scanWindowSize": 16})
+            for key, count, pattern in (("requestIds", 2, r"[1-9][0-9]{0,9}"), ("fingerprints", 2, r"[a-f0-9]{64}"), ("serialNumbers", 2, r"[a-f0-9]{1,128}"), ("jobIds", 3, uuid_pattern)):
+                items = ambiguity.get(key)
+                if (not isinstance(items, list) or len(items) != count
+                        or any(not isinstance(item, str) or not re.fullmatch(pattern, item) for item in items)
+                        or len({item.lower() for item in items}) != count):
+                    raise ValueError("Invalid native ambiguity distinct identities")
+                bounded_ambiguity[key] = list(items)
+            if any(not floor <= int(item) < min(floor + 16, 0x100000000) for item in ambiguity["requestIds"]):
+                raise ValueError("Native ambiguity candidate outside actual default window")
+            for key in ("selectedRequestId", "unusedRequestId"):
+                if not isinstance(ambiguity.get(key), str) or ambiguity[key] not in ambiguity["requestIds"]:
+                    raise ValueError("Native ambiguity selected/unused request mismatch")
+                bounded_ambiguity[key] = ambiguity[key]
+            if ambiguity["selectedRequestId"] == ambiguity["unusedRequestId"]:
+                raise ValueError("Native ambiguity selected request cannot be revoked")
+            result["nativeUncertainOperatorAmbiguity"] = bounded_ambiguity
             cancellation = value.get("nativeIssuedCancellation")
             if not isinstance(cancellation, dict):
                 raise ValueError("Missing native issued cancellation evidence")

@@ -22,6 +22,7 @@ test("Windows profile evidence binds public admission, recovery and output-priva
         .digest("hex"),
     );
   for (const file of [
+    "scripts/certops-installer-pe.test.ps1",
     "tests/e2e/helpers/certops-windows-public-issuance.js",
     "tests/e2e/helpers/certops-windows-installed-handoff.js",
     "tests/e2e/helpers/certops-windows-registration-job.ps1",

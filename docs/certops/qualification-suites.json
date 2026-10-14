@@ -272,7 +272,10 @@
       "adcs-real-local-rule-ca-host-mismatch-refused": "real-host",
       "adcs-real-local-rule-ca-authority-mismatch-refused": "real-host",
       "adcs-real-local-rule-template-pair-mismatch-refused": "real-host",
-      "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host"
+      "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host",
+      "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment": "real-host",
+      "adcs-real-uncertain-public-explicit-request-recovers": "real-host",
+      "adcs-real-uncertain-unused-operator-request-revoked": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -578,7 +581,10 @@
       "adcs-real-local-rule-ca-host-mismatch-refused": "real-host",
       "adcs-real-local-rule-ca-authority-mismatch-refused": "real-host",
       "adcs-real-local-rule-template-pair-mismatch-refused": "real-host",
-      "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host"
+      "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host",
+      "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment": "real-host",
+      "adcs-real-uncertain-public-explicit-request-recovers": "real-host",
+      "adcs-real-uncertain-unused-operator-request-revoked": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1151,6 +1157,14 @@
       "windows-cli-second-rename-owned-fixture": "e2e",
       "windows-cli-second-rename-preserves-installed-service": "e2e",
       "windows-cli-second-rename-owned-cleanup": "e2e"
+    },
+    "windows-arm64-cng-runtime": {
+      "windows-arm64-native-runtime": "real-host",
+      "windows-arm64-fresh-helper": "real-host",
+      "windows-arm64-cng-csr-signature-and-public-leaf": "real-host",
+      "windows-arm64-acceptance-and-export-refusal": "real-host",
+      "windows-arm64-native-chain-and-key-survivors": "real-host",
+      "windows-arm64-owned-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1630,6 +1644,13 @@
       "installedAgent",
       "api",
       "iis"
+    ],
+    "windows-arm64-cng-runtime": [
+      "native-arm64-desktop",
+      "native-powershell",
+      "native-go",
+      "native-certreq-certutil",
+      "administrator"
     ]
   },
   "suites": {
@@ -1904,7 +1925,10 @@
       "adcs-real-local-rule-ca-host-mismatch-refused",
       "adcs-real-local-rule-ca-authority-mismatch-refused",
       "adcs-real-local-rule-template-pair-mismatch-refused",
-      "adcs-real-native-reconcile-other-enrollment-spki-refused"
+      "adcs-real-native-reconcile-other-enrollment-spki-refused",
+      "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment",
+      "adcs-real-uncertain-public-explicit-request-recovers",
+      "adcs-real-uncertain-unused-operator-request-revoked"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2210,7 +2234,10 @@
       "adcs-real-local-rule-ca-host-mismatch-refused",
       "adcs-real-local-rule-ca-authority-mismatch-refused",
       "adcs-real-local-rule-template-pair-mismatch-refused",
-      "adcs-real-native-reconcile-other-enrollment-spki-refused"
+      "adcs-real-native-reconcile-other-enrollment-spki-refused",
+      "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment",
+      "adcs-real-uncertain-public-explicit-request-recovers",
+      "adcs-real-uncertain-unused-operator-request-revoked"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -2778,6 +2805,14 @@
       "windows-cli-second-rename-owned-fixture",
       "windows-cli-second-rename-preserves-installed-service",
       "windows-cli-second-rename-owned-cleanup"
+    ],
+    "windows-arm64-cng-runtime": [
+      "windows-arm64-native-runtime",
+      "windows-arm64-fresh-helper",
+      "windows-arm64-cng-csr-signature-and-public-leaf",
+      "windows-arm64-acceptance-and-export-refusal",
+      "windows-arm64-native-chain-and-key-survivors",
+      "windows-arm64-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2874,6 +2909,7 @@
     "renewal-key-facts-api": "integration",
     "windows-canonical-root-lifecycle": "e2e",
     "windows-certificate-dry-run": "e2e",
-    "windows-installer-cli-second-rename": "e2e"
+    "windows-installer-cli-second-rename": "e2e",
+    "windows-arm64-cng-runtime": "real-host"
   }
 }

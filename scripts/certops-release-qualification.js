@@ -100,6 +100,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-installer-first-rename-refusal") require("../tests/e2e/helpers/certops-windows-rename-refusal").verifyProof(artifact.report.nativeRenameRefusal);
         if (slot.suite === "windows-activation-second-rename") require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(artifact.report.nativeSecondRename);
         if (slot.suite === "windows-installer-cli-second-rename") require("../tests/e2e/helpers/certops-windows-cli-second-rename").verifyProof(artifact.report.nativeCliSecondRename);
+        if (slot.suite === "windows-arm64-cng-runtime") require("./certops-arm64-runtime-proof").verifyRuntimeReport(artifact.report);
         if (slot.suite === "windows-two-unattended-renewals") require("../tests/e2e/helpers/certops-windows-two-renewals").verifyProof(artifact.report.nativeTwoRenewals);
         if (slot.suite === "windows-certificate-dry-run") require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(artifact.report.nativeCertificateDryRun);
         if (slot.suite === "windows-host") require("./certops-native-key-survivor-proof").verifyProof(artifact.report.nativeKeySurvivors);
@@ -134,6 +135,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               !browserDispatch.jobIds.every(id => typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) || new Set(browserDispatch.jobIds.map(id => id.toLowerCase())).size !== 2) throw new Error("Browser native preflight dispatch accounting incomplete");
           require("../tests/e2e/helpers/certops-adcs-two-renewals").verifyProof(artifact.report.nativeAdcsTwoRenewals);
           require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").assertProof(artifact.report.nativeUncertainAbandon);
+          require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity").verifyProof(artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-issued-cancellation").verifyIssuedCancellationFacts(artifact.report.nativeIssuedCancellation);
           const expiry = artifact.report.nativeValidationExpiry;
           if (!expiry || expiry.configuredTimeoutSeconds !== 300 || expiry.defaultTimeoutSeconds !== 86400 ||

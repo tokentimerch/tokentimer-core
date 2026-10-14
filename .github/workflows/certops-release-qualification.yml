@@ -40,8 +40,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/certops-release-collector.test.py
-          node --test scripts/certops-release-qualification.test.js
+          node scripts/run-certops-collector-tests.js
+          node --test scripts/certops-release-qualification.test.js scripts/certops-arm64-release.test.js
           python3 scripts/certops-release-collector.py
       - name: Preserve sanitized consolidated verdict
         if: always()

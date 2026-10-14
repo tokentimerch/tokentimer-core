@@ -50,7 +50,7 @@
     "test:contracts": "node --test tests/contract/**/*.test.js",
     "test:e2e:agent": "node --test tests/e2e/certops-agent-e2e.test.js",
     "test:certops:qualification": "node scripts/run-certops-tooling-tests.js",
-    "test:certops:release-collector": "python scripts/certops-release-collector.test.py",
+    "test:certops:release-collector": "node scripts/run-certops-collector-tests.js",
     "check:certops:release-matrix": "node scripts/ci-guards/certops-release-matrix.cjs",
     "check:certops:release-qualification": "node scripts/certops-release-qualification.js",
     "check:certops:dns-errors": "node scripts/ci-guards/certops-dns-errors.cjs",

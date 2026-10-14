@@ -24,6 +24,17 @@ function keyUsageProof() {
 }
 function foreignSpkiProof(){const helper=require("../tests/e2e/helpers/certops-adcs-native-reconcile");return {scope:helper.foreignScope,...Object.fromEntries(helper.foreignFlags.map(flag=>[flag,true])),requestIds:["17","18"],spkiFingerprints:["a".repeat(64),"b".repeat(64)]};}
 function localPairsProof(){const helper=require("../tests/e2e/helpers/certops-adcs-local-rules");return helper.pairCases.map(caseId=>({caseId,...Object.fromEntries(helper.pairFlags.map(flag=>[flag,true]))}));}
+function operatorAmbiguityProof() {
+  const helper = require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity");
+  const enrollmentId = "11111111-1111-1111-1111-111111111111";
+  return { scope: helper.SCOPE, fixtureOrigin: "operator-created-two-real-system-submissions-of-the-same-public-csr", resolvedIssuingCaAddress: "10.64.0.4",
+    leaseRemainingAtFaultMs: 60000, recoveryWaitBudgetMs: 150000, actualLeaseWaitMs: 120000,
+    caRequestsAtFault: 0, caRequestsAfterOperatorSubmissions: 2, caRequestsAfterAmbiguousRecovery: 2, caRequestsAfterExplicitRecovery: 2,
+    requestIds: ["101", "102"], fingerprints: ["1".repeat(64), "2".repeat(64)], serialNumbers: ["aa", "bb"], csrSpkiSha256: "3".repeat(64), csrSha256: "4".repeat(64),
+    selectedRequestId: "101", unusedRequestId: "102", enrollmentId, containerName: `tokentimer-enr-${enrollmentId}`,
+    jobIds: ["22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"],
+    reconcileSearchFrom: 100, scanWindowSize: 16, ...Object.fromEntries(helper.FLAGS.map(flag => [flag, true])) };
+}
 function browserAdcsProof() {
   const { FLAGS, SCOPE } = require("../tests/e2e/helpers/certops-adcs-browser-journey");
   const uuid = value => `${value.repeat(8)}-${value.repeat(4)}-4${value.repeat(3)}-8${value.repeat(3)}-${value.repeat(12)}`;
@@ -235,6 +246,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativeAdcsTwoRenewals: twoAdcsRenewalsProof(),
     nativeLocalRulePairs: localPairsProof(),
     nativeForeignSpkiCandidate: foreignSpkiProof(),
+    nativeUncertainOperatorAmbiguity: operatorAmbiguityProof(),
     nativeBrowserAdcs: browserAdcsProof(),
     browserNativePreflightDispatch: { count: 2, jobIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] },
     nativeUncertainAbandon: { leaseRemainingAtFaultMs: 60000, recoveryWaitBudgetMs: 150000, actualLeaseWaitMs: 61000, scope: "native-zero-request-uncertain-abandon", resolvedIssuingCaAddress: "10.64.0.4", ownedObserverDrained: true, ownedTransportBlock: true, observedSubmittingTermination: true, actualLeaseExpiry: true, acknowledgedPublicRecovery: true, sameCsrAndKey: true, noAutomaticResubmit: true, publicAbandonAudited: true, unacceptedKeyRemoved: true, originalOrphanPreserved: true, recoveryPolicyUnchanged: true, caRequestsAtFault: 0, caRequestsAfterRecovery: 0, caRequestsAfterAbandon: 0 },
@@ -249,6 +261,29 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   hierarchy.suite = hierarchy.report.suite = hierarchyOptions.specification.slots[0].suite = hierarchySuite;
   hierarchy.report.requiredScenarios = contract.suites[hierarchySuite]; hierarchy.report.scenarios = contract.suites[hierarchySuite].map(id => ({ ...value.report.scenarios[0], id }));
   assert.deepEqual(verifyMatrix([hierarchy], hierarchyOptions), []);
+  for (const [base, settings] of [[value, options], [hierarchy, hierarchyOptions]]) {
+    const missing = structuredClone(base); delete missing.report.nativeUncertainOperatorAmbiguity;
+    assert.ok(verifyMatrix([missing], settings).length);
+    for (const id of require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity").REQUIRED_SCENARIOS) {
+      const absent = structuredClone(base); absent.report.scenarios = absent.report.scenarios.filter(item => item.id !== id);
+      assert.ok(verifyMatrix([absent], settings).length, id);
+    }
+  }
+  for (const [key, prior] of Object.entries(operatorAmbiguityProof())) {
+    const missing = structuredClone(value); delete missing.report.nativeUncertainOperatorAmbiguity[key]; assert.ok(verifyMatrix([missing], options).length, key);
+    const invalids = prior === true ? [false, null, 1, "true"] : [Array.isArray(prior) ? prior.map(() => prior[0]) : typeof prior === "number" ? false : "invalid"];
+    for (const invalid of invalids) { const bad = structuredClone(value); bad.report.nativeUncertainOperatorAmbiguity[key] = invalid; assert.ok(verifyMatrix([bad], options).length, key); }
+  }
+  for (const patch of [{ fixtureOrigin: "lost-submit-response" }, { scope: "deterministic-response-loss-qualified" }, { caRequestsAtFault: 1 }, { caRequestsAfterExplicitRecovery: 3 }, { actualLeaseWaitMs: 60000 }, { actualLeaseWaitMs: 152000 }, { reconcileSearchFrom: 86 }, { scanWindowSize: 64 }, { selectedRequestId: "103" }, { unusedRequestId: "101" }, { containerName: "tokentimer-enr-55555555-5555-5555-5555-555555555555" }, { jobIds: ["AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "44444444-4444-4444-4444-444444444444"] }, { deterministicResponseLossQualified: true }]) {
+    const bad = structuredClone(value); Object.assign(bad.report.nativeUncertainOperatorAmbiguity, patch); assert.ok(verifyMatrix([bad], options).length);
+  }
+  {
+    const supporting = "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js", bound = structuredClone(value), settings = structuredClone(options);
+    settings.specification.slots[0].requiredSources = [supporting];
+    bound.report.fixtureSources = [{ file: supporting, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, supporting))).digest("hex") }];
+    assert.deepEqual(verifyMatrix([bound], settings), []);
+    bound.report.fixtureSources[0].sha256 = "0".repeat(64); assert.ok(verifyMatrix([bound], settings).length);
+  }
   const missingHierarchyBrowser = structuredClone(hierarchy); delete missingHierarchyBrowser.report.nativeBrowserAdcs; assert.ok(verifyMatrix([missingHierarchyBrowser], hierarchyOptions).length);
   for (const [key, prior] of Object.entries(value.report.nativeBrowserAdcs)) {
     const missing = structuredClone(value); delete missing.report.nativeBrowserAdcs[key]; assert.ok(verifyMatrix([missing], options).length, key);

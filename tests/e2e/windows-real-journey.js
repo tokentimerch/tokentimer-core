@@ -269,6 +269,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       // function against owned temporary files, then the full fixture below
       // independently observes the actual installed service and trusted TLS.
       const swapProof = JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(repoRoot,"scripts/certops-installer-swap.test.ps1")]));
+      const peProof=JSON.parse(command("powershell.exe",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",path.join(repoRoot,"scripts/certops-installer-pe.test.ps1")]));
+      assert.equal(peProof.scope,"supporting-production-pe-preactivation-not-installer-service-execution");assert.equal(peProof.positiveRealCompiledImages,4);assert.equal(peProof.refusedCases.length,48);assert.equal(peProof.productionSourceAndStageHooks,true);assert.equal(peProof.replacementStagePreserved,true);
+
       for (const field of ["productionAstParsed","bothRenamesProtected","unexpectedPathsRefused","realFirstRenameRefused","predecessorPreserved","failedStagingRemoved","handleReleased","actualPositiveActivation","existingRecoveryPreserved","actualSecondRenameRestoration"]) assert.equal(swapProof[field],true,field);
       assert.equal(swapProof.scope,"owned-temporary-filesystem-only");
       await require("./helpers/certops-windows-rename-refusal").qualifyRenameRefusal({pool,workspaceId,agentId,configDir,workDir,repoRoot,installerFixture,createBootstrap,baseUrl,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil});
@@ -318,20 +321,174 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.deepEqual(fs.readFileSync(path.join(configDir, "config.json")), preUpgradeConfig);
     assert.equal(crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex"), credentialDigest);
     assert.deepEqual(fs.readFileSync(path.join(workDir, "app/bin/tokentimer-agent-host-amd64.exe")), fs.readFileSync(host));
-    // A real loader failure exercises the installer's existing rollback path.
+    // Malformed selected helpers must be refused before touching the running
+    // service or activating any staging tree. Native protocol health remains a
+    // separate valid-PE control below.
+    if ((process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048") === "rsa-2048") {
+      const identity = () =>
+        ps(
+          "$s=Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\";$p=Get-CimInstance Win32_Process -Filter (\"ProcessId=\"+$s.ProcessId);@{pid=[int]$s.ProcessId;created=$p.CreationDate.ToUniversalTime().ToString('o');executable=$p.ExecutablePath;path=$s.PathName;state=$s.State}|ConvertTo-Json -Compress",
+        );
+      const originalIdentity = identity(),
+        originalPin = fs.readFileSync(path.join(configDir, "signing-key-pin.json"));
+      const originalInstalledHost = fs.readFileSync(
+        path.join(workDir, "app/bin/tokentimer-agent-host-amd64.exe"),
+      );
+      const custody = () =>
+          JSON.parse(
+            ps(
+              `$c=Get-Item 'Cert:\\LocalMachine\\My\\${deployedThumbprint}';$k=$null;try{$k=${privateKeyGetter};@{der=[Convert]::ToBase64String($c.RawData);container=$k.Key.KeyName;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;exportPolicy=[string]$k.Key.ExportPolicy;bits=$k.KeySize}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
+            ),
+          ),
+        originalCustody = custody();
+      const peerFingerprint = () =>
+        new Promise((resolve, reject) => {
+          const socket = tls.connect(
+            {
+              host: "127.0.0.1",
+              port,
+              servername: domain,
+              ca: roots.map((root) => root.pem),
+              rejectUnauthorized: true,
+            },
+            () => {
+              try {
+                assert.equal(socket.authorized, true);
+                resolve(socket.getPeerCertificate().fingerprint256);
+              } catch (error) {
+                reject(error);
+              } finally {
+                socket.destroy();
+              }
+            },
+          );
+          socket.once("error", reject);
+          socket.setTimeout(10000, () =>
+            socket.destroy(new Error("Preactivation refusal TLS deadline")),
+          );
+        });
+      const originalPeer = await peerFingerprint();
+      for (const kind of ["tokentimer-agent-host", "tokentimer-adcs-chain"])
+        for (const fault of ["missing", "truncated", "wrong-architecture"]) {
+          const selected = path.join(candidateRoot, "bin", `${kind}-amd64.exe`),
+            before = fs.readFileSync(selected),
+            bootstrap = await createBootstrap();
+          try {
+            if (fault === "missing") fs.unlinkSync(selected);
+            else if (fault === "truncated")
+              fs.writeFileSync(selected, before.subarray(0, 64));
+            else
+              fs.copyFileSync(
+                path.join(candidateRoot, "bin", `${kind}-arm64.exe`),
+                selected,
+              );
+            const refused = spawnSync(
+              "powershell.exe",
+              [
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                installerFixture,
+                "--api-url",
+                baseUrl,
+                "--workspace-id",
+                String(workspaceId),
+                "--allow-insecure-local-http",
+                "--no-trust-store",
+              ],
+              {
+                encoding: "utf8",
+                timeout: 180000,
+                env: nativeCommandEnvironment("powershell.exe", {
+                  TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: bootstrap.plaintextToken,
+                }),
+              },
+            );
+            assert.ifError(refused.error);
+            assert.notEqual(refused.status, 0);
+            assert.ok(
+              /native package preflight failed before installation changes/.test(
+                `${refused.stdout}\n${refused.stderr}`,
+              ),
+              "Malformed helper must reach preactivation refusal",
+            );
+            assert.equal(
+              identity() === originalIdentity,
+              true,
+              "Preactivation refusal changed the running service identity",
+            );
+            assert.ok(
+              fs
+                .readFileSync(
+                  path.join(workDir, "app/bin/tokentimer-agent-host-amd64.exe"),
+                )
+                .equals(originalInstalledHost),
+              "Preactivation refusal changed installed helper bytes",
+            );
+            assert.ok(
+              require("node:util").isDeepStrictEqual(custody(), originalCustody),
+              "Preactivation refusal changed native certificate/key custody",
+            );
+            assert.equal(
+              await peerFingerprint(),
+              originalPeer,
+              "Preactivation refusal changed trusted TLS",
+            );
+            assert.ok(
+              fs
+                .readFileSync(path.join(configDir, "config.json"))
+                .equals(preUpgradeConfig),
+            );
+            assert.ok(
+              fs
+                .readFileSync(path.join(configDir, "signing-key-pin.json"))
+                .equals(originalPin),
+            );
+            assert.equal(
+              crypto
+                .createHash("sha256")
+                .update(fs.readFileSync(credentialFile))
+                .digest("hex"),
+              credentialDigest,
+            );
+            assert.equal(
+              (
+                await pool.query(
+                  "SELECT status FROM certops_agent_bootstrap_tokens WHERE workspace_id=$1 AND id=$2",
+                  [workspaceId, bootstrap.token.id],
+                )
+              ).rows[0].status,
+              "active",
+            );
+            assert.equal(
+              fs
+                .readdirSync(workDir)
+                .some((name) => /^app\.(?:staging|previous)\./.test(name)),
+              false,
+              "Preactivation refusal must not create swap directories",
+            );
+          } finally {
+            fs.writeFileSync(selected, before);
+          }
+        }
+    }
+    // A real, architecture-valid chain helper is not an SCM host. It passes PE
+    // validation but fails the service protocol, preserving health-check rollback.
     // Only the extracted disposable candidate is sabotaged; the archive and
     // previously installed bytes remain the checked candidate.
     const intactCandidateHost = fs.readFileSync(host);
     const rollbackBootstrap = await createBootstrap();
     let failedUpgrade;
     try {
-      fs.writeFileSync(host, Buffer.from("MZ qualification intentionally invalid native executable"));
+      fs.copyFileSync(path.join(candidateRoot,"bin/tokentimer-adcs-chain-amd64.exe"),host);
       failedUpgrade = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installerFixture,
         "--api-url", baseUrl, "--workspace-id", String(workspaceId), "--allow-insecure-local-http", "--no-trust-store"],
       { encoding: "utf8", timeout: 180000, env: nativeCommandEnvironment("powershell.exe", { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: rollbackBootstrap.plaintextToken }) });
     } finally { fs.writeFileSync(host, intactCandidateHost); }
     assert.ifError(failedUpgrade.error);
-    assert.notEqual(failedUpgrade.status, 0, "invalid native candidate must fail upgrade qualification");
+    assert.notEqual(failedUpgrade.status, 0, "valid PE with the wrong runtime service protocol must fail upgrade qualification");
     assert.ok(/rolled back to the previous version/.test(`${failedUpgrade.stdout}\n${failedUpgrade.stderr}`),
       "failure must reach the product health-check rollback, not an unrelated prerequisite error");
     assert.deepEqual(fs.readFileSync(path.join(workDir, "app/bin/tokentimer-agent-host-amd64.exe")), intactCandidateHost,

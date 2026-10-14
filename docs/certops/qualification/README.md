@@ -40,6 +40,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+- [Windows 11 ARM64 native CNG runtime and strict desktop scope](windows/arm64-native-cng-runtime.md)
 - [Installed certificate dry-run native state and DNS observation](windows/certificate-dry-run.md)
 - [Native CNG export refusal and operational key custody](windows/cng-export-refusal-qualification.md)
 - [Native certificate KeyUsage and CNG signing permission](windows/native-key-usage.md)
@@ -51,6 +52,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
 - [Explicit installed Windows service state handoff](windows/installed-state-handoff.md)
+- [Installer native helper preactivation checks](windows/installer-pe-preflight.md)
 - [Installer first-rename refusal and preserved service](windows/installer-first-rename-refusal.md)
 - [Activation-function second-rename restoration](windows/installer-second-rename-restoration.md)
 - [Two successful unattended Windows renewal generations](windows/two-unattended-renewals.md)
@@ -111,3 +113,5 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Supporting CertOps integration qualification](reporting/supporting-integration-qualification.md)
 
 - [Completed-console authority withdrawal](api/browser-completed-console.md)
+
+The [operator-created uncertain ambiguity journey](adcs/operator-created-uncertain-ambiguity.md) exercises public ambiguous-candidate refusal and explicit RequestId recovery after a real zero-request interruption. Its two real operator submissions are distinct from the nonqualified lost-response experiment.

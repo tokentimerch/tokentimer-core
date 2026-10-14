@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # install-agent.ps1 - install the TokenTimer CertOps Agent as a native Windows Service.
 #
 # This script installs FROM THE LOCAL PACKAGE DIRECTORY it lives in
@@ -515,6 +515,129 @@ function Invoke-PlatformAcl {
     }
 }
 
+# Native package checks run before any installed application/state mutation.
+function Assert-WindowsPeImage {
+    param(
+        [Parameter(Mandatory)][string]$LiteralPath,
+        [Parameter(Mandatory)][ValidateSet('AMD64','ARM64')][string]$Architecture
+    )
+    if (-not [IO.Path]::IsPathRooted($LiteralPath)) { throw 'Native helper path must be absolute' }
+    $ancestor = [IO.Path]::GetFullPath($LiteralPath)
+    while ($ancestor) {
+        $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked native helper path' }
+        $next = [IO.Path]::GetDirectoryName($ancestor)
+        if (!$next -or $next -eq $ancestor) { break }
+        $ancestor = $next
+    }
+    $stream = $null
+    try {
+        # Hold a read-only, non-write/delete-shared handle while inspecting the
+        # bounded public image. Never execute an unvalidated candidate helper.
+        $stream = [IO.FileStream]::new($LiteralPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        if ($stream.Length -lt 64 -or $stream.Length -gt 67108864) { throw 'Native helper size is outside supported PE bounds' }
+        $bytes = New-Object byte[] ([int]$stream.Length)
+        $read = 0
+        while ($read -lt $bytes.Length) {
+            $count = $stream.Read($bytes,$read,$bytes.Length-$read)
+            if ($count -eq 0) { throw 'Native helper truncated during PE read' }
+            $read += $count
+        }
+        if ([BitConverter]::ToUInt16($bytes,0) -ne 0x5a4d) { throw 'Native helper DOS signature invalid' }
+        [UInt64]$pe = [BitConverter]::ToUInt32($bytes,60)
+        if ($pe -lt 64 -or $pe+24 -gt $bytes.Length) { throw 'Native helper PE offset invalid' }
+        if ([BitConverter]::ToUInt32($bytes,[int]$pe) -ne 0x4550) { throw 'Native helper PE signature invalid' }
+        $expected = if ($Architecture -eq 'AMD64') { 0x8664 } else { 0xaa64 }
+        if ([BitConverter]::ToUInt16($bytes,[int]$pe+4) -ne $expected) { throw 'Native helper architecture mismatch' }
+        [UInt64]$sections = [BitConverter]::ToUInt16($bytes,[int]$pe+6)
+        [UInt64]$optionalSize = [BitConverter]::ToUInt16($bytes,[int]$pe+20)
+        $characteristics = [BitConverter]::ToUInt16($bytes,[int]$pe+22)
+        if ($sections -lt 1 -or $sections -gt 96 -or ($characteristics -band 2) -eq 0 -or ($characteristics -band 0x2000) -ne 0) { throw 'Native helper executable COFF header invalid' }
+        [UInt64]$optional = $pe+24
+        [UInt64]$table = $optional+$optionalSize
+        if ($optionalSize -lt 112 -or $optionalSize -gt 4096 -or $table+$sections*40 -gt $bytes.Length) { throw 'Native helper optional or section header truncated' }
+        if ([BitConverter]::ToUInt16($bytes,[int]$optional) -ne 0x20b) { throw 'Native helper must be a PE32+ image' }
+        [UInt64]$entry = [BitConverter]::ToUInt32($bytes,[int]$optional+16)
+        [UInt64]$sectionAlignment = [BitConverter]::ToUInt32($bytes,[int]$optional+32)
+        [UInt64]$fileAlignment = [BitConverter]::ToUInt32($bytes,[int]$optional+36)
+        [UInt64]$imageSize = [BitConverter]::ToUInt32($bytes,[int]$optional+56)
+        [UInt64]$headers = [BitConverter]::ToUInt32($bytes,[int]$optional+60)
+        [UInt64]$directories = [BitConverter]::ToUInt32($bytes,[int]$optional+108)
+        if ($directories -gt 16 -or 112+$directories*8 -gt $optionalSize) { throw 'Native helper data directory header invalid' }
+        if ($fileAlignment -lt 512 -or $fileAlignment -gt 65536 -or ($fileAlignment -band ($fileAlignment-1)) -ne 0 -or $sectionAlignment -lt $fileAlignment -or ($sectionAlignment -band ($sectionAlignment-1)) -ne 0) { throw 'Native helper image alignment invalid' }
+        if ($headers -lt $table+$sections*40 -or $headers -gt $bytes.Length -or $headers % $fileAlignment -ne 0 -or $imageSize -eq 0 -or $imageSize % $sectionAlignment -ne 0 -or $entry -eq 0 -or $entry -ge $imageSize) { throw 'Native helper image/header/entry bounds invalid' }
+        $ranges = @()
+        $entryBacked = $false
+        for ($index=0; $index -lt $sections; $index++) {
+            [int]$offset = [int]($table+$index*40)
+            [UInt64]$virtualSize = [BitConverter]::ToUInt32($bytes,$offset+8)
+            [UInt64]$address = [BitConverter]::ToUInt32($bytes,$offset+12)
+            [UInt64]$rawSize = [BitConverter]::ToUInt32($bytes,$offset+16)
+            [UInt64]$raw = [BitConverter]::ToUInt32($bytes,$offset+20)
+            [UInt64]$flags = [BitConverter]::ToUInt32($bytes,$offset+36)
+            [UInt64]$span = [Math]::Max($virtualSize,$rawSize)
+            if ($address % $sectionAlignment -ne 0 -or $address -lt $headers -or $address+$span -gt $imageSize) { throw 'Native helper virtual section bounds invalid' }
+            if ($rawSize -gt 0 -and ($raw -lt $headers -or $raw % $fileAlignment -ne 0 -or $rawSize % $fileAlignment -ne 0 -or $raw+$rawSize -gt $bytes.Length)) { throw 'Native helper raw section bounds invalid' }
+            foreach ($prior in $ranges) {
+                if ($rawSize -gt 0 -and $prior.rawSize -gt 0 -and $raw -lt $prior.raw+$prior.rawSize -and $prior.raw -lt $raw+$rawSize) { throw 'Native helper overlapping raw sections' }
+                if ($span -gt 0 -and $prior.span -gt 0 -and $address -lt $prior.address+$prior.span -and $prior.address -lt $address+$span) { throw 'Native helper overlapping virtual sections' }
+            }
+            if ($entry -ge $address -and $entry -lt $address+$span -and $entry-$address -lt $rawSize -and ($flags -band 0x20000000) -ne 0 -and ($flags -band 0x20) -ne 0) { $entryBacked=$true }
+            $ranges += @{raw=$raw;rawSize=$rawSize;address=$address;span=$span}
+        }
+        if (!$entryBacked) { throw 'Native helper entry point is not file-backed executable code' }
+    } finally { if ($stream) { $stream.Dispose() } }
+}
+
+function Assert-WindowsPackageHelpers {
+    param(
+        [Parameter(Mandatory)][string]$PackageDirectory,
+        [Parameter(Mandatory)][ValidateSet('AMD64','ARM64')][string]$Architecture
+    )
+    $tag = $Architecture.ToLowerInvariant()
+    foreach ($name in @("tokentimer-agent-host-$tag.exe","tokentimer-adcs-chain-$tag.exe")) {
+        Assert-WindowsPeImage -LiteralPath (Join-Path $PackageDirectory "bin\$name") -Architecture $Architecture
+    }
+}
+
+function Get-PackageDirectoryIdentity {
+    param([Parameter(Mandatory)][string]$Directory)
+    if (-not [IO.Path]::IsPathRooted($Directory)) { throw 'Package directory identity requires an absolute path' }
+    $item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing nonregular package directory identity' }
+    $ancestor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Directory))
+    while ($ancestor) {
+        $parentItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package directory ancestor' }
+        $next = [IO.Path]::GetDirectoryName($ancestor)
+        if (!$next -or $next -eq $ancestor) { break }
+        $ancestor = $next
+    }
+    $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
+    try {
+        $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
+        # Built-in fs obtains the volume/file index, never package code. Passing
+        # the literal path through an environment value avoids argv quoting.
+        $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
+        if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
+        return ([string]$identity).Trim()
+    } finally { [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process') }
+}
+
+function Remove-OwnedPackageStaging {
+    param([Parameter(Mandatory)][string]$Directory,[Parameter(Mandatory)][string]$ExpectedIdentity)
+    if ((Get-PackageDirectoryIdentity -Directory $Directory) -ne $ExpectedIdentity) { throw 'Refusing replaced package staging directory' }
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($Directory)
+    while ($pending.Count) {
+        foreach ($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop) {
+            if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package staging content' }
+            if ($entry.PSIsContainer) { $pending.Push($entry.FullName) }
+        }
+    }
+    Remove-Item -LiteralPath $Directory -Recurse -Force -ErrorAction Stop
+}
+
 # ------------------------------------------------------------ install files
 # Staged, atomic-swap install: copy into a fresh staging dir next to the app
 # dir, then swap it into place. A failed copy can never leave a half-written
@@ -588,7 +711,8 @@ function Activate-StagedPackage {
     param(
         [Parameter(Mandatory = $true)][string]$AppDirectory,
         [Parameter(Mandatory = $true)][string]$StagingDirectory,
-        [Parameter(Mandatory = $true)][string]$PreviousDirectory
+        [Parameter(Mandatory = $true)][string]$PreviousDirectory,
+        [string]$ExpectedStagingIdentity = ""
     )
     $ErrorActionPreference = 'Stop'
     $appPath = [IO.Path]::GetFullPath($AppDirectory).TrimEnd('\')
@@ -606,6 +730,7 @@ function Activate-StagedPackage {
         }
     }
     if (Test-Path -LiteralPath $PreviousDirectory) { throw 'refusing an existing package recovery directory' }
+    if ($ExpectedStagingIdentity -and (Get-PackageDirectoryIdentity -Directory $StagingDirectory) -ne $ExpectedStagingIdentity) { throw 'refusing replaced package staging before activation' }
     $previousMoved = $false
     try {
         if (Test-Path -LiteralPath $AppDirectory) {
@@ -624,7 +749,8 @@ function Activate-StagedPackage {
             $stagedItem = Get-Item -LiteralPath $StagingDirectory -Force -ErrorAction SilentlyContinue
             if ($stagedItem) {
                 if (($stagedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $stagedItem.PSIsContainer) { throw 'staging ownership changed' }
-                Remove-Item -LiteralPath $StagingDirectory -Recurse -Force -ErrorAction Stop
+                if ($ExpectedStagingIdentity) { Remove-OwnedPackageStaging -Directory $StagingDirectory -ExpectedIdentity $ExpectedStagingIdentity }
+                else { Remove-Item -LiteralPath $StagingDirectory -Recurse -Force -ErrorAction Stop }
             }
         } catch { $recoveryErrors += 'staging cleanup failed' }
         if ($recoveryErrors.Count) {
@@ -633,6 +759,11 @@ function Activate-StagedPackage {
         $previousOutcome = if ($previousMoved) { 'restored' } else { 'preserved' }
         throw "failed to activate the staged agent package; the previous install was $previousOutcome ($activationError)"
     }
+}
+
+if (-not $script:DryRun) {
+    try { Assert-WindowsPackageHelpers -PackageDirectory $PackageDir -Architecture $arch }
+    catch { Fail "native package preflight failed before installation changes ($($_.Exception.Message))" }
 }
 
 Write-Log "Installing agent package from $PackageDir to $AppDir"
@@ -647,15 +778,23 @@ $script:IsUpgrade = (Test-Path $AppDir)
 if ($script:DryRun) {
     Write-Host "[dry-run] copy $PackageDir into $($script:AppStaging) (excluding node_modules, .git), then atomically swap into $AppDir"
 } else {
-    if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
+    if (Test-Path -LiteralPath $script:AppStaging) { Fail 'refusing an existing package staging directory' }
+    New-Item -ItemType Directory -Path $script:AppStaging -ErrorAction Stop | Out-Null
+    $stagingIdentity = Get-PackageDirectoryIdentity -Directory $script:AppStaging
     try {
         Copy-PackageTree -Source $PackageDir -Destination $script:AppStaging
+        Assert-WindowsPackageHelpers -PackageDirectory $script:AppStaging -Architecture $arch
     } catch {
-        if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
-        Fail "failed to stage the agent package; $AppDir was left untouched ($($_.Exception.Message))"
+        $stagingError = $_.Exception.Message
+        try {
+            Remove-OwnedPackageStaging -Directory $script:AppStaging -ExpectedIdentity $stagingIdentity
+        } catch {
+            Fail "failed to stage the agent package; staging cleanup refused; preserve $($script:AppStaging) for inspection; $AppDir was left untouched ($stagingError)"
+        }
+        Fail "failed to stage the agent package; $AppDir was left untouched ($stagingError)"
     }
     try {
-        Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious
+        Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious -ExpectedStagingIdentity $stagingIdentity
     } catch {
         Fail $_.Exception.Message
     }

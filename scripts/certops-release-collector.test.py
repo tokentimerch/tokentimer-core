@@ -75,6 +75,12 @@ def uncertain_abandon_proof():
     return {**result, "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 61000, "scope": "native-zero-request-uncertain-abandon", "resolvedIssuingCaAddress": "10.64.0.4", "caRequestsAtFault": 0, "caRequestsAfterRecovery": 0, "caRequestsAfterAbandon": 0}
 
 
+def operator_ambiguity_proof():
+    flags = ("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "originalOrphanPreserved", "recoveryPolicyUnchanged", "operatorCreatedSameCsrAmbiguity", "nativeCaOwnershipVerified", "automaticAttachmentRefused", "unacceptedKeyPreserved", "unrelatedTrustedTlsPreserved", "publicExplicitReconcileAudited", "exactSelectedRequestInstalled", "claimBoundVerification", "sameProtectedMachineKeyInstalled", "unusedOwnedRequestRevoked", "unusedLeafNeverAccepted")
+    enrollment = "11111111-1111-1111-1111-111111111111"
+    return {**dict.fromkeys(flags, True), "scope": "native-zero-request-uncertainty-with-operator-created-same-csr-ambiguity", "fixtureOrigin": "operator-created-two-real-system-submissions-of-the-same-public-csr", "resolvedIssuingCaAddress": "10.64.0.4", "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 120000, "caRequestsAtFault": 0, "caRequestsAfterOperatorSubmissions": 2, "caRequestsAfterAmbiguousRecovery": 2, "caRequestsAfterExplicitRecovery": 2, "requestIds": ["101", "102"], "fingerprints": ["1" * 64, "2" * 64], "serialNumbers": ["aa", "bb"], "csrSpkiSha256": "3" * 64, "csrSha256": "4" * 64, "selectedRequestId": "101", "unusedRequestId": "102", "enrollmentId": enrollment, "containerName": "tokentimer-enr-" + enrollment, "jobIds": [value * 8 + "-" + value * 4 + "-" + value * 4 + "-" + value * 4 + "-" + value * 12 for value in ("2", "3", "4")], "reconcileSearchFrom": 100, "scanWindowSize": 16}
+
+
 def two_adcs_renewals_proof():
     flags = ("defaultSqlNowSelection", "automaticSourceAndRealMode", "distinctExpiryGenerations", "independentCaRequests", "freshLeafSerialAndSpki", "protectedUniqueMachineKeys", "nativeIisAndSniCutovers", "independentTrustedTls", "claimBoundVerificationEvidence", "unchangedStoredProfile", "sameManagementPeriod", "predecessorCustodyPreserved", "actualInventoryMatchesLatest", "ownedEnrollmentCleanupRegistered", "noDateOrJournalOverrides")
     return {**dict.fromkeys(flags, True), "scope": "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", "renewalProtocol": "fresh-enrollment-with-new-key-and-csr", "schedulerInvocation": "qualification-invoked-production-default-sweep", "workerIntervalQualified": False, "successfulAutomationCycles": 2, "expiryCleanupQualified": False,
@@ -690,6 +696,8 @@ class CollectorTests(unittest.TestCase):
         value = {"suite": "enterprise-adcs-real", "nativeLocalRulePairs": local_pairs_proof(), "nativeForeignSpkiCandidate": foreign_spki_proof(), "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
+        value["nativeUncertainOperatorAmbiguity"] = operator_ambiguity_proof()
+        value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
         value["nativeBrowserAdcs"] = browser_adcs_proof()
         value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
         value["browserNativePreflightDispatch"] = {"count": 2, "jobIds": ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"], "privateReceipt": "sentinel"}
@@ -699,6 +707,23 @@ class CollectorTests(unittest.TestCase):
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))
+        self.assertEqual(result[0][1]["nativeUncertainOperatorAmbiguity"], operator_ambiguity_proof())
+        for key, expected in operator_ambiguity_proof().items():
+            invalid = json.loads(json.dumps(value))
+            del invalid["nativeUncertainOperatorAmbiguity"][key]
+            with self.subTest(ambiguity_missing=key), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+            bad_values = (False, None, 1, "true") if type(expected) is bool else (None, False, "invalid")
+            for bad_value in bad_values:
+                invalid = json.loads(json.dumps(value))
+                invalid["nativeUncertainOperatorAmbiguity"][key] = bad_value
+                with self.subTest(ambiguity_field=key, value=bad_value), self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for patch in ({"fixtureOrigin": "lost-submit-response"}, {"caRequestsAtFault": 1}, {"caRequestsAfterAmbiguousRecovery": 3}, {"actualLeaseWaitMs": 60000}, {"actualLeaseWaitMs": 152000}, {"reconcileSearchFrom": 102}, {"scanWindowSize": 64}, {"selectedRequestId": "103"}, {"unusedRequestId": "101"}, {"requestIds": ["101", "101"]}, {"jobIds": ["22222222-2222-2222-2222-222222222222"] * 3}):
+            invalid = json.loads(json.dumps(value))
+            invalid["nativeUncertainOperatorAmbiguity"].update(patch)
+            with self.subTest(ambiguity_patch=patch), self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeBrowserAdcs"], browser_adcs_proof())
         self.assertEqual(result[0][1]["nativeLocalRulePairs"], local_pairs_proof())
         self.assertEqual(result[0][1]["nativeForeignSpkiCandidate"], foreign_spki_proof())
@@ -890,6 +915,12 @@ class CollectorTests(unittest.TestCase):
     def test_trusted_run_identity(self):
         run = {"status": "completed", "conclusion": "success", "head_sha": "a" * 40, "head_branch": "main", "repository": {"full_name": "owner/repo"}, "head_repository": {"full_name": "owner/repo"}, "path": ".github/workflows/certops-qualification.yml", "event": "workflow_dispatch"}
         collector.validate_run(run, "a" * 40, "owner/repo")
+        for workflow in ("certops-windows-fixed-root.yml", "certops-windows-arm64-cng.yml"):
+            trusted = {**run, "path": ".github/workflows/" + workflow}
+            collector.validate_run(trusted, "a" * 40, "owner/repo")
+            for field, value in (("head_branch", "feature"), ("head_sha", "b" * 40), ("event", "pull_request"), ("conclusion", "cancelled")):
+                with self.subTest(workflow=workflow, field=field), self.assertRaises(ValueError):
+                    collector.validate_run({**trusted, field: value}, "a" * 40, "owner/repo")
         for field, value in (("head_sha", "b" * 40), ("head_branch", "other"), ("conclusion", "failure"), ("path", ".github/workflows/ci.yml"), ("event", "pull_request")):
             with self.assertRaises(ValueError):
                 collector.validate_run({**run, field: value}, "a" * 40, "owner/repo")

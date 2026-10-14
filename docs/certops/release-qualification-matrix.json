@@ -252,7 +252,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -290,7 +291,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -328,7 +330,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -366,7 +369,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -404,7 +408,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -483,7 +488,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -521,7 +527,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -559,7 +566,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -597,7 +605,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -635,7 +644,8 @@
         "apps/api/services/certops/agentRegistry.js",
         "apps/api/services/certops/agentCredentials.js",
         "scripts/certops-stack-reporter.js",
-        ".github/workflows/certops-windows-e2e.yml"
+        ".github/workflows/certops-windows-e2e.yml",
+        "scripts/certops-installer-pe.test.ps1"
       ]
     },
     {
@@ -704,7 +714,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -773,7 +789,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -842,7 +864,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -911,7 +939,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -980,7 +1014,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -1049,7 +1089,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -1118,7 +1164,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -1187,7 +1239,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -1256,7 +1314,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -1862,7 +1926,13 @@
         "infra/certops-adcs/run-windows-tests.ps1",
         ".dockerignore",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-enrollment-journal.js"
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity.js",
+        "infra/certops-adcs/officer-action.ps1",
+        "packages/agent/src/issuers/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/windows-iis/index.js",
+        "apps/api/routes/certops-enrollments.js"
       ]
     },
     {
@@ -3737,6 +3807,40 @@
         "osVersion": "2025",
         "identity": "LocalSystem"
       }
+    },
+    {
+      "id": "windows-arm64-cng-runtime",
+      "kind": "host",
+      "suite": "windows-arm64-cng-runtime",
+      "source": "scripts/certops-arm64-runtime.js",
+      "environment": {
+        "osFamily": "windows",
+        "productType": 1,
+        "architecture": "arm64"
+      },
+      "requiredSources": [
+        "scripts/certops-arm64-runtime.js",
+        "scripts/certops-arm64-runtime-proof.js",
+        "scripts/certops-arm64-native.ps1",
+        ".github/workflows/certops-windows-arm64-cng.yml",
+        "packages/agent/scripts/host-gate.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/scripts/host/cng-export-fixture.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/issuers/csr-certificate-key.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/go.mod",
+        "packages/agent/reference/adcs-chain/go.sum",
+        "packages/agent/reference/adcs-chain/main.go",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "packages/agent/reference/adcs-chain/chaincore/result.go",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
+        "packages/agent/reference/adcs-chain/keyrefs/result.go"
+      ]
     }
   ]
 }
