@@ -510,3 +510,26 @@ test("canonical Windows CLI and completed-console facts are mandatory and source
     }
   }
 });
+
+test("full installer CLI second-rename evidence requires exact scope and all native facts", () => {
+  const helper=require("../tests/e2e/helpers/certops-windows-cli-second-rename"), suite=helper.suite;
+  assert.equal(helper.fields.length,19);
+  const slots=require("../docs/certops/release-qualification-matrix.json").slots.filter(slot=>slot.suite===suite);
+  assert.equal(slots.length,2);
+  for(const slot of slots){
+    const proof={scope:"unmodified-installer-cli-canonical-root-operator-cng-binding",...Object.fromEntries(helper.fields.map(field=>[field,true]))};
+    const value=suiteArtifact(suite,slot.source,{nativeCliSecondRename:proof});
+    value.environment=value.report.qualificationEnvironment={...slot.environment,measurement:"native"};
+    value.report.fixtureSources=slot.requiredSources.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
+    const options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
+    assert.deepEqual(verifyMatrix([value],options),[]);
+    for(const field of helper.fields){
+      for(const invalid of [false,1,null,"true"]){const bad=structuredClone(value);bad.report.nativeCliSecondRename[field]=invalid;assert.ok(verifyMatrix([bad],options).length,field);}
+      const missing=structuredClone(value);delete missing.report.nativeCliSecondRename[field];assert.ok(verifyMatrix([missing],options).length,field);
+    }
+    for(const invalid of [undefined,null,[],{...proof,scope:"production-activation-functions-not-installer-cli"},{...proof,scope:"temporaryfile-mechanics-only"},{...proof,agentIssuanceQualified:true}]){
+      const bad=structuredClone(value);bad.report.nativeCliSecondRename=invalid;assert.ok(verifyMatrix([bad],options).length);
+    }
+    const stale=structuredClone(value);stale.report.fixtureSources[0].sha256="0".repeat(64);assert.ok(verifyMatrix([stale],options).length);
+  }
+});

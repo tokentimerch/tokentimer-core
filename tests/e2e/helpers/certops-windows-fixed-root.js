@@ -3,18 +3,20 @@
  * Executes the byte-identical packed installer CLI, not extracted functions or
  * a root-rewritten script. Owns only a previously absent canonical service/root.
  * This lane qualifies candidate reapplication, not distinct-version migration,
- * certificate issuance, second-rename rollback or Windows dump containment.
+ * certificate issuance or Windows dump containment. The separate full-CLI
+ * second-rename sidecar runs in this same owned host and is mandatory.
  */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const cliMechanics = require("./certops-windows-cli-oplock");
 const canonicalRoot = "C:\\ProgramData\\TokenTimerAgent";
 const suite = "windows-canonical-root-lifecycle";
 const requiredScenarios = ["windows-canonical-root-owned", "windows-canonical-unmodified-install", "windows-canonical-authenticated-registration", "windows-canonical-service-restart", "windows-canonical-candidate-reapplication", "windows-canonical-unmodified-uninstall", "windows-canonical-owned-cleanup"];
 const fields = ["initialRootAbsent", "initialServiceAbsent", "ownershipRecordedBeforeInstall", "originalInstallerBytesUnchanged", "canonicalInstalledHostVerified", "localSystemServiceVerified", "authenticatedRegistration", "bootstrapRegistryScrubbed", "restartChangedServicePid", "freshHeartbeatAfterRestart", "candidateReapplicationSucceeded", "configurationCredentialAndPinPreserved", "freshHeartbeatAfterReapplication", "unmodifiedUninstallerSucceeded", "serviceAndAppRemoved", "uninstallPreservedState", "exactOwnedRootRemoved"];
-const requiredSources = ["tests/e2e/helpers/certops-windows-fixed-root.js", "tests/e2e/certops-agent-e2e.test.js", "packages/agent/scripts/install-agent.ps1", "packages/agent/scripts/pack-release.js", "packages/agent/scripts/build-windows-chain-helper.js", "packages/agent/scripts/build-windows-service-host.js", "scripts/certops-windows-fixed-root.js", "scripts/certops-windows-fixed-root-cleanup.js"];
+const requiredSources = ["tests/e2e/helpers/certops-windows-fixed-root.js", "tests/e2e/certops-agent-e2e.test.js", "packages/agent/scripts/install-agent.ps1", "packages/agent/scripts/pack-release.js", "packages/agent/scripts/build-windows-chain-helper.js", "packages/agent/scripts/build-windows-service-host.js", "scripts/certops-windows-fixed-root.js", "scripts/certops-windows-fixed-root-cleanup.js", ".github/workflows/certops-windows-fixed-root.yml", "tests/e2e/helpers/certops-windows-cli-second-rename.js", "tests/e2e/helpers/certops-windows-cli-oplock.js", "tests/e2e/helpers/certops-windows-cli-oplock-driver.ps1", "tests/e2e/helpers/certops-windows-cli-oplock-launcher.ps1", "packages/agent/src/windows-cert-store/index.js", "packages/agent/src/windows-key-survivors/index.js", "packages/agent/src/issuers/chain-helper.js"];
 function verifyProof(proof) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
   assert.deepEqual(Object.keys(proof).sort(), [...fields, "scope"].sort());
@@ -46,7 +48,7 @@ async function qualifyFixedRoot({ pool, baseUrl, workspaceId, createBootstrap, r
     assert.ifError(result.error); assert.equal(result.status, 0, "Owned native operation failed"); return result.stdout.trim();
   };
   const ps = script => run(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from("$ErrorActionPreference='Stop';" + script, "utf16le").toString("base64")]);
-  const service = () => JSON.parse(ps("$s=Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\";if($s){@{pid=$s.ProcessId;state=$s.State;path=$s.PathName;startName=$s.StartName}|ConvertTo-Json -Compress}else{'null'}"));
+  const service = () => JSON.parse(ps("$s=Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\";if($s){$p=if($s.ProcessId){Get-CimInstance Win32_Process -Filter \"ProcessId=$($s.ProcessId)\"};@{pid=$s.ProcessId;state=$s.State;path=$s.PathName;startName=$s.StartName;created=if($p){$p.CreationDate.ToUniversalTime().ToString('o')}else{$null};executable=if($p){$p.ExecutablePath}else{$null}}|ConvertTo-Json -Compress}else{'null'}"));
   const absent = () => service() === null;
   const wait = async check => { const deadline = Date.now() + 120000; while (Date.now() < deadline) { const value = await check(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 500)); } throw new Error("Canonical Windows lifecycle deadline exceeded"); };
   assert.equal(ps("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"), "S-1-5-18");
@@ -60,13 +62,14 @@ async function qualifyFixedRoot({ pool, baseUrl, workspaceId, createBootstrap, r
   assert.ok(externalReceipt.startsWith(path.resolve(process.env.RUNNER_TEMP) + path.sep));
   assert.equal(fs.existsSync(externalReceipt), false, "Refuse stale external ownership receipt");
   const workDir = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "certops-fixed-root-"));
+  const workDirFileId = fs.statSync(workDir, { bigint: true }).ino;
   const configDir = path.join(canonicalRoot, "state"), receiptPath = path.join(canonicalRoot, ".qualification-ownership.json");
   const expectedHost = path.join(canonicalRoot, "app/bin/tokentimer-agent-host-amd64.exe");
   const proof = { scope: "unmodified-candidate-cli-canonical-root-same-version-reapplication", initialRootAbsent: true, initialServiceAbsent: true };
   let rootOwned = false, fileId, installer, originalBytes, primary;
   const errors = [];
   const hash = file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(repoRoot, file))).digest("hex") });
-  const gate = require("../../../packages/agent/scripts/host-gate").createHostGate({ suite, strict: true, evidenceLevel: "e2e", reportPath: "qualification-results/windows-canonical-root.json", fixtureSource: hash(requiredSources[0]), requiredCapabilities: ["windows", "system", "disposableHost", "api"], probeCapabilities: () => ({ windows: { available: process.platform === "win32" }, system: { available: ps("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value") === "S-1-5-18" }, disposableHost: { available: process.env.RUNNER_ENVIRONMENT === "github-hosted" }, api: { available: true } }) });
+  const gate = require("../../../packages/agent/scripts/host-gate").createHostGate({ suite, strict: true, evidenceLevel: "e2e", reportPath: "qualification-results/windows-canonical-root.json", fixtureSource: hash(requiredSources[0]), requiredCapabilities: ["windows", "system", "disposableHost", "api", "iis"], probeCapabilities: () => ({ windows: { available: process.platform === "win32" }, system: { available: ps("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value") === "S-1-5-18" }, disposableHost: { available: process.env.RUNNER_ENVIRONMENT === "github-hosted" }, api: { available: true }, iis: { available: ps("[bool](Get-Module -ListAvailable WebAdministration)") === "True" } }) });
   gate.report.fixtureSources = requiredSources.map(hash);
   await gate.preflight(); gate.report.qualificationEnvironment.identity = "LocalSystem";
   const assertRoot = () => {
@@ -78,16 +81,21 @@ async function qualifyFixedRoot({ pool, baseUrl, workspaceId, createBootstrap, r
     return receipt;
   };
   const assertService = () => { assertRoot(); const value = service(); assert.ok(value); assert.ok(value.path.toLowerCase().startsWith(('"' + expectedHost + '" ').toLowerCase()), "Refuse a service outside the owned canonical app"); assert.equal(value.startName, "LocalSystem"); return value; };
+  const assertDrained = () => {
+    assert.equal(fs.lstatSync(workDir).isSymbolicLink(), false); assert.equal(fs.statSync(workDir, { bigint: true }).ino, workDirFileId);
+    assert.equal(path.resolve(fs.realpathSync(workDir)).toLowerCase(), path.resolve(workDir).toLowerCase());
+    cliMechanics.assertCleanupSafe(canonicalRoot); cliMechanics.assertCleanupSafe(workDir);
+  };
   const install = async () => { assertRoot(); assert.deepEqual(fs.readFileSync(installer), originalBytes); const bootstrap = await createBootstrap(); run(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installer, "--api-url", baseUrl, "--workspace-id", String(workspaceId), "--allow-insecure-local-http", "--no-trust-store"], { TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: bootstrap.plaintextToken }); assert.deepEqual(fs.readFileSync(installer), originalBytes); assert.deepEqual(fs.readFileSync(path.join(canonicalRoot, "app/scripts/install-agent.ps1")), originalBytes); };
   const seen = async () => (await pool.query("SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2 AND retired_at IS NULL", [workspaceId, agentId])).rows[0]?.last_seen_at;
   const freshHeartbeat = async () => { const baseline = await seen(); assert.ok(baseline); await wait(async () => new Date(await seen()).getTime() > new Date(baseline).getTime()); };
   const stateFiles = ["config.json", "credential", "signing-key-pin.json"];
-  const readState = () => stateFiles.map(file => fs.readFileSync(path.join(configDir, file)));
+  const readState = () => stateFiles.map(file => crypto.createHash("sha256").update(fs.readFileSync(path.join(configDir, file))).digest("hex"));
   try {
     await gate.scenario(requiredScenarios[0], () => {
       assert.equal(fs.existsSync(canonicalRoot), false); assert.equal(absent(), true);
       fs.mkdirSync(canonicalRoot); rootOwned = true; fileId = fs.statSync(canonicalRoot, { bigint: true }).ino; assert.ok(fileId > 0n);
-      fs.writeFileSync(receiptPath, JSON.stringify({ root: canonicalRoot, token, fileId: String(fileId) }), { flag: "wx" });
+      fs.writeFileSync(receiptPath, JSON.stringify({ root: canonicalRoot, token, fileId: String(fileId), workDir, workDirFileId: String(workDirFileId) }), { flag: "wx" });
       fs.writeFileSync(externalReceipt, fs.readFileSync(receiptPath), { flag: "wx" });
       assertRoot(); proof.ownershipRecordedBeforeInstall = true;
       fs.mkdirSync(configDir);
@@ -116,11 +124,13 @@ async function qualifyFixedRoot({ pool, baseUrl, workspaceId, createBootstrap, r
       await wait(() => { const after = assertService(); return after.state === "Running" && after.pid > 0 && after.pid !== before.pid; });
       assert.deepEqual(readState(), state); await freshHeartbeat(); Object.assign(proof, { restartChangedServicePid: true, freshHeartbeatAfterRestart: true });
     });
+    await require("./certops-windows-cli-second-rename").qualifyCliSecondRename({ pool, workspaceId, agentId, repoRoot, installer, workDir, createBootstrap, baseUrl, configDir, ps, assertRoot });
     await gate.scenario(requiredScenarios[4], async () => {
       const state = readState(); await install(); assert.equal(assertService().state, "Running"); assert.deepEqual(readState(), state); await freshHeartbeat();
       Object.assign(proof, { candidateReapplicationSucceeded: true, configurationCredentialAndPinPreserved: true, freshHeartbeatAfterReapplication: true });
     });
     await gate.scenario(requiredScenarios[5], async () => {
+      assertDrained();
       const state = readState(); assertService(); assert.deepEqual(fs.readFileSync(installer), originalBytes);
       run(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installer, "--uninstall"]);
       await wait(absent); assert.equal(fs.existsSync(path.join(canonicalRoot, "app")), false); assert.deepEqual(readState(), state); assertRoot();
@@ -130,17 +140,18 @@ async function qualifyFixedRoot({ pool, baseUrl, workspaceId, createBootstrap, r
   finally {
     await gate.scenario(requiredScenarios[6], async () => {
       if (rootOwned) {
+        assertDrained();
         assertRoot();
         if (!absent()) {
           assertService(); ps("$s=Get-Service TokenTimerAgent;if($s.Status -ne 'Stopped'){Stop-Service TokenTimerAgent -ErrorAction Stop};$s.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(20))");
           run("sc.exe", ["delete", "TokenTimerAgent"]); await wait(absent);
         }
         const receipt = assertRoot(); assertCanonicalOwnership({ root: canonicalRoot, token, receipt, fileId, serviceAbsent: absent() });
-        fs.rmSync(canonicalRoot, { recursive: true }); assert.equal(fs.existsSync(canonicalRoot), false); proof.exactOwnedRootRemoved = true;
+        assertDrained(); fs.rmSync(canonicalRoot, { recursive: true }); assert.equal(fs.existsSync(canonicalRoot), false); proof.exactOwnedRootRemoved = true;
       }
       const tempRoot = path.resolve(process.env.RUNNER_TEMP), target = path.resolve(workDir);
       assert.ok(target.startsWith(tempRoot + path.sep) && path.basename(target).startsWith("certops-fixed-root-"));
-      assert.equal(absent(), true); fs.rmSync(target, { recursive: true });
+      assertDrained(); assert.equal(absent(), true); fs.rmSync(target, { recursive: true });
       if (!primary) { verifyProof(proof); gate.report.nativeCanonicalRoot = proof; }
     }).catch(error => errors.push(error));
     await gate.finish({ requiredScenarios }).catch(error => errors.push(error));

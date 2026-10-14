@@ -3206,7 +3206,15 @@
         "packages/agent/scripts/build-windows-chain-helper.js",
         "packages/agent/scripts/build-windows-service-host.js",
         "scripts/certops-windows-fixed-root.js",
-        "scripts/certops-windows-fixed-root-cleanup.js"
+        "scripts/certops-windows-fixed-root-cleanup.js",
+        ".github/workflows/certops-windows-fixed-root.yml",
+        "tests/e2e/helpers/certops-windows-cli-second-rename.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock-driver.ps1",
+        "tests/e2e/helpers/certops-windows-cli-oplock-launcher.ps1",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/chain-helper.js"
       ],
       "environment": {
         "osFamily": "windows",
@@ -3227,7 +3235,15 @@
         "packages/agent/scripts/build-windows-chain-helper.js",
         "packages/agent/scripts/build-windows-service-host.js",
         "scripts/certops-windows-fixed-root.js",
-        "scripts/certops-windows-fixed-root-cleanup.js"
+        "scripts/certops-windows-fixed-root-cleanup.js",
+        ".github/workflows/certops-windows-fixed-root.yml",
+        "tests/e2e/helpers/certops-windows-cli-second-rename.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock-driver.ps1",
+        "tests/e2e/helpers/certops-windows-cli-oplock-launcher.ps1",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/chain-helper.js"
       ],
       "environment": {
         "osFamily": "windows",
@@ -3433,6 +3449,62 @@
         "identity": "LocalSystem",
         "measurement": "native",
         "keyProfile": "ec-p384"
+      }
+    },
+    {
+      "id": "windows-cli-second-rename-2022",
+      "kind": "host",
+      "suite": "windows-installer-cli-second-rename",
+      "source": "tests/e2e/helpers/certops-windows-cli-second-rename.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-cli-second-rename.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock-driver.ps1",
+        "tests/e2e/helpers/certops-windows-cli-oplock-launcher.ps1",
+        "tests/e2e/helpers/certops-windows-fixed-root.js",
+        "packages/agent/scripts/install-agent.ps1",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "scripts/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root-cleanup.js",
+        ".github/workflows/certops-windows-fixed-root.yml",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/scripts/build-windows-service-host.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem"
+      }
+    },
+    {
+      "id": "windows-cli-second-rename-2025",
+      "kind": "host",
+      "suite": "windows-installer-cli-second-rename",
+      "source": "tests/e2e/helpers/certops-windows-cli-second-rename.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-cli-second-rename.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock.js",
+        "tests/e2e/helpers/certops-windows-cli-oplock-driver.ps1",
+        "tests/e2e/helpers/certops-windows-cli-oplock-launcher.ps1",
+        "tests/e2e/helpers/certops-windows-fixed-root.js",
+        "packages/agent/scripts/install-agent.ps1",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "scripts/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root-cleanup.js",
+        ".github/workflows/certops-windows-fixed-root.yml",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/scripts/build-windows-service-host.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem"
       }
     }
   ]

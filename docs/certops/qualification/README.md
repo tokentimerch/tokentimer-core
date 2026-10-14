@@ -46,6 +46,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [IIS SNI isolation between sites sharing one port](windows/shared-port-sni-qualification.md)
 - [Native store and HTTP.sys discovery selectors](windows/native-discovery-qualification.md)
 - [Canonical-root unmodified Windows installer lifecycle](windows/canonical-root-lifecycle.md)
+- [Full installer CLI second-rename refusal and guarded cleanup](windows/installer-cli-second-rename.md)
 - [Installed Windows adoption and predecessor retention qualification](windows/windows-adoption-qualification.md)
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
 - [Installer first-rename refusal and preserved service](windows/installer-first-rename-refusal.md)

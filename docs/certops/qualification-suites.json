@@ -1132,6 +1132,11 @@
     "windows-certificate-dry-run": {
       "windows-certificate-deploy-dry-run": "e2e",
       "windows-certificate-renew-dry-run": "e2e"
+    },
+    "windows-installer-cli-second-rename": {
+      "windows-cli-second-rename-owned-fixture": "e2e",
+      "windows-cli-second-rename-preserves-installed-service": "e2e",
+      "windows-cli-second-rename-owned-cleanup": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1595,9 +1600,17 @@
       "windows",
       "system",
       "disposableHost",
-      "api"
+      "api",
+      "iis"
     ],
     "windows-certificate-dry-run": [
+      "windows",
+      "system",
+      "installedAgent",
+      "api",
+      "iis"
+    ],
+    "windows-installer-cli-second-rename": [
       "windows",
       "system",
       "installedAgent",
@@ -2732,6 +2745,11 @@
     "windows-certificate-dry-run": [
       "windows-certificate-deploy-dry-run",
       "windows-certificate-renew-dry-run"
+    ],
+    "windows-installer-cli-second-rename": [
+      "windows-cli-second-rename-owned-fixture",
+      "windows-cli-second-rename-preserves-installed-service",
+      "windows-cli-second-rename-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2827,6 +2845,7 @@
     "windows-two-unattended-renewals": "e2e",
     "renewal-key-facts-api": "integration",
     "windows-canonical-root-lifecycle": "e2e",
-    "windows-certificate-dry-run": "e2e"
+    "windows-certificate-dry-run": "e2e",
+    "windows-installer-cli-second-rename": "e2e"
   }
 }

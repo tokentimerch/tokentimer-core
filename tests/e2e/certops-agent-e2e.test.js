@@ -437,7 +437,7 @@ describe("CertOps agent surface E2E", () => {
     });
   }
   if (process.env.CERTOPS_REAL_WINDOWS_FIXED_ROOT_REQUIRED === "1") {
-    it("real Windows canonical root: unmodified installer registers restarts reapplies and uninstalls", { timeout: 600000 }, async () => {
+    it("real Windows canonical root: unmodified installer registers restarts reapplies and uninstalls", { timeout: 900000 }, async () => {
       assert.equal(dbAvailable, true, "Canonical Windows lifecycle requires migrated PostgreSQL");
       await require("./helpers/certops-windows-fixed-root").qualifyFixedRoot({ pool, baseUrl, workspaceId: seeded.workspaceId, createBootstrap, repoRoot });
     });

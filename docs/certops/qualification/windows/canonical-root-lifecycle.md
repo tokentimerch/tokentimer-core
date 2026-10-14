@@ -31,7 +31,8 @@ Implementation and supporting proof/cleanup tests are not native execution
 evidence. The two Server lanes remain unrun. Same-version candidate
 reapplication does not qualify a distinct-version or published-artifact upgrade.
 The separate root-redirected ACME/CNG/IIS journey remains necessary for certificate
-capabilities. Full-installer second-rename failure still needs a deterministic
-external native interception mechanism; the activation-function harness does
-not satisfy that gap. This lane does not claim dump containment or ARM64 service
-qualification.
+capabilities. The separate [full installer CLI second-rename source](installer-cli-second-rename.md)
+now runs as a mandatory sidecar in this same fresh-host lane; its native
+execution remains pending. The activation-function harness qualifies only its
+supporting mechanics. This lane does not claim dump containment or ARM64
+service qualification.

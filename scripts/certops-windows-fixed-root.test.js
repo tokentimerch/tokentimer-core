@@ -3,6 +3,13 @@
  * certificate store or canonical directory is touched by these tests. */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
 const fixture = require("../tests/e2e/helpers/certops-windows-fixed-root");
+test("full CLI rollback preservation requires process creation/executable/service path, not PID alone", () => {
+  const { assertServiceStable } = require("../tests/e2e/helpers/certops-windows-cli-second-rename");
+  const host = path.win32.join(fixture.canonicalRoot, "app/bin/tokentimer-agent-host-amd64.exe");
+  const identity = { pid: 1234, state: "Running", owner: "S-1-5-18", created: "2026-10-14T10:00:00.0000000Z", executable: host, servicePath: '"' + host + '" --state-dir owned' };
+  assertServiceStable(identity, { ...identity });
+  for (const change of [{ created: "2026-10-14T10:01:00.0000000Z" }, { executable: "C:\\other.exe" }, { servicePath: '"C:\\other.exe" --state-dir owned' }, { owner: "S-1-5-19" }, { state: "Stopped" }]) assert.throws(() => assertServiceStable(identity, { ...identity, ...change }));
+});
 test("canonical lifecycle proof refuses missing or coerced facts and migration overclaims", () => {
   const proof = { ...Object.fromEntries(fixture.fields.map(field => [field, true])), scope: "unmodified-candidate-cli-canonical-root-same-version-reapplication" };
   assert.equal(fixture.verifyProof(proof), true);

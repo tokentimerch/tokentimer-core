@@ -17,7 +17,7 @@ jobs:
       matrix:
         windows_server: [windows-2022, windows-2025]
     runs-on: ${{ matrix.windows_server }}
-    timeout-minutes: 35
+    timeout-minutes: 40
     defaults:
       run:
         shell: pwsh
@@ -49,6 +49,12 @@ jobs:
           go-version-file: packages/agent/windows-service-host/go.mod
           cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Require native IIS support for the owned rollback fixture
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = Install-WindowsFeature Web-Server,Web-Mgmt-Tools,Web-Scripting-Tools -IncludeManagementTools
+          if (!$result.Success -or [string]$result.RestartNeeded -ne 'No') { throw 'IIS prerequisite unavailable without reboot; refusing qualification' }
+          if (!(Get-Module -ListAvailable WebAdministration)) { throw 'Native IIS PowerShell module unavailable' }
       - name: Refuse an existing canonical service or directory and establish run ownership
         run: |
           $ErrorActionPreference = 'Stop'
@@ -107,13 +113,13 @@ jobs:
           $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $action = New-ScheduledTaskAction -Execute $powershellPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $env:GITHUB_WORKSPACE
           $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-          # Native lifecycle: 10min; producer: 15min. Allow bounded finalization
+          # Native lifecycle: 15min; producer: 20min. Allow bounded finalization
           # before stopping the owned task and running independent cleanup.
-          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 19)
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 24)
           Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
           try {
             Start-ScheduledTask -TaskName $taskName
-            $deadline = [DateTime]::UtcNow.AddMinutes(18)
+            $deadline = [DateTime]::UtcNow.AddMinutes(23)
             while (!(Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 2 }
             if (!(Test-Path -LiteralPath $receipt)) { throw 'SYSTEM qualification exceeded its deadline' }
             if ((Get-Content -LiteralPath $receipt -Raw).Trim() -ne '0') { throw 'SYSTEM installed-agent qualification failed; inspect sanitized report' }
@@ -147,4 +153,5 @@ jobs:
           path: |
             qualification-results/windows-canonical-root.json
             qualification-results/windows-canonical-root-protocol.jsonl
+            qualification-results/windows-cli-second-rename.json
           if-no-files-found: error

@@ -99,6 +99,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-canonical-root-lifecycle") require("../tests/e2e/helpers/certops-windows-fixed-root").verifyProof(artifact.report.nativeCanonicalRoot);
         if (slot.suite === "windows-installer-first-rename-refusal") require("../tests/e2e/helpers/certops-windows-rename-refusal").verifyProof(artifact.report.nativeRenameRefusal);
         if (slot.suite === "windows-activation-second-rename") require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(artifact.report.nativeSecondRename);
+        if (slot.suite === "windows-installer-cli-second-rename") require("../tests/e2e/helpers/certops-windows-cli-second-rename").verifyProof(artifact.report.nativeCliSecondRename);
         if (slot.suite === "windows-two-unattended-renewals") require("../tests/e2e/helpers/certops-windows-two-renewals").verifyProof(artifact.report.nativeTwoRenewals);
         if (slot.suite === "windows-certificate-dry-run") require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(artifact.report.nativeCertificateDryRun);
         if (slot.suite === "windows-host") require("./certops-native-key-survivor-proof").verifyProof(artifact.report.nativeKeySurvivors);

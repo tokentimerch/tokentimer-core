@@ -653,6 +653,14 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Invalid compaction certificate identity")
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
+        if value.get("suite") == "windows-installer-cli-second-rename":
+            rollback = value.get("nativeCliSecondRename")
+            flags = ("sourceOplockGranted", "actualSourceOpenBrokeOplock", "stagingHeldBeforeCopyResumed", "nativeOrderedRestoration", "originalDirectoryIdentityPreserved", "installedBytesUnchanged", "explicitStagingCleanupFailure", "sourceBytesUnchanged", "nativeHandleReleased", "ownedInstallerDrained", "ownedDriverDrained", "ownedStagingRemoved", "originalInstallerCliBytes", "sameRunningLocalSystemServicePid", "configurationCredentialAndPinUnchanged", "freshAuthenticatedHeartbeat", "nonExportableMachineCngCustodyUnchanged", "nativeBindingAndTrustedTlsUnchanged", "ownedCertificateKeyAndEndpointRemoved")
+            if (not isinstance(rollback, dict)
+                    or rollback.get("scope") != "unmodified-installer-cli-canonical-root-operator-cng-binding"
+                    or any(rollback.get(key) is not True for key in flags)):
+                raise ValueError("Invalid full installer CLI second-rename evidence")
+            result["nativeCliSecondRename"] = {key: rollback[key] for key in ("scope", *flags)}
         if value.get("suite") == "windows-certificate-dry-run":
             dry_run = value.get("nativeCertificateDryRun")
             flags = ("priorRealIssuanceVerified", "authenticatedPlansPersisted", "nativeCertificateInventoryUnchanged", "machineKeyMetadataUnchanged", "exactCngCustodyUnchanged", "httpSysBindingUnchanged", "trustedTlsUnchanged", "configurationCredentialPinUnchanged", "dnsProxyRequestsUnchanged")

@@ -157,6 +157,31 @@ class CollectorTests(unittest.TestCase):
         for invalid in (None, {**proof, "scope": "complete-installer-rollback"}):
             with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeSecondRename": invalid}, {suite}, set())
 
+    def test_full_cli_second_rename_projection_requires_exact_scope_and_nineteen_facts(self):
+        fields = ("sourceOplockGranted", "actualSourceOpenBrokeOplock", "stagingHeldBeforeCopyResumed", "nativeOrderedRestoration", "originalDirectoryIdentityPreserved", "installedBytesUnchanged", "explicitStagingCleanupFailure", "sourceBytesUnchanged", "nativeHandleReleased", "ownedInstallerDrained", "ownedDriverDrained", "ownedStagingRemoved", "originalInstallerCliBytes", "sameRunningLocalSystemServicePid", "configurationCredentialAndPinUnchanged", "freshAuthenticatedHeartbeat", "nonExportableMachineCngCustodyUnchanged", "nativeBindingAndTrustedTlsUnchanged", "ownedCertificateKeyAndEndpointRemoved")
+        self.assertEqual(len(fields), 19)
+        suite = "windows-installer-cli-second-rename"
+        proof = {"scope": "unmodified-installer-cli-canonical-root-operator-cng-binding", **dict.fromkeys(fields, True)}
+        def project(value):
+            return collector.sanitized_report({"suite": suite, "nativeCliSecondRename": value}, {suite}, set())
+        projected = project({**proof, "rawConfig": "private-sentinel", "rawNativeEvents": "private-sentinel", "agentIssuanceQualified": True})
+        self.assertEqual(projected["nativeCliSecondRename"], proof)
+        self.assertNotIn("private-sentinel", json.dumps(projected))
+        self.assertNotIn("agentIssuanceQualified", json.dumps(projected))
+        for field in fields:
+            for invalid in (False, None, 1, "true"):
+                with self.subTest(field=field, invalid=invalid), self.assertRaises(ValueError):
+                    project({**proof, field: invalid})
+            missing = dict(proof)
+            del missing[field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                project(missing)
+        for invalid in (None, [], {}, {**proof, "scope": "production-activation-functions-not-installer-cli"}, {**proof, "scope": "temporaryfile-mechanics-only"}):
+            with self.assertRaises(ValueError):
+                project(invalid)
+        with self.assertRaises(ValueError):
+            collector.sanitized_report({"suite": suite}, {suite}, set())
+
     def test_retention_atomic_proof_strips_native_paths_and_requires_all_facts(self):
         fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
         proof = dict.fromkeys(fields, True)
