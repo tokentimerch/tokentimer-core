@@ -64,6 +64,21 @@ if(Test-Path -LiteralPath $AppDir){throw 'Literal app survived'};
         fs.readFileSync(path.join(sibling, "unrelated.txt"), "utf8"),
         "preserve",
       );
+      // Evaluate only the actual journey's small command adapter, not its
+      // privileged main. This catches legacy PowerShell OEM stdout corrupting
+      // Unicode IIS physical-path observations read back as UTF-8 by Node.
+      const main = fs.readFileSync(path.resolve(__dirname, "../../../../tests/e2e/windows-real-journey.js"), "utf8");
+      const adapter = main.match(/^function ps\(script\) \{[^\n]+\}$/m);
+      assert.ok(adapter, "Actual Windows journey PowerShell adapter absent");
+      const ps = require("node:vm").runInNewContext(`(${adapter[0]})`, {
+        command(program, args) {
+          const actual = spawnSync(program, args, { encoding: "utf8", timeout: 10000 });
+          assert.equal(actual.status, 0, actual.stderr);
+          return actual.stdout.trim();
+        },
+      });
+      const observed = JSON.parse(ps(`[pscustomobject]@{path='${q(literal)}'}|ConvertTo-Json -Compress`));
+      assert.equal(observed.path, literal, "Actual UTF-8 adapter must preserve Unicode and literal brackets");
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }

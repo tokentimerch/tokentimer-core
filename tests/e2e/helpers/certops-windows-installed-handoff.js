@@ -21,6 +21,7 @@ const COPY_ENTRIES = Object.freeze([
 ]);
 const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-windows-installed-handoff.js",
+  "tests/e2e/helpers/certops-windows-installed-paths.js",
   "tests/e2e/helpers/certops-windows-registration-job.ps1",
   "tests/e2e/windows-real-journey.js",
   "packages/agent/bin/tokentimer-agent.js",
@@ -178,11 +179,18 @@ function createOwnedHandoffResource({ hasLiveChild, drain, restore, receipt }) {
     },
   };
 }
+function assertHandoffRoot(workDir, receipt) {
+  require("./certops-windows-installed-paths").assertOwnedRoot(receipt);
+  assert.equal(receipt.historicalSupportingOnly, false, "Historical supporting root cannot qualify the current installed handoff");
+  assert.equal(path.resolve(workDir), path.resolve(receipt.root), "Installed handoff root differs from its original identity receipt");
+  return true;
+}
 async function qualifyInstalledStateHandoff({
   pool,
   baseUrl,
   workspaceId,
   oldAgentId,
+  installedPathReceipt,
   publicSession,
   packageRoot,
   configDir,
@@ -206,7 +214,7 @@ async function qualifyInstalledStateHandoff({
   );
   assert.ok(Array.isArray(ownedHandoffs));
   assert.equal(path.dirname(configDir), workDir);
-  assert.match(path.basename(workDir), /^certops-windows-journey-/);
+  assertHandoffRoot(workDir, installedPathReceipt);
   assert.match(thumbprint, /^[a-f0-9]{40}$/i);
   assert.match(site, /^CertOps-[a-f0-9-]{36}$/i);
   const platform = require(path.join(packageRoot, "src/platform")),
@@ -848,6 +856,7 @@ async function qualifyInstalledStateHandoff({
 }
 module.exports = {
   qualifyInstalledStateHandoff,
+  assertHandoffRoot,
   copyCustody,
   stateFiles,
   COPY_ENTRIES,

@@ -25,7 +25,7 @@ function command(program, args) {
   assert.equal(result.status, 0, `${program} failed (status ${result.status})`);
   return result.stdout.trim();
 }
-function ps(script) { return command("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop'; ${script}`]); }
+function ps(script) { return command("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ${script}`]); }
 async function waitUntil(check, timeout = 180000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const result = await check(); if (result) return result; await new Promise((resolve) => setTimeout(resolve, 500)); }
@@ -658,7 +658,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       baseUrl, workspaceId, oldAgentId: agentId, pool, createBootstrap,
       packageRoot: path.join(workDir, "app"), workDir,
     });
-    installedHandoffProof=await require("./helpers/certops-windows-installed-handoff").qualifyInstalledStateHandoff({pool,baseUrl,workspaceId,oldAgentId:agentId,publicSession,packageRoot:path.join(workDir,"app"),configDir,workDir,ps,command,waitUntil,domain,site,port,roots,thumbprint:deployedThumbprint,keyProfile,ownedHandoffs});
+    installedHandoffProof=await require("./helpers/certops-windows-installed-handoff").qualifyInstalledStateHandoff({pool,baseUrl,workspaceId,oldAgentId:agentId,installedPathReceipt,publicSession,packageRoot:path.join(workDir,"app"),configDir,workDir,ps,command,waitUntil,domain,site,port,roots,thumbprint:deployedThumbprint,keyProfile,ownedHandoffs});
     assert.equal(crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex"), credentialDigest,
       "fresh registration in a separate protected state must preserve predecessor credential bytes");
     const afterReregistration = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate().fingerprint256); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Registration preservation TLS timeout"))); });

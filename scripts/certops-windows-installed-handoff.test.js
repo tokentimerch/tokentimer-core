@@ -171,3 +171,9 @@ test("native process-job receipt requires actual descendant drainage and exact w
       helper.verifyDrainReceipt({ ...valid, ...change }, expected),
     );
 });
+
+test("installed handoff accepts only the current original Unicode root receipt",()=>{
+ const paths=require("../tests/e2e/helpers/certops-windows-installed-paths");const base=path.resolve(__dirname,"../.build");const normal=paths.createOwnedRoot(base),historical=paths.createOwnedRoot(base,true);
+ try{assert.equal(helper.assertHandoffRoot(normal.root,normal),true);assert.throws(()=>helper.assertHandoffRoot(historical.root,historical));assert.throws(()=>helper.assertHandoffRoot(historical.root,normal));assert.throws(()=>helper.assertHandoffRoot(normal.root,undefined));}
+ finally{fs.rmdirSync(normal.root);fs.rmdirSync(historical.root);}
+});
