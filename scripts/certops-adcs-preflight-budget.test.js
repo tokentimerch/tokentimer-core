@@ -46,14 +46,19 @@ test("actual native descriptor and cache generations fit the original18 primary 
     main,
     /const item=\{\.\.\.descriptor,template:renewalFixture\.item\.template\}/,
   );
-  const freshCapacity = 2,
+  const pendingNewKeyRecovery = 1,
+    freshCapacity = 2,
     automaticFreshChecks = 2,
     rootCaRechecks = 2;
   const rootMaximum =
-    initial.size + automaticFreshChecks + freshCapacity + rootCaRechecks;
+    initial.size +
+    automaticFreshChecks +
+    freshCapacity +
+    rootCaRechecks +
+    pendingNewKeyRecovery;
   const hierarchyMaximum =
     initial.size + automaticFreshChecks + freshCapacity + 1; // cache cleared by flags; tail repopulates RSAshort
-  assert.equal(rootMaximum, 17);
+  assert.equal(rootMaximum, 18);
   assert.equal(hierarchyMaximum, 16);
   assert.ok(rootMaximum + 2 <= 20);
 });
@@ -93,4 +98,12 @@ test("all primary caller and cache invalidation sites are explicitly audited", (
   const capacity = read("tests/e2e/helpers/certops-adcs-capacity.js");
   assert.equal((capacity.match(/await preflight\(/g) || []).length, 2);
   assert.match(capacity, /reservePrimaryPreflights\(2\)/);
+  const pendingNewKey = read(
+    "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+  );
+  assert.equal(
+    (pendingNewKey.match(/reservePrimaryPreflights\(1\)/g) || []).length,
+    1,
+  );
+  assert.equal((pendingNewKey.match(/\/preflight`,\s*"POST"/g) || []).length, 1);
 });

@@ -309,7 +309,9 @@
       "adcs-real-ca-renewal-pending-same-request-installed": "real-host",
       "adcs-real-background-worker-natural-generations": "real-host",
       "adcs-real-background-worker-native-key-cutovers": "real-host",
-      "adcs-real-background-worker-profile-and-custody-preservation": "real-host"
+      "adcs-real-background-worker-profile-and-custody-preservation": "real-host",
+      "adcs-real-pending-request-refuses-new-ca-key": "real-host",
+      "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -2069,7 +2071,9 @@
       "adcs-real-ca-renewal-pending-same-request-installed",
       "adcs-real-background-worker-natural-generations",
       "adcs-real-background-worker-native-key-cutovers",
-      "adcs-real-background-worker-profile-and-custody-preservation"
+      "adcs-real-background-worker-profile-and-custody-preservation",
+      "adcs-real-pending-request-refuses-new-ca-key",
+      "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",

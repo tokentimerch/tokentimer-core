@@ -1468,7 +1468,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native CA rekey must fail with ADCS_CA_KEY_CHANGED, preserve existing served TLS, block further requests, then genuine new-root preflight/public confirmation restores issuance. Host execution is pending; all pending phases and cross-language/native cache variants remain."
+      "remainingCoverage": "Native CA rekey must fail with ADCS_CA_KEY_CHANGED, preserve existing served TLS, block further requests, then genuine new-root preflight/public confirmation restores issuance. Additional mandatory root-domain source prepares an actual pending request before the same single rekey; signed continuation must reject the changed signer, preserve the frozen CSR/SPKI/snapshot/RequestId without resubmission and remove the exact invalid-terminal key. Owned officer denial closes only that pending CA request. The same issuer then undergoes genuine native preflight/public confirmation and fresh pending enrollment, approval and signed native installation with a new snapshot/request/key, trusted IIS/TLS and claim-bound evidence. Source and supporting proof checks are implemented; native execution, remaining interruption phases and cross-language cache variants remain pending."
     },
     {
       "id": "adcs-safety.downtime",

@@ -402,6 +402,42 @@ def journal_acl_fields(proof):
     return {"scope": proof["scope"], "installedServiceQualified": False, "nativeCngQualified": False, **dict.fromkeys(fields, True)}
 
 
+def pending_ca_key_change_fields(proof):
+    """Actual pending refusal after CA rekey plus fresh same-issuer recovery; public projection only."""
+    flags = ('actualPendingBeforeRekey', 'pendingNativeSignatureVerified', 'actualSingleNewKeyRekey', 'originalSnapshotNeverRepinned', 'signedContinuationRefusedChangedKey', 'oldUnacceptedKeyRemoved', 'oldRequestDeniedByOwnedOfficer', 'oldRequestNeverResubmitted', 'predecessorCustodyAndTlsPreserved', 'sameIssuerPublicReconfirmed', 'freshSnapshotAndCngKey', 'freshActualPendingApproved', 'freshSignedNativeInstallation', 'claimBoundNativeEvidence', 'nativeIisAndTrustedTls', 'registeredCleanupResolved')
+    if not isinstance(proof, dict) or proof.get("scope") != 'real-pending-request-refused-across-ca-new-key-and-fresh-reconfirmation' or proof.get("schedulerClock") != "supported-scheduler-now-input" or proof.get("backgroundWorkerIntervalQualified") is not False or any(proof.get(key) is not True for key in flags):
+        raise ValueError("Incomplete pending CA new-key evidence")
+    result = {"scope": proof["scope"], "schedulerClock": proof["schedulerClock"], "backgroundWorkerIntervalQualified": False, **dict.fromkeys(flags, True)}
+    ids = ('issuerId', 'oldEnrollmentId', 'oldOriginalJobId', 'oldContinuationJobId', 'freshEnrollmentId', 'freshOriginalJobId', 'freshContinuationJobId', 'preflightJobId')
+    for key in ids:
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+            raise ValueError("Invalid pending CA new-key identity")
+        result[key] = value
+    if len({result[key] for key in ids}) != len(ids):
+        raise ValueError("Repeated pending CA new-key identity")
+    for key in ("oldRequestId", "freshRequestId"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", value) or int(value) > 0xffffffff:
+            raise ValueError("Invalid pending CA new-key request")
+        result[key] = value
+    if result["oldRequestId"] == result["freshRequestId"]:
+        raise ValueError("Fresh recovery must use a new request")
+    for key in ('oldCaKeySha256', 'newCaKeySha256', 'oldSnapshotSha256', 'freshSnapshotSha256', 'oldSpkiSha256', 'freshSpkiSha256', 'predecessorFingerprint', 'freshFingerprint'):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("Invalid pending CA new-key digest")
+        result[key] = value
+    for left, right in (("oldCaKeySha256", "newCaKeySha256"), ("oldSnapshotSha256", "freshSnapshotSha256"), ("oldSpkiSha256", "freshSpkiSha256"), ("predecessorFingerprint", "freshFingerprint")):
+        if result[left] == result[right]:
+            raise ValueError("Recovery generations must be distinct")
+    before, after = proof.get("subjectCountBefore"), proof.get("subjectCountAfter")
+    if type(before) is not int or not 1 <= before < 2048 or type(after) is not int or after != before + 1:
+        raise ValueError("Unexpected pending CA new-key request count")
+    result.update(subjectCountBefore=before, subjectCountAfter=after)
+    return result
+
+
 def pending_ca_renewal_fields(proof):
     """Same actual pending request across root CA certificate renewal; no worker-clock claim."""
     flags = ('matchingActualInstalledPredecessor', 'ownedMyCleanupRegistered', 'actualPendingBeforeCaRenewal', 'pendingCngSignatureVerified', 'actualCaSameKeyRenewal', 'confirmedIssuerUnchanged', 'noReconfirmation', 'pendingCsrKeyRequestPreserved', 'predecessorPreservedAcrossCaRenewal', 'actualSameRequestApproved', 'actualSignedContinuationInstalled', 'claimBoundNativeEvidence', 'nativeSamePendingKeyAndLeaf', 'trustedTlsCutover', 'predecessorKeyAndReceiptPreserved', 'noCaResubmission')
@@ -1041,6 +1077,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") == "enterprise-adcs-real":
             result["nativePendingCaRenewal"] = pending_ca_renewal_fields(value.get("nativePendingCaRenewal"))
+            result["nativePendingCaKeyChange"] = pending_ca_key_change_fields(value.get("nativePendingCaKeyChange"))
+            if (result["nativePendingCaKeyChange"]["predecessorFingerprint"] != result["nativePendingCaRenewal"]["leafFingerprint"] or result["nativePendingCaKeyChange"]["oldCaKeySha256"] != result["nativePendingCaRenewal"]["caKeySha256"]):
+                raise ValueError("Pending new-key proof must bind actual prior pending installation")
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
             result["nativeIssuedRevocation"] = issued_revocation_fields(value.get("nativeIssuedRevocation"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))

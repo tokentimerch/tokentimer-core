@@ -139,6 +139,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal").verifyCrossProof(artifact.report.nativePendingCaRenewal,artifact.report.nativeAdcsCapacity);
+        if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-key-change").verifyCrossProof(artifact.report.nativePendingCaKeyChange,artifact.report.nativePendingCaRenewal);
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
           require("../tests/e2e/helpers/certops-adcs-issued-revocation").verifyProof(artifact.report.nativeIssuedRevocation);
           require("../tests/e2e/helpers/certops-adcs-issued-san-boundary").verifyProof(artifact.report.nativeIssuedSanBoundary);

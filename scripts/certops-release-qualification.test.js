@@ -272,6 +272,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativeIssuedSanBoundary: issuedSanProof(),
     nativeIssuedRevocation: issuedRevocationProof(),
     nativePendingCaRenewal: pendingCaProof(),
+    nativePendingCaKeyChange: require("./fixtures/certops-adcs-pending-ca-key-change.cjs").proof(),
     nativeBrowserJobApproval:browserJobApprovalProof(),
     nativeBrowserCancel: browserCancelProof(),
     nativeBrowserAdcs: browserAdcsProof(),
@@ -289,6 +290,10 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     const wrong=structuredClone(value);wrong.report.nativePendingCaRenewal[key]=typeof wrong.report.nativePendingCaRenewal[key]==="boolean"?!wrong.report.nativePendingCaRenewal[key]:"invalid";assert.ok(verifyMatrix([wrong],options).length,`pending CA invalid ${key}`);
   }
   for(const patch of [{requestId:"4294967296"},{caCertificateCountAfter:17},{caCertificateCountAfter:1},{caCertificateCountBefore:true},{continuationJobId:pendingCaProof().originalJobId},{leafFingerprint:pendingCaProof().predecessorFingerprint},{schedulerClock:"default-real-now"},{backgroundWorkerIntervalQualified:true},{rawJournal:"private"},{predecessorFingerprint:"f".repeat(64)}]){const invalid=structuredClone(value);Object.assign(invalid.report.nativePendingCaRenewal,patch);assert.ok(verifyMatrix([invalid],options).length);}
+  const pendingNewKey = require("./fixtures/certops-adcs-pending-ca-key-change.cjs").proof();
+  for (const key of Object.keys(pendingNewKey)) { const missing=structuredClone(value);delete missing.report.nativePendingCaKeyChange[key];assert.ok(verifyMatrix([missing],options).length); }
+  for (const patch of [{freshRequestId:pendingNewKey.oldRequestId},{freshEnrollmentId:pendingNewKey.oldEnrollmentId},{newCaKeySha256:pendingNewKey.oldCaKeySha256},{freshSnapshotSha256:pendingNewKey.oldSnapshotSha256},{subjectCountAfter:9},{predecessorFingerprint:"f".repeat(64)},{oldCaKeySha256:"f".repeat(64)},{privateExtra:"sentinel"}]) {const wrong=structuredClone(value);Object.assign(wrong.report.nativePendingCaKeyChange,patch);assert.ok(verifyMatrix([wrong],options).length);}
+  const absentNewKey=structuredClone(value);delete absentNewKey.report.nativePendingCaKeyChange;assert.ok(verifyMatrix([absentNewKey],options).length);
   const absentPending=structuredClone(value);delete absentPending.report.nativePendingCaRenewal;assert.ok(verifyMatrix([absentPending],options).length);
   const hierarchy = structuredClone(value), hierarchyOptions = structuredClone(options), hierarchySuite = "enterprise-adcs-hierarchy-real";
   delete hierarchy.report.nativePendingCaRenewal; // Root CA mutation is explicitly outside subordinate hierarchy scope.
