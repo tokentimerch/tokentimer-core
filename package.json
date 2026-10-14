@@ -49,7 +49,7 @@
     "test:quick": "pnpm exec mocha tests/integration/endpoint-monitor.test.js tests/integration/endpoint-health-alerts.test.js --timeout 30000 --exit",
     "test:contracts": "node --test tests/contract/**/*.test.js",
     "test:e2e:agent": "node --test tests/e2e/certops-agent-e2e.test.js",
-    "test:certops:qualification": "node --test packages/agent/scripts/host-gate.test.js scripts/certops-qualification-report.test.js scripts/certops-stack-report.test.js scripts/certops-skip-qualification.test.js scripts/certops-integration-report.test.js scripts/certops-release-qualification.test.js scripts/certops-standalone-report.test.js scripts/certops-integration-source-inventory.test.js scripts/certops-dns-provider-errors-report.test.js",
+    "test:certops:qualification": "node --test packages/agent/scripts/host-gate.test.js scripts/certops-qualification-report.test.js scripts/certops-stack-report.test.js scripts/certops-skip-qualification.test.js scripts/certops-integration-report.test.js scripts/certops-release-qualification.test.js scripts/certops-standalone-report.test.js scripts/certops-integration-source-inventory.test.js scripts/certops-dns-provider-errors-report.test.js scripts/certops-dns-provider-host.test.js scripts/certops-kube-api-bridge.test.js",
     "test:certops:release-collector": "python scripts/certops-release-collector.test.py",
     "check:certops:release-matrix": "node scripts/ci-guards/certops-release-matrix.cjs",
     "check:certops:release-qualification": "node scripts/certops-release-qualification.js",

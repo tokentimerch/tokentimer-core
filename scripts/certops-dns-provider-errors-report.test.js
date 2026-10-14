@@ -3,6 +3,15 @@ const { test } = require("node:test"), assert = require("node:assert/strict"), f
 const { validateInventory, verifyDnsErrors } = require("./certops-dns-provider-errors-report");
 const inventory = require("../docs/certops/dns-provider-errors.json"), contract = require("../docs/certops/qualification-suites.json");
 const root = path.resolve(__dirname, "..");
+test("OAuth fixture endpoints require exact HTTPS origin and token path", () => {
+  const { isOAuthFixtureEndpoint } = require("./certops-dns-provider-errors");
+  const credential = { tenantId: "fixture-tenant" };
+  assert.equal(isOAuthFixtureEndpoint("https://oauth2.googleapis.com/token", "google-cloud-dns", credential), true);
+  assert.equal(isOAuthFixtureEndpoint("https://login.microsoftonline.com/fixture-tenant/oauth2/v2.0/token", "azure-dns", credential), true);
+  for (const endpoint of ["https://oauth2.googleapis.com.evil.test/token", "https://evil-oauth2.googleapis.com/token", "https://evil.test/oauth2.googleapis.com/token", "https://oauth2.googleapis.com@evil.test/token", "http://oauth2.googleapis.com/token", "https://oauth2.googleapis.com:444/token", "https://oauth2.googleapis.com/token?redirect=fixture", "https://oauth2.googleapis.com/token#fragment", "not a URL"]) assert.equal(isOAuthFixtureEndpoint(endpoint, "google-cloud-dns", credential), false);
+  assert.equal(isOAuthFixtureEndpoint("https://login.microsoftonline.com/wrong-tenant/oauth2/v2.0/token", "azure-dns", credential), false);
+  assert.equal(isOAuthFixtureEndpoint("https://evil.test/fixture-tenant/oauth2/v2.0/token", "azure-dns", credential), false);
+});
 test("new unsupported test declarations cannot silently escape the mandatory inventory", () => {
   const { contractNames } = require("./certops-dns-provider-errors-report");
   assert.deepEqual(contractNames('test("named", () => {});'), ["named"]);

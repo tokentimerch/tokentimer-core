@@ -24,5 +24,5 @@ try {
   if (result.status !== 0 || result.error) throw new Error("AD CS database integration process failed or exceeded its deadline");
   verify(report, required, process.env.GITHUB_SHA, scope);
   for (const file of files) if (!report.tests.some((test) => test.file === file)) throw new Error(`Missing required test file ${file}`);
-  console.log(`${group} supporting database integration: ${report.tests.length} passed, no pending tests`);
+  console.log("Supporting database integration passed with no pending tests");
 } catch (error) { console.error(error.message); process.exitCode = 1; }

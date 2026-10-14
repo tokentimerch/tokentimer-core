@@ -15,22 +15,26 @@ async function freePort() {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   return port;
 }
-async function servedThumbprint(port, servername) {
+async function servedThumbprint(port, servername, ca) {
+  assert.equal(typeof ca,"string");assert.ok(ca.includes("-----BEGIN CERTIFICATE-----"),"Explicit fixture certificate trust is required");
   return new Promise((resolve, reject) => {
-    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false }, () => {
-      const certificate = socket.getPeerCertificate();
-      socket.end();
-      resolve(certificate.fingerprint.replace(/:/g, ""));
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, ca, rejectUnauthorized: true }, () => {
+      try {
+        assert.equal(socket.authorized,true,"Independent TLS probe requires certificate authentication");
+        const certificate = socket.getPeerCertificate();
+        resolve(certificate.fingerprint.replace(/:/g, ""));
+      } catch(error) { reject(error); }
+      finally { socket.end(); }
     });
     socket.setTimeout(10000, () => socket.destroy(new Error("Independent TLS probe timeout")));
     socket.once("error", reject);
   });
 }
-async function expectServed(port, expected, servername) {
+async function expectServedWithTrust(port, expected, servername, ca) {
   const deadline = Date.now() + 20000;
   let failure;
   do {
-    try { assert.equal(await servedThumbprint(port, servername), expected); return; }
+    try { assert.equal(await servedThumbprint(port, servername, ca), expected); return; }
     catch (error) { failure = error; }
     await new Promise((resolve) => setTimeout(resolve, 250));
   } while (Date.now() < deadline);
@@ -46,6 +50,8 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   fs.mkdirSync(directory);
   fs.writeFileSync(path.join(directory, "index.htm"), "Certificate qualification fixture");
   const certificates = [];
+  const pem = (certificate) => `-----BEGIN CERTIFICATE-----\n${certificate.der}\n-----END CERTIFICATE-----\n`;
+  const expectServed=(probePort,expected,probeServername)=>{const certificate=certificates.find(value=>value.thumbprint===expected);assert.ok(certificate?.der,"Owned public certificate required for independent TLS trust");return expectServedWithTrust(probePort,expected,probeServername,pem(certificate));};
   const ownedKeys = new Set();
   let siteCreated = false;
   let sslOwned = false;
@@ -65,9 +71,10 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     for (let i = 0; i < 4; i += 1) {
       const receipt = path.join(directory, `certificate-${i}.receipt`).replace(/'/g, "''");
       const keyReceipt = path.join(directory, `certificate-${i}.key-receipt`).replace(/'/g, "''");
-      const output = powershell(`$c=New-SelfSignedCertificate -DnsName 'localhost' -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -CertStoreLocation Cert:\\LocalMachine\\My; [IO.File]::WriteAllText('${receipt}', $c.Thumbprint); $k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c); try { [IO.File]::WriteAllText('${keyReceipt}', $k.Key.KeyName); [pscustomobject]@{thumbprint=$c.Thumbprint; der=[Convert]::ToBase64String($c.RawData)} | ConvertTo-Json -Compress } finally { if ($null -ne $k) { $k.Dispose() }; $c.Dispose() }`);
+      const output = powershell(`$c=New-SelfSignedCertificate -Subject 'CN=localhost' -TextExtension @('2.5.29.17={text}DNS=localhost&IPAddress=127.0.0.1') -KeyAlgorithm RSA -KeyLength 2048 -Provider 'Microsoft Software Key Storage Provider' -CertStoreLocation Cert:\\LocalMachine\\My; [IO.File]::WriteAllText('${receipt}', $c.Thumbprint); $k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c); try { [IO.File]::WriteAllText('${keyReceipt}', $k.Key.KeyName); [pscustomobject]@{thumbprint=$c.Thumbprint; der=[Convert]::ToBase64String($c.RawData)} | ConvertTo-Json -Compress } finally { if ($null -ne $k) { $k.Dispose() }; $c.Dispose() }`);
       const certificate = JSON.parse(output);
       assert.match(certificate.thumbprint, /^[A-F0-9]{40}$/);
+      const parsed=new crypto.X509Certificate(Buffer.from(certificate.der,"base64"));assert.equal(parsed.checkHost("localhost"),"localhost");assert.equal(parsed.checkIP("127.0.0.1"),"127.0.0.1");assert.equal(parsed.fingerprint.replace(/:/g,""),certificate.thumbprint);
       certificates.push(certificate);
       fs.writeFileSync(path.join(directory, "owned-certificates.json"), JSON.stringify(certificates.map((c) => c.thumbprint)));
     }
@@ -89,7 +96,6 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     }
     await expectServed(unrelatedPort, certificates[0].thumbprint);
     await expectServed(port, certificates[0].thumbprint, servername);
-    const pem = (certificate) => `-----BEGIN CERTIFICATE-----\n${certificate.der}\n-----END CERTIFICATE-----\n`;
     if (gate && !sni && !nativeFlags) await gate.scenario("windows-iis-unsupported-targets", () => require("./unsupported-target-fixture").qualifyUnsupportedTargets({ binding, certificatePem: pem(certificates[1]), thumbprints: certificates.map(certificate => certificate.thumbprint), powershell, expectServed, originalThumbprint: certificates[0].thumbprint }), { evidenceLevel: "real-host", oracle: "Actual native-platform executor refuses unsupported standalone IIS deploy and multiple SNI renewal destinations; independently read owned store and binding metadata plus live TLS stay unchanged" });
     const result = await deployIisBinding({ binding, certificatePem: pem(certificates[1]), verifyTimeoutMs: 15000 });
     fs.writeFileSync(path.join(directory, "deploy.json"), JSON.stringify(result));
@@ -253,4 +259,4 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
   }
 }
 
-module.exports = { qualifyIis, freePort, expectServed };
+module.exports = { qualifyIis, freePort, expectServed:expectServedWithTrust, servedThumbprint };

@@ -8,6 +8,12 @@ const inventory = require("../docs/certops/dns-provider-errors.json");
 const root = path.resolve(__dirname, "..");
 const challenge = { zone: "fixture.invalid", recordName: "_acme-challenge.fixture.invalid", txtValue: "owned-public-challenge" };
 function fingerprint(file) { return crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex"); }
+function isOAuthFixtureEndpoint(endpoint, provider, credential) {
+  let url; try { url = new URL(endpoint); } catch { return false; }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash) return false;
+  if (provider === "azure-dns") return url.hostname === "login.microsoftonline.com" && url.pathname === `/${encodeURIComponent(credential.tenantId)}/oauth2/v2.0/token`;
+  return provider === "google-cloud-dns" && url.hostname === "oauth2.googleapis.com" && url.pathname === "/token";
+}
 function credentials(privateKey, url) {
   return {
     cloudflare: { apiToken: "fixture-cf-sensitive", zoneId: "owned-zone" },
@@ -90,7 +96,7 @@ async function run() {
         const token = "generated-private-oauth-fixture";
         for (const network of [false, true]) {
           const fetchImpl = (endpoint) => {
-            if (endpoint.includes("/oauth2/") || endpoint.includes("oauth2.googleapis.com")) return Promise.resolve({ status: 200, text: () => Promise.resolve(JSON.stringify({ access_token: token })) });
+            if (isOAuthFixtureEndpoint(endpoint, provider, credential)) return Promise.resolve({ status: 200, text: () => Promise.resolve(JSON.stringify({ access_token: token })) });
             if (network) return Promise.reject(new Error("Upstream reflected " + token));
             return Promise.resolve({ status: 403, text: () => Promise.resolve("Upstream reflected " + token) });
           };
@@ -123,4 +129,4 @@ async function run() {
   }
 }
 if (require.main === module) run().catch(() => { console.error("DNS provider error qualification failed; inspect bounded report"); process.exitCode = 1; });
-module.exports = { run };
+module.exports = { run, isOAuthFixtureEndpoint };

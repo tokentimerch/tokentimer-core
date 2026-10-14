@@ -20,7 +20,8 @@ async function main() {
     assert.equal(adoption.suite, "windows-adoption-retention-real");
     const adoptionResult = require("./certops-qualification-report").verifyReport(adoption, require("../tests/e2e/windows-adoption-retention-journey").requiredScenarios);
     assert.deepEqual(adoptionResult, [], JSON.stringify(adoptionResult));
-    console.log(JSON.stringify(verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope)));
+    verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
+    console.log("Windows installed-agent qualification report verified");
   });
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

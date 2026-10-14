@@ -21,13 +21,20 @@ async function udpAvailable(port) {
     socket.bind(port, "127.0.0.1", () => socket.close(resolve));
   });
 }
-async function ready(url) {
+function probeHttpsReady(endpoint, ca) {
+  const url = new URL(endpoint);
+  assert.equal(url.protocol, "https:");
+  assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Fixture readiness is loopback-only");
+  assert.ok(Buffer.isBuffer(ca) && ca.length > 0, "The owned fixture's public TLS certificate is required");
+  return new Promise((resolve) => {
+    const request = https.get(url, { ca, rejectUnauthorized: true, timeout: 1000 }, (response) => { response.resume(); resolve(response.statusCode === 200); });
+    request.on("error", () => resolve(false)); request.on("timeout", () => request.destroy());
+  });
+}
+async function ready(url, ca) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
-    const ok = await new Promise((resolve) => {
-      const request = https.get(url, { rejectUnauthorized: false, timeout: 1000 }, (response) => { response.resume(); resolve(response.statusCode === 200); });
-      request.on("error", () => resolve(false)); request.on("timeout", () => request.destroy());
-    });
+    const ok = await probeHttpsReady(url, ca);
     if (ok) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -53,7 +60,7 @@ async function withPebble(run) {
     children.push(spawn("pebble-challtestsrv", ["-management", "127.0.0.1:8055", "-dns01", "127.0.0.1:8053", "-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", "", "-defaultIPv6", ""], { stdio: "ignore" }));
     children.push(spawn("pebble", ["-config", config, "-strict", "-dnsserver", "127.0.0.1:8053"], { stdio: "ignore", env: { ...process.env, PEBBLE_VA_NOSLEEP: "1", PEBBLE_AUTHZREUSE: "0", PEBBLE_VA_ALWAYS_VALID: "0" } }));
     for (const child of children) child.on("error", () => {});
-    await ready("https://127.0.0.1:14000/dir");
+    await ready("https://127.0.0.1:14000/dir", fs.readFileSync(cert));
     const actualDirectory = await new Promise((resolve, reject) => {
       const request = https.get("https://127.0.0.1:14000/dir", { ca: fs.readFileSync(cert), timeout: 10000 }, (response) => {
         if (response.statusCode !== 200) { response.resume(); reject(new Error("Actual fixture ACME directory unavailable")); return; }
@@ -96,7 +103,7 @@ async function withPebble(run) {
     if(errors.length)throw new AggregateError([...(primaryError?[primaryError]:[]),...errors],"Owned Pebble fixture or journey cleanup failed");
   }
 }
-module.exports = { withPebble };
+module.exports = { withPebble, probeHttpsReady };
 async function main() {
   assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1", "Real ACME requires an explicitly disposable database");
   assert.equal(process.platform, "linux", "initial real ACME lane requires Linux");

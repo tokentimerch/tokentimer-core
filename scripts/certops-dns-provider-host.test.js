@@ -14,3 +14,15 @@ test("DNS janitor refuses malformed inventory and invalid clock instead of broad
 test("Real provider fixture inventory excludes test-only solver", () => {
   assert.equal(providers.length, 11); assert.equal(new Set(providers).size, 11); assert.equal(providers.includes("pebble-challtestsrv"), false);
 });
+
+test("DNS janitor never prints environment credentials or configuration", () => {
+  const { spawnSync } = require("node:child_process");
+  const marker = "private-janitor-environment-sentinel";
+  const result = spawnSync(process.execPath, [require.resolve("./certops-dns-provider-host"), "--janitor"], {
+    encoding: "utf8", timeout: 10000,
+    env: { ...process.env, GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", CERTOPS_DNS_DEDICATED_FIXTURE: "1", CERTOPS_DNS_PROVIDER: "acme-dns", CERTOPS_DNS_ZONE: "fixture.invalid", CERTOPS_DNS_RESOLVERS_JSON: '["127.0.0.1"]', CERTOPS_DNS_CREDENTIALS_JSON: JSON.stringify({ baseUrl: "https://fixture.invalid", username: marker, password: marker, subdomain: marker }) },
+  });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), "DNS cleanup is not applicable to the two-slot provider");
+  assert.equal((result.stdout + result.stderr).includes(marker), false);
+});

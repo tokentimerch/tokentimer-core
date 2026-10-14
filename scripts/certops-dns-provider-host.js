@@ -57,10 +57,10 @@ async function cleanupReceipt(file) {
 }
 async function janitor() {
   const config = configuration();
-  if (!config.solver.capabilities.cleanupVerifiable) { console.log(JSON.stringify({ provider: config.provider, cleanup: "not-applicable-two-slot-provider", deleted: 0 })); return; }
+  if (!config.solver.capabilities.cleanupVerifiable) { console.log("DNS cleanup is not applicable to the two-slot provider"); return; }
   const stale = staleValues(await config.txt());
   await cleanupValues(config, stale);
-  console.log(JSON.stringify({ provider: config.provider, cleanup: "completed", deleted: stale.length }));
+  console.log("Owned stale DNS values cleaned up");
 }
 function staleValues(values, now = Date.now()) {
   assert.ok(Array.isArray(values) && values.every((value) => typeof value === "string"));
