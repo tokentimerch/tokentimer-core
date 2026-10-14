@@ -1332,7 +1332,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native source covers supported fresh-enrollment manual renewal with changed SPKI and exact new CNG container, stored-profile service initiation, real SQL-NOW short-lived certificate selection and pending profile continuation. ADR0014 requires a new key and CSR for every new enrollment; signed CMC renewal requests are not a supported capability. Host execution, capacity contention and repeated unattended cycles remain."
+      "remainingCoverage": "Native source covers supported fresh-enrollment manual renewal with changed SPKI and exact new CNG container, stored-profile service initiation, real SQL-NOW short-lived certificate selection and pending profile continuation. Two additional qualification-invoked production default scheduler sweeps verify distinct expiry-bound automation jobs, CA requests, serial/SPKI/native CNG identities, trusted IIS/SNI cutovers, claim-bound evidence and stable profile/management lineage with predecessor custody preserved. This does not qualify a background worker interval or expiry cleanup. ADR0014 requires a new key and CSR for every new enrollment; signed CMC renewal requests are not a supported capability. Host execution, capacity contention, background scheduling and further target variants remain pending."
     },
     {
       "id": "adcs.control-plane-path",

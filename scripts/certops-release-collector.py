@@ -206,7 +206,9 @@ def public_environment(value):
 
 def supporting_sources(value):
     declared = declared_sources()
-    if not isinstance(value, list) or len(value) > 32:
+    # Full native AD CS journeys bind more than 32 distinct dependencies.
+    # Keep an explicit collection ceiling; declared-path and digest checks remain.
+    if not isinstance(value, list) or len(value) > 64:
         raise ValueError("Invalid supporting source inventory")
     result = []
     for source in value:
@@ -481,6 +483,34 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            cycles = value.get("nativeAdcsTwoRenewals")
+            flags = ("defaultSqlNowSelection", "automaticSourceAndRealMode", "distinctExpiryGenerations", "independentCaRequests", "freshLeafSerialAndSpki", "protectedUniqueMachineKeys", "nativeIisAndSniCutovers", "independentTrustedTls", "claimBoundVerificationEvidence", "unchangedStoredProfile", "sameManagementPeriod", "predecessorCustodyPreserved", "actualInventoryMatchesLatest", "ownedEnrollmentCleanupRegistered", "noDateOrJournalOverrides")
+            strings = {"scope": "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", "renewalProtocol": "fresh-enrollment-with-new-key-and-csr", "schedulerInvocation": "qualification-invoked-production-default-sweep"}
+            if (not isinstance(cycles, dict) or any(cycles.get(key) != expected for key, expected in strings.items())
+                    or any(cycles.get(key) is not True for key in flags)
+                    or cycles.get("workerIntervalQualified") is not False or cycles.get("expiryCleanupQualified") is not False
+                    or type(cycles.get("successfulAutomationCycles")) is not int or cycles["successfulAutomationCycles"] != 2):
+                raise ValueError("Invalid native AD CS renewal cycle scope")
+            bounded_cycles = {key: cycles[key] for key in (*strings, *flags, "workerIntervalQualified", "expiryCleanupQualified", "successfulAutomationCycles")}
+            patterns = {"requestIds": r"[1-9][0-9]{0,9}", "fingerprints": r"[a-f0-9]{64}", "spkiFingerprints": r"[a-f0-9]{64}", "serialNumbers": r"[a-f0-9]{1,128}", "containerNames": r"tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"}
+            for key, pattern in patterns.items():
+                values = cycles.get(key)
+                if (not isinstance(values, list) or len(values) != 3
+                        or any(not isinstance(item, str) or not re.fullmatch(pattern, item) for item in values)
+                        or len(set(values)) != 3):
+                    raise ValueError("Invalid native AD CS renewal generation identities")
+                bounded_cycles[key] = values
+            if any(int(item) > 0xffffffff for item in cycles["requestIds"]):
+                raise ValueError("Invalid native AD CS request identity")
+            for key in ("caRequestCounts", "expiryEpochs"):
+                values = cycles.get(key)
+                if not isinstance(values, list) or len(values) != 3 or any(type(item) is not int or not 0 < item <= 9007199254740991 for item in values):
+                    raise ValueError("Invalid native AD CS renewal generation counters")
+                bounded_cycles[key] = values
+            counts, expiry = cycles["caRequestCounts"], cycles["expiryEpochs"]
+            if counts[2] > 1000 or counts[1] != counts[0] + 1 or counts[2] != counts[1] + 1 or not expiry[0] < expiry[1] < expiry[2]:
+                raise ValueError("Invalid native AD CS renewal generation progression")
+            result["nativeAdcsTwoRenewals"] = bounded_cycles
             abandon = value.get("nativeUncertainAbandon")
             flags = ("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged")
             counts = ("caRequestsAtFault", "caRequestsAfterRecovery", "caRequestsAfterAbandon")

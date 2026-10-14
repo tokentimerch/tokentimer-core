@@ -2,6 +2,7 @@
 # Synthetic API/artifact fixtures verify refusal paths; no workflow is dispatched and no
 # native environment is qualified by these collector regression tests.
 import importlib.util
+import hashlib
 import io
 import json
 import stat
@@ -33,6 +34,13 @@ def certificate_dry_run_proof():
 def uncertain_abandon_proof():
     result = dict.fromkeys(("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged"), True)
     return {**result, "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 61000, "scope": "native-zero-request-uncertain-abandon", "resolvedIssuingCaAddress": "10.64.0.4", "caRequestsAtFault": 0, "caRequestsAfterRecovery": 0, "caRequestsAfterAbandon": 0}
+
+
+def two_adcs_renewals_proof():
+    flags = ("defaultSqlNowSelection", "automaticSourceAndRealMode", "distinctExpiryGenerations", "independentCaRequests", "freshLeafSerialAndSpki", "protectedUniqueMachineKeys", "nativeIisAndSniCutovers", "independentTrustedTls", "claimBoundVerificationEvidence", "unchangedStoredProfile", "sameManagementPeriod", "predecessorCustodyPreserved", "actualInventoryMatchesLatest", "ownedEnrollmentCleanupRegistered", "noDateOrJournalOverrides")
+    return {**dict.fromkeys(flags, True), "scope": "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", "renewalProtocol": "fresh-enrollment-with-new-key-and-csr", "schedulerInvocation": "qualification-invoked-production-default-sweep", "workerIntervalQualified": False, "successfulAutomationCycles": 2, "expiryCleanupQualified": False,
+            "requestIds": ["17", "18", "19"], "caRequestCounts": [7, 8, 9], "fingerprints": [value * 64 for value in ("a", "b", "c")], "spkiFingerprints": [value * 64 for value in ("d", "e", "f")], "serialNumbers": ["a1", "b2", "c3"],
+            "containerNames": [f"tokentimer-enr-{value * 8}-{value * 4}-4{value * 3}-8{value * 3}-{value * 12}" for value in ("a", "b", "c")], "expiryEpochs": [1792497600000, 1792497601000, 1792497602000]}
 
 
 def elapsed_proof():
@@ -502,10 +510,33 @@ class CollectorTests(unittest.TestCase):
         value = {"suite": "enterprise-adcs-real", "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
+        value["nativeAdcsTwoRenewals"] = two_adcs_renewals_proof()
+        value["nativeAdcsTwoRenewals"]["privateKey"] = "sentinel"
         value["nativeUncertainAbandon"]["private"] = "sentinel"
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))
+        self.assertEqual(result[0][1]["nativeAdcsTwoRenewals"], two_adcs_renewals_proof())
+        for key, expected in two_adcs_renewals_proof().items():
+            with self.subTest(two_adcs_renewals_field=key):
+                invalid = json.loads(json.dumps(value))
+                del invalid["nativeAdcsTwoRenewals"][key]
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+                invalid = json.loads(json.dumps(value))
+                invalid["nativeAdcsTwoRenewals"][key] = expected + expected[:1] if isinstance(expected, list) else not expected if type(expected) is bool else 1 if type(expected) is int else "unqualified"
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for key in ("requestIds", "fingerprints", "spkiFingerprints", "serialNumbers", "containerNames", "expiryEpochs"):
+            invalid = json.loads(json.dumps(value))
+            invalid["nativeAdcsTwoRenewals"][key][2] = invalid["nativeAdcsTwoRenewals"][key][1]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for change in ({"requestIds": ["17", "18", "4294967296"]}, {"caRequestCounts": [999, 1000, 1001]}, {"caRequestCounts": [7, 8, 10]}, {"caRequestCounts": [True, 2, 3]}, {"expiryEpochs": [1, 2, 9007199254740992]}, {"workerIntervalQualified": True}, {"expiryCleanupQualified": True}):
+            invalid = json.loads(json.dumps(value))
+            invalid["nativeAdcsTwoRenewals"].update(change)
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         for key, expected in uncertain_abandon_proof().items():
             with self.subTest(uncertain_abandon_field=key):
                 invalid = json.loads(json.dumps(value))
@@ -540,8 +571,12 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(collector.supporting_sources(value), [{"file": file, "sha256": "a" * 64}])
         with self.assertRaises(ValueError):
             collector.supporting_sources([{"file": file, "sha256": "private-value"}])
+        declared = sorted(collector.declared_sources())
+        self.assertGreaterEqual(len(declared), 65)
+        public_sources = [{"file": name, "sha256": hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:65]]
+        self.assertEqual(collector.supporting_sources(public_sources[:64]), public_sources[:64])
         with self.assertRaises(ValueError):
-            collector.supporting_sources(value * 17)
+            collector.supporting_sources(public_sources)
 
     def migration(self):
         return {

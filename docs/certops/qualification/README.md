@@ -58,6 +58,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
 - [AD CS operator guide](../agent/adcs.md)
 - [Native uncertain submission, acknowledged recovery and safe abandonment](adcs/uncertain-abandon.md)
+- [Two native AD CS renewal generations through default scheduler sweeps](adcs/two-unattended-renewals.md)
 
 ## Linux agents and deployment
 

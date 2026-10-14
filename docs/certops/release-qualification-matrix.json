@@ -519,7 +519,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -561,7 +566,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -603,7 +613,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -645,7 +660,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -687,7 +707,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -729,7 +754,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -771,7 +801,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -813,7 +848,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -855,7 +895,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -1412,7 +1457,12 @@
         "packages/agent/src/windows-key-survivors/index.js",
         "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        "packages/agent/src/issuers/adcs.js"
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-two-renewals.js",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {

@@ -253,7 +253,10 @@
       "adcs-real-cancel-ca-issued-unaccepted-key": "real-host",
       "adcs-real-uncertain-zero-request-owned-termination": "real-host",
       "adcs-real-uncertain-zero-request-acknowledged-recovery": "real-host",
-      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host"
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host",
+      "adcs-real-two-unattended-natural-generations": "real-host",
+      "adcs-real-two-unattended-native-key-cutovers": "real-host",
+      "adcs-real-two-unattended-profile-and-custody-preservation": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -546,7 +549,10 @@
       "adcs-real-cancel-ca-issued-unaccepted-key": "real-host",
       "adcs-real-uncertain-zero-request-owned-termination": "real-host",
       "adcs-real-uncertain-zero-request-acknowledged-recovery": "real-host",
-      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host"
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host",
+      "adcs-real-two-unattended-natural-generations": "real-host",
+      "adcs-real-two-unattended-native-key-cutovers": "real-host",
+      "adcs-real-two-unattended-profile-and-custody-preservation": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1834,7 +1840,10 @@
       "adcs-real-cancel-ca-issued-unaccepted-key",
       "adcs-real-uncertain-zero-request-owned-termination",
       "adcs-real-uncertain-zero-request-acknowledged-recovery",
-      "adcs-real-uncertain-zero-request-public-abandon-cleans-key"
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key",
+      "adcs-real-two-unattended-natural-generations",
+      "adcs-real-two-unattended-native-key-cutovers",
+      "adcs-real-two-unattended-profile-and-custody-preservation"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2127,7 +2136,10 @@
       "adcs-real-cancel-ca-issued-unaccepted-key",
       "adcs-real-uncertain-zero-request-owned-termination",
       "adcs-real-uncertain-zero-request-acknowledged-recovery",
-      "adcs-real-uncertain-zero-request-public-abandon-cleans-key"
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key",
+      "adcs-real-two-unattended-natural-generations",
+      "adcs-real-two-unattended-native-key-cutovers",
+      "adcs-real-two-unattended-profile-and-custody-preservation"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

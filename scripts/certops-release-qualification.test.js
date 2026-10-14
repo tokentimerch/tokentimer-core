@@ -16,6 +16,13 @@ const root = path.resolve(__dirname, "..");
 const candidateSha = "a".repeat(40);
 const source = "tests/e2e/certops-job-decisions-e2e.test.js";
 const environment = { osFamily: "linux" };
+function twoAdcsRenewalsProof() {
+  const { FLAGS } = require("../tests/e2e/helpers/certops-adcs-two-renewals");
+  return { scope: "two-native-adcs-default-scheduler-cycles-not-expiry-cleanup", renewalProtocol: "fresh-enrollment-with-new-key-and-csr", schedulerInvocation: "qualification-invoked-production-default-sweep", workerIntervalQualified: false,
+    successfulAutomationCycles: 2, expiryCleanupQualified: false, ...Object.fromEntries(FLAGS.map(key => [key, true])), requestIds: ["17", "18", "19"], caRequestCounts: [7, 8, 9],
+    fingerprints: ["a", "b", "c"].map(value => value.repeat(64)), spkiFingerprints: ["d", "e", "f"].map(value => value.repeat(64)), serialNumbers: ["a1", "b2", "c3"],
+    containerNames: ["a", "b", "c"].map(value => `tokentimer-enr-${value.repeat(8)}-${value.repeat(4)}-4${value.repeat(3)}-8${value.repeat(3)}-${value.repeat(12)}`), expiryEpochs: [1792497600000, 1792497601000, 1792497602000] };
+}
 test("a complete mandatory matrix cannot promote incomplete feature specifications", () => {
   const catalog = { schemaVersion: 1, scenarios: [{ id: "fixture.not-yet-covered", outcome: "Still requires native qualification", status: "planned", evidenceLevel: "unassigned", requiredEnvironments: [], implementation: null }] };
   const coverage = catalogCoverage(catalog);
@@ -205,6 +212,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     requiredScenarios: contract.suites[suite], scenarios: contract.suites[suite].map(id => ({ ...value.report.scenarios[0], id, evidenceLevel: "real-host" })),
     fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") },
     nativeIssuedCancellation: { requestId: "17", snapshotSha256: "a".repeat(64), pollIntervalSeconds: 900, schedulerClock: "default-real-now", actualCaIssuedBeforeCancel: true, caLeafSignatureAndCsrSpkiVerified: true, controlPlaneStillPendingBeforeCancel: true, nonExportableKeyPresentBeforeCancel: true, signedTerminalCleanupSucceeded: true, exactUnacceptedKeyAbsent: true, certificateNeverAccepted: true, sameRequestSnapshotAndCsrPreserved: true, noAdditionalCaRequest: true, outgoingTrustedTlsUnchanged: true, terminalReconcileRefused: true, unusedIssuedLeafRevoked: true, databaseDatesRewritten: false, journalRewritten: false },
+    nativeAdcsTwoRenewals: twoAdcsRenewalsProof(),
     nativeUncertainAbandon: { leaseRemainingAtFaultMs: 60000, recoveryWaitBudgetMs: 150000, actualLeaseWaitMs: 61000, scope: "native-zero-request-uncertain-abandon", resolvedIssuingCaAddress: "10.64.0.4", ownedObserverDrained: true, ownedTransportBlock: true, observedSubmittingTermination: true, actualLeaseExpiry: true, acknowledgedPublicRecovery: true, sameCsrAndKey: true, noAutomaticResubmit: true, publicAbandonAudited: true, unacceptedKeyRemoved: true, originalOrphanPreserved: true, recoveryPolicyUnchanged: true, caRequestsAtFault: 0, caRequestsAfterRecovery: 0, caRequestsAfterAbandon: 0 },
     nativeValidationExpiry: { configuredTimeoutSeconds: 300, defaultTimeoutSeconds: 86400, storedWindowSeconds: 299, monotonicObservedWaitSeconds: 301, actualDeadline: new Date().toISOString(), requestId: "17", snapshotSha256: "a".repeat(64), actualNativeRevocationUnknown: true, actualSignedContinuationExpired: true, persistedDeadlineSurvivedRestartAndPolicyRestoration: true, exactUnacceptedKeyFreed: true, noCertificateAccepted: true, noCaResubmission: true, outgoingTrustedTlsPreserved: true, chainCacheValueRestored: true, nativeAndCaClocks: "actual", qualificationScope: "configured-five-minute-window-not-default-24-hour-elapsed" },
     primaryNativePreflightDispatchCount: 18,
@@ -213,6 +221,18 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "cohort", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
+  for (const [key, prior] of Object.entries(value.report.nativeAdcsTwoRenewals)) {
+    const missing = structuredClone(value); delete missing.report.nativeAdcsTwoRenewals[key]; assert.ok(verifyMatrix([missing], options).length, key);
+    const changed = structuredClone(value); changed.report.nativeAdcsTwoRenewals[key] = Array.isArray(prior) ? [...prior, prior[0]] : typeof prior === "boolean" ? !prior : typeof prior === "number" ? 1 : "unqualified";
+    assert.ok(verifyMatrix([changed], options).length, key);
+  }
+  for (const key of ["requestIds", "fingerprints", "spkiFingerprints", "serialNumbers", "containerNames", "expiryEpochs"]) {
+    const duplicate = structuredClone(value); duplicate.report.nativeAdcsTwoRenewals[key][2] = duplicate.report.nativeAdcsTwoRenewals[key][1];
+    assert.ok(verifyMatrix([duplicate], options).length, key);
+  }
+  for (const change of [{ requestIds: ["17", "18", "4294967296"] }, { caRequestCounts: [999, 1000, 1001] }, { caRequestCounts: [7, 8, 10] }, { caRequestCounts: [true, 2, 3] }, { expiryEpochs: [1, 2, Number.MAX_SAFE_INTEGER + 1] }, { workerIntervalQualified: true }, { expiryCleanupQualified: true }, { schedulerInvocation: "background-worker-interval-qualified" }, { privateKey: "unexpected field" }]) {
+    const invalid = structuredClone(value); Object.assign(invalid.report.nativeAdcsTwoRenewals, change); assert.ok(verifyMatrix([invalid], options).length);
+  }
   for (const key of Object.keys(value.report.nativeUncertainAbandon)) {
     const invalid = structuredClone(value); delete invalid.report.nativeUncertainAbandon[key];
     assert.ok(verifyMatrix([invalid], options).length, key);
@@ -220,7 +240,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     changed.report.nativeUncertainAbandon[key] = typeof prior === "boolean" ? false : typeof prior === "number" ? 1 : "unqualified";
     assert.ok(verifyMatrix([changed], options).length, key);
   }
-  const requiredSources = require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").REQUIRED_SOURCES;
+  const requiredSources = [...new Set([...require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").REQUIRED_SOURCES, ...require("../tests/e2e/helpers/certops-adcs-two-renewals").REQUIRED_SOURCES])];
   const sourceOptions = structuredClone(options); sourceOptions.specification.slots[0].requiredSources = requiredSources;
   const sourced = structuredClone(value); sourced.report.fixtureSources = requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
   assert.deepEqual(verifyMatrix([sourced], sourceOptions), []);
