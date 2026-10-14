@@ -77,7 +77,7 @@
       "requiredEnvironments": [
         "enterprise-adcs-domain-lab"
       ],
-      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; scripts/certops-adcs-ttl24h-resident.js; scripts/certops-adcs-ttl24h-finish.js",
       "remainingCoverage": "Mandatory native discovery source checks all seven actual CA-issued owned SNI fixtures against independent certificate fingerprints and native binding coordinates. The existing release matrix requires true installed English/German/French resources and LocalSystem UI culture across Windows Server2019/2022/2025. Native runs remain pending; broader arbitrary store/integration-source/locale permutations remain distinct."
     },
     {
@@ -1211,8 +1211,8 @@
       "requiredEnvironments": [
         "enterprise-domain-native-adcs"
       ],
-      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native new-CA-key recovery performs a fresh actual preflight and public confirmation, refusing enrollment while revalidation is required. Host execution is pending; TTL expiry and all stale capability/cache combinations remain."
+      "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; scripts/certops-adcs-ttl24h-finish.js",
+      "remainingCoverage": "Native new-CA-key recovery performs a fresh actual preflight and public confirmation, refusing enrollment while revalidation is required. A separate same-VM default24h source preserves original caches during a genuine monotonic day, independently refuses stale native pin/template caches, attaches a public profile, observes waiting_for_fresh_preflight and requires a naturally due default-clock sweep to create zero jobs before a fresh public preflight restores actual native renewal. Strict release evidence also requires independently authenticated prepare artifacts, CA counters, scheduler isolation and completed cloud cleanup; partial timing/native-stage receipts cannot qualify. Protected native execution and additional stale capability/cache combinations remain pending."
     },
     {
       "id": "adcs.auto-issue",
@@ -1446,7 +1446,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native source isolates real LDAP CRL outage, preserves outgoing trusted TLS and the owned key, removes the fault and continues the same CA request. A separate configured five-minute validation_expired source waits real monotonic time, preserves the committed deadline through a SYSTEM restart and restoration of the default policy, then requires exact unaccepted-key cleanup without CA resubmission. Native execution, default 24-hour elapsed expiry, and OCSP/HTTP distribution fault variants remain pending."
+      "remainingCoverage": "Native source isolates real LDAP CRL outage, preserves outgoing trusted TLS and the owned key, removes the fault and continues the same CA request. A separate configured five-minute validation_expired source waits real monotonic time, preserves the committed deadline through a SYSTEM restart and restoration of the default policy, then requires exact unaccepted-key cleanup without CA resubmission. Separate default24h source retains the production timeout unchanged across an actual same-process day, then requires a genuine signed continuation to expire the original request, remove only its unaccepted key and preserve predecessor custody/TLS before fresh native renewal. This source and strict release contract do not establish native execution. Protected execution and OCSP/HTTP distribution fault variants remain pending."
     },
     {
       "id": "adcs-safety.ca-key-reuse",

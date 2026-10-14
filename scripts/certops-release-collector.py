@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 import certops_retention24h_collection as retention24h_collection
+import certops_adcs_ttl24h_collection as adcs_ttl24h_collection
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -740,6 +741,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                                if isinstance(item, dict)]
         if value.get("suite") == "windows-domain-adcs-retention24h":
             result["nativeRetention24h"] = retention24h_fields(value)
+        if value.get("suite") == adcs_ttl24h_collection.SUITE:
+            from certops_adcs_ttl24h_proof import fields as adcs_ttl24h_fields
+            result["nativeAdcsTtl24h"] = adcs_ttl24h_fields(value)
         if value.get("suite") == "windows-arm64-installed-agent":
             result.update(arm64_installed_fields(value))
         if value.get("suite") == "windows-arm64-packaged-scm":
@@ -1610,9 +1614,11 @@ def main():
         for run_id in run_ids:
             endpoint = f"https://api.github.com/repos/{repository}/actions/runs/{run_id}"
             run = json.loads(download(endpoint, token))
-            elapsed_finalizer = run.get("path") == retention24h_collection.FINALIZER
+            owner_auth = {retention24h_collection.FINALIZER: retention24h_collection,
+                          adcs_ttl24h_collection.FINALIZER: adcs_ttl24h_collection}.get(run.get("path"))
+            elapsed_finalizer = owner_auth is not None
             if elapsed_finalizer:
-                retention24h_collection.validate_finalizer_run(run, repository, run_id)
+                owner_auth.validate_finalizer_run(run, repository, run_id)
             else:
                 validate_run(run, candidate, repository)
             data = json.loads(download(endpoint + "/artifacts?per_page=100", token))
@@ -1632,13 +1638,13 @@ def main():
                 if downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                     raise ValueError("Collection total download size exceeds limit")
                 if elapsed_finalizer and artifact.get("digest") != "sha256:" + hashlib.sha256(raw).hexdigest():
-                    raise ValueError("Retention finalizer artifact digest does not match GitHub")
+                    raise ValueError("Real-day finalizer artifact digest does not match GitHub")
                 def authenticate_elapsed_report(report):
                     if not isinstance(report, dict):
                         return False
-                    if report.get("suite") != retention24h_collection.SUITE:
+                    if report.get("suite") != owner_auth.SUITE:
                         if report.get("suite") in suites or report.get("scope") in scopes | database_scopes:
-                            raise ValueError("Retention finalizer cannot supply other qualification suites")
+                            raise ValueError("Real-day finalizer cannot supply other qualification suites")
                         return False
                     # Scheduled controllers can finish several original campaigns.
                     # Select the explicitly requested native candidate only;
@@ -1652,9 +1658,9 @@ def main():
                         if redirect:
                             archive_count += 1
                         if downloaded_bytes > MAX_TOTAL_DOWNLOAD or archive_count > limits["archives"]:
-                            raise ValueError("Retention ownership exceeds collection budget")
+                            raise ValueError("Real-day ownership exceeds collection budget")
                         return owner_raw
-                    retention24h_collection.authenticate(report, run, run_id, candidate, repository, fetch_retention_owner)
+                    owner_auth.authenticate(report, run, run_id, candidate, repository, fetch_retention_owner)
                     return True
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:

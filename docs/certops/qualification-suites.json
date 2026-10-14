@@ -1238,6 +1238,13 @@
       "windows-arm64-signed-noop-and-certificate-file-plan": "e2e",
       "windows-arm64-my-native-discovery-and-restart": "e2e",
       "windows-arm64-installed-agent-owned-cleanup": "e2e"
+    },
+    "windows-domain-adcs-default-ttl24h": {
+      "adcs-default24h-original-preflight-and-deferred-fixtures": "real-host",
+      "adcs-default24h-same-vm-resident-custody": "real-host",
+      "adcs-default24h-stale-preflight-blocks-admission": "real-host",
+      "adcs-default24h-expired-validation-frees-unaccepted-key": "real-host",
+      "adcs-default24h-fresh-preflight-restores-native-issuance": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1740,6 +1747,13 @@
       "windows",
       "native-arm64",
       "system",
+      "api"
+    ],
+    "windows-domain-adcs-default-ttl24h": [
+      "windows",
+      "system",
+      "domain",
+      "sameVmResidentKeeper",
       "api"
     ]
   },
@@ -2976,6 +2990,13 @@
       "windows-arm64-signed-noop-and-certificate-file-plan",
       "windows-arm64-my-native-discovery-and-restart",
       "windows-arm64-installed-agent-owned-cleanup"
+    ],
+    "windows-domain-adcs-default-ttl24h": [
+      "adcs-default24h-original-preflight-and-deferred-fixtures",
+      "adcs-default24h-same-vm-resident-custody",
+      "adcs-default24h-stale-preflight-blocks-admission",
+      "adcs-default24h-expired-validation-frees-unaccepted-key",
+      "adcs-default24h-fresh-preflight-restores-native-issuance"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3076,6 +3097,7 @@
     "windows-arm64-cng-runtime": "real-host",
     "windows-domain-adcs-retention24h": "real-host",
     "windows-arm64-packaged-scm": "real-host",
-    "windows-arm64-installed-agent": "e2e"
+    "windows-arm64-installed-agent": "e2e",
+    "windows-domain-adcs-default-ttl24h": "real-host"
   }
 }

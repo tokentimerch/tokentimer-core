@@ -147,3 +147,5 @@ The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separate
 - [Pending request across same-key root CA renewal](adcs/pending-same-key-ca-renewal.md): actual pending custody and same-request continuation; native execution pending.
 
 - [ARM64 installed agent/API](windows/arm64-installed-agent-api.md): original canonical installer, real signed jobs, file-plan/discovery scope and explicit pinned x64-emulated PostgreSQL; native execution pending.
+
+The separate [default24h AD CS release contract](adcs/default24h-release-contract.md) requires a genuine same-VM day, original stale caches, production-deadline cleanup and fresh native renewal. Its timing-only and native-stage receipts cannot qualify the new slot; protected execution remains pending.

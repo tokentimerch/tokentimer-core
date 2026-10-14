@@ -9,6 +9,12 @@ candidate="${1#*=}"
 journal_phase_arg="${2:-journal_phase=none}"
 journal_phase="${journal_phase_arg#*=}"
 case "$journal_phase" in none|keygen_intent|prepared|submitting|installing|accepted-before-bind|bound-before-complete) ;; *) echo 'Unsupported journal phase experiment' >&2; exit 1 ;; esac
+ttl24h_arg="${3:-adcs_ttl24h=0}"
+ttl24h="${ttl24h_arg#*=}"
+case "$ttl24h" in 0|1) ;; *) echo 'Unsupported default TTL qualification selector' >&2; exit 1 ;; esac
+[[ "$ttl24h" == 0 || "$journal_phase" == none ]] || { echo 'Default TTL qualification cannot combine timing experiments' >&2; exit 1; }
+api_certificate_days=1
+if [[ "$ttl24h" == 1 ]]; then api_certificate_days=7; fi
 workspace=/opt/ttqualification
 test ! -e "$workspace" || { echo 'Refusing existing qualification workspace' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
@@ -44,7 +50,7 @@ for attempt in $(seq 1 120); do
 done
 curl -fsS http://127.0.0.1:4000/health >/dev/null
 install -d -m 700 /etc/ttqualification
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=tt-control.lab.certops.test -addext subjectAltName=DNS:tt-control.lab.certops.test,IP:10.64.0.6 -keyout /etc/ttqualification/api.key -out /etc/ttqualification/api.pem >/dev/null 2>&1
+openssl req -x509 -newkey rsa:2048 -nodes -days "$api_certificate_days" -subj /CN=tt-control.lab.certops.test -addext subjectAltName=DNS:tt-control.lab.certops.test,IP:10.64.0.6 -keyout /etc/ttqualification/api.key -out /etc/ttqualification/api.pem >/dev/null 2>&1
 chmod 600 /etc/ttqualification/api.key
 cat > /etc/nginx/conf.d/ttqualification.conf <<'NGINX'
 server {

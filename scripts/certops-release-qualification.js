@@ -97,6 +97,10 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "agent-log-maintenance-worker") require("./certops-log-maintenance-report").verify(artifact.report, root, candidateSha);
         if (slot.suite === "windows-host") { require("../packages/agent/scripts/host/cng-export-fixture").verifyCustodyProof(artifact.report.cngCustody); require("../packages/agent/scripts/host/iis-shared-port-fixture").verifyIsolationFacts(artifact.report.nativeSamePortSni); require("../packages/agent/scripts/host/enrollment-contention-fixture").verifyContentionFacts(artifact.report.nativeEnrollmentContention); }
         if (slot.suite === "browser-agent-console") require("./certops-completed-console-proof").verifyProof(artifact.report.completedConsolePrivacy);
+        if (slot.suite === "windows-domain-adcs-default-ttl24h") {
+          const helper = require("./certops-adcs-ttl24h-proof"); helper.verifyProof(artifact.report[helper.FIELD]);
+          if (artifact.report[helper.FIELD].candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Actual TTL native environment, candidate and cleanup required");
+        }
         if (slot.suite === "windows-domain-adcs-retention24h") require("./certops-retention24h-proof").verifyProof(artifact.report.nativeRetention24h);
         if (slot.suite === "windows-canonical-root-lifecycle") require("../tests/e2e/helpers/certops-windows-fixed-root").verifyProof(artifact.report.nativeCanonicalRoot);
         if (slot.suite === "windows-installer-first-rename-refusal") require("../tests/e2e/helpers/certops-windows-rename-refusal").verifyProof(artifact.report.nativeRenameRefusal);

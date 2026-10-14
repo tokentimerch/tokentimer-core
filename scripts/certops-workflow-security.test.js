@@ -65,3 +65,23 @@ test("approval-pending retention prepare never occupies cleanup queue and cannot
  for(const timeout of [181,240,"180",null]){const altered=structuredClone(value);altered.jobs.prepare["timeout-minutes"]=timeout;assert.ok(validateWorkflow(altered,name).length);}
  for(const other of ["certops-retention24h-finalize.yml","certops-retention24h-janitor.yml","certops-adcs-lab-janitor.yml"]){const cleanup=read(other);assert.equal(cleanup.concurrency.group,"certops-retention24h-owned-azure-lifecycle");assert.equal(cleanup.concurrency["cancel-in-progress"],false);assert.notEqual(cleanup.concurrency.group,value.concurrency.group);for(const job of Object.values(cleanup.jobs))assert.equal(job.environment,"certops-adcs-cleanup");}
 });
+
+test("only complete separate ADCS TTL original-artifact-first handoff may retain a successful lab",()=>{
+ const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module");
+ const yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
+ const workflow=()=>yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-adcs-ttl24h-prepare.yml"),"utf8"));
+ const name="certops-adcs-ttl24h-prepare.yml";assert.deepEqual(validateWorkflow(workflow(),name),[]);
+ const find=(w,fragment)=>w.jobs.prepare.steps.findIndex(step=>(step.run||step.with?.path||"").includes(fragment));
+ for(const fragment of ["provision-lab.ps1","-azure.js seal","adcs-ttl24h-original.json","-azure.js handoff","adcs-ttl24h-ownership.json","-azure.js abort"]){const w=workflow();w.jobs.prepare.steps.splice(find(w,fragment),1);assert.ok(validateWorkflow(w,name).length,fragment);}
+ for(const change of [w=>{const steps=w.jobs.prepare.steps,a=find(w,"adcs-ttl24h-original.json"),b=find(w,"-azure.js handoff");[steps[a],steps[b]]=[steps[b],steps[a]];},w=>w.jobs.prepare.steps[find(w,"-azure.js handoff")].if="always()",w=>w.jobs.prepare.steps[find(w,"-azure.js seal")].if="always()",w=>w.jobs.prepare.steps[find(w,"provision-lab.ps1")].if="always()",w=>w.jobs.prepare.steps[find(w,"adcs-ttl24h-original.json")].with["if-no-files-found"]="warn",w=>w.jobs.prepare.steps[find(w,"-azure.js abort")].if="failure()",w=>w.concurrency["cancel-in-progress"]=true,w=>w.jobs.prepare.environment="certops-adcs-cleanup",w=>w.on.schedule=[{cron:"0 * * * *"}],w=>w.jobs.prepare.if="always()",w=>w.jobs.prepare.steps.push({run:"echo late failure"})]){const w=workflow();change(w);assert.ok(validateWorkflow(w,name).length);}
+ assert.ok(validateWorkflow(workflow(),"certops-unrelated-paid-lab.yml").some(error=>error.includes("independent always cleanup")),"Other labs cannot borrow retained-resource exception");
+});
+
+
+test("ADCS TTL approval queues cannot delay cleanup and active preparation ends before initialexpiry",()=>{
+ const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module"),yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
+ const read=name=>yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8")),name="certops-adcs-ttl24h-prepare.yml",value=read(name),initial=require("./certops-adcs-ttl24h-contract").INITIAL;
+ assert.deepEqual(validateWorkflow(value,name),[]);assert.equal(value.jobs.prepare["timeout-minutes"],180);assert.ok(value.jobs.prepare["timeout-minutes"]*60000+5*60000<initial);
+ for(const alteredGroup of ["certops-adcs-ttl24h-cleanup","foreign","certops-adcs-ttl24h-prepare-${{ github.run_id }}"]){const bad=structuredClone(value);bad.concurrency.group=alteredGroup;assert.ok(validateWorkflow(bad,name).length);}
+ for(const mode of ["finalize","janitor"]){const name=`certops-adcs-ttl24h-${mode}.yml`,workflow=read(name);assert.deepEqual(validateWorkflow(workflow,name),[]);assert.notEqual(value.concurrency.group,workflow.concurrency.group);workflow.jobs[mode].environment="certops-adcs-lab";assert.ok(validateWorkflow(workflow,name).length);}
+});
