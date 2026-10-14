@@ -57,6 +57,17 @@ def local_pairs_proof():
     return [{"caseId": case, **dict.fromkeys(fields, True)} for case in ("ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch")]
 
 
+def algorithm_proof():
+    cases = (("rsa2048-below-template3072", "rsa3072"), ("rsa3072-below-template4096", "rsa4096"), ("ec256-on-p384-schema-three", "ec384schema3"), ("ec256-on-p384-schema-four", "ec384"))
+    flags = ("nativeSafeTemplateObserved", "publicConfirmedIssuerUsed", "actualSignedClaimRefusal", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "positiveNativeCustodyUnchanged", "positiveTrustedTlsUnchanged")
+    return [{"caseId": case, "positiveScenario": f"adcs-real-{positive}-issued-cng-iis", "positiveFingerprintSha256": format(index+10, "x") * 64, "positiveRequestId": str(index+17), **dict.fromkeys(flags, True)} for index, (case, positive) in enumerate(cases)]
+
+
+def cmc_proof():
+    flags = ("actualCaSignedPending", "actualPinnedSignatureVerified", "actualSignerSignatureByteTampered", "actualPristineDerControlVerified", "agentResponseUnchanged")
+    return {"scope": "read-only-native-ca-signed-response-signature-boundaries", **dict.fromkeys(flags, True), "syntheticCaResponse": False, "caRequestId": "17", "responseSha256": "a" * 64, "nativeHelperSha256": "b" * 64, "originalResponseDerSha256": "c" * 64, "tamperedResponseDerSha256": "d" * 64, "refusedVariants": ["empty", "truncated", "trailing-data", "oversized", "signer-signature-tampered", "wrong-ca-key-pin"]}
+
+
 def browser_adcs_proof():
     flags = ("browserIssuerCreation", "nativeSafePreflight", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
     def uuid(value):
@@ -695,6 +706,8 @@ class CollectorTests(unittest.TestCase):
         cohort = {"workspaceId": "a" * 36, "agentId": "b" * 36, "dispatchCount": 18, "dispatchLimit": 18, "nativeIdentity": "LocalSystem", "runtime": "candidate-cli", "privateState": "sentinel"}
         value = {"suite": "enterprise-adcs-real", "nativeLocalRulePairs": local_pairs_proof(), "nativeForeignSpkiCandidate": foreign_spki_proof(), "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
+        value["nativeAlgorithmBoundaries"] = algorithm_proof()
+        value["nativeCmcBoundaries"] = cmc_proof()
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
         value["nativeUncertainOperatorAmbiguity"] = operator_ambiguity_proof()
         value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
@@ -868,11 +881,47 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.supporting_sources([{"file": file, "sha256": "private-value"}])
         declared = sorted(collector.declared_sources())
-        self.assertGreaterEqual(len(declared), 65)
-        public_sources = [{"file": name, "sha256": hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:65]]
-        self.assertEqual(collector.supporting_sources(public_sources[:64]), public_sources[:64])
+        self.assertGreaterEqual(len(declared), 97)
+        public_sources = [{"file": name, "sha256": hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:97]]
+        self.assertEqual(collector.supporting_sources(public_sources[:96]), public_sources[:96])
         with self.assertRaises(ValueError):
             collector.supporting_sources(public_sources)
+        with self.assertRaises(ValueError):
+            collector.supporting_sources([public_sources[0], public_sources[0]])
+        for escaped in ("../outside.js", "C:\\private.js", "/private.js", "inside/../private.js"):
+            with self.assertRaises(ValueError):
+                collector.supporting_sources([{"file": escaped, "sha256": "a" * 64}])
+
+    def test_algorithm_and_cmc_closed_native_proofs_refuse_missing_and_duplicate_controls(self):
+        self.assertEqual(collector.algorithm_boundaries_fields(algorithm_proof()), algorithm_proof())
+        self.assertEqual(collector.cmc_boundaries_fields(cmc_proof()), cmc_proof())
+        for field in algorithm_proof()[0]:
+            if type(algorithm_proof()[0][field]) is bool:
+                for wrong in (False, 1, None, "true"):
+                    rows = algorithm_proof()
+                    rows[0][field] = wrong
+                    with self.assertRaises(ValueError):
+                        collector.algorithm_boundaries_fields(rows)
+        for key in ("positiveRequestId", "positiveFingerprintSha256"):
+            rows = algorithm_proof()
+            rows[1][key] = rows[0][key]
+            with self.assertRaises(ValueError):
+                collector.algorithm_boundaries_fields(rows)
+        for field in cmc_proof():
+            if type(cmc_proof()[field]) is bool and field != "syntheticCaResponse":
+                value = cmc_proof()
+                value[field] = 1
+                with self.assertRaises(ValueError):
+                    collector.cmc_boundaries_fields(value)
+        for mutate in (lambda value: value.update(syntheticCaResponse=True), lambda value: value.update(tamperedResponseDerSha256=value["originalResponseDerSha256"]), lambda value: value["refusedVariants"].pop(), lambda value: value.update(rawPrivate="unexpected")):
+            value = cmc_proof()
+            mutate(value)
+            with self.assertRaises(ValueError):
+                collector.cmc_boundaries_fields(value)
+        with self.assertRaises(ValueError):
+            collector.algorithm_boundaries_fields(None)
+        with self.assertRaises(ValueError):
+            collector.cmc_boundaries_fields(None)
 
     def migration(self):
         return {

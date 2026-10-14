@@ -216,6 +216,34 @@
       "algorithm": "rsa",
       "size": 2048,
       "schema": 4
+    },
+    {
+      "id": "rsa2048-below-template3072",
+      "template": "TTQualificationRSA3072",
+      "algorithm": "rsa",
+      "size": 2048,
+      "schema": 2
+    },
+    {
+      "id": "rsa3072-below-template4096",
+      "template": "TTQualificationRSA4096",
+      "algorithm": "rsa",
+      "size": 3072,
+      "schema": 2
+    },
+    {
+      "id": "ec256-on-p384-schema-three",
+      "template": "TTQualificationEC384Schema3",
+      "algorithm": "ecdsa",
+      "size": 256,
+      "schema": 3
+    },
+    {
+      "id": "ec256-on-p384-schema-four",
+      "template": "TTQualificationEC384",
+      "algorithm": "ecdsa",
+      "size": 256,
+      "schema": 4
     }
   ],
   "caFlagCases": [

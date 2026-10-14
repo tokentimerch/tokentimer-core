@@ -29,9 +29,11 @@ function validate(definition = cases) {
     ["rsa-below-template-minimum", "rsa", 2048, 2], ["ec-on-schema-two", "ecdsa", 256, 2],
     ["ec-curve-on-schema-three", "ecdsa", 384, 3], ["rsa-on-ec-schema-three", "rsa", 2048, 3],
     ["ec-curve-on-schema-four", "ecdsa", 384, 4], ["rsa-on-ec-schema-four", "rsa", 2048, 4],
+    ["rsa2048-below-template3072", "rsa", 2048, 2], ["rsa3072-below-template4096", "rsa", 3072, 2],
+    ["ec256-on-p384-schema-three", "ecdsa", 256, 3], ["ec256-on-p384-schema-four", "ecdsa", 256, 4],
   ];
   for (const [id, algorithm, size, schema] of requiredKeys) assert.equal(definition.keyConstraintCases.filter(item => item.id === id && item.algorithm === algorithm && item.size === size && item.schema === schema).length, 1, `Missing or misclassified snapshot key boundary ${id}`);
-  for (const item of definition.keyConstraintCases) { assert.ok([2, 3, 4].includes(item.schema)); assert.ok(["rsa", "ecdsa"].includes(item.algorithm)); assert.ok([256, 384, 2048].includes(item.size)); }
+  for (const item of definition.keyConstraintCases) { assert.ok([2, 3, 4].includes(item.schema)); assert.ok(["rsa", "ecdsa"].includes(item.algorithm)); assert.ok([256, 384, 2048, 3072].includes(item.size)); }
   for (const [edit, clear] of [[0x40000, 0], [0, 0x200], [0x40000, 0x200]]) {
     assert.equal(definition.caFlagCases.filter(item => item.editFlagsSet === edit && item.interfaceFlagsClear === clear).length, 1, "Each native unsafe CA flag combination is mandatory");
   }

@@ -1222,7 +1222,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; tests/e2e/helpers/certops-adcs-browser-journey.js",
-      "remainingCoverage": "Five algorithm/template variants use the public enrollment API and installed LocalSystem agent, real CA/CNG/IIS, persisted evidence and independent trusted TLS. Browser source follows the supported existing-inventory path: actual issuer/preflight/confirmation/profile/attachment UI interactions enable automation, a production default scheduler sweep creates enrollment, and actual CA request, fresh leaf/SPKI, protected machine key, SNI binding, claim-bound evidence and visible installed state are independently required. This is renewal of existing inventory; the UI does not provide first-issue or generic manual AD CS enrollment. Protected execution and remaining installation/fault variants are pending."
+      "remainingCoverage": "Seven algorithm/template/schema variants use the public enrollment API and installed LocalSystem agent, real CA/CNG/IIS, persisted evidence and independent trusted TLS. Browser source follows the supported existing-inventory path: actual issuer/preflight/confirmation/profile/attachment UI interactions enable automation, a production default scheduler sweep creates enrollment, and actual CA request, fresh leaf/SPKI, protected machine key, SNI binding, claim-bound evidence and visible installed state are independently required. This is renewal of existing inventory; the UI does not provide first-issue or generic manual AD CS enrollment. Protected execution and remaining installation/fault variants are pending."
     },
     {
       "id": "adcs.manager-approval",
@@ -1389,7 +1389,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Actual required native issuance covers RSA2048/RSA3072/RSA4096 and EC P256/P384 under supported owned templates. Host execution is pending; all incompatible algorithm/curve/template negative combinations remain."
+      "remainingCoverage": "Mandatory native source covers seven supported RSA/EC/schema profiles plus existing incompatible keys. Four additional native cases bind RSA2048<3072, RSA3072<4096 and P256-on-P384 schema3/schema4 refusals to actual passed matching-template issuance RequestIds/fingerprints, exact unchanged positive CNG custody and actively trusted IIS TLS. Source and supporting policy/proof checks are implemented; native execution remains pending and other unsupported algorithm/template cross-products are not implied."
     },
     {
       "id": "adcs-safety.issued-template",
@@ -1423,7 +1423,7 @@
         "enterprise-adcs-domain-lab"
       ],
       "implementation": "packages/agent/reference/adcs-cmc/cmccore/decode_adversarial_test.go",
-      "remainingCoverage": "Thirty-three actual Windows Go checks including nested cases pass genuine signed issued/pending/denied fixture controls, tampering/truncation/trailing data refusal, nonzero full uint32 RequestId bounds, strict pending time/body fields, and synthetic English/French/German structured descriptions. Current native lab source exercises localized real pending/disposition journeys; fresh native adversarial CA-response qualification remains pending. Response decoding does not implement signed CMC renewal requests."
+      "remainingCoverage": "Thirty-three actual Windows Go checks including nested cases pass genuine signed issued/pending/denied fixture controls, tampering/truncation/trailing data refusal, nonzero full uint32 RequestId bounds, strict pending time/body fields, and synthetic English/French/German structured descriptions. Current native lab source exercises localized real pending/disposition journeys; fresh native adversarial CA-response qualification remains pending. Response decoding does not implement signed CMC renewal requests. Read-only native decoder source additionally changes exactly one CMS SignerInfo signature byte in an owned pristine response copy, verifies the original DER control, requires pinned-signature refusal and unchanged agent response, and binds distinct original/tampered DER hashes. This is response decoding, not signed CMC renewal or custody recovery; native execution remains pending."
     },
     {
       "id": "adcs-safety.chain-online",

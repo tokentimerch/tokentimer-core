@@ -40,6 +40,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Windows and AD CS
 
+- [AD CS algorithm/template negatives with actual positive issuance controls](adcs/algorithm-template-boundaries.md)
+- [Native CA-signed response decoder signature tamper controls](adcs/signed-response-signature-tamper.md)
 - [Windows 11 ARM64 native CNG runtime and strict desktop scope](windows/arm64-native-cng-runtime.md)
 - [Installed certificate dry-run native state and DNS observation](windows/certificate-dry-run.md)
 - [Native CNG export refusal and operational key custody](windows/cng-export-refusal-qualification.md)

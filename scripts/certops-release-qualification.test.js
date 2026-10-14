@@ -24,6 +24,8 @@ function keyUsageProof() {
 }
 function foreignSpkiProof(){const helper=require("../tests/e2e/helpers/certops-adcs-native-reconcile");return {scope:helper.foreignScope,...Object.fromEntries(helper.foreignFlags.map(flag=>[flag,true])),requestIds:["17","18"],spkiFingerprints:["a".repeat(64),"b".repeat(64)]};}
 function localPairsProof(){const helper=require("../tests/e2e/helpers/certops-adcs-local-rules");return helper.pairCases.map(caseId=>({caseId,...Object.fromEntries(helper.pairFlags.map(flag=>[flag,true]))}));}
+function algorithmProof(){const helper=require("../tests/e2e/helpers/certops-adcs-algorithm-boundaries");return helper.CASES.map((item,index)=>({caseId:item.id,positiveScenario:`adcs-real-${item.positiveId}-issued-cng-iis`,positiveFingerprintSha256:(index+10).toString(16).repeat(64),positiveRequestId:String(17+index),...Object.fromEntries(helper.FLAGS.map(flag=>[flag,true]))}));}
+function cmcProof(){const helper=require("../tests/e2e/helpers/certops-adcs-cmc-signature-copy");return {scope:helper.scope,...Object.fromEntries(helper.flags.map(flag=>[flag,true])),syntheticCaResponse:false,caRequestId:"17",responseSha256:"a".repeat(64),nativeHelperSha256:"b".repeat(64),originalResponseDerSha256:"c".repeat(64),tamperedResponseDerSha256:"d".repeat(64),refusedVariants:[...helper.refusedVariants]};}
 function operatorAmbiguityProof() {
   const helper = require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity");
   const enrollmentId = "11111111-1111-1111-1111-111111111111";
@@ -245,6 +247,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativeIssuedCancellation: { requestId: "17", snapshotSha256: "a".repeat(64), pollIntervalSeconds: 900, schedulerClock: "default-real-now", actualCaIssuedBeforeCancel: true, caLeafSignatureAndCsrSpkiVerified: true, controlPlaneStillPendingBeforeCancel: true, nonExportableKeyPresentBeforeCancel: true, signedTerminalCleanupSucceeded: true, exactUnacceptedKeyAbsent: true, certificateNeverAccepted: true, sameRequestSnapshotAndCsrPreserved: true, noAdditionalCaRequest: true, outgoingTrustedTlsUnchanged: true, terminalReconcileRefused: true, unusedIssuedLeafRevoked: true, databaseDatesRewritten: false, journalRewritten: false },
     nativeAdcsTwoRenewals: twoAdcsRenewalsProof(),
     nativeLocalRulePairs: localPairsProof(),
+    nativeAlgorithmBoundaries: algorithmProof(), nativeCmcBoundaries: cmcProof(),
     nativeForeignSpkiCandidate: foreignSpkiProof(),
     nativeUncertainOperatorAmbiguity: operatorAmbiguityProof(),
     nativeBrowserAdcs: browserAdcsProof(),
@@ -322,6 +325,10 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     assert.ok(verifyMatrix([changed], options).length, key);
   }
   const requiredSources = [...new Set([...require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").REQUIRED_SOURCES, ...require("../tests/e2e/helpers/certops-adcs-two-renewals").REQUIRED_SOURCES, ...require("../tests/e2e/helpers/certops-adcs-browser-journey").REQUIRED_SOURCES])];
+  for(const key of ["nativeAlgorithmBoundaries","nativeCmcBoundaries"]){const missing=structuredClone(value);delete missing.report[key];assert.ok(verifyMatrix([missing],options).length,key);}
+  for(const flag of require("../tests/e2e/helpers/certops-adcs-algorithm-boundaries").FLAGS)for(const wrong of [false,1,null,"true"]){const bad=structuredClone(value);bad.report.nativeAlgorithmBoundaries[0][flag]=wrong;assert.ok(verifyMatrix([bad],options).length,flag);}
+  for(const flag of require("../tests/e2e/helpers/certops-adcs-cmc-signature-copy").flags)for(const wrong of [false,1,null,"true"]){const bad=structuredClone(value);bad.report.nativeCmcBoundaries[flag]=wrong;assert.ok(verifyMatrix([bad],options).length,flag);}
+  for(const mutate of [item=>item.nativeAlgorithmBoundaries.pop(),item=>item.nativeAlgorithmBoundaries[1].positiveRequestId=item.nativeAlgorithmBoundaries[0].positiveRequestId,item=>item.nativeAlgorithmBoundaries[1].positiveFingerprintSha256=item.nativeAlgorithmBoundaries[0].positiveFingerprintSha256,item=>item.nativeAlgorithmBoundaries[0].positiveScenario="unexecuted",item=>item.nativeCmcBoundaries.refusedVariants.pop(),item=>item.nativeCmcBoundaries.syntheticCaResponse=true,item=>item.nativeCmcBoundaries.tamperedResponseDerSha256=item.nativeCmcBoundaries.originalResponseDerSha256,item=>item.nativeCmcBoundaries.rawPrivate="unexpected"]){const bad=structuredClone(value);mutate(bad.report);assert.ok(verifyMatrix([bad],options).length);}
   const sourceOptions = structuredClone(options); sourceOptions.specification.slots[0].requiredSources = requiredSources;
   const sourced = structuredClone(value); sourced.report.fixtureSources = requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
   assert.deepEqual(verifyMatrix([sourced], sourceOptions), []);
@@ -378,6 +385,13 @@ test("committed release matrix covers all mandatory suites and rejects escaped s
   assert.ok(validateMatrix({ schemaVersion: 1, slots: [{ ...specification.slots[0], source: "../outside.js" }] }).some((error) => error.includes("inside")));
   assert.ok(validateMatrix({ schemaVersion: 1, slots: [] }).length);
   assert.ok(verifyMatrix([], { candidateSha, specification: { schemaVersion: 1, slots: [null, { id: "invalid" }] } }).length);
+});
+test("release supporting sources enforce reviewed 96-item cap, unique identities and repository bounds",()=>{
+ const declared=[...new Set(require("../docs/certops/release-qualification-matrix.json").slots.flatMap(slot=>[slot.source,...(slot.requiredSources||[])]))];assert.ok(declared.length>=97);
+ const records=declared.slice(0,97).map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
+ const value=artifact(),spec=structuredClone(specification),options={candidateSha,specification:spec};value.report.fixtureSources=records.slice(0,96);spec.slots[0].requiredSources=records.slice(0,96).map(row=>row.file);assert.deepEqual(verifyMatrix([value],options),[]);
+ for(const rows of [records,[records[0],records[0]],[{file:"../outside.js",sha256:"a".repeat(64)}],[{file:"C:\\outside.js",sha256:"a".repeat(64)}]]){const bad=structuredClone(value);bad.report.fixtureSources=rows;assert.ok(verifyMatrix([bad],options).length);}
+ const oversized=structuredClone(spec);oversized.slots[0].requiredSources=records.map(row=>row.file);assert.ok(validateMatrix(oversized).some(error=>error.includes("invalid supporting source")));
 });
 test("migration slot requires historical schema and transition evidence beyond generic scenario success", () => {
   const value = artifact();

@@ -275,7 +275,11 @@
       "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host",
       "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment": "real-host",
       "adcs-real-uncertain-public-explicit-request-recovers": "real-host",
-      "adcs-real-uncertain-unused-operator-request-revoked": "real-host"
+      "adcs-real-uncertain-unused-operator-request-revoked": "real-host",
+      "adcs-real-template-key-rsa2048-below-template3072-refused": "real-host",
+      "adcs-real-template-key-rsa3072-below-template4096-refused": "real-host",
+      "adcs-real-template-key-ec256-on-p384-schema-three-refused": "real-host",
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -584,7 +588,11 @@
       "adcs-real-native-reconcile-other-enrollment-spki-refused": "real-host",
       "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment": "real-host",
       "adcs-real-uncertain-public-explicit-request-recovers": "real-host",
-      "adcs-real-uncertain-unused-operator-request-revoked": "real-host"
+      "adcs-real-uncertain-unused-operator-request-revoked": "real-host",
+      "adcs-real-template-key-rsa2048-below-template3072-refused": "real-host",
+      "adcs-real-template-key-rsa3072-below-template4096-refused": "real-host",
+      "adcs-real-template-key-ec256-on-p384-schema-three-refused": "real-host",
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1928,7 +1936,11 @@
       "adcs-real-native-reconcile-other-enrollment-spki-refused",
       "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment",
       "adcs-real-uncertain-public-explicit-request-recovers",
-      "adcs-real-uncertain-unused-operator-request-revoked"
+      "adcs-real-uncertain-unused-operator-request-revoked",
+      "adcs-real-template-key-rsa2048-below-template3072-refused",
+      "adcs-real-template-key-rsa3072-below-template4096-refused",
+      "adcs-real-template-key-ec256-on-p384-schema-three-refused",
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2237,7 +2249,11 @@
       "adcs-real-native-reconcile-other-enrollment-spki-refused",
       "adcs-real-uncertain-operator-created-ambiguity-refuses-attachment",
       "adcs-real-uncertain-public-explicit-request-recovers",
-      "adcs-real-uncertain-unused-operator-request-revoked"
+      "adcs-real-uncertain-unused-operator-request-revoked",
+      "adcs-real-template-key-rsa2048-below-template3072-refused",
+      "adcs-real-template-key-rsa3072-below-template4096-refused",
+      "adcs-real-template-key-ec256-on-p384-schema-three-refused",
+      "adcs-real-template-key-ec256-on-p384-schema-four-refused"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

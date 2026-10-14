@@ -720,7 +720,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -795,7 +800,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -870,7 +880,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -945,7 +960,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -1020,7 +1040,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -1095,7 +1120,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -1170,7 +1200,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -1245,7 +1280,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -1320,7 +1360,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {
@@ -1932,7 +1977,12 @@
         "packages/agent/src/issuers/index.js",
         "packages/agent/src/issuers/chain-helper.js",
         "packages/agent/src/windows-iis/index.js",
-        "apps/api/routes/certops-enrollments.js"
+        "apps/api/routes/certops-enrollments.js",
+        "tests/e2e/helpers/certops-adcs-algorithm-boundaries.js",
+        "infra/certops-adcs/safety-cases.json",
+        "packages/agent/src/issuers/adcs-safety.js",
+        "tests/e2e/helpers/certops-adcs-cmc-boundaries.js",
+        "tests/e2e/helpers/certops-adcs-cmc-signature-copy.js"
       ]
     },
     {

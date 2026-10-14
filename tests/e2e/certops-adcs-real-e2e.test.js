@@ -132,6 +132,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
     assert.equal(caSafety("request-count", item),"0","Safety refusal must precede actual native CA submission");
     const container=require("../../packages/agent/src/windows-cert-store").buildEnrollmentContainerName(created.body.enrollmentId);assert.ok(!command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(container),"Safety refusal must precede owned CNG key generation");
     assert.equal(ps(`@(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object Subject -eq 'CN=${item.domain}').Count`),"0");
+    return {enrollmentId:created.body.enrollmentId,jobId:created.body.jobId};
   }
   try {
     await gate.scenario("adcs-real-installed-native-language",async()=>{
@@ -205,6 +206,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       gate.report.localizedDiscovery={nativeLanguage:language,measurement:"native",fixtureIdentities:identities,publicDerFingerprintComparedToTrustedTls:true,localizedConsoleLabelsRequired:false};
     },{evidenceLevel:"real-host",oracle:"actual production Windows store/HTTP.sys/IIS discovery on measured installed native language, exact seven owned SNI coordinates and protected-key locality compared to independently trusted TLS DER"});
     await require("./helpers/certops-adcs-iis-locale").qualifyIisLocale({gate,issuedFixtures,ps,command,workDir,run,tlsAuthority,ownedNativeBindings});
+    await require("./helpers/certops-adcs-algorithm-boundaries").qualifyAlgorithmBoundaries({gate,fixture,api,agentRowId,issuedFixtures,configDir,preflight,requireNativeRefusal,command,ps,tlsAuthority,caConfig});
     await require("./helpers/certops-adcs-positive-renewals").qualifyPositiveRenewals({gate,fixture,api,agentRowId,issuedFixtures,ownedEnrollmentIds,ownedThumbprints,jobFinished,ps,command,tlsAuthority});
     await require("./helpers/certops-adcs-native-reconcile").qualifyNativeReconciliation({gate,fixture,api,configDir,workDir,run,issuedFixtures,ps,command,tlsAuthority});
     await require("./helpers/certops-adcs-retrieve-boundaries").qualifyRetrieveBoundaries({gate,configDir,workDir,run,issuedFixtures,ps,command});
@@ -404,7 +406,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       const response = await confirm({ caKeySha256: result.caCertificates[0]?.keySha256 || "0".repeat(64), caConfig, template }); assert.equal(response.status, 400);
     });
     await require("./helpers/certops-adcs-template-mutations").qualifyTemplateMutations({gate,fixture,api,agentRowId,renewalFixture,preflightCohorts,run,command,ps,until,ownedEnrollmentIds,tlsAuthority});
-    for(const item of safetyEnrollments.filter(item=>item.algorithm))await gate.scenario(`adcs-real-template-key-${item.id}-refused`,async()=>{
+    for(const item of safetyEnrollments.filter(item=>item.algorithm&&!require("./helpers/certops-adcs-algorithm-boundaries").CASES.some(selected=>selected.id===item.id)))await gate.scenario(`adcs-real-template-key-${item.id}-refused`,async()=>{
       const {issuerId,result}=await preflight(item.template);assert.equal(result.templateCheck.verdict,"safe");assert.equal(result.templateCheck.schemaVersion,item.schema);
       assert.equal((await fixture.request(`${api}/issuers/${issuerId}/confirm`,"POST",{caKeySha256:result.caCertificates[0].keySha256,caConfig,template:item.template})).status,200);
       await requireNativeRefusal(item,issuerId,"ADCS_TEMPLATE_UNSAFE");

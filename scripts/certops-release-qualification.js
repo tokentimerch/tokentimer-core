@@ -39,8 +39,8 @@ function validateMatrix(specification = matrix) {
     if (!["host", "stack", "database"].includes(slot.kind) || !slot.suite || !slot.source || !slot.environment || !["windows", "linux"].includes(slot.environment.osFamily)) errors.push(`${slot.id}: invalid environment specification`);
     if (typeof slot.source !== "string" || path.isAbsolute(slot.source) || slot.source.split(/[\\/]/).includes("..")) errors.push(`${slot.id}: source must remain inside the repository`);
     if (slot.requiredSources !== undefined && (!Array.isArray(slot.requiredSources) ||
-        !slot.requiredSources.length || new Set(slot.requiredSources).size !== slot.requiredSources.length ||
-        slot.requiredSources.some(source => typeof source !== "string" || !source || path.isAbsolute(source) || source.split(/[\\/]/).includes("..")))) {
+        !slot.requiredSources.length || slot.requiredSources.length > 96 || new Set(slot.requiredSources).size !== slot.requiredSources.length ||
+        slot.requiredSources.some(source => typeof source !== "string" || !source || path.isAbsolute(source) || /^[A-Za-z]:|^[\\/]/.test(source) || source.split(/[\\/]/).includes("..")))) {
       errors.push(`${slot.id}: invalid supporting source inventory`);
     }
     const identity = JSON.stringify([slot.kind, slot.suite, Object.entries(slot.environment || {}).sort()]);
@@ -72,6 +72,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
       if (!Array.isArray(entries) || !entries.length) throw new Error("Empty artifact evidence");
       const expectedDigest = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, slot.source))).digest("hex");
       for (const entry of entries) {
+        if (entry.fixtureSources !== undefined && (!Array.isArray(entry.fixtureSources) || entry.fixtureSources.length > 96 || new Set(entry.fixtureSources.map(item => item?.file)).size !== entry.fixtureSources.length || entry.fixtureSources.some(item => typeof item?.file !== "string" || path.isAbsolute(item.file) || /^[A-Za-z]:/.test(item.file) || item.file.split(/[\\/]/).includes("..")))) throw new Error("Supporting source inventory exceeds bounds or ownership");
         if (entry.qualificationStatus === "not-qualified" || entry.experimental === true) throw new Error("Experimental evidence cannot qualify a release");
         if (entry.candidateSha !== candidateSha) throw new Error("Candidate identity mismatch");
         if (entry.qualificationEnvironment?.measurement !== "native" || !Object.entries(slot.environment).every(([key, value]) => entry.qualificationEnvironment?.[key] === value)) throw new Error("Host measurement mismatch");
@@ -127,6 +128,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          require("../tests/e2e/helpers/certops-adcs-algorithm-boundaries").verifyProof(artifact.report.nativeAlgorithmBoundaries);
+          require("../tests/e2e/helpers/certops-adcs-cmc-signature-copy").verifyProof(artifact.report.nativeCmcBoundaries);
           require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(artifact.report.nativeBrowserAdcs);
           require("../tests/e2e/helpers/certops-adcs-local-rules").verifyPairProof(artifact.report.nativeLocalRulePairs);
           require("../tests/e2e/helpers/certops-adcs-native-reconcile").verifyForeignProof(artifact.report.nativeForeignSpkiCandidate);

@@ -208,14 +208,20 @@ def public_environment(value):
 
 def supporting_sources(value):
     declared = declared_sources()
-    # Full native AD CS journeys bind more than 32 distinct dependencies.
+    # Full native AD CS journeys now bind more than 64 distinct dependencies.
     # Keep an explicit collection ceiling; declared-path and digest checks remain.
-    if not isinstance(value, list) or len(value) > 64:
+    if not isinstance(value, list) or len(value) > 96:
         raise ValueError("Invalid supporting source inventory")
-    result = []
+    result, seen = [], set()
     for source in value:
-        if not isinstance(source, dict) or source.get("file") not in declared:
+        file = source.get("file") if isinstance(source, dict) else None
+        if isinstance(file, str) and (file.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", file) or ".." in re.split(r"[\\/]", file)):
+            raise ValueError("Supporting source escaped repository")
+        if not isinstance(source, dict) or not isinstance(file, str) or file not in declared:
             continue
+        if file in seen:
+            raise ValueError("Duplicate supporting source identity")
+        seen.add(file)
         if not isinstance(source.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", source["sha256"]):
             raise ValueError("Invalid supporting source fingerprint")
         result.append({"file": source["file"], "sha256": source["sha256"]})
@@ -330,6 +336,40 @@ def arm64_runtime_fields(value):
         if type(case.get("privateExportHResult")) is not int or not -2147483648 <= case["privateExportHResult"] < 0:
             raise ValueError("ARM64 native export denial unavailable")
     return {"platform": "win32", "architecture": "arm64", "nativeArchitectureProbe": dict(architecture), "nativeArm64CngRuntime": {**proof, "architecture": dict(architecture), "cases": [dict(case) for case in cases]}}
+
+
+def algorithm_boundaries_fields(rows):
+    cases = {"rsa2048-below-template3072": "rsa3072", "rsa3072-below-template4096": "rsa4096", "ec256-on-p384-schema-three": "ec384schema3", "ec256-on-p384-schema-four": "ec384"}
+    flags = ("nativeSafeTemplateObserved", "publicConfirmedIssuerUsed", "actualSignedClaimRefusal", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "positiveNativeCustodyUnchanged", "positiveTrustedTlsUnchanged")
+    if not isinstance(rows, list) or len(rows) != 4:
+        raise ValueError("Missing native algorithm/template boundaries")
+    result, seen = [], set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"caseId", "positiveScenario", "positiveFingerprintSha256", "positiveRequestId", *flags} or not isinstance(row.get("caseId"), str) or row["caseId"] not in cases or row["caseId"] in seen:
+            raise ValueError("Invalid native algorithm/template case")
+        if row.get("positiveScenario") != f"adcs-real-{cases[row['caseId']]}-issued-cng-iis" or any(row.get(flag) is not True for flag in flags):
+            raise ValueError("Native algorithm boundary lacks positive control")
+        for field, pattern in (("positiveFingerprintSha256", r"[a-f0-9]{64}"), ("positiveRequestId", r"[1-9][0-9]{0,9}")):
+            if not isinstance(row.get(field), str) or not re.fullmatch(pattern, row[field]):
+                raise ValueError("Invalid native positive issuance identity")
+        seen.add(row["caseId"])
+        result.append(dict(row))
+    if len({row["positiveFingerprintSha256"].lower() for row in result}) != 4 or len({row["positiveRequestId"] for row in result}) != 4 or any(int(row["positiveRequestId"]) > 0xffffffff for row in result):
+        raise ValueError("Native positive issuance controls must be distinct")
+    return result
+
+
+def cmc_boundaries_fields(proof):
+    flags = ("actualCaSignedPending", "actualPinnedSignatureVerified", "actualSignerSignatureByteTampered", "actualPristineDerControlVerified", "agentResponseUnchanged")
+    hashes = ("responseSha256", "nativeHelperSha256", "originalResponseDerSha256", "tamperedResponseDerSha256")
+    variants = ["empty", "truncated", "trailing-data", "oversized", "signer-signature-tampered", "wrong-ca-key-pin"]
+    if not isinstance(proof, dict) or set(proof) != {"scope", *flags, "caRequestId", *hashes, "refusedVariants", "syntheticCaResponse"} or proof.get("scope") != "read-only-native-ca-signed-response-signature-boundaries" or any(proof.get(flag) is not True for flag in flags) or proof.get("syntheticCaResponse") is not False:
+        raise ValueError("Missing native signed-response decoder boundaries")
+    if not isinstance(proof.get("caRequestId"), str) or not re.fullmatch(r"[1-9][0-9]{0,9}", proof["caRequestId"]) or int(proof["caRequestId"]) > 0xffffffff:
+        raise ValueError("Invalid signed-response CA request identity")
+    if any(not isinstance(proof.get(field), str) or not re.fullmatch(r"[a-f0-9]{64}", proof[field]) for field in hashes) or proof["originalResponseDerSha256"] == proof["tamperedResponseDerSha256"] or proof.get("refusedVariants") != variants:
+        raise ValueError("Invalid native signed-response signature controls")
+    return {**proof, "refusedVariants": list(variants)}
 
 
 def _sanitized_report(value, suites, scopes, database_scopes=()):
@@ -619,6 +659,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            result["nativeAlgorithmBoundaries"] = algorithm_boundaries_fields(value.get("nativeAlgorithmBoundaries"))
+            result["nativeCmcBoundaries"] = cmc_boundaries_fields(value.get("nativeCmcBoundaries"))
             foreign = value.get("nativeForeignSpkiCandidate")
             foreign_flags = ("sameRequesterNativeRetrieveSucceeded", "nativeCaIdentityMatched", "differentEnrollmentSpkiProved", "explicitCandidateRefused", "boundedSearchUnresolved", "originalJournalWatermarkPreserved", "originalNativeCustodyAndTlsPreserved", "noAdditionalCaRequest")
             if (not isinstance(foreign, dict) or foreign.get("scope") != "read-only-native-foreign-spki-candidate-not-public-uncertain-recovery"
