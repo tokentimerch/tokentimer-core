@@ -56,6 +56,16 @@ test("Every committed Linux ACME scope binds current actual journey and Pebble p
         "scripts/certops-real-acme.js",
         "tests/e2e/helpers/certops-acme-lease-loss.js",
         "tests/e2e/helpers/certops-acme-command-barrier.js",
+        "scripts/certops-stack-reporter.js",
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/acme/index.js",
+        "packages/agent/src/signing/index.js",
+        "apps/api/services/certops/renewalProfileAdmin.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
       ],
     );
     for (const item of sources)

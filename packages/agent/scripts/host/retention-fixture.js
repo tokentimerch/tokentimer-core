@@ -16,7 +16,8 @@ function createRetentionTlsProbe({caPem,servername="certops-host.invalid"}={}){
  assert.equal(typeof caPem,"string");assert.equal(new crypto.X509Certificate(caPem).ca,true,"Retention TLS requires the owned public CA");assert.match(servername,/^[a-z0-9.-]+$/i);
  return (port,thumbprint)=>expectServed(port,thumbprint,servername,caPem);
 }
-async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint, replacementThumbprint, containerName }) {
+async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint, replacementThumbprint, containerName, gate }) {
+  assert.ok(gate && typeof gate.scenario === "function", "Required native reference qualification gate missing");
   const expectOwnedServed=createRetentionTlsProbe({caPem:fs.readFileSync(path.join(workDir,"ca.pem"),"utf8")});
   const site = `CertOps-Retention-${crypto.randomUUID()}`;
   const oldPort = await freePort();
@@ -97,6 +98,7 @@ async function qualifyRetentionGuards({ powershell, run, workDir, oldThumbprint,
     assert.ok(result.deferred.some((row) => row.oldThumbprint === oldThumbprint && row.reason === "deadline_not_reached"));
     assert.equal(powershell(`[bool]((Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').HasPrivateKey)`), "True");
     await expectOwnedServed(newPort, replacementThumbprint);
+    gate.report.nativeRetentionReferences = await require("./retention-reference-fixture").qualifyRetentionReferences({ gate, powershell, ledgerDir, oldThumbprint, replacementThumbprint, containerName, sweep, expectReplacementServed: thumbprint => expectOwnedServed(newPort, thumbprint) });
     return { differentCertificateCrossStoreProtected: true, sameCertificateCrossStoreProtected: true, originalKeyPreserved: true, replacementTrustedTlsPreserved: true, ownedCrossStoreCopiesRemoved: true };
   } catch (error) { primaryError = error; throw error; }
   finally {

@@ -34,7 +34,10 @@
       "windows-cng-private-export-refusal": "real-host",
       "windows-iis-shared-port-sni-isolation": "real-host",
       "windows-enrollment-lock-cng-contention": "real-host",
-      "windows-retention-atomic-replace-refusal": "real-host"
+      "windows-retention-atomic-replace-refusal": "real-host",
+      "windows-retention-two-open-references-protect": "real-host",
+      "windows-retention-one-closed-reference-still-protects": "real-host",
+      "windows-retention-all-closed-respects-real-deadline": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -262,7 +265,10 @@
       "adcs-real-browser-profile-attachment": "real-host",
       "adcs-real-browser-automation-native-enrollment": "real-host",
       "adcs-real-browser-installed-enrollment-visible": "real-host",
-      "adcs-real-browser-owned-cleanup": "real-host"
+      "adcs-real-browser-owned-cleanup": "real-host",
+      "adcs-real-local-rule-ca-host-mismatch-refused": "real-host",
+      "adcs-real-local-rule-ca-authority-mismatch-refused": "real-host",
+      "adcs-real-local-rule-template-pair-mismatch-refused": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -564,7 +570,10 @@
       "adcs-real-browser-profile-attachment": "real-host",
       "adcs-real-browser-automation-native-enrollment": "real-host",
       "adcs-real-browser-installed-enrollment-visible": "real-host",
-      "adcs-real-browser-owned-cleanup": "real-host"
+      "adcs-real-browser-owned-cleanup": "real-host",
+      "adcs-real-local-rule-ca-host-mismatch-refused": "real-host",
+      "adcs-real-local-rule-ca-authority-mismatch-refused": "real-host",
+      "adcs-real-local-rule-template-pair-mismatch-refused": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1652,7 +1661,10 @@
       "windows-cng-private-export-refusal",
       "windows-iis-shared-port-sni-isolation",
       "windows-enrollment-lock-cng-contention",
-      "windows-retention-atomic-replace-refusal"
+      "windows-retention-atomic-replace-refusal",
+      "windows-retention-two-open-references-protect",
+      "windows-retention-one-closed-reference-still-protects",
+      "windows-retention-all-closed-respects-real-deadline"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -1880,7 +1892,10 @@
       "adcs-real-browser-profile-attachment",
       "adcs-real-browser-automation-native-enrollment",
       "adcs-real-browser-installed-enrollment-visible",
-      "adcs-real-browser-owned-cleanup"
+      "adcs-real-browser-owned-cleanup",
+      "adcs-real-local-rule-ca-host-mismatch-refused",
+      "adcs-real-local-rule-ca-authority-mismatch-refused",
+      "adcs-real-local-rule-template-pair-mismatch-refused"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2182,7 +2197,10 @@
       "adcs-real-browser-profile-attachment",
       "adcs-real-browser-automation-native-enrollment",
       "adcs-real-browser-installed-enrollment-visible",
-      "adcs-real-browser-owned-cleanup"
+      "adcs-real-browser-owned-cleanup",
+      "adcs-real-local-rule-ca-host-mismatch-refused",
+      "adcs-real-local-rule-ca-authority-mismatch-refused",
+      "adcs-real-local-rule-template-pair-mismatch-refused"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

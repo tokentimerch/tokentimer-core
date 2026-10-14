@@ -130,7 +130,11 @@ async function main() {
     const report = "qualification-results/real-acme.jsonl";
     const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 840000, env: { ...process.env, ...fixtureEnv, CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REAL_ACME_CLIENT: client, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_ACME_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope } });
     assert.equal(result.status, 0, "real agent/API/ACME suite failed");
-    console.log(JSON.stringify(verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope)));
+    const events = fs.readFileSync(report, "utf8");
+    const helper = require("../tests/e2e/helpers/certops-acme-key-reuse");
+    const native = events.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)).filter(event => event.name === journey);
+    assert.equal(native.length, 1); helper.verifyProof(native[0].nativeAcmeKeyReuse); assert.equal(native[0].nativeAcmeKeyReuse.client, client);
+    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName], "certops-agent-e2e.test.js", scope)));
   });
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

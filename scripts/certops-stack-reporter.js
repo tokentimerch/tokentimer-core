@@ -31,7 +31,7 @@ function measuredEnvironment(){
 function supplementalSources(scope){
   let files;
   if(scope.startsWith("real-agent-windows-acme-iis/"))files=["tests/e2e/helpers/certops-windows-public-issuance.js","tests/e2e/helpers/certops-api-fixture.js","tests/e2e/helpers/certops-windows-reregistration.js","tests/e2e/helpers/certops-windows-capability-refresh.js","tests/e2e/helpers/certops-windows-output-child.js","tests/e2e/helpers/certops-windows-output-privacy.js","tests/e2e/windows-real-journey.js"];
-  else if(["real-agent-acme-filesystem","real-agent-acme-eab-filesystem","real-agent-acmesh-filesystem","real-agent-acmesh-eab-filesystem","real-agent-alpine-certbot","real-agent-alpine-acmesh"].includes(scope))files=["tests/e2e/acme-real-journey.js","scripts/certops-real-acme.js","tests/e2e/helpers/certops-acme-lease-loss.js","tests/e2e/helpers/certops-acme-command-barrier.js"];
+  else if(["real-agent-acme-filesystem","real-agent-acme-eab-filesystem","real-agent-acmesh-filesystem","real-agent-acmesh-eab-filesystem","real-agent-alpine-certbot","real-agent-alpine-acmesh"].includes(scope))files=[...new Set(["tests/e2e/acme-real-journey.js","scripts/certops-real-acme.js","tests/e2e/helpers/certops-acme-lease-loss.js","tests/e2e/helpers/certops-acme-command-barrier.js","scripts/certops-stack-reporter.js",...require("../tests/e2e/helpers/certops-acme-key-reuse").requiredSources])];
   else return undefined;
   const root=path.resolve(__dirname,"..");return files.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
 }
@@ -40,6 +40,12 @@ function windowsPublicIssueProof(scope,name,root=path.resolve(__dirname,"..")){
   const profile=scope.split("/")[1];if(!["rsa-2048","rsa-3072","rsa-4096","ec-p256","ec-p384"].includes(profile))throw new Error("Invalid Windows issue proof profile");
   const facts=JSON.parse(fs.readFileSync(path.join(root,"qualification-results",`windows-public-issue-${profile}.json`),"utf8"));
   require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(facts);return facts;
+}
+function acmeKeyReuseProof(scope,name,root=path.resolve(__dirname,"..")){
+  if(!["real-agent-acme-filesystem","real-agent-acme-eab-filesystem","real-agent-acmesh-filesystem","real-agent-acmesh-eab-filesystem","real-agent-alpine-acmesh"].includes(scope)||name!=="real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence")return undefined;
+  const client=scope.includes("acmesh") ? "acme.sh" : "certbot";
+  const proof=JSON.parse(fs.readFileSync(path.join(root,"qualification-results",`acme-key-reuse-${client === "certbot" ? "certbot" : "acmesh"}.json`),"utf8"));
+  require("../tests/e2e/helpers/certops-acme-key-reuse").verifyProof(proof);if(proof.client!==client)throw new Error("ACME reuse client scope mismatch");return proof;
 }
 // Node's test reporter events preserve names and skip status without XML parsing.
 module.exports = async function* report(events) {
@@ -50,7 +56,8 @@ module.exports = async function* report(events) {
       const source=event.data.file;
       const fixtureSource=source && fs.existsSync(source) ? {file:path.relative(path.resolve(__dirname,".."),source).replace(/\\/g,"/"),sha256:crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex")} : null;
       const publicProof=event.type === "test:pass" ? windowsPublicIssueProof(process.env.CERTOPS_REPORT_SCOPE||"",event.data.name) : undefined;
-      yield JSON.stringify({ ...(publicProof ? {windowsPublicIssuance:publicProof} : {}), type: event.type, name: event.data.name, file: source, fixtureSource, ...(fixtureSources ? {fixtureSources} : {}), qualificationEnvironment, artifactQualification:process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout-source" : "local-worktree-source-baseline-sha-only", candidateSha: process.env.GITHUB_SHA || null, scope: process.env.CERTOPS_REPORT_SCOPE || "agent-protocol-api-worker", skip: event.data.skip || false, todo: event.data.todo || false }) + "\n";
+      const reuseProof=event.type === "test:pass" ? acmeKeyReuseProof(process.env.CERTOPS_REPORT_SCOPE||"",event.data.name) : undefined;
+      yield JSON.stringify({ ...(publicProof ? {windowsPublicIssuance:publicProof} : {}), ...(reuseProof ? {nativeAcmeKeyReuse:reuseProof} : {}), type: event.type, name: event.data.name, file: source, fixtureSource, ...(fixtureSources ? {fixtureSources} : {}), qualificationEnvironment, artifactQualification:process.env.GITHUB_ACTIONS === "true" ? "workflow-checkout-source" : "local-worktree-source-baseline-sha-only", candidateSha: process.env.GITHUB_SHA || null, scope: process.env.CERTOPS_REPORT_SCOPE || "agent-protocol-api-worker", skip: event.data.skip || false, todo: event.data.todo || false }) + "\n";
     }
   }
 };
@@ -59,3 +66,4 @@ module.exports.measuredEnvironment=measuredEnvironment;
 module.exports.supplementalSources=supplementalSources;
 
 module.exports.windowsPublicIssueProof=windowsPublicIssueProof;
+module.exports.acmeKeyReuseProof=acmeKeyReuseProof;

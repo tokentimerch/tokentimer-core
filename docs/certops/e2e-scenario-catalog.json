@@ -774,8 +774,8 @@
         "windows-2022-host",
         "windows-2025-host"
       ],
-      "implementation": "packages/agent/scripts/host/retention-fixture.js",
-      "remainingCoverage": "Native source now checks actual old/replacement HTTPS bindings, a same-store shared machine KSP key, a distinct WebHosting certificate and an identical old-certificate mirror in WebHosting. Each cross-store case must defer deletion while preserving original key and replacement trusted TLS, then remove only owned public copies. Current source/build hashes and five bounded native facts are mandatory. Additional enrollment/journal/provider variants and actual native execution evidence remain pending."
+      "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/retention-reference-fixture.js",
+      "remainingCoverage": "Native source now checks actual old/replacement HTTPS bindings, a same-store shared machine KSP key, a distinct WebHosting certificate and an identical old-certificate mirror in WebHosting. Each cross-store case must defer deletion while preserving original key and replacement trusted TLS, then remove only owned public copies. Current source/build hashes and five bounded native facts are mandatory. Additional enrollment/journal/provider variants and actual native execution evidence remain pending. Supporting native collector source now persists two explicit job/rollback ledger references, independently reads them in fresh processes, requires active_reference_present before deadline_not_reached, closes one without unprotecting the other, refuses unknown-reference closure and finally still defers on the unmodified real deadline after both close. Native CNG identity/provider/non-exportability, immutable ledger coordinates and trusted replacement TLS must remain unchanged. These explicit supporting references do not qualify actual AD CS enrollment journals."
     },
     {
       "id": "windows-retention.owned-only",
@@ -798,8 +798,8 @@
         "windows-2022-host",
         "windows-2025-host"
       ],
-      "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Native collector with a fresh supporting ledger and real clock defers24h cleanup. Separate real-clock fixture retains the supported24h policy but uses the product's earlier actual certificate-expiry-plus300s deadline, waits the actual elapsed grace and verifies cleanup. Synthetic-clock supporting sweep remains separately labeled. Exact full24h passage and every min/max config combination remain; native execution evidence is pending."
+      "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js; scripts/certops-retention-boundaries.test.js",
+      "remainingCoverage": "Native collector with a fresh supporting ledger and real clock defers24h cleanup. Separate real-clock fixture retains the supported24h policy but uses the product's earlier actual certificate-expiry-plus300s deadline, waits the actual elapsed grace and verifies cleanup. Synthetic-clock supporting sweep remains separately labeled. Exact full24h passage and every min/max config combination remain; native execution evidence is pending. Supporting production configuration-loader tests cover default168h/6h, minimum24h and maximum720h across valid positive sweep intervals, invalid types/fractions/out-of-range values, and exact unchanged configuration/custody marker. These are loader/filesystem checks, not installed-service cadence execution."
     },
     {
       "id": "windows-retention.durable-ledger",
@@ -924,7 +924,7 @@
         "real-agent-acmesh-filesystem"
       ],
       "implementation": "tests/e2e/acme-real-journey.js",
-      "remainingCoverage": "Mandatory native source requires real SPKI changes with rotateOnRenew through two naturally due certificate renewals for both clients. Native execution, key reuse, algorithm cross-products and Windows ACME regression permutations remain."
+      "remainingCoverage": "Mandatory Linux source preserves positive SPKI rotation controls and adds public-profile keyRotation=false manual/default-SQL-NOW renewal controls for certbot/acme.sh, with unchanged private custody/SPKI, distinct CA serials/leaves, advancing expiry and trusted TLS. Execution of the new reuse controls and algorithm cross-products remains pending. Windows os-store-managed ACME currently accepts rotateOnRenew=false in the profile mapping but the native executor still creates a fresh CNG enrollment container; explicit refusal or truthful policy handling needs separate product coverage and is not qualified as reuse."
     },
     {
       "id": "acme.zone-provider",
@@ -1288,7 +1288,7 @@
         "disposable-enterprise-adcs-response-loss-experiment"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
-      "remainingCoverage": "Experimental native source and separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile only its exact owned candidate. Native source has not executed and is explicitly nonqualified/excluded from release matrix; deterministic fault-window coverage and zero/ambiguous unique-candidate/operator recovery cases remain."
+      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending."
     },
     {
       "id": "adcs.unreachable-before-submit",
@@ -1310,7 +1310,7 @@
         "disposable-enterprise-adcs-response-loss-experiment"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-response-loss.js",
-      "remainingCoverage": "Experimental native source and separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile only its exact owned candidate. Native source has not executed and is explicitly nonqualified/excluded from release matrix; deterministic fault-window coverage and zero/ambiguous unique-candidate/operator recovery cases remain."
+      "remainingCoverage": "Experimental native source and a separate manual fault workflow observe an owned real CA request after interrupted submission and reconcile its exact candidate. Separate native candidate-search controls exercise zero, unique and ambiguous bounded CA results, including a genuine duplicate request sharing the CSR. These sources remain unexecuted here; fault experiments are explicitly nonqualified and excluded from the release matrix. Deterministic lost-response timing followed by the complete public uncertain-enrollment zero/ambiguous operator recovery flow remains pending."
     },
     {
       "id": "adcs.abandon",
@@ -1354,7 +1354,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native templates enforce actual CA publication and enrollment ACL denials with exact HRESULTs and owned-key absence. Host execution is pending; all agent-local CA/name/algorithm allowlist negative boundaries remain."
+      "remainingCoverage": "Native source covers CA publication/enrollment ACL denials plus agent-local missing constraints, DNS dot boundaries, algorithms, cross-product permissions, additional SANs and pending-policy tightening. Three exact pair controls separately mismatch the CA host, CA authority and template while preserving DNS/RSA permission; signed installed-agent refusal must precede CA allocation and key generation, preserve the prior DER/CNG/TLS custody, and restore original configuration/credentials after a drained restart. Host execution remains pending; further policy and target combinations are not implied."
     },
     {
       "id": "adcs-safety.unsafe-templates",

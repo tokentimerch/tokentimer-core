@@ -227,12 +227,13 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${acceptedCertificates[1]}')`), "True");
     }, { evidenceLevel: "real-host", oracle: "real owned certificate/key deletion and surviving replacement; synthetic time/context, not served-TLS retention E2E" });
     await gate.scenario("windows-retention-native-guards", async () => {
-      gate.report.nativeKeySurvivors = await require("./retention-fixture").qualifyRetentionGuards({ powershell, run, workDir,
+      gate.report.nativeKeySurvivors = await require("./retention-fixture").qualifyRetentionGuards({ powershell, run, workDir, gate,
         oldThumbprint: acceptedCertificates[2], replacementThumbprint: acceptedCertificates[3], containerName: containers[2] });
       const contract = require("../../../../scripts/certops-native-key-survivor-proof");
       contract.verifyProof(gate.report.nativeKeySurvivors);
+      const referenceContract = require("./retention-reference-fixture"); referenceContract.verifyProof(gate.report.nativeRetentionReferences);
       gate.report.fixtureSources ||= [];
-      for (const file of contract.REQUIRED_SOURCES) {
+      for (const file of [...contract.REQUIRED_SOURCES, ...referenceContract.requiredSources]) {
         if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
       }
     }, { evidenceLevel: "real-host", oracle: "product retention collector reads real HTTP.sys bindings, actual shared CNG key association and replacement TLS; real clock blocks fresh ledger cleanup" });
@@ -372,6 +373,6 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");
     }, { evidenceLevel: "real-host", oracle: "certificate absence and certutil KSP enumeration" });
-    await gate.finish({ requiredScenarios: ["windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    await gate.finish({ requiredScenarios: ["windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

@@ -29,9 +29,11 @@ async function waitUntil(check, timeoutMs = 180000) {
   }
   throw new Error("Real ACME journey exceeded its deadline");
 }
-module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, createBootstrap, repoRoot }) {
+module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, createBootstrap, repoRoot, runScenario = async (_name, action) => action() }) {
   const acmeKind = process.env.CERTOPS_REAL_ACME_CLIENT || "certbot";
   assert.ok(["certbot", "acme.sh"].includes(acmeKind), "Only declared real ACME clients are qualified");
+  const reuseProofPath = path.join(repoRoot, "qualification-results", `acme-key-reuse-${acmeKind === "certbot" ? "certbot" : "acmesh"}.json`);
+  fs.rmSync(reuseProofPath, { force: true });
   const commandRef = acmeKind === "certbot" ? "qualification-certbot" : "qualification-acmesh";
   let commandArgv = acmeKind === "certbot" ? ["certbot", "--no-verify-ssl", "--agree-tos", "--register-unsafely-without-email"] : ["bash", process.env.CERTOPS_LINUX_ACMESH, "--insecure", "--accountemail", "certops@example.test"];
   if (acmeKind === "acme.sh") assert.ok(path.isAbsolute(process.env.CERTOPS_LINUX_ACMESH || "") && fs.existsSync(process.env.CERTOPS_LINUX_ACMESH), "Pinned acme.sh executable required");
@@ -314,6 +316,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, manualJob.id])).rows.length);
     assert.deepEqual((await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0].public_metadata.renewalProfile, profileBeforeManual,
       "manual renewal must preserve its stored execution profile");
+    const reuse = require("./helpers/certops-acme-key-reuse");
+    await runScenario(reuse.scenarioName, async () => {
+      const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind });
+      fs.mkdirSync(path.dirname(reuseProofPath), { recursive: true }); fs.writeFileSync(reuseProofPath, JSON.stringify(proof), { mode: 0o600 });
+    });
     await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,waitUntil,verifyDnsCleanup,servedFingerprint});
     if (eabSecret) {
       const stored = await pool.query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1", [workspaceId]);

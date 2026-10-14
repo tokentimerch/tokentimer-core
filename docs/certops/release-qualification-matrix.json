@@ -211,7 +211,8 @@
         "packages/agent/reference/adcs-chain/main.go",
         "packages/agent/reference/adcs-chain/keyrefs/result.go",
         "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
-        "packages/agent/scripts/host/cng-key-usage-proof.js"
+        "packages/agent/scripts/host/cng-key-usage-proof.js",
+        "packages/agent/scripts/host/retention-reference-fixture.js"
       ]
     },
     {
@@ -364,7 +365,8 @@
         "packages/agent/reference/adcs-chain/main.go",
         "packages/agent/reference/adcs-chain/keyrefs/result.go",
         "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
-        "packages/agent/scripts/host/cng-key-usage-proof.js"
+        "packages/agent/scripts/host/cng-key-usage-proof.js",
+        "packages/agent/scripts/host/retention-reference-fixture.js"
       ]
     },
     {
@@ -546,7 +548,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -613,7 +617,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -680,7 +686,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -747,7 +755,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -814,7 +824,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -881,7 +893,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -948,7 +962,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -1015,7 +1031,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -1082,7 +1100,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -1095,13 +1115,24 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real ACME: manual and default scheduler renewals reuse the same local key"
       ],
       "requiredSources": [
         "tests/e2e/acme-real-journey.js",
         "scripts/certops-real-acme.js",
         "tests/e2e/helpers/certops-acme-lease-loss.js",
-        "tests/e2e/helpers/certops-acme-command-barrier.js"
+        "tests/e2e/helpers/certops-acme-command-barrier.js",
+        "scripts/certops-stack-reporter.js",
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/acme/index.js",
+        "packages/agent/src/signing/index.js",
+        "apps/api/services/certops/renewalProfileAdmin.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -1343,13 +1374,24 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real ACME: manual and default scheduler renewals reuse the same local key"
       ],
       "requiredSources": [
         "tests/e2e/acme-real-journey.js",
         "scripts/certops-real-acme.js",
         "tests/e2e/helpers/certops-acme-lease-loss.js",
-        "tests/e2e/helpers/certops-acme-command-barrier.js"
+        "tests/e2e/helpers/certops-acme-command-barrier.js",
+        "scripts/certops-stack-reporter.js",
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/acme/index.js",
+        "packages/agent/src/signing/index.js",
+        "apps/api/services/certops/renewalProfileAdmin.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -1664,7 +1706,9 @@
         "deploy/compose/nginx.conf",
         "infra/certops-adcs/provision-lab.ps1",
         "infra/certops-adcs/run-windows-tests.ps1",
-        ".dockerignore"
+        ".dockerignore",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js"
       ]
     },
     {
@@ -1800,13 +1844,24 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real ACME: manual and default scheduler renewals reuse the same local key"
       ],
       "requiredSources": [
         "tests/e2e/acme-real-journey.js",
         "scripts/certops-real-acme.js",
         "tests/e2e/helpers/certops-acme-lease-loss.js",
-        "tests/e2e/helpers/certops-acme-command-barrier.js"
+        "tests/e2e/helpers/certops-acme-command-barrier.js",
+        "scripts/certops-stack-reporter.js",
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/acme/index.js",
+        "packages/agent/src/signing/index.js",
+        "apps/api/services/certops/renewalProfileAdmin.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -1819,13 +1874,24 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real ACME: manual and default scheduler renewals reuse the same local key"
       ],
       "requiredSources": [
         "tests/e2e/acme-real-journey.js",
         "scripts/certops-real-acme.js",
         "tests/e2e/helpers/certops-acme-lease-loss.js",
-        "tests/e2e/helpers/certops-acme-command-barrier.js"
+        "tests/e2e/helpers/certops-acme-command-barrier.js",
+        "scripts/certops-stack-reporter.js",
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/acme/index.js",
+        "packages/agent/src/signing/index.js",
+        "apps/api/services/certops/renewalProfileAdmin.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {
@@ -1874,13 +1940,24 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence"
+        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+        "real ACME: manual and default scheduler renewals reuse the same local key"
       ],
       "requiredSources": [
         "tests/e2e/acme-real-journey.js",
         "scripts/certops-real-acme.js",
         "tests/e2e/helpers/certops-acme-lease-loss.js",
-        "tests/e2e/helpers/certops-acme-command-barrier.js"
+        "tests/e2e/helpers/certops-acme-command-barrier.js",
+        "scripts/certops-stack-reporter.js",
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/acme/index.js",
+        "packages/agent/src/signing/index.js",
+        "apps/api/services/certops/renewalProfileAdmin.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js"
       ]
     },
     {

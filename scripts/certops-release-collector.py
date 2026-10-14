@@ -239,6 +239,34 @@ def windows_public_issuance(value):
     return result
 
 
+def acme_key_reuse_fields(event):
+    scopes = ("real-agent-acme-filesystem", "real-agent-acme-eab-filesystem", "real-agent-acmesh-filesystem", "real-agent-acmesh-eab-filesystem", "real-agent-alpine-acmesh")
+    if event.get("scope") not in scopes or event.get("name") != "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence":
+        return {}
+    value = event.get("nativeAcmeKeyReuse")
+    if not isinstance(value, dict):
+        raise ValueError("Missing native ACME key reuse proof")
+    result = {}
+    for field in ("publicProfilePolicyChanged", "manualRenewalSucceeded", "defaultSqlNowRenewalSucceeded", "claimBoundVerification", "unchangedPrivateCustody", "privateMaterialStayedLocal", "unchangedSpki", "distinctCaLeavesAndSerials", "advancingExpiry", "trustedTlsEachGeneration", "dnsCleanEachGeneration", "stableReuseProfile"):
+        if value.get(field) is not True:
+            raise ValueError("Incomplete native ACME key reuse proof")
+        result[field] = True
+    for field, expected in (("scope", "real-linux-manual-and-default-scheduler-csr-key-reuse"), ("client", "acme.sh" if "acmesh" in event["scope"] else "certbot")):
+        if value.get(field) != expected:
+            raise ValueError("Invalid native ACME key reuse scope")
+        result[field] = expected
+    for field, count, pattern in (("fingerprints", 3, r"[a-f0-9]{64}"), ("serials", 3, r"[A-F0-9]{1,64}"), ("jobIds", 2, r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}")):
+        rows = value.get(field)
+        if not isinstance(rows, list) or len(rows) != count or not all(isinstance(item, str) and re.fullmatch(pattern, item) for item in rows) or len(set(item.lower() for item in rows)) != count:
+            raise ValueError("Invalid native ACME key reuse identity inventory")
+        result[field] = list(rows)
+    for field, pattern in (("spkiFingerprint", r"[a-f0-9]{64}"), ("sourceProfileFingerprint", r"[a-f0-9]{64}"), ("sourceProfileId", r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}")):
+        if not isinstance(value.get(field), str) or not re.fullmatch(pattern, value[field]):
+            raise ValueError("Invalid native ACME key reuse source identity")
+        result[field] = value[field]
+    return {"nativeAcmeKeyReuse": result}
+
+
 def _sanitized_report(value, suites, scopes, database_scopes=()):
     if isinstance(value, dict) and value.get("scope") in database_scopes:
         keys = ("scope", "candidateSha", "evidenceLevel", "qualificationEnvironment",
@@ -392,6 +420,14 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(survivors, dict) or any(survivors.get(field) is not True for field in survivor_fields):
                 raise ValueError("Incomplete native cross-store CNG survivor evidence")
             result["nativeKeySurvivors"] = dict.fromkeys(survivor_fields, True)
+            reference_fields = ("twoOpenReferencesPersistedAcrossProcess", "bothOpenNativeSweepPreservedCustody", "oneClosedStillProtected", "unknownReferenceDoesNotCloseOwnedReferences", "allClosedStillDeferredByRealDeadline", "nativeCustodyAndTrustedTlsUnchanged")
+            references = value.get("nativeRetentionReferences")
+            reference_scope = "native-collector-supporting-ledger-reference-lifecycle"
+            if (not isinstance(references, dict) or references.get("scope") != reference_scope
+                    or references.get("elapsed24HourQualified") is not False
+                    or any(references.get(field) is not True for field in reference_fields)):
+                raise ValueError("Incomplete native retention reference guard evidence")
+            result["nativeRetentionReferences"] = {**dict.fromkeys(reference_fields, True), "scope": reference_scope, "elapsed24HourQualified": False}
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
@@ -508,6 +544,19 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            pair_cases = {"ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch"}
+            pair_flags = ("actualSignedJobRefused", "claimBoundOutcome", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "originalNativeCustodyPreserved", "outgoingTrustedTlsPreserved", "configurationAndCredentialRestored")
+            pairs = value.get("nativeLocalRulePairs")
+            if not isinstance(pairs, list) or len(pairs) != 3:
+                raise ValueError("Missing native exact CA/template rule boundaries")
+            bounded_pairs, seen_pairs = [], set()
+            for row in pairs:
+                if (not isinstance(row, dict) or not isinstance(row.get("caseId"), str) or row["caseId"] not in pair_cases or row["caseId"] in seen_pairs
+                        or any(row.get(flag) is not True for flag in pair_flags)):
+                    raise ValueError("Invalid native exact CA/template rule boundary")
+                seen_pairs.add(row["caseId"])
+                bounded_pairs.append({key: row[key] for key in ("caseId", *pair_flags)})
+            result["nativeLocalRulePairs"] = bounded_pairs
             browser = value.get("nativeBrowserAdcs")
             browser_flags = ("browserIssuerCreation", "nativeSafePreflight", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
             fixed = {"scope": "browser-issuer-profile-default-scheduler-native-adcs", "lifecycle": "renew-existing-inventory-not-first-issue-or-manual-job", "scheduler": "production-default-sweep-not-background-worker-loop", "browserEngine": "chromium"}
@@ -737,6 +786,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
         keys = ("type", "name", "candidateSha", "scope", "skip", "todo",
                 "fixtureSource", "qualificationEnvironment", "artifactQualification", "qualificationStatus", "experimental")
         return [{**{key: event[key] for key in keys if key in event},
+                 **acme_key_reuse_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
                  **({"fixtureSources": supporting_sources(event["fixtureSources"])} if "fixtureSources" in event else {}),
                  "file": event.get("fixtureSource", {}).get("file", "")}
