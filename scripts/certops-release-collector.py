@@ -210,9 +210,9 @@ def public_environment(value):
 
 def supporting_sources(value):
     declared = declared_sources()
-    # Full native AD CS journeys now bind more than 64 distinct dependencies.
+    # Full native AD CS journeys bind 102 reviewed dependencies including real job-decision UI.
     # Keep an explicit collection ceiling; declared-path and digest checks remain.
-    if not isinstance(value, list) or len(value) > 96:
+    if not isinstance(value, list) or len(value) > 128:
         raise ValueError("Invalid supporting source inventory")
     result, seen = [], set()
     for source in value:
@@ -356,6 +356,28 @@ def browser_admin_boundary_fields(proof):
         if type(proof.get(key)) is not int or proof[key] != expected:
             raise ValueError("Invalid browser role-boundary counts")
         result[key] = expected
+    return result
+
+
+def browser_job_approval_fields(proof):
+    flags = ["twoDistinctOwnedPendingJobs","distinctManagerApprover","exactJobVisibleInActualDashboard","cancelDidNotMutate","twoExactPublicApprovalPosts","appendOnlyDecisionsBoundToActor","payloadAndCanonicalIntentHashesVerified","browserAndTrustDrained","sameApprovedJobsInstalledNatively","capacityGenerationsCrossBound","oneExactPublicRejectionPost","rejectedJobNeverClaimedOrSubmitted","rejectedIntentAndNativeAbsencePreserved"]
+    if not isinstance(proof, dict) or proof.get("scope") != "browser-control-plane-job-approval-for-two-real-adcs-capacity-installations" or proof.get("caOfficerApprovalQualified") is not False or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete actual browser job decision evidence")
+    result = {"scope": proof["scope"], "caOfficerApprovalQualified": False, **dict.fromkeys(flags, True)}
+    for key, expected in (("approvePosts", 2), ("rejectPosts", 1), ("cancelPosts", 0)):
+        if type(proof.get(key)) is not int or proof[key] != expected: raise ValueError("Invalid browser job decision count")
+        result[key] = expected
+    for key, pattern in (("jobIds", r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"), ("enrollmentIds", r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"), ("payloadHashes", r"[a-f0-9]{64}"), ("requestIds", r"[1-9][0-9]{0,9}"), ("fingerprints", r"[a-f0-9]{64}")):
+        values = proof.get(key)
+        if not isinstance(values, list) or len(values) != 2 or any(not isinstance(value, str) or not re.fullmatch(pattern, value) for value in values) or len(set(values)) != 2: raise ValueError("Invalid browser job decision identities")
+        result[key] = list(values)
+    if any(int(value) > 0xffffffff for value in result["requestIds"]): raise ValueError("Invalid browser job CA request bound")
+    for key in ("rejectedJobId", "rejectedEnrollmentId", "rejectedPayloadHash", "rejectedCanonicalIntentHash"):
+        value = proof.get(key)
+        pattern = r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}" if key.endswith("Id") else r"[a-f0-9]{64}"
+        if not isinstance(value, str) or not re.fullmatch(pattern, value): raise ValueError("Invalid browser rejection identity")
+        result[key] = value
+    if result["rejectedJobId"] in result["jobIds"] or result["rejectedEnrollmentId"] in result["enrollmentIds"]: raise ValueError("Rejected job cannot be an installed approved generation")
     return result
 
 
@@ -945,6 +967,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Role boundary must bind actual abandoned enrollment")
             result["nativeBrowserReconcile"] = browser_reconcile_fields(value.get("nativeBrowserReconcile"))
             result["nativeAdcsCapacity"] = adcs_capacity_fields(value.get("nativeAdcsCapacity"))
+            result["nativeBrowserJobApproval"] = browser_job_approval_fields(value.get("nativeBrowserJobApproval"))
+            if any(result["nativeBrowserJobApproval"][key] != result["nativeAdcsCapacity"][key] for key in ("jobIds", "enrollmentIds", "requestIds", "fingerprints")):
+                raise ValueError("Browser decisions must bind both actual native capacity generations")
             result["nativeBrowserCancel"] = browser_cancel_fields(value.get("nativeBrowserCancel"))
             capacity, browser_cancel = result["nativeAdcsCapacity"], result["nativeBrowserCancel"]
             for key, field in (("priorEnrollmentId", "enrollmentIds"), ("priorJobId", "jobIds"), ("priorRequestId", "requestIds"), ("fingerprint", "fingerprints")):

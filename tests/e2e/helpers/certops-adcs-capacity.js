@@ -79,7 +79,8 @@ async function qualifyCapacity(context) {
       assert.equal(observe(refused).subjectRequestCount, 0); assert.equal(nativeKeys(), keyBaseline); assert.equal(ps(`@(Get-ChildItem Cert:\\LocalMachine\\My|Where-Object Subject -eq 'CN=${refused.domain}').Count`), "0"); flags.sixthTransactionRolledBack = true;
     }, { evidenceLevel: "real-host", oracle: "Capacity refusal rolls back its enrollment/job/outbox atomically; exact rejected subject has no CA row or public certificate and native key metadata remains unchanged" });
     const issue = async item => {
-      assert.equal((await approver.request(`${api}/jobs/${item.jobId}/approve`, "POST", { reason: "Independent manager approves owned native capacity control" })).status, 200); await jobFinished(item.jobId);
+      if(context.approvalActor)await context.approvalActor.approveJob({jobId:item.jobId,enrollmentId:item.enrollmentId,approver});
+      else assert.equal((await approver.request(`${api}/jobs/${item.jobId}/approve`, "POST", { reason: "Independent manager approves owned native capacity control" })).status, 200); await jobFinished(item.jobId);
       const row = (await query("SELECT j.status,j.claim_id,j.assigned_agent_id,e.state,e.request_id FROM certificate_jobs j JOIN certificate_enrollments e ON e.workspace_id=j.workspace_id AND e.current_job_id=j.id WHERE j.workspace_id=$1 AND j.id=$2 AND e.id=$3", [fixture.workspaceId, item.jobId, item.enrollmentId])).rows[0]; assert.equal(row.status, "succeeded"); assert.equal(row.state, "installed"); assert.ok(row.claim_id); assert.equal(row.assigned_agent_id, agentRowId);
       const journal = readEnrollmentJournal(configDir, item.enrollmentId); assert.equal(journal.kind, "valid"); assert.equal(journal.journal.state, "installed"); assert.equal(String(journal.journal.requestId), String(row.request_id));
       const leaf = await new Promise((resolve, reject) => { const socket = tls.connect({ host: "127.0.0.1", port: item.port, servername: item.domain, ca: tlsAuthority(authority), rejectUnauthorized: true }, () => { try { assert.equal(socket.authorized, true); resolve(new crypto.X509Certificate(socket.getPeerCertificate().raw)); } catch (error) { reject(error); } finally { socket.destroy(); } }); socket.once("error", reject); socket.setTimeout(10000, () => socket.destroy(new Error("Capacity trusted TLS observation timed out"))); });
@@ -100,6 +101,7 @@ async function qualifyCapacity(context) {
       Object.assign(flags, { twoClaimBoundNativeInstallations: true, twoDistinctOwnedCaRequests: true, twoNonexportableMachineKeys: true, twoNativeIisAndTrustedTls: true });
     }, { evidenceLevel: "real-host", oracle: "Independent manager approval produces a genuine claim-bound native CA/CNG/IIS/TLS installation, releases a capacity slot, and the originally refused subject enters publicly and completes its own distinct real issuance" });
     if (context.cancelActor) await context.cancelActor.cancelRenewal({ issuerId, item: refused, authority, priorCompleted: completed[1] });
+    if(context.approvalActor){const item=accepted.find(item=>!completed.some(row=>row.jobId===item.jobId));assert.ok(item);await context.approvalActor.rejectJob({item,approver});}
   } catch (error) { primaryError = error; }
   finally {
     const errors = [];
@@ -111,6 +113,7 @@ async function qualifyCapacity(context) {
     const rows = (await query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=ANY($2::uuid[])", [fixture.workspaceId, accepted.map(item => item.jobId)])).rows; assert.equal(rows.filter(row => row.status === "rejected").length, 4); assert.equal(rows.filter(row => row.status === "succeeded").length, 2); flags.fourUnapprovedJobsPubliclyRejected = true;
     Object.assign(proof, flags, { requestIds: completed.map(row => row.requestId), fingerprints: completed.map(row => row.fingerprint), enrollmentIds: completed.map(row => row.enrollmentId), jobIds: completed.map(row => row.jobId) }); verifyProof(proof);
   }, { evidenceLevel: "real-host", oracle: "Four unapproved requests are publicly rejected without CA allocation and the exact original workspace approval policy is restored, even when native control cleanup fails" });
+  if(context.approvalActor)await context.approvalActor.observeNativeCompletion(proof);
   return proof;
 }
 module.exports = { qualifyCapacity, verifyProof, REQUIRED_SCENARIOS, REQUIRED_SOURCES, FLAGS, SCOPE, domains };

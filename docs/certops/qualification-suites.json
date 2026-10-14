@@ -299,7 +299,9 @@
       "adcs-real-browser-manager-viewer-admin-boundary": "real-host",
       "adcs-real-browser-role-boundary-preserves-native-uncertain-state": "real-host",
       "adcs-real-issued-wrong-san-preserves-predecessor": "real-host",
-      "adcs-real-issued-revoked-leaf-preserves-predecessor": "real-host"
+      "adcs-real-issued-revoked-leaf-preserves-predecessor": "real-host",
+      "adcs-real-browser-job-approval-cancel-and-confirm": "real-host",
+      "adcs-real-browser-job-approval-native-capacity-completion": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -628,7 +630,9 @@
       "adcs-real-browser-manager-viewer-admin-boundary": "real-host",
       "adcs-real-browser-role-boundary-preserves-native-uncertain-state": "real-host",
       "adcs-real-issued-wrong-san-preserves-predecessor": "real-host",
-      "adcs-real-issued-revoked-leaf-preserves-predecessor": "real-host"
+      "adcs-real-issued-revoked-leaf-preserves-predecessor": "real-host",
+      "adcs-real-browser-job-approval-cancel-and-confirm": "real-host",
+      "adcs-real-browser-job-approval-native-capacity-completion": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -2018,7 +2022,9 @@
       "adcs-real-browser-manager-viewer-admin-boundary",
       "adcs-real-browser-role-boundary-preserves-native-uncertain-state",
       "adcs-real-issued-wrong-san-preserves-predecessor",
-      "adcs-real-issued-revoked-leaf-preserves-predecessor"
+      "adcs-real-issued-revoked-leaf-preserves-predecessor",
+      "adcs-real-browser-job-approval-cancel-and-confirm",
+      "adcs-real-browser-job-approval-native-capacity-completion"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2347,7 +2353,9 @@
       "adcs-real-browser-manager-viewer-admin-boundary",
       "adcs-real-browser-role-boundary-preserves-native-uncertain-state",
       "adcs-real-issued-wrong-san-preserves-predecessor",
-      "adcs-real-issued-revoked-leaf-preserves-predecessor"
+      "adcs-real-issued-revoked-leaf-preserves-predecessor",
+      "adcs-real-browser-job-approval-cancel-and-confirm",
+      "adcs-real-browser-job-approval-native-capacity-completion"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

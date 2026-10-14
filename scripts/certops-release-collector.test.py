@@ -45,6 +45,10 @@ def retention_reference_proof():
     return {**dict.fromkeys(fields, True), "scope": "native-collector-supporting-ledger-reference-lifecycle", "elapsed24HourQualified": False}
 
 
+def browser_job_approval_proof():
+    return {"scope":"browser-control-plane-job-approval-for-two-real-adcs-capacity-installations","approvePosts":2,"rejectPosts":1,"cancelPosts":0,"caOfficerApprovalQualified":False,"jobIds":["33333333-3333-3333-3333-333333333333","44444444-4444-4444-4444-444444444444"],"enrollmentIds":["11111111-1111-1111-1111-111111111111","22222222-2222-2222-2222-222222222222"],"payloadHashes":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"requestIds":["17","18"],"fingerprints":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"rejectedJobId":"77777777-7777-7777-7777-777777777777","rejectedEnrollmentId":"88888888-8888-8888-8888-888888888888","rejectedPayloadHash":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","rejectedCanonicalIntentHash":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","twoDistinctOwnedPendingJobs":True,"distinctManagerApprover":True,"exactJobVisibleInActualDashboard":True,"cancelDidNotMutate":True,"twoExactPublicApprovalPosts":True,"appendOnlyDecisionsBoundToActor":True,"payloadAndCanonicalIntentHashesVerified":True,"browserAndTrustDrained":True,"sameApprovedJobsInstalledNatively":True,"capacityGenerationsCrossBound":True,"oneExactPublicRejectionPost":True,"rejectedJobNeverClaimedOrSubmitted":True,"rejectedIntentAndNativeAbsencePreserved":True}
+
+
 def journal_read_proof():
     return {"scope":"native-temporary-adcs-journal-acl-refusals-not-installed-enrollment","installedServiceQualified":False,"nativeCngQualified":False,"genuinePreparedPublicCsr":True,"twoActualNativeAccessDenials":True,"journalUnreadableNotAbsent":True,"globalProtectionScanDeferred":True,"exactFileIdentitiesAndBytesPreserved":True,"exactNativeAclsRestored":True,"productionReadersRecovered":True,"ownedTemporaryStateRemoved":True}
 
@@ -842,6 +846,7 @@ class CollectorTests(unittest.TestCase):
         value = {"suite": "enterprise-adcs-real", "nativeLocalRulePairs": local_pairs_proof(), "nativeForeignSpkiCandidate": foreign_spki_proof(), "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeAdcsCapacity"] = {**adcs_capacity_proof(), "privateManagerCredential": "sentinel"}
+        value["nativeBrowserJobApproval"] = {**browser_job_approval_proof(), "privateTrace": "sentinel"}
         value["nativeBrowserCancel"] = {**browser_cancel_proof(), "privateTrace": "sentinel"}
         value["nativeIssuedRevocation"] = {**issued_revocation_proof(), "privateTrace": "sentinel"}
         value["nativeIssuedSanBoundary"] = {**issued_san_proof(), "privateTrace": "sentinel"}
@@ -969,6 +974,15 @@ class CollectorTests(unittest.TestCase):
         invalid["nativeBrowserAdcs"]["requestId"] = "4294967296"
         with self.assertRaises(ValueError):
             collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        self.assertEqual(result[0][1]["nativeBrowserJobApproval"], browser_job_approval_proof())
+        for key, expected in browser_job_approval_proof().items():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeBrowserJobApproval"][key]
+            with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserJobApproval"][key] = not expected if type(expected) is bool else "invalid"
+            with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
+        for patch in ({"approvePosts": True}, {"rejectPosts": True}, {"cancelPosts": False}, {"requestIds": ["17", "4294967296"]}, {"jobIds": list(reversed(value["nativeAdcsCapacity"]["jobIds"]))}, {"rejectedJobId": value["nativeAdcsCapacity"]["jobIds"][0]}):
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserJobApproval"].update(patch)
+            with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
         self.assertEqual(result[0][1]["nativeBrowserCancel"], browser_cancel_proof())
         self.assertNotIn("sentinel", json.dumps(result[0][1]["nativeBrowserCancel"]))
         for key, expected in browser_cancel_proof().items():
@@ -1116,9 +1130,10 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.supporting_sources([{"file": file, "sha256": "private-value"}])
         declared = sorted(collector.declared_sources())
-        self.assertGreaterEqual(len(declared), 97)
-        public_sources = [{"file": name, "sha256": hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:97]]
-        self.assertEqual(collector.supporting_sources(public_sources[:96]), public_sources[:96])
+        self.assertGreaterEqual(len(declared), 129)
+        public_sources = [{"file": name, "sha256": hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:129]]
+        for count in range(97, 129):
+            self.assertEqual(collector.supporting_sources(public_sources[:count]), public_sources[:count])
         with self.assertRaises(ValueError):
             collector.supporting_sources(public_sources)
         with self.assertRaises(ValueError):

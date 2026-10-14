@@ -4,6 +4,7 @@ Start with the [qualification overview](../e2e-qualification.md). These runbooks
 
 Machine-readable specifications retain their stable locations: [scenario catalog](../e2e-scenario-catalog.json), [mandatory suite inventory](../qualification-suites.json), [release environment matrix](../release-qualification-matrix.json) and [skip mappings](../skip-qualification.generated.json).
 
+- [Browser approval and rejection of native AD CS jobs](adcs/browser-job-approval.md)
 - [Supported AD CS manager/viewer admin boundary](adcs/browser-admin-role-boundary.md)
 
 ## API, inventory and worker behavior

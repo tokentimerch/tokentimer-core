@@ -850,7 +850,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -959,7 +966,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1068,7 +1082,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1177,7 +1198,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1286,7 +1314,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1395,7 +1430,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1504,7 +1546,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1613,7 +1662,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -1722,7 +1778,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
@@ -2368,7 +2431,14 @@
         "apps/api/services/workspace.js",
         "tests/e2e/helpers/certops-adcs-issued-revocation.js",
         "packages/agent/src/issuers/der-extensions.js",
-        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "tests/e2e/helpers/certops-adcs-browser-job-approval.js",
+        "apps/dashboard/src/components/certops/ExecutorJobsPanel.jsx",
+        "apps/dashboard/src/components/certops/ApprovalDecisionModal.jsx",
+        "apps/dashboard/src/components/certops/JobDetailsButton.jsx",
+        "apps/dashboard/src/components/certops/certopsJobsApi.js",
+        "apps/dashboard/src/hooks/useCertOpsUrlState.js",
+        "apps/api/routes/certops.js"
       ]
     },
     {
