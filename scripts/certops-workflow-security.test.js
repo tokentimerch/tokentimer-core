@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: trusted read-only qualification with failure cleanup passes.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");const {validateWorkflow}=require("./certops-workflow-security");
 const baseline=()=>({name:"CertOps / Fixture",on:{workflow_dispatch:null},permissions:{contents:"read"},jobs:{qualify:{if:"github.ref == 'refs/heads/main'","timeout-minutes":30,steps:[{uses:"actions/checkout@"+"a".repeat(40),with:{"persist-credentials":false}},{run:"docker compose -f owned.yml up -d"},{if:"always()",run:"docker compose -f owned.yml down -v"},{if:"always()",uses:"actions/upload-artifact@"+"b".repeat(40),with:{path:"qualification-results/report.json"}}]}}});
@@ -11,4 +16,17 @@ test("independent AD CS expiry cleanup cannot share approval-gated lab environme
   assert.ok(validateWorkflow(workflow,"certops-adcs-lab-janitor.yml").some(error=>error.includes("dedicated unattended environment")));
   workflow.jobs.qualify.environment="certops-adcs-cleanup";
   assert.deepEqual(validateWorkflow(workflow,"certops-adcs-lab-janitor.yml"),[]);
+});
+
+test("selective lanes narrow only exact trusted main with their committed dependency output",()=>{
+ const w=baseline();w.jobs={windows:{...w.jobs.qualify,needs:"selection",if:"github.ref == 'refs/heads/main' && needs.selection.outputs.windows == 'true'"}};
+ assert.deepEqual(validateWorkflow(w,"certops-qualification.yml"),[]);
+ for(const alter of [value=>{value.jobs.windows.if="github.ref == 'refs/heads/main' || needs.selection.outputs.windows == 'true'";},value=>{value.jobs.windows.if="github.ref == 'refs/heads/main' && needs.selection.outputs.stack == 'true'";},value=>{value.jobs.windows.needs="untrusted";},value=>{value.jobs.windows.if="github.ref == 'refs/heads/main' && true";},value=>{value.jobs.windows.if="github.ref == 'refs/heads/main'";}]){const value=structuredClone(w);alter(value);assert.ok(validateWorkflow(value,"certops-qualification.yml").length);}
+ assert.ok(validateWorkflow(w,"certops-paid-fixture.yml").length,"Other workflows cannot borrow selector exceptions");
+});
+
+test("DNS cleanup uses only enrolled provider matrix and its independent unattended environment",()=>{
+ const w=baseline();w.on={schedule:[{cron:"17 * * * *"}]};w.jobs={cleanup:{...w.jobs.qualify,needs:"enrollment",if:"github.ref == 'refs/heads/main' && needs.enrollment.outputs.enabled == 'true'",environment:"certops-dns-cleanup-${{ matrix.provider }}",strategy:{matrix:{provider:"${{ fromJSON(needs.enrollment.outputs.providers) }}"}}}};
+ assert.deepEqual(validateWorkflow(w,"certops-dns-fixture-janitor.yml"),[]);
+ for(const change of [value=>{value.jobs.cleanup.environment="certops-dns-${{ matrix.provider }}";},value=>{value.jobs.cleanup.strategy.matrix.provider=["cloudflare","route53"];},value=>{value.jobs.cleanup.if="github.ref == 'refs/heads/main' || needs.enrollment.outputs.enabled == 'true'";},value=>{value.jobs.cleanup.needs="foreign";}]){const value=structuredClone(w);change(value);assert.ok(validateWorkflow(value,"certops-dns-fixture-janitor.yml").length);}
 });

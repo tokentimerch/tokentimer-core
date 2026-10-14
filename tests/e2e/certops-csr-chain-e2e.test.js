@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: external signing chain lifecycle through public CSR API.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * Public requests and persisted rows are the oracle; prerequisite state is isolated.
+ * Native certificate deployment is qualified separately; strict reports and cleanup apply. */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

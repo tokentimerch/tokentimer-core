@@ -1,4 +1,10 @@
-"""Collect bounded qualification reports from explicitly selected trusted runs."""
+"""Collect bounded reports from explicitly selected trusted workflow runs.
+
+Invoked by the manual release-collection workflow with a candidate and run IDs.
+Checks run provenance and safe artifact boundaries, retains public evidence only,
+and delegates qualification to the committed matrix. It neither runs native labs
+nor enables AD CS, and experimental/supporting reports cannot fill native slots.
+"""
 import io
 import json
 import os
@@ -26,6 +32,7 @@ WORKFLOWS = {
         "certops-signing-rotation-qualification.yml",
         "certops-enterprise-adcs-qualification.yml",
         "certops-enterprise-adcs-hierarchy-qualification.yml",
+        "certops-enterprise-adcs-pending-elapsed.yml",
         "certops-integration-qualification.yml",
         "certops-linux-trust-qualification.yml",
         "certops-filesystem-qualification.yml",
@@ -171,6 +178,28 @@ def sanitized_report(value, suites, scopes, database_scopes=()):
                     scenario[key] = "invalid"
         if "cleanup" in value:
             result["cleanup"] = {"status": value["cleanup"].get("status")}
+        if value.get("suite") == "enterprise-adcs-elapsed-pending-real":
+            facts = value.get("nativePendingElapsed")
+            if not isinstance(facts, dict):
+                raise ValueError("Missing actual pending elapsed evidence")
+            bounded = {key: facts.get(key) is True for key in ("snapshotAndCsrStableAcrossRestart", "keyProtectedBeforeDeadline", "signedTerminalCleanup", "exactKeyAbsent", "noCertificateAccepted", "noCaResubmission", "lateApprovalTerminalRefusal", "lateIssuedCertificateRevoked", "outgoingTrustedTlsUnchanged")}
+            for key in ("pendingTimeoutSeconds", "pollIntervalSeconds", "monotonicWaitSeconds", "databaseElapsedSeconds"):
+                if type(facts.get(key)) not in (int, float) or not 0 <= facts[key] <= 86400:
+                    raise ValueError("Invalid pending elapsed counter")
+                bounded[key] = facts[key]
+            for key in ("databaseDatesRewritten", "journalRewritten"):
+                if facts.get(key) is not False:
+                    raise ValueError("Pending elapsed state rewritten")
+                bounded[key] = False
+            for key, pattern in (("pendingSince", r"[0-9TZ:.+\-]{16,40}"), ("requestId", r"[1-9][0-9]{0,9}"), ("snapshotSha256", r"[a-f0-9]{64}")):
+                if not isinstance(facts.get(key), str) or not re.fullmatch(pattern, facts[key]):
+                    raise ValueError("Invalid pending elapsed identity")
+                bounded[key] = facts[key]
+            for key, expected in (("clocks", "actual-host-and-database"), ("schedulerClock", "default-real-now"), ("qualificationScope", "configured-one-hour-not-default-fourteen-days")):
+                if facts.get(key) != expected:
+                    raise ValueError("Invalid pending elapsed scope")
+                bounded[key] = expected
+            result["nativePendingElapsed"] = bounded
         if value.get("suite") == "core-api-migration-upgrade":
             result.update(migration_evidence(value))
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):

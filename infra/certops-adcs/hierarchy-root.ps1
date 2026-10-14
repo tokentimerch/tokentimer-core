@@ -1,3 +1,8 @@
+<#
+Create the isolated standalone root for the optional real hierarchy workflow. Exports only its
+public certificate/CRL and leaves signing service offline; parent-owned resource group destruction
+removes private root material.
+#>
 param([ValidateSet('prepare','sign')][string]$Action='prepare',[string]$RequestBase64)
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).PartOfDomain -or $env:COMPUTERNAME -ne 'tt-root'){throw 'Requires isolated standalone qualification root host'}

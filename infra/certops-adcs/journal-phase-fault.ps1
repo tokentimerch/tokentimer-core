@@ -1,3 +1,8 @@
+<#
+Observed native phase fault for an explicitly selected experimental lab. Verifies run-owned
+service/process/creation identity before interruption and snapshots SCM recovery configuration for
+restoration; never rewrites enrollment journals.
+#>
 param([Parameter(Mandatory)][string]$OwnedDirectory,
   [Parameter(Mandatory)][string]$ConfigDirectory,
   [Parameter(Mandatory)][string]$RepositoryRoot,

@@ -1,4 +1,8 @@
 "use strict";
+/* Public registration conflict and explicit fresh-identity CLI checks on an owned installed-agent
+ * state directory. Called by windows-real-journey.js; verifies real HTTP outcomes and
+ * credential/ID preservation, then closes replacement processes before capability refresh.
+ */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");

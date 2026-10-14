@@ -1,3 +1,6 @@
+/**
+ * Reject drift between supported production DNS adapters and mandatory fault-case inventory.
+ * This cheap source guard does not contact providers or qualify live credentials. */
 "use strict";
 try {
   const result = require("../certops-dns-provider-errors-report").validateInventory();

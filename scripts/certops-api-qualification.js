@@ -1,3 +1,8 @@
+/**
+ * Run the supporting public-API/PostgreSQL suites and verify each current-source report.
+ * Invoked by certops-qualification.yml against its disposable stack; requires
+ * CERTOPS_CSR_API_URL and explicit disposable-stack authorization. Protocol fixtures
+ * exercise server admission and persistence; native certificate deployment has separate suites. */
 "use strict";
 const path = require("node:path");
 const fs = require("node:fs");

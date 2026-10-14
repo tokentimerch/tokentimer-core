@@ -1,3 +1,8 @@
+/**
+ * Qualify genuine renewal outbox processing and captured SMTP delivery in a disposable stack.
+ * certops-renewal-alert-qualification.yml supplies the API/database and owned mail receiver.
+ * Authenticated protocol fixtures trigger the server outcomes; worker delivery and
+ * deduplication are real, while native certificate issuance is outside this file. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os"),crypto=require("node:crypto"),{spawnSync}=require("node:child_process"),{pathToFileURL}=require("node:url");
 const {createApiFixture}=require("./helpers/certops-api-fixture"),{createRegisteredAgent}=require("./helpers/certops-registered-agent"),{createHostGate}=require("../../packages/agent/scripts/host-gate");

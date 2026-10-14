@@ -1,3 +1,8 @@
+/**
+ * Failure/interruption cleanup for the run-owned installed Linux agent.
+ * Called with always() by certops-linux-systemd.yml. Revalidate the ownership receipt
+ * and current native unit/process identity before stopping/removing anything; a
+ * replacement or unproved installation is a cleanup failure, not an authorized target. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

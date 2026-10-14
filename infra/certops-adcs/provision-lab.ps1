@@ -1,14 +1,21 @@
+<#
+Trusted workflow entry point for a disposable enterprise AD CS forest/control plane/member. Uses the
+dedicated lab OIDC identity, bounded TTL and owned teardown receipts; explicit selectors separate
+full, hierarchy, elapsed and experimental scopes. Raw guest output/credentials are not artifacts.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][string]$ResourceGroup,
   [ValidateSet(4,8)][int]$Hours = 4,
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022',
   [ValidateSet('en-US','de-DE','fr-FR')][string]$Language = 'en-US',
   [ValidateSet('0','1')][string]$ResponseLossExperiment = '0',
+  [ValidateSet('0','1')][string]$PendingElapsedQualification = '0',
   [ValidateSet('none','keygen_intent','prepared','submitting','installing')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [string]$Location = 'westeurope')
 $ErrorActionPreference = 'Stop'
 if($HierarchyRole -eq 'subordinate' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Hierarchy and experimental fault profiles cannot be combined'}
 if($ResponseLossExperiment -ne '0' -and $JournalPhaseExperiment -ne 'none'){throw 'Only one native fault experiment may own a lab'}
+if($PendingElapsedQualification -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Elapsed pending qualification requires its isolated four-hour Server2022 en-US profile'}
 $password = 'Tt!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) + 'a1'
 Write-Output "::add-mask::$password"
 $createdAt = [DateTimeOffset]::UtcNow
@@ -112,17 +119,17 @@ try {
   foreach($node in @('domain-ca','windows-agent')){Invoke-Stage $node (Join-Path $PSScriptRoot 'language-verify.ps1') 'CERTOPS_STAGE=installed-language-verified' @("Language=$Language")}
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
-  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
+  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
   try { Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters }
   finally {
-    $reportErrors=@();$kinds=if($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')};if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
+    $reportErrors=@();$kinds=if($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')};if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
     foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$reportErrors+=$kind}}
     if($reportErrors.Count){throw "Guest execution report retrieval failed for: $($reportErrors -join ', ')"}
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'
 } finally {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
-  $scenarioReport=if($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
+  $scenarioReport=if($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
   @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
   Remove-Item -LiteralPath $parameterPath -Force -ErrorAction SilentlyContinue
   $password = $null

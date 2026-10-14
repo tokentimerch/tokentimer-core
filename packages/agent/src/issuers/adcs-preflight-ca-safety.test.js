@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: known unsafe SAN flag wins over unreadable interface and operator attestation.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

@@ -1,3 +1,7 @@
+/**
+ * Regression tests for strict prerequisite handling, mandatory scenario accounting and
+ * bounded qualification evidence. Uses controlled probes and temporary report files;
+ * these tests verify the evidence mechanism and do not certify a native Windows host. */
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");

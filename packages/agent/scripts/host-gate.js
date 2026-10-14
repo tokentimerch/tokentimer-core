@@ -1,3 +1,8 @@
+/**
+ * Shared qualification evidence gate: probe actual capabilities, record named cases,
+ * and fail strict runs when prerequisites or mandatory executions are missing.
+ * Host harnesses supply owned fixtures and source hashes; this module measures the
+ * runtime and writes bounded reports. A source mapping is not execution evidence. */
 "use strict";
 
 const fs = require("node:fs/promises");

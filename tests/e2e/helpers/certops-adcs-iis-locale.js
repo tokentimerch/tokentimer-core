@@ -1,4 +1,9 @@
 "use strict";
+/* Native language-independent IIS identity/idempotency/verification rollback checks on existing
+ * owned enrollment fixtures; compares concrete bindings/store hashes and independently trusted
+ * TLS. Called only by the protected disposable-forest AD CS harness; native qualification
+ * requires that workflow to execute.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),tls=require("node:tls");
 const {deployIisBinding}=require("../../../packages/agent/src/windows-iis");
 function nativeSnapshotScript(item){

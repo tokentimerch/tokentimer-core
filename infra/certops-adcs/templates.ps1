@@ -1,3 +1,8 @@
+<#
+Publish the real isolated safe/pending/unsafe AD CS template matrix with qualification-only
+enrollment ACLs. Provisioner passes committed matrix bytes; native public preflight/enrollment cases
+must independently observe these actual LDAP values.
+#>
 param([Parameter(Mandatory)][string]$DomainPassword,[Parameter(Mandatory)][string]$SafetyCasesBase64)
 $ErrorActionPreference = 'Stop'
 $safetyCases=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($SafetyCasesBase64)) | ConvertFrom-Json

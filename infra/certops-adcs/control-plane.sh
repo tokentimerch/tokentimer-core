@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Disposable Linux control-plane setup for the protected AD CS lab provisioner.
+# Checks out the exact public candidate, starts actual isolated API/PostgreSQL
+# and test TLS, and accepts only the explicit experimental lease selector.
+# Private fixture credentials stay inside the lab; reports expose public facts.
 set -euo pipefail
 candidate="${1#*=}"
 [[ "$candidate" =~ ^[a-f0-9]{40}$ ]] || { echo 'Invalid candidate SHA' >&2; exit 1; }

@@ -1,4 +1,8 @@
 "use strict";
+/* Read-only historical public Windows archive provenance/checksum/package verifier used by
+ * upgrade qualification. Missing shipped helpers fail explicitly; it never injects current
+ * binaries into a historical release or claims source-built artifacts were published.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

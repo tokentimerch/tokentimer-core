@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: mixed eligible bulk renewal shares issuance capacity and conserves replay.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * Public requests and persisted rows are the oracle; prerequisite state is isolated.
+ * Native certificate deployment is qualified separately; strict reports and cleanup apply. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),crypto=require("node:crypto"),os=require("node:os"),path=require("node:path"),{spawnSync}=require("node:child_process");
 const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGate}=require("../../packages/agent/scripts/host-gate");

@@ -1,3 +1,7 @@
+// Disposable AD CS qualification topology owned by one workflow resource group.
+// Creates isolated forest/CA/member/control-plane networking and tagged expiry;
+// trusted OIDC provisioning, always-run teardown and the independent janitor
+// bound lifetime/cost. No permanent Windows runner or existing domain is used.
 targetScope = 'resourceGroup'
 
 @description('UTC expiry used by the independent lab janitor.')

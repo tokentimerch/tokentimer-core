@@ -1,3 +1,7 @@
+/**
+ * Fail-closed AD CS template and CA safety checks shared by preflight and enrollment.
+ * Native helper evidence, requested key constraints and explicit operator attestation
+ * have distinct roles; attestation cannot override an observed unsafe native setting. */
 "use strict";
 
 const { executeAdcsPreflight, cachePreflightLocally, matchEnrollmentRule } = require("./adcs-preflight");

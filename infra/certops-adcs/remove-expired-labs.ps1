@@ -1,3 +1,8 @@
+<#
+Independent janitor for expired, explicitly tagged qualification resource groups. Inspects
+ownership/expiry before deleting only matching lab groups; protects against interrupted workflow
+teardown and does not enumerate arbitrary resources for deletion.
+#>
 param([switch]$WhatIf)
 $ErrorActionPreference = 'Stop'
 $groups = az group list --query "[?tags.purpose=='certops-adcs-qualification'].{name:name,expiresAt:tags.expiresAt,purpose:tags.purpose}" -o json | ConvertFrom-Json

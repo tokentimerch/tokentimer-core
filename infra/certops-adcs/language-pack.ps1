@@ -1,3 +1,8 @@
+<#
+Install explicitly supplied native Windows language assets on the disposable CA/member. Validates
+version-specific asset inputs and leaves reboot/installed-language verification to the provisioner;
+no mock locale labels qualify a language slot.
+#>
 param([ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',
   [string]$PackageUri='', [string]$PackageSha256='')
 $ErrorActionPreference='Stop'

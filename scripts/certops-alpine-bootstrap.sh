@@ -1,4 +1,8 @@
 #!/bin/sh
+# Build the isolated musl/Alpine ACME qualification container and run the real journey.
+# Called by certops-alpine-acme-qualification.yml with a read-only candidate archive and explicit
+# disposable-stack authorization. Exact OS/client pins and frozen dependencies make
+# this a distinct native surface; it must never bootstrap a persistent host.
 set -eu
 test "${CERTOPS_ALPINE_DISPOSABLE_STACK:-}" = 1
 test -f /.dockerenv

@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: independent public trust anchors remain scoped through concurrent approval and retirement.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * Public requests and persisted rows are the oracle; prerequisite state is isolated.
+ * Native certificate deployment is qualified separately; strict reports and cleanup apply. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os"),crypto=require("node:crypto");
 const {spawnSync}=require("node:child_process"),{createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGate}=require("../../packages/agent/scripts/host-gate");

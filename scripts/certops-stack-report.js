@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Checks JSONL execution events against the exact committed protocol or native journey inventory.
+ * Invoked by workflow report verification and the release aggregator; skipped, duplicate and
+ * foreign-scope events fail. A protocol-only fixture cannot prove optional native certificate work.
+ */
 const fs = require("node:fs");
 const manifest = require("../tests/e2e/agent-protocol-required-tests.json");
 function verify(text, required = manifest.requiredTests, sourceFile = "certops-agent-e2e.test.js", scope = manifest.scope) {

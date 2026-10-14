@@ -1,4 +1,9 @@
 "use strict";
+/* Shared owned program-scoped CRL outage fixture. Snapshots/restores the exact global chain-cache
+ * value, requires actual native revocation_unknown, and removes only its verified firewall rule.
+ * Called only by the protected disposable-forest AD CS harness; native qualification requires
+ * that workflow to execute.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),net=require("node:net");
 const {execFile}=require("node:child_process");
 const {promisify}=require("node:util");

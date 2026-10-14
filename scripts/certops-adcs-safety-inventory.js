@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Validates the committed unsafe-template, key-constraint and CA-flag fixture inventory.
+ * Invoked before disposable AD CS provisioning to catch missing boundary cases; inventory
+ * validation alone is not a native CA execution or qualification result.
+ */
 const assert = require("node:assert/strict");
 const cases = require("../infra/certops-adcs/safety-cases.json");
 function validate(definition = cases) {

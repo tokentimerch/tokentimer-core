@@ -1,5 +1,8 @@
 "use strict";
-// Diagnostic positive control only. It cannot qualify dump suppression.
+/* Experimental positive-control probe, explicitly selected on a disposable
+ * hosted Windows runner. Owns its benign SYSTEM child/dump directory and exact
+ * WER registry snapshot; caller must restore recorded values. This can observe
+ * custom dump behavior, but cannot qualify agent heap-dump suppression. */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

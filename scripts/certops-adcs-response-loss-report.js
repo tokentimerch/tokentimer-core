@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Checks explicitly experimental lost-response observations from the isolated native CA harness.
+ * Invoked by its manual experiment workflow; requires the recorded fault window and source
+ * identity without promoting uncertain or experimental outcomes into release qualification.
+ */
 const fs=require("node:fs");
 const assert=require("node:assert/strict");
 function verify(report,candidate){

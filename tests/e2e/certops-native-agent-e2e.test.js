@@ -1,3 +1,8 @@
+/**
+ * Run the production Linux agent against the real API/PostgreSQL disposable stack.
+ * certops-native-agent-qualification.yml supplies an isolated runtime. Actual child restart, lease
+ * loss, credential handling and log transport faults are observed with persisted
+ * oracles and owned cleanup; no Windows SCM or native certificate issuance is implied. */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

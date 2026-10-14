@@ -1,3 +1,8 @@
+/**
+ * Installed Windows adoption/retention journey invoked by the dedicated owned host harness.
+ * Public agent execution drives native certificate and binding operations; exact resource
+ * ownership and observed key/store/TLS state constrain cleanup. Requires disposable
+ * elevated Windows and does not run as part of portable report regressions. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

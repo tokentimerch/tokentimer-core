@@ -1,3 +1,8 @@
+<#
+Experimental actual-submit response-loss controller on the isolated forest. Observes a genuine CA
+side effect, then interrupts only a verified owned certreq process tree; it never fabricates a
+journal phase or request identifier.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-fault\.example\.test$')][string]$CommonName,
   [Parameter(Mandatory)][string]$OwnedDirectory)
 $ErrorActionPreference='Stop'

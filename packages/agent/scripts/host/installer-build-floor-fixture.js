@@ -1,4 +1,8 @@
 "use strict";
+/* Supporting installer source-gate check called by windows-host.test.js. Parses and executes only
+ * the real build-floor AST with explicit build inputs; it never invokes the installer, creates
+ * SCM services or claims those Windows versions were run.
+ */
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");

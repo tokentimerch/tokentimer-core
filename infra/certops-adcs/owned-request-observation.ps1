@@ -1,3 +1,8 @@
+<#
+Read-only independent CA request/disposition/count oracle for an exact qualification CN and request
+ID. Used by native pending/recovery cases; preserves original CA permissions and emits only bounded
+public observations.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName,
   [ValidateRange(0,4294967295)][long]$RequestId=0,
   [switch]$Discover)

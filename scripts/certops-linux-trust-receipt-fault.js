@@ -1,3 +1,8 @@
+/**
+ * Inject a receipt-finalization fault after a genuine native Linux trust refresh succeeds.
+ * Imported by certops-linux-trust.js on an explicitly disposable root-owned host.
+ * Only this fixture's receipt path is blocked; native refresh output is unchanged.
+ * The oracle verifies pending-custody refusal, safe recovery and exact receipt cleanup. */
 "use strict";
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),{execFile}=require("node:child_process"),{randomUUID}=require("node:crypto");
 const trust=require("../packages/agent/src/trust-store"),receipt=require("../packages/agent/src/trust-store/receipt");

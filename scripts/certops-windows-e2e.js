@@ -1,4 +1,8 @@
 "use strict";
+/* Windows journey producer invoked by the trusted manual Windows workflow. Starts only owned
+ * Pebble processes and forwards the candidate environment to the public protocol/API suite;
+ * reports installed-agent evidence separately from temporary CA fixture startup.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");

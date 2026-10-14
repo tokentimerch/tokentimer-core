@@ -1,4 +1,8 @@
 "use strict";
+/* Build a genuine immutable historical-source Windows agent package for the upgrade qualification
+ * workflow. Verifies historical source provenance and compiles both native helpers from that
+ * checkout; it does not relabel candidate binaries as a published historical artifact.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

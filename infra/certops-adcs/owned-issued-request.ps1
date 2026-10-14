@@ -1,3 +1,8 @@
+<#
+Read-only exact issued-leaf fingerprint/request association for a qualification CN. Native CA rows
+independently bind observed IIS TLS DER to a genuine request; no issuance or database state is
+invented.
+#>
 param(
   [Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName,
   [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$FingerprintSha256

@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: bridge startup accepts only loopback HTTP root without credentials query or fragment.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),http=require("node:http");
 const {fixtureApiPort,createBridgeRequestHandler}=require("./certops-kube-api-bridge");

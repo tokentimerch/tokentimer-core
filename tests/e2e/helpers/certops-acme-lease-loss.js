@@ -1,3 +1,8 @@
+/**
+ * Observe lease-loss cancellation of a genuine owned ACME command in the native journey.
+ * The parent arms a transparent command barrier, triggers public retirement, and proves
+ * actual process-tree exit plus unchanged certificate/key/TLS/DNS state. This fixture
+ * must run only under its owning disposable ACME harness and exact PID identity checks. */
 "use strict";
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");
 function measureOwnedProcess(proof,{token,agent,barrierDirectory}){

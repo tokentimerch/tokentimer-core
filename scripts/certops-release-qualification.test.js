@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: a complete mandatory matrix cannot promote incomplete feature specifications.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -22,6 +27,30 @@ test("a complete mandatory matrix cannot promote incomplete feature specificatio
   assert.ok(validateQualificationSummary({ ...summary, catalogCoverage: { ...coverage, implementationStatus: "all-specifications-implemented" } }, catalog).length);
 });
 const specification = { schemaVersion: 1, slots: [{ id: "fixture", kind: "host", suite: "job-decisions-api", source, environment }] };
+test("dedicated elapsed-pending release slot requires actual-hour evidence", () => {
+  const suite = "enterprise-adcs-elapsed-pending-real";
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
+  const report = { ...artifact().report, suite, evidenceLevel: "real-host",
+    startedAt: "2026-10-14T12:00:00.000Z", finishedAt: "2026-10-14T13:00:01.000Z",
+    qualificationEnvironment: { ...slot.environment, measurement: "native" },
+    requiredScenarios: contract.suites[suite], requiredCapabilities: contract.requiredCapabilities[suite],
+    capabilities: Object.fromEntries(contract.requiredCapabilities[suite].map(name => [name, { available: true }])),
+    fixtureSource: { file: slot.source, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, slot.source))).digest("hex") },
+    fixtureSources: slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") })) };
+  report.scenarios = contract.suites[suite].map(id => ({ id, status: "passed", evidenceLevel: "real-host", startedAt: report.startedAt, finishedAt: report.finishedAt }));
+  const item = { kind: "host", suite, environment: report.qualificationEnvironment, report };
+  const spec = { schemaVersion: 1, slots: [slot] };
+  assert.ok(verifyMatrix([item], { candidateSha, specification: spec }).length);
+  report.nativePendingElapsed = { pendingTimeoutSeconds: 3600, pollIntervalSeconds: 60,
+    monotonicWaitSeconds: 3601, databaseElapsedSeconds: 3601, clocks: "actual-host-and-database",
+    schedulerClock: "default-real-now", databaseDatesRewritten: false, journalRewritten: false,
+    qualificationScope: "configured-one-hour-not-default-fourteen-days", pendingSince: report.startedAt,
+    requestId: "17", snapshotSha256: "a".repeat(64) };
+  for (const field of ["snapshotAndCsrStableAcrossRestart", "keyProtectedBeforeDeadline", "signedTerminalCleanup", "exactKeyAbsent", "noCertificateAccepted", "noCaResubmission", "lateApprovalTerminalRefusal", "lateIssuedCertificateRevoked", "outgoingTrustedTlsUnchanged"]) report.nativePendingElapsed[field] = true;
+  assert.deepEqual(verifyMatrix([item], { candidateSha, specification: spec }), []);
+  report.nativePendingElapsed.monotonicWaitSeconds = 3599;
+  assert.ok(verifyMatrix([item], { candidateSha, specification: spec }).length);
+});
 function artifact() {
   const suite = "job-decisions-api";
   const now = new Date().toISOString();

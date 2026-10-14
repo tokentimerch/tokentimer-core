@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: public AD CS enrollment policy bounds and immutable snapshots.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * The registered fixture sends genuine machine-protocol requests; it does not run
+ * an installed native agent. Named strict reports and owned cleanup are mandatory. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),crypto=require("node:crypto"),fs=require("node:fs");
 const {createApiFixture}=require("./helpers/certops-api-fixture");

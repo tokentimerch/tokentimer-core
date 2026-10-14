@@ -1,4 +1,8 @@
 "use strict";
+/* Strict supporting Windows host suite, invoked by the protected Windows host workflow. Opted-in
+ * disposable runners own temporary CNG/store/IIS/process fixtures; each native oracle and cleanup
+ * is reported separately. Go supporting tests are not full API-agent certificate E2E.
+ */
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

@@ -1,3 +1,8 @@
+/**
+ * Create isolated authenticated users/workspaces in a real disposable API/PostgreSQL stack.
+ * Supporting API suites use public requests plus narrowly scoped prerequisite rows
+ * and database oracles. cleanup() removes only fixture-owned identities; callers must
+ * retain finally cleanup and must explicitly authorize the disposable stack. */
 "use strict";
 const crypto = require("node:crypto");
 const path = require("node:path");

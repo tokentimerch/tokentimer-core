@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: OAuth fixture endpoints require exact HTTPS origin and token path.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const { validateInventory, verifyDnsErrors } = require("./certops-dns-provider-errors-report");

@@ -1,3 +1,8 @@
+<#
+Read the exact owned CA row public certificate for independent signature/SPKI/template assertions.
+Only disposable qualification identities are accepted; no CA ACL changes or private-key exports
+occur.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName,
   [Parameter(Mandatory)][ValidateRange(1,4294967295)][long]$RequestId)
 $ErrorActionPreference='Stop'

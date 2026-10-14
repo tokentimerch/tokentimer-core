@@ -1,4 +1,6 @@
 "use strict";
+// Drive the real public API and production controller image through issuance,
+// destination TLS and recovery inside an owned disposable Kubernetes namespace.
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const os=require("node:os");

@@ -1,3 +1,8 @@
+/**
+ * Exercise signing-key rotation with real agent processes and a disposable API database.
+ * certops-signing-rotation-qualification.yml owns the agents, signing keys and temporary credential
+ * directories. Persisted key pins and actual signed claims survive process restart;
+ * these checks do not qualify an external CA or an installed Windows service. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os"),crypto=require("node:crypto"),http=require("node:http");
 const {spawn,spawnSync}=require("node:child_process"),{createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGate}=require("../../packages/agent/scripts/host-gate");

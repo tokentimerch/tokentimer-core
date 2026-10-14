@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Verifies the DNS fault harness report against the committed exact test inventory and source hashes.
+ * Invoked after the DNS error workflow; validates upstream-fixture and loopback adapter evidence
+ * without claiming live provider credentials, network access or authoritative provider qualification.
+ */
 const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto"), assert = require("node:assert/strict");
 const inventory = require("../docs/certops/dns-provider-errors.json");
 const { listSupportedDnsProviders } = require("../packages/agent/src/dns");

@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: AD CS validation deadline retains its default actual 24-hour window.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const fs=require("node:fs"),os=require("node:os"),path=require("node:path");

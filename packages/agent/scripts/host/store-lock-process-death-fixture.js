@@ -1,4 +1,8 @@
 "use strict";
+/* Cross-process native store-lock recovery check for windows-host.test.js. Owns only spawned
+ * children and a temporary lock directory; an actual dead process must release or safely abandon
+ * its lock before a successor proceeds.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

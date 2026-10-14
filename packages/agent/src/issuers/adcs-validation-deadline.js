@@ -1,3 +1,7 @@
+/**
+ * Create the agent-local revocation-validation deadline for a newly deferred enrollment.
+ * Protected host configuration may shorten the default24-hour window to at least five
+ * minutes. Continuation code retains an existing journal deadline across restart. */
 "use strict";
 const DEFAULT_VALIDATION_TIMEOUT_SECONDS=86400;
 const MIN_VALIDATION_TIMEOUT_SECONDS=300;

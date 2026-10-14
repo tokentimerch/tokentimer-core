@@ -1,0 +1,64 @@
+# Separate cost-bounded elapsed-time proof; main-only OIDC/environment approval,
+# four-hour disposable lab TTL and independent janitor remain mandatory.
+name: "CertOps / Enterprise AD CS actual one-hour pending expiry"
+on:
+  workflow_dispatch:
+    inputs:
+      lab_hours:
+        description: Maximum resource lifetime in hours
+        type: choice
+        options: ['4']
+        default: '4'
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  lab:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: certops-adcs-lab
+    timeout-minutes: 180
+    env:
+      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+      LAB_HOURS: ${{ inputs.lab_hours }}
+      WINDOWS_VERSION: '2022'
+      WINDOWS_LANGUAGE: en-US
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Check mandatory native fixture inventory
+        run: |
+          node scripts/certops-adcs-safety-inventory.js
+          node scripts/ci-guards/certops-qualification-suites.cjs
+      - name: Authenticate dedicated lab environment with OIDC
+        shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Provision isolated domain CA control plane and member and execute real scenarios
+        shell: pwsh
+        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -PendingElapsedQualification 1
+      - name: Assert all dedicated elapsed-lane prerequisites and cleanup
+        run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-elapsed-pending-real.json
+      - name: Assert real one-hour expiry, signed key cleanup and late-approval refusal
+        run: node scripts/certops-adcs-pending-elapsed-report.js qualification-results/enterprise-adcs-elapsed-pending-real.json
+      - name: Destroy owned temporary resources
+        if: always()
+        shell: pwsh
+        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP
+      - name: Preserve infrastructure scope receipts only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: enterprise-adcs-elapsed-pending
+          path: |
+            qualification-results/enterprise-adcs-elapsed-pending-real.json
+            qualification-results/enterprise-adcs-infrastructure.json
+            qualification-results/enterprise-adcs-cleanup.json
+            qualification-results/enterprise-adcs-transfer-pending-elapsed.json
+          if-no-files-found: warn

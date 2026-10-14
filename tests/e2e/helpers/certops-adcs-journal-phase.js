@@ -1,4 +1,9 @@
 "use strict";
+/* Observed native journal-phase fault helper for the dedicated experiment. Exact owned
+ * process/phase receipts fence termination; durable records are observed rather than rewritten to
+ * manufacture a crash state. Called only by the protected disposable-forest AD CS harness; native
+ * qualification requires that workflow to execute.
+ */
 const path=require("node:path");
 const {spawn}=require("node:child_process");
 module.exports=function startJournalPhaseFault({ownedDirectory,configDirectory,repositoryRoot,phase}){

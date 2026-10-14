@@ -1,4 +1,8 @@
 "use strict";
+/* Actual candidate-agent restart and heartbeat declaration refresh on a temporary protected state
+ * directory. Public persisted profile/operation declarations must track observe-only
+ * configuration without changing registration or credentials; called by the Windows journey.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os");
 const {spawn}=require("node:child_process");
 async function qualifyWindowsCapabilityRefresh({pool,workspaceId,agentId,state,packageRoot}){

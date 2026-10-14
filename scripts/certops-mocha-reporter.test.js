@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: Mocha evidence records failure and pending without assertion or credential payloads.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

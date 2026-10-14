@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Validates the public outcome catalog and reports implementation scope separately from execution.
+ * Run with node scripts/certops-qualification-catalog.js [catalog-path]. A partial mapping
+ * documents supporting source; it is never a claim that a host or full outcome qualified.
+ */
 function validateCatalog(catalog) {
   const errors = [];
   if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.scenarios) || !catalog.scenarios.length) return ["Invalid or empty scenario catalog"];

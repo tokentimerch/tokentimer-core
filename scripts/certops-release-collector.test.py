@@ -1,3 +1,6 @@
+# Exercise release collection trust, archive bounds and sanitized evidence retention offline.
+# Synthetic API/artifact fixtures verify refusal paths; no workflow is dispatched and no
+# native environment is qualified by these collector regression tests.
 import importlib.util
 import io
 import json
@@ -15,6 +18,27 @@ spec.loader.exec_module(collector)
 
 
 class CollectorTests(unittest.TestCase):
+    def test_elapsed_pending_preserves_only_bounded_native_facts(self):
+        facts = {"pendingTimeoutSeconds": 3600, "pollIntervalSeconds": 60,
+                 "monotonicWaitSeconds": 3601, "databaseElapsedSeconds": 3602,
+                 "pendingSince": "2026-10-14T12:00:00.000Z", "requestId": "17",
+                 "snapshotSha256": "a" * 64, "clocks": "actual-host-and-database",
+                 "schedulerClock": "default-real-now", "databaseDatesRewritten": False,
+                 "journalRewritten": False,
+                 "qualificationScope": "configured-one-hour-not-default-fourteen-days",
+                 "private": "sentinel"}
+        value = {"suite": "enterprise-adcs-elapsed-pending-real", "nativePendingElapsed": facts}
+        result = collector.sanitized_report(value, {value["suite"]}, set())
+        self.assertEqual(result["nativePendingElapsed"]["monotonicWaitSeconds"], 3601)
+        self.assertNotIn("sentinel", json.dumps(result))
+        facts["journalRewritten"] = True
+        with self.assertRaises(ValueError):
+            collector.sanitized_report(value, {value["suite"]}, set())
+        facts["journalRewritten"] = False
+        facts["monotonicWaitSeconds"] = "3601"
+        with self.assertRaises(ValueError):
+            collector.sanitized_report(value, {value["suite"]}, set())
+
     def test_native_compaction_evidence_keeps_only_bounded_public_facts(self):
         evidence = {"expiredStatus": 410, "originalResourceVersion": "10", "compactedRevision": "20", "observedResourceVersion": "21", "certificateUid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "productionClient": True, "productionObserver": True, "controlPlaneRestarted": True, "ownedSingleNodeCluster": True, "private": "sentinel"}
         value = {"suite": "kubernetes-host", "nativeCompaction": evidence}

@@ -1,4 +1,7 @@
 "use strict";
+/* Portable rejection tests for response-loss experiment evidence; run with node --test. Synthetic
+ * reports check the verifier only and never qualify native AD CS behavior.
+ */
 const {test}=require("node:test");
 const assert=require("node:assert/strict");
 const {verify}=require("./certops-adcs-response-loss-report");

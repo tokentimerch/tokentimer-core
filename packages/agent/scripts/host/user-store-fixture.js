@@ -1,4 +1,8 @@
 "use strict";
+/* CurrentUser versus LocalMachine discovery boundary for windows-host.test.js. Creates a uniquely
+ * named user certificate with an immediate ownership receipt, compares real product discovery
+ * scope and removes only the recorded certificate/key.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

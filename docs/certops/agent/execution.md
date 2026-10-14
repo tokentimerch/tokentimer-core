@@ -143,8 +143,8 @@ For `renew` (`executeRenewJob`):
    then crash while saving the chain (`OSError: [Errno 30] Read-only file
    system: '/0000_chain.pem'`), losing an already-issued certificate. See
    the argv/flags table in `src/acme/index.js`'s module docblock for the
-   exact contract, and the worked Cloudflare DNS-01 example in
-   `tokentimer-cloud`'s docs for a real reproduction and fix confirmation.
+   exact contract. Keep all certificate output paths within the configured
+   writable deployment directories.
    A separate, unrelated operator pitfall: certbot also needs an ACME
    account to run non-interactively, so `policy.allowedCommands.<profile>
    .argv` must include `--agree-tos` plus either `--email <address>` or

@@ -1,3 +1,7 @@
+# Disposable hosted-Windows feasibility smoke for native standalone CA/certreq/CNG.
+# certops-standalone-adcs-smoke.yml invokes this with elevation on a fresh owned runner.
+# It refuses existing CA state, cleans up its role/key/certificate and reports its limited
+# scope; standalone success cannot qualify enterprise domain templates or agent orchestration.
 param([string]$ReportDirectory = 'qualification-results/adcs')
 $ErrorActionPreference = 'Stop'
 # Deliberately limited to a disposable GitHub-hosted machine; never an existing CA.

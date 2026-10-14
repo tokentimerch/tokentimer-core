@@ -1,3 +1,8 @@
+/**
+ * Probe actual filesystem write restrictions from the installed agent's systemd sandbox.
+ * The disposable systemd journey supplies its proved unit and run-owned paths.
+ * An allowed destination must remain writable while the peer destination fails with
+ * native EROFS; all probe files and temporary units belong to this qualification run. */
 "use strict";
 const fs=require("node:fs"),assert=require("node:assert/strict");
 const [allowed,denied,mode]=process.argv.slice(2);assert.ok(allowed&&denied&&process.getuid()>0);

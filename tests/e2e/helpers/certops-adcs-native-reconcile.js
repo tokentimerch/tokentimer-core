@@ -1,4 +1,9 @@
 "use strict";
+/* Read-only native CA candidate search using real CSR SPKI/checkpoints, plus one owned same-CSR
+ * submission to create genuine ambiguity. Never changes CA Read ACLs or fabricates uncertain
+ * enrollment state. Called only by the protected disposable-forest AD CS harness; native
+ * qualification requires that workflow to execute.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),tls=require("node:tls");
 const {createAdcsIssuer,assertIssuanceOutcome,resolveAdcsCmcHelperPath,readEnrollmentJournal}=require("../../../packages/agent/src/issuers");
 const {tryReconcileUncertainSubmission,retrieveProposedEnrollmentCandidate,watermarkPath}=require("../../../packages/agent/src/issuers/adcs-enrollment-reconcile");

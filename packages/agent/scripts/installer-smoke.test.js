@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * B9 installer smoke test: package the agent, extract it OUTSIDE the monorepo,
+ * Installer smoke test: package the agent, extract it OUTSIDE the monorepo,
  * install production deps, and prove entrypoint imports resolve without any
  * monorepo-relative path layout.
  *

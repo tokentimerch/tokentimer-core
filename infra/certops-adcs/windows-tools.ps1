@@ -1,3 +1,8 @@
+<#
+Prepare exact candidate source, pinned Node/Go and locally compiled native helpers on the new
+disposable Windows member. Writes public runtime digests for later verification; qualification-only
+capability selection is never a released build claim.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$CandidateSha,
   [Parameter(Mandatory)][string]$ApiPublicPemBase64,
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022')

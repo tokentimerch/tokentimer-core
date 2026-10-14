@@ -1,3 +1,8 @@
+/**
+ * Supporting scheduler/admission qualification against an isolated API/PostgreSQL stack.
+ * certops-scheduler-capacity-qualification.yml owns the database because sweeping the scheduler
+ * can affect every eligible row. Public admission, actual scheduler calls and persisted
+ * jobs are compared; this is not a clock-elapsed native CA issuance qualification. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),crypto=require("node:crypto"),os=require("node:os"),path=require("node:path"),{spawnSync}=require("node:child_process");
 const {createApiFixture}=require("./helpers/certops-api-fixture"),{createHostGate}=require("../../packages/agent/scripts/host-gate");

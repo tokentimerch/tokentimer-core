@@ -1,3 +1,8 @@
+/**
+ * Prove disposable hosted-VM and exact installed unit/process ownership before mutation.
+ * Shared by the systemd journey and its interruption cleanup; command results and
+ * ownership receipts are validated before stopping or removing an agent. Environment
+ * flags alone never authorize touching a foreign service. */
 "use strict";
 const assert=require("node:assert/strict"),path=require("node:path"),fs=require("node:fs");
 function validateWriteFixture(value){

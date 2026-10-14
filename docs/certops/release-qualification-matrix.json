@@ -1008,7 +1008,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "cloudflare"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-route53",
@@ -1018,7 +1021,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "route53"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-azure-dns",
@@ -1028,7 +1034,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "azure-dns"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-google-cloud-dns",
@@ -1038,7 +1047,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "google-cloud-dns"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-rfc2136",
@@ -1048,7 +1060,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "rfc2136"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-acme-dns",
@@ -1058,7 +1073,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "acme-dns"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-ovhcloud",
@@ -1068,7 +1086,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "ovhcloud"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-hetzner",
@@ -1078,7 +1099,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "hetzner"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-infomaniak",
@@ -1088,7 +1112,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "infomaniak"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-exoscale",
@@ -1098,7 +1125,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "exoscale"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "dns-powerdns",
@@ -1108,7 +1138,10 @@
       "environment": {
         "osFamily": "linux",
         "dnsProvider": "powerdns"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-dns-cleanup-enrollment.js"
+      ]
     },
     {
       "id": "enterprise-adcs-hierarchy-2022-en-US",
@@ -1702,6 +1735,21 @@
       "environment": {
         "osFamily": "linux"
       }
+    },
+    {
+      "id": "adcs-elapsed-pending-2022-en-US",
+      "kind": "host",
+      "suite": "enterprise-adcs-elapsed-pending-real",
+      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-pending-elapsed.js"
+      ]
     }
   ]
 }

@@ -1,4 +1,9 @@
 "use strict";
+/* Actual owned CA service outage during pending continuation. Snapshots service state, restores
+ * it in finally and proves the same request/key resumes without issuing a replacement request.
+ * Called only by the protected disposable-forest AD CS harness; native qualification requires
+ * that workflow to execute.
+ */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const path = require("node:path");
@@ -10,7 +15,7 @@ async function qualifyCaOutage({ gate, fixture, api, agentRowId, configDir, run,
   const owned = pendingRecoveryFixtures.cancel; assert.ok(owned);
   const nativeAction = action => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.resolve(__dirname, "../../../infra/certops-adcs/ca-service-outage.ps1"), "-Action", action, "-RunId", run]));
   const observe = requestId => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.resolve(__dirname, "../../../infra/certops-adcs/owned-request-observation.ps1"), "-CommonName", owned.item.domain, "-RequestId", String(requestId)]));
-  const enrollment = async id => (await fixture.pool.query("SELECT state,request_id,next_poll_at FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
+  const enrollment = async id => (await fixture.pool.query("SELECT state,operator_request_id AS request_id,next_poll_at FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
   const served = () => new Promise((resolve, reject) => {
     const socket = tls.connect({ host: "127.0.0.1", port: owned.port, servername: owned.item.domain, ca: tlsAuthority(owned.authority), rejectUnauthorized: true }, () => {
       try { assert.equal(socket.authorized, true); resolve(new crypto.X509Certificate(socket.getPeerCertificate().raw)); }

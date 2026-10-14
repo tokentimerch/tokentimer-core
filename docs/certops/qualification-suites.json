@@ -915,6 +915,13 @@
       "scheduler-capacity-paused-release": "integration",
       "scheduler-capacity-resume": "integration",
       "scheduler-capacity-cleanup": "integration"
+    },
+    "enterprise-adcs-elapsed-pending-real": {
+      "adcs-real-installed-native-language": "real-host",
+      "adcs-real-agent-registration-system": "real-host",
+      "adcs-real-rsa2048-issued-cng-iis": "real-host",
+      "adcs-elapsed-pending-one-hour-terminal-cleanup": "real-host",
+      "adcs-real-owned-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1085,7 +1092,8 @@
     ],
     "dns-provider-host": [
       "provider-credentials-configured",
-      "native-txt-resolver"
+      "native-txt-resolver",
+      "independent-cleanup-enrolled"
     ],
     "enterprise-adcs-hierarchy-real": [
       "windows",
@@ -1247,6 +1255,13 @@
       "api",
       "postgres",
       "openssl"
+    ],
+    "enterprise-adcs-elapsed-pending-real": [
+      "windows",
+      "elevated",
+      "domain",
+      "api",
+      "qualifiedBuild"
     ]
   },
   "suites": {
@@ -2164,6 +2179,13 @@
       "scheduler-capacity-paused-release",
       "scheduler-capacity-resume",
       "scheduler-capacity-cleanup"
+    ],
+    "enterprise-adcs-elapsed-pending-real": [
+      "adcs-real-installed-native-language",
+      "adcs-real-agent-registration-system",
+      "adcs-real-rsa2048-issued-cng-iis",
+      "adcs-elapsed-pending-one-hour-terminal-cleanup",
+      "adcs-real-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2236,6 +2258,7 @@
     "adcs-enrollment-policy-api": "integration",
     "import-metadata-api": "integration",
     "bulk-eligible-api": "integration",
-    "scheduler-capacity-api": "integration"
+    "scheduler-capacity-api": "integration",
+    "enterprise-adcs-elapsed-pending-real": "real-host"
   }
 }

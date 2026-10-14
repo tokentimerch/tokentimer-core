@@ -1,4 +1,7 @@
 "use strict";
+/* Portable adversarial checks for Go qualification evidence parsing. Run with node --test;
+ * synthetic Go JSON records test the verifier and do not count as native helper execution.
+ */
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { verifyGoExecution } = require("./go-report");

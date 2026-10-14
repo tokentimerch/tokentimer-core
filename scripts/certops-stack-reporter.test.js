@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: Windows profile evidence binds both actual recovery source files.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict"),crypto=require("node:crypto"),fs=require("node:fs"),path=require("node:path");
 const {supplementalSources}=require("./certops-stack-reporter");

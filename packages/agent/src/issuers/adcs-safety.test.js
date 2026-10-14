@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: requested key constraints fail before trusting an otherwise safe template.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

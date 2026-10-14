@@ -1,3 +1,8 @@
+/**
+ * Run an ACME client with bounded output and cancellation of its owned process tree.
+ * The production agent uses this runner under its execution lease. POSIX commands
+ * receive a dedicated process group; Windows cleanup targets the started tree.
+ * Injected runners are a test seam, while native process tests verify real teardown. */
 "use strict";
 
 const childProcess = require("node:child_process");

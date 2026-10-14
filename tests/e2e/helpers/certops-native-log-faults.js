@@ -1,3 +1,8 @@
+/**
+ * Place bounded transport faults between a real running agent and the actual API.
+ * Imported by certops-native-agent-e2e.test.js for retry, lost-ACK replay, batch split
+ * and oversized-line cases. Forward genuine authenticated uploads, retain only bounded
+ * counters, and compare persisted rows/gaps and terminal job outcome before cleanup. */
 "use strict";
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");

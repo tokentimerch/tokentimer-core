@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Validates collected reports against the committed release matrix and candidate/source identity.
+ * Invoked by the release collector and its CLI; consumes evidence only and never runs host tests
+ * or enables a feature. Supporting fixtures cannot substitute for required native evidence.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -130,6 +135,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
               evidence.allowedWrite !== true || evidence.deniedError !== "EROFS" || evidence.samePeerDacMode !== "0777" ||
               !Number.isInteger(evidence.nonRootUid) || evidence.nonRootUid <= 0) throw new Error("Native systemd write-path isolation evidence incomplete");
         }
+        if (slot.suite === "enterprise-adcs-elapsed-pending-real") require("./certops-adcs-pending-elapsed-report").verify(artifact.report);
         if (slot.suite === "core-api-migration-upgrade") {
           require("./certops-migration-upgrade-report").verifyEvidence(artifact.report);
           if (artifact.report.sourceIdentity?.candidate?.sha !== candidateSha) throw new Error("Migration candidate differs from release candidate");

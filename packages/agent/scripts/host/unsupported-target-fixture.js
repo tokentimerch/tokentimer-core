@@ -1,4 +1,8 @@
 "use strict";
+/* Native negative deployment checks for windows-host.test.js. Receives exact owned
+ * IIS/certificate identities and checks unsupported selector/target refusals against actual
+ * binding/store/TLS state; it must not mutate unrelated sites or certificates.
+ */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { executeDeployJob, executeWindowsIisRenewJob } = require("../../src");

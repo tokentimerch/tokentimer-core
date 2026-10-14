@@ -1,3 +1,8 @@
+/**
+ * Installed Linux agent journey, invoked through certops-linux-systemd.js on an owned VM.
+ * Exercise the shipped installer, actual systemd identity/sandbox, restart recovery and
+ * retirement. Unit/process ownership receipts constrain destructive cleanup; the host
+ * must satisfy the explicit disposable GitHub-hosted qualification prerequisites. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

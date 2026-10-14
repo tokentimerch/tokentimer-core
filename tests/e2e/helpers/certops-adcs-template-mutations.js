@@ -1,4 +1,9 @@
 "use strict";
+/* Real owned LDAP template safety mutations with exact all-attribute snapshot/restore. Public
+ * native preflight and signed enrollment must refuse unsafe facts before CA submission or CNG
+ * creation. Called only by the protected disposable-forest AD CS harness; native qualification
+ * requires that workflow to execute.
+ */
 const assert=require("node:assert/strict"),crypto=require("node:crypto"),fs=require("node:fs"),path=require("node:path"),tls=require("node:tls");
 const {buildEnrollmentContainerName}=require("../../../packages/agent/src/windows-cert-store");
 async function qualifyTemplateMutations({gate,fixture,api,agentRowId,renewalFixture,preflightCohorts,run,command,ps,until,ownedEnrollmentIds,tlsAuthority}){

@@ -2060,8 +2060,8 @@
       "requiredEnvironments": [
         "cloud-exact-pin-native-acme-pro-team"
       ],
-      "implementation": "tokentimer-cloud/tests/e2e/cloud-acme-real-journey.js",
-      "remainingCoverage": "Runnable native Cloud source and manual hosted workflow cover actual SaaS public issue, the exact pinned real agent, discovery/promotion/derived profile and two production SQL-NOW renewal generations. Concurrent sweeps require one second-generation job; each deployment independently verifies advanced real expiry, rotated public SPKI and trusted served TLS across Certbot/acme.sh and Pro/Team. Native workflow has not executed. Preserved Core b6ad7fc cannot qualify the new Core candidate or post-pin ADCS; Cloud browser, Windows/service and packaged scheduler lifecycle variants remain."
+      "implementation": "docs/certops/qualification/editions/downstream-qualification.md",
+      "remainingCoverage": "This is a downstream qualification requirement, not executable evidence in this Core checkout. The edition must supply its own candidate and exact Core composition identity, mandatory scenario inventory, measured environment, public API policy assertions and owned cleanup report. Separate edition reports cannot satisfy a current Core release slot. Full native certificate lifecycle, browser, packaging and entitlement transition variants require independently verifiable downstream execution."
     },
     {
       "id": "governance.cloud-policy",
@@ -2071,8 +2071,8 @@
       "requiredEnvironments": [
         "cloud-exact-pin-disposable-api-postgres"
       ],
-      "implementation": "tokentimer-cloud/scripts/cloud-certops-qualification.js",
-      "remainingCoverage": "24 actual SaaS API/PostgreSQL cases passed at preserved Core b6ad7fc: plan/role/frozen/quota/security precedence, lifecycle quota, machine continuation and upgrade/downgrade history, Free mid-claim continuation and envelope workspace-binding precedence. Entitlement changes are explicit prerequisite DB records, not billing payment transitions. Hosted Node22, browser/native hosts/default quotas and newer Core features remain unqualified. Edition candidate/composition identity is separate from Core release matrix."
+      "implementation": "docs/certops/qualification/editions/downstream-qualification.md",
+      "remainingCoverage": "This is a downstream qualification requirement, not executable evidence in this Core checkout. The edition must supply its own candidate and exact Core composition identity, mandatory scenario inventory, measured environment, public API policy assertions and owned cleanup report. Separate edition reports cannot satisfy a current Core release slot. Full native certificate lifecycle, browser, packaging and entitlement transition variants require independently verifiable downstream execution."
     },
     {
       "id": "governance.enterprise-policy",
@@ -2082,8 +2082,8 @@
       "requiredEnvironments": [
         "enterprise-exact-pin-source-built-api-postgres"
       ],
-      "implementation": "tokentimer-enterprise/tests/integration/certops-qualification.json",
-      "remainingCoverage": "48 actual Enterprise public API/PostgreSQL cases passed twice against exact source-built runtime at Core155fe990: base CertOps entitlement, license/compliance precedence/audit, trust RBAC and manual job create. Independent runtime489-source verification/image identity/strict cleanup preserved. Local baseline evidence does not qualify newer Core/post-pin ADCS, native Windows/Azure, hosted packaging or full release CI."
+      "implementation": "docs/certops/qualification/editions/downstream-qualification.md",
+      "remainingCoverage": "This is a downstream qualification requirement, not executable evidence in this Core checkout. The edition must supply its own candidate and exact Core composition identity, mandatory scenario inventory, measured environment, public API policy assertions and owned cleanup report. Separate edition reports cannot satisfy a current Core release slot. Full native certificate lifecycle, browser, packaging and entitlement transition variants require independently verifiable downstream execution."
     },
     {
       "id": "governance.migration-package",

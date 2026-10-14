@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: compaction requires the exact owned single-node kind control plane.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const {validateClusterIdentity,apiContainer}=require("./certops-kubernetes-compaction");

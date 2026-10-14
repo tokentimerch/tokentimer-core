@@ -1,3 +1,7 @@
+<#
+Read-only native CA high-water/count oracle for the current qualification run. Called before and
+after actual submissions to detect resubmission; does not alter CA rows or synthesize request IDs.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId)
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test' -or -not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Native CA checkpoint requires isolated forest credentials'}

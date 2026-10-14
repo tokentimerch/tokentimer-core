@@ -1,3 +1,7 @@
+/**
+ * Feed controlled upstream transport responses into the real certificate integration scanners.
+ * The supporting API suite retains production parsing/normalization and database ingestion;
+ * upstream HTTP/SDK replies are fixtures, so this helper does not qualify provider accounts. */
 "use strict";
 const Module = require("node:module");
 const { X509Certificate } = require("node:crypto");

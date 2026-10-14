@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Node test reporter emitting bounded test events, measured host identity and current source hashes.
+ * Selected with --test-reporter by qualification harnesses. It records actual Node test outcomes;
+ * scope-specific native claims still require the matching mandatory journey and downstream verifier.
+ */
 const fs=require("node:fs");
 const path=require("node:path");
 const crypto=require("node:crypto");

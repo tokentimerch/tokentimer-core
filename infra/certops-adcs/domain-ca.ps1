@@ -1,3 +1,8 @@
+<#
+Install/configure the enterprise CA on the freshly provisioned qualification domain server. Called
+only by provision-lab.ps1 with a temporary forest credential; creates actual CA service/material,
+not simulated certutil output.
+#>
 param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('root','subordinate')][string]$HierarchyRole='root')
 $ErrorActionPreference = 'Stop'
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Expected isolated qualification forest' }

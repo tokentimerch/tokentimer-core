@@ -1,4 +1,6 @@
 "use strict";
+// Host-side native compaction qualification for a verified, run-owned kind node.
+// Only that node's etcd/API container is touched; absent native410 fails the case.
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),{spawnSync}=require("node:child_process");
 function execute(binary,args){const result=spawnSync(binary,args,{encoding:"utf8",timeout:45000,maxBuffer:1024*1024});if(result.error||result.status!==0)throw new Error("Owned native compaction operation failed");return result.stdout;}
 async function until(check,timeout=90000){const deadline=Date.now()+timeout;while(Date.now()<deadline){const value=await check();if(value)return value;await new Promise(resolve=>setTimeout(resolve,500));}throw new Error("Owned native compaction readiness deadline exceeded");}

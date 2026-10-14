@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Verifies bounded experimental standalone CA/CMC reports against candidate and source identity.
+ * Invoked by the standalone manual workflow; requires native observations and owned cleanup
+ * while deliberately preserving experimental, nonqualified status outside the release matrix.
+ */
 const fs=require("node:fs");
 const crypto=require("node:crypto");
 const path=require("node:path");

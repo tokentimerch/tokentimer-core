@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Qualifies one explicitly configured isolated DNS provider zone using production solvers and
+ * independent TXT resolution. Invoked by the protected manual provider workflow (or its janitor
+ * mode); credentials stay in process environment and cleanup is restricted to reserved owned values.
+ */
 // Protected disposable DNS fixture only. No CA issuance or provider replies are simulated.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -69,22 +74,25 @@ function staleValues(values, now = Date.now()) {
   return [...new Set(values)].filter((value) => { const match = value.match(valuePattern); return match && Number(match[1]) < cutoff; });
 }
 async function present(value) {
+  require("./certops-dns-cleanup-enrollment").assertProducerEnrollment(process.env.CERTOPS_DNS_PROVIDER,process.env.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON);
   assert.match(value, valuePattern);
   const config = configuration();
   const result = await config.solver.presentChallenge({ zone: config.zone, recordName: config.recordName, txtValue: value });
   assert.equal(result.ok, true, "Actual provider operation failed; output withheld");
 }
 async function main() {
+  require("./certops-dns-cleanup-enrollment").assertProducerEnrollment(process.env.CERTOPS_DNS_PROVIDER,process.env.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON);
   const config = configuration();
   const values = [0, 1].map(() => `certops-qualification-${Date.now()}-${crypto.randomBytes(16).toString("hex")}`);
   const receiptFile = path.resolve("qualification-results/dns-provider-receipt.json"); fs.mkdirSync(path.dirname(receiptFile), { recursive: true });
   assert.equal(fs.existsSync(receiptFile), false, "Existing cleanup receipt must be handled before another run");
   const receipt = { schemaVersion: 1, provider: config.provider, recordName: config.recordName, values: [] };
   const save = () => { const temporary = `${receiptFile}.${process.pid}.tmp`; fs.writeFileSync(temporary, JSON.stringify(receipt), { mode: 0o600 }); fs.renameSync(temporary, receiptFile); };
-  const gate = createHostGate({ suite: "dns-provider-host", strict: true, evidenceLevel: "integration", requiredCapabilities: ["provider-credentials-configured", "native-txt-resolver"], fixtureSource: { file: "scripts/certops-dns-provider-host.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => {
+  const gate = createHostGate({ suite: "dns-provider-host", strict: true, evidenceLevel: "integration", requiredCapabilities: ["provider-credentials-configured", "native-txt-resolver", "independent-cleanup-enrolled"], fixtureSource: { file: "scripts/certops-dns-provider-host.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => {
     const observed = await config.txt(); assert.ok(observed.every((value) => valuePattern.test(value)), "Dedicated DNS label contains unowned values; refusing mutation");
-    return { "provider-credentials-configured": { available: true }, "native-txt-resolver": { available: true } };
+    return { "provider-credentials-configured": { available: true }, "native-txt-resolver": { available: true }, "independent-cleanup-enrolled": {available: require("./certops-dns-cleanup-enrollment").enrolledProviders(process.env.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON).includes(config.provider)} };
   } });
+  gate.report.fixtureSources=[{file:"scripts/certops-dns-cleanup-enrollment.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(require.resolve("./certops-dns-cleanup-enrollment"))).digest("hex")}];
   gate.report.qualificationEnvironment.dnsProvider = config.solver.provider;
   gate.report.cleanupDisposition = config.solver.capabilities.cleanupVerifiable ? "value-deletion-required" : "not-applicable-two-slot-provider";
   let failure, ready = false, cleanup = "failed";

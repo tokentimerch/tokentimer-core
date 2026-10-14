@@ -1,4 +1,9 @@
 "use strict";
+/* Native CMC signed-response boundary checks using real fixture enrollment material and the
+ * candidate helper. Supporting protocol observations are distinct from full renewed-certificate
+ * installation. Called only by the protected disposable-forest AD CS harness; native
+ * qualification requires that workflow to execute.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");
 const {filesystemSafeJobId,resolveAdcsCmcHelperPath}=require("../../../packages/agent/src/issuers/adcs-enrollment");
 const {decodeCmcResponse}=require("../../../packages/agent/src/issuers/cmc-helper");

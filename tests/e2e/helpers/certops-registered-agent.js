@@ -1,3 +1,8 @@
+/**
+ * Authenticate a fixture agent through the genuine registration and signed machine protocol.
+ * API qualification suites use this client to test server admission and persistence.
+ * This helper constructs protocol requests; it does not launch an installed agent or
+ * establish native certificate-store/IIS execution evidence. */
 "use strict";
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");

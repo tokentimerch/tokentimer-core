@@ -1,4 +1,9 @@
 "use strict";
+/* Rate-limit-safe native preflight cohorts: real isolated workspaces/registered candidate CLI
+ * processes under measured SYSTEM identity. Owns process-tree receipts and protected state; never
+ * rewrites dispatch timestamps. Called only by the protected disposable-forest AD CS harness;
+ * native qualification requires that workflow to execute.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

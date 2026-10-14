@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: public queued renewal freezes profile across operator edits approval and signed claim.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * The registered fixture sends genuine machine-protocol requests; it does not run
+ * an installed native agent. Named strict reports and owned cleanup are mandatory. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),crypto=require("node:crypto"),fs=require("node:fs"),os=require("node:os"),path=require("node:path"),{spawnSync}=require("node:child_process");
 const {createApiFixture}=require("./helpers/certops-api-fixture"),{createRegisteredAgent}=require("./helpers/certops-registered-agent"),{createHostGate}=require("../../packages/agent/scripts/host-gate"),{canonicalizeJobPayload}=require("../../packages/contracts/certops/canonical-json.cjs");

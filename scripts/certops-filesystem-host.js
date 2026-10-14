@@ -1,3 +1,8 @@
+/**
+ * Qualify the production filesystem certificate coordinator on an explicitly disposable host.
+ * certops-filesystem-qualification.yml selects the native distribution. This harness
+ * owns its temporary keys, certificate paths and receipts, verifies real file/lock
+ * behavior, and emits mandatory named evidence rather than qualifying API admission. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

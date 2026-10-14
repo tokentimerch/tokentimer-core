@@ -1,3 +1,8 @@
+<#
+Read actual installed Windows UI culture/build on the disposable CA/member after language setup.
+Called by provision-lab.ps1 before tests; fails when native language differs from the selected
+qualification environment.
+#>
 param([ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US')
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Language verification requires owned domain'}

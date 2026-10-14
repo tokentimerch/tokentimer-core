@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Checks the committed certificate-source inventory against production source kinds and fixture tests.
+ * Invoked as a drift guard; confirms supporting scanner/import coverage is wired, without
+ * asserting that external cloud or vault providers were contacted or qualified.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const root = path.resolve(__dirname, "..");

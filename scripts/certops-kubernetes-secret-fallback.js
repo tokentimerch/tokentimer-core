@@ -1,4 +1,6 @@
 "use strict";
+// Run inside the production controller image with its scoped mounted identity;
+// verify the bounded public-only Secret reader and real native RBAC refusals.
 const assert=require("node:assert/strict"),crypto=require("node:crypto");
 const {createInClusterCertManagerClient}=require("/app/apps/k8s-controller/src/cert-manager-client");
 const {createTlsCertificateFallback}=require("/app/apps/k8s-controller/src/tls-certificate-fallback");

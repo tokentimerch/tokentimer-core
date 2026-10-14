@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: measured old/new source and additive actual schema evidence required.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const {verifyEvidence}=require("./certops-migration-upgrade-report"),{BASELINE}=require("./certops-migration-upgrade");

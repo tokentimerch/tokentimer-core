@@ -1,3 +1,8 @@
+<#
+Native same-key or new-key CA renewal on the disposable qualification forest. Called with the
+temporary officer identity to exercise actual pin continuity/rotation; the entire lab is
+subsequently destroyed, never a persistent enterprise CA.
+#>
 param([ValidateSet('new-key','reuse-key')][string]$Mode='new-key')
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test' -or -not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'CA key rotation requires isolated qualification forest officer'}

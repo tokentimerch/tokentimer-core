@@ -1,4 +1,8 @@
 "use strict";
+/* Candidate-package supporting qualification for windows-host.test.js. Verifies exact archive
+ * checksum names/bytes and native PE architecture, then inspects owned extracted files. Candidate
+ * source packaging is distinct from a verified historical published release.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

@@ -1,4 +1,6 @@
 "use strict";
+// Qualify production controller adapters against one disposable kind cluster;
+// each scenario owns only its random namespace and emits strict public evidence.
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");

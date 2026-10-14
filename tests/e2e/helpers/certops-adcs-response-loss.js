@@ -1,4 +1,9 @@
 "use strict";
+/* Opt-in lost-submit-response experiment using an actual owned CA side effect and verified
+ * certreq process interruption. Public reconciliation must preserve request/key ownership and
+ * cannot silently resubmit uncertainty. Called only by the protected disposable-forest AD CS
+ * harness; native qualification requires that workflow to execute.
+ */
 const path=require("node:path");
 const {spawn}=require("node:child_process");
 // This opt-in experiment never substitutes CLI output or edits the enrollment journal.

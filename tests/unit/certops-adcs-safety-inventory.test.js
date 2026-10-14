@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: AD CS fixture inventory cannot omit a prohibited standalone or mixed EKU.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict");

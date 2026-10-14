@@ -1,4 +1,6 @@
 "use strict";
+// Enforce trusted refs, bounded privileges and owned cleanup across every
+// qualification workflow; selection may only narrow the exact main guard.
 const fs=require("node:fs"),path=require("node:path");
 function validateWorkflow(workflow,name="workflow"){
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
@@ -11,7 +13,15 @@ function validateWorkflow(workflow,name="workflow"){
   if(permissions.contents!=="read")fail("contents read permission required");
   for(const [id,job] of Object.entries(workflow.jobs||{})){
     if(name==="certops-adcs-lab-janitor.yml"&&job.environment!=="certops-adcs-cleanup")fail(`${id} independent expiry cleanup requires its dedicated unattended environment`);
-    if(job.if!=="github.ref == 'refs/heads/main'")fail(`${id} must enforce the exact trusted main reference`);
+    const dnsLane=(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup")||(name==="certops-dns-provider-qualification.yml"&&id==="provider");
+    const dnsCondition=dnsLane&&job.needs==="enrollment"&&job.if==="github.ref == 'refs/heads/main' && needs.enrollment.outputs.enabled == 'true'";
+    if(dnsLane&&!dnsCondition)fail(`${id} must select only explicitly enrolled DNS providers`);
+    if(dnsLane&&job.strategy?.matrix?.provider!=="${{ fromJSON(needs.enrollment.outputs.providers) }}")fail(`${id} provider matrix must come from enrollment`);
+    if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
+    const selectedLane={tooling:"tooling",windows:"windows","agent-stack":"stack"}[id];
+    const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
+    if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition)fail(`${id} must enforce the exact trusted main reference`);
+    if(name==="certops-qualification.yml"&&selectedLane&&!selectedCondition)fail(`${id} must narrow execution to its committed selection output`);
     if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>180)fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);

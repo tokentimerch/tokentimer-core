@@ -1,3 +1,8 @@
+/**
+ * Own a local Pebble CA/challenge server around the real agent/API ACME journey.
+ * certops-real-acme.yml supplies isolated dependencies; this file checks fixed loopback
+ * ports, trusts only the generated fixture CA, runs the selected client journey and
+ * verifies its report. Public CA interoperability requires separate provider qualification. */
 "use strict";
 const fs = require("node:fs");
 const os = require("node:os");

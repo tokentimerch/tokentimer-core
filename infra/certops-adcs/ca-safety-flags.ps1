@@ -1,3 +1,8 @@
+<#
+Receipt-backed unsafe CA flag mutations in the disposable forest. Snapshot and restore exact native
+policy values; independently observed CA counts prove refused enrollment did not submit. The caller
+owns the isolated lab and cleanup.
+#>
 param(
   [Parameter(Mandatory)][ValidateSet('apply','restore','request-count')][string]$Action,
   [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId,

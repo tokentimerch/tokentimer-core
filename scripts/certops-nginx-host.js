@@ -1,3 +1,8 @@
+/**
+ * Qualify real certificate deployment/reload in the selected native consuming server.
+ * certops-nginx-qualification.yml provisions the disposable nginx/Apache/HAProxy host.
+ * Owned keys and configuration feed the production coordinator; trusted TLS probes
+ * verify the served leaf, while failed verification must preserve or restore service. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

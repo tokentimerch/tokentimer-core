@@ -1,4 +1,6 @@
 "use strict";
+// Qualify real cert-manager HTTP01 through the public API and owned ingress;
+// observed native challenges, served TLS and cleanup are mandatory evidence.
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const os=require("node:os");

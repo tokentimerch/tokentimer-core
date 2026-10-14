@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Executes one committed integration test group against a disposable API/PostgreSQL fixture.
+ * Invoked by its manual workflow with an explicit group; reporter output records exact cases
+ * and source identity. Supporting seeded states do not establish native CA or Windows execution.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");

@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: exact generated native write fixture ownership is accepted.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");const {validateWriteFixture}=require("./certops-linux-systemd-ownership");
 const owned=()=>({runId:"0123456789",root:"/var/lib/tokentimer-qualification-0123456789",allowed:"/var/lib/tokentimer-qualification-0123456789/allowed",denied:"/var/lib/tokentimer-qualification-0123456789/denied",probe:"/var/lib/tokentimer-qualification-0123456789/write-probe.js",probeSha256:"a".repeat(64)});

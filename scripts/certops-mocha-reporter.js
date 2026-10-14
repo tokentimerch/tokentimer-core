@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Mocha reporter recording bounded integration outcomes, measured runtime and committed source hashes.
+ * Selected by the integration qualification runner; emits supporting API/PostgreSQL evidence
+ * without raw assertion values, credentials or a claim of native certificate execution.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto=require("node:crypto");

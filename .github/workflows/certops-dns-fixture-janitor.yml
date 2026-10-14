@@ -6,16 +6,36 @@ on:
 permissions:
   contents: read
 jobs:
-  cleanup:
+  enrollment:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      providers: ${{ steps.plan.outputs.providers }}
+      enabled: ${{ steps.plan.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: plan
+        name: Select explicitly enrolled DNS providers
+        env:
+          CERTOPS_DNS_ENROLLED_PROVIDERS_JSON: ${{ vars.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON }}
+        run: node scripts/certops-dns-cleanup-enrollment.js janitor
+  cleanup:
+    needs: enrollment
+    if: github.ref == 'refs/heads/main' && needs.enrollment.outputs.enabled == 'true'
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        provider: [cloudflare, route53, azure-dns, google-cloud-dns, rfc2136, acme-dns, ovhcloud, hetzner, infomaniak, exoscale, powerdns]
+        provider: ${{ fromJSON(needs.enrollment.outputs.providers) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment: certops-dns-${{ matrix.provider }}
+    environment: certops-dns-cleanup-${{ matrix.provider }}
     concurrency:
       group: certops-dns-${{ matrix.provider }}
       cancel-in-progress: false

@@ -1,4 +1,8 @@
 "use strict";
+/* Actual CA validity-policy refusal cases: older issued leaf and minimum remaining lifetime,
+ * compared with the installed trusted outgoing IIS certificate. Called only by the protected
+ * disposable-forest AD CS harness; native qualification requires that workflow to execute.
+ */
 const fs=require("node:fs");
 const assert=require("node:assert/strict"),crypto=require("node:crypto"),path=require("node:path"),tls=require("node:tls");
 const {buildEnrollmentContainerName}=require("../../../packages/agent/src/windows-cert-store");
@@ -17,7 +21,7 @@ async function qualifyValidityBoundaries(context){
     if(selected.pending){const checked=await preflight(selected.template);assert.equal(checked.result.templateCheck.verdict,"safe");assert.equal(checked.result.caCheck.verdict,"safe");assert.equal(checked.result.caCertificates[0].keySha256,authority.keySha256);issuerId=checked.issuerId;assert.equal((await fixture.request(`${api}/issuers/${issuerId}/confirm`,"POST",{caKeySha256:authority.keySha256,caConfig:context.caConfig,template:selected.template})).status,200);}
     else assert.equal(item.template,selected.template,"Reuse only the already confirmed unchanged issuer of this actual six-day outgoing certificate");
     const admitted=await fixture.request(`${api}/enrollments`,"POST",{issuerId,certificateId,agentId:agentRowId,target:{type:"windows-iis",reference:item.domain,store:"My",binding},authorizedDnsNames:[item.domain],keyAlgorithm:"rsa",keySize:2048,...selected.options});assert.equal(admitted.status,201);ownedEnrollmentIds.push(admitted.body.enrollmentId);
-    const row=async()=>(await fixture.pool.query("SELECT state,request_id,next_poll_at,snapshot_bytes,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,admitted.body.enrollmentId])).rows[0];
+    const row=async()=>(await fixture.pool.query("SELECT state,operator_request_id AS request_id,next_poll_at,snapshot_bytes,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,admitted.body.enrollmentId])).rows[0];
     const original=await row(),frozen=JSON.parse(original.snapshot_bytes);for(const [field,value]of Object.entries(selected.options))assert.equal(frozen[field],value);assert.equal(original.snapshot_sha256,admitted.body.snapshotSha256);
     let jobId=admitted.body.jobId,leaf;
     if(selected.pending){

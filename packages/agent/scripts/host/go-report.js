@@ -1,4 +1,8 @@
 "use strict";
+/* Supporting Go test JSON evidence parser used by windows-host.test.js. Requires actual selected
+ * test completions and rejects skipped or failed tests; a zero command exit code alone cannot
+ * qualify the native helper modules.
+ */
 const assert = require("node:assert/strict");
 function verifyGoExecution(stdout) {
   let events;

@@ -1,3 +1,7 @@
+/**
+ * Verify periodic execution-lease loss reaches the active command cancellation signal.
+ * Controlled timers/lease callbacks test propagation; native command-tree teardown and
+ * actual public cancellation are qualified separately by the command and ACME journeys. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const {startExecutionLeaseRenewal}=require("./index");

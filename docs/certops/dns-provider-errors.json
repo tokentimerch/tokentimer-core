@@ -350,7 +350,7 @@
       "scenario": "dns-errors-shared-retry-redaction-contracts",
       "requiredTests": [
         "DNS request redaction preserves full errors for static secret boundary checks",
-        "listSupportedDnsProviders returns the wave-1 then wave-2 provider ids",
+        "listSupportedDnsProviders returns the stable supported provider order",
         "listSupportedDnsProviders returns a fresh copy each call",
         "createDnsSolver throws on an unsupported provider",
         "createDnsSolver throws on a missing provider",

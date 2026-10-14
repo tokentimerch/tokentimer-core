@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: whole local enrollment rule applies dot-boundary DNS coverage to every SAN and key together.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const {test}=require("node:test");
 const assert=require("node:assert/strict");

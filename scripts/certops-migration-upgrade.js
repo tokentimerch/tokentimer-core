@@ -1,3 +1,8 @@
+/**
+ * Qualify historical-to-candidate CertOps schema migration on an empty owned database.
+ * certops-migration-upgrade.yml supplies exact baseline/candidate checkouts and a
+ * digest-bound PostgreSQL image. Public API transitions and repeated startup are
+ * checked against persisted rows; neither checkout nor a shared database is rewritten. */
 "use strict";
 const assert=require("node:assert/strict");
 const fs=require("node:fs"),path=require("node:path"),os=require("node:os"),crypto=require("node:crypto"),https=require("node:https"),net=require("node:net");

@@ -48,7 +48,7 @@ test("DNS request redaction preserves full errors for static secret boundary che
 // listSupportedDnsProviders
 // ---------------------------------------------------------------------------
 
-test("listSupportedDnsProviders returns the wave-1 then wave-2 provider ids", () => {
+test("listSupportedDnsProviders returns the stable supported provider order", () => {
   assert.deepEqual(listSupportedDnsProviders(), [
     "cloudflare",
     "route53",

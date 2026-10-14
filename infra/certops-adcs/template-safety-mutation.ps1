@@ -1,3 +1,8 @@
+<#
+Live owned LDAP template safety mutation oracle. Records exact attribute presence/values before
+mutation and verifies all values after restoration; used by genuine candidate preflight/signed
+enrollment refusal cases, not simulated native output.
+#>
 param([Parameter(Mandatory)][ValidateSet('apply','restore')][string]$Action,
  [Parameter(Mandatory)][ValidateSet('schema-one','application-policy-absent','subject-client-auth','schema-three-algorithm-absent','eku-absent','subject-any-purpose','subject-enrollment-agent','subject-smartcard','subject-pkinit','application-policy-any-purpose','application-policy-client-mixed','minimum-key-absent','template-oid-absent','schema-out-of-range')][string]$CaseId,
  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId,

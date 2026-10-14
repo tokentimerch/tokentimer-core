@@ -681,7 +681,7 @@ CertOps agent and cert-manager controller: the first end-to-end path for TokenTi
 - **Worker runner** — `apps/worker/src/runner.js` long-running scheduler for local development and Docker Compose; reuses one-shot job functions with cron mode aligned to Kubernetes Helm defaults.
 - **Cross-platform dev scripts** — `scripts/dev.js`, `scripts/run-with-env.js`, and `scripts/process-utils.js` make `pnpm run dev` and `pnpm run migrate` work on Windows, WSL, Linux, and macOS.
 - **Zero-config local dev** — `pnpm dev` starts PostgreSQL via `deploy/compose/docker-compose.postgres.yml`, applies local defaults when no root `.env` exists, and runs DB migrations on API startup.
-- **Dev helpers** — `pnpm dev:noDB`, `pnpm dev:postgres`, and `pnpm dev:ports:check` (detects port conflicts with `tokentimer-enterprise` `demo:local` / `dev-mock-api`).
+- **Dev helpers** — `pnpm dev:noDB`, `pnpm dev:postgres`, and `pnpm dev:ports:check` (detects port conflicts with other local development APIs).
 - **Root `.env.example`** — documents minimum local development variables.
 - **Unit tests** — worker runner, CLI entrypoint detection (`is-node-entrypoint.js`), root env loading, and dev port checks.
 
@@ -1072,7 +1072,7 @@ CertOps agent and cert-manager controller: the first end-to-end path for TokenTi
 ## [0.1.0] - 2026-04-01
 
 First public release. Complete extraction of the self-hosted core from the
-tokentimer-cloud SaaS codebase into a standalone, variant-agnostic repository.
+hosted SaaS codebase into a standalone, variant-agnostic repository.
 
 ### Added
 

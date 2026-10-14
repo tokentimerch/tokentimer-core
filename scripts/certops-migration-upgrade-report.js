@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Checks historical-to-candidate API migration evidence beyond the generic named report contract.
+ * Invoked after the isolated upgrade harness; requires exact source, real PostgreSQL schema
+ * preservation and public lifecycle transitions, without claiming native agent upgrades.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs");
 const {BASELINE}=require("./certops-migration-upgrade");
 function verifyEvidence(report){

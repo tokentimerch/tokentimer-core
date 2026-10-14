@@ -1,4 +1,8 @@
 "use strict";
+/* Windows host helper: compile the candidate native chain validator and exercise actual local
+ * fixture chains/pins/revocation policy. Called by windows-host.test.js; its CA/key inputs are
+ * test-only files in the owned work directory, not a domain AD CS issuance claim.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

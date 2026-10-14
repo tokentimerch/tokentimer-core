@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Verifies named HostGate reports against committed suite requirements.
+ * Used by qualification workflows and CLI callers after execution; rejects absent, skipped or
+ * failed cases. Verification inspects evidence and does not itself execute certificate operations.
+ */
 const fs = require("node:fs");
 
 function verifyReport(report, expectedScenarios) {

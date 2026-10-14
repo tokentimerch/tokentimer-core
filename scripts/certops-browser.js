@@ -1,3 +1,8 @@
+/**
+ * Exercise certificate UI journeys in Chromium against a disposable dashboard/API.
+ * certops-browser-qualification.yml supplies URLs and OpenSSL. Assertions combine
+ * visible controls with authenticated API reads and reloads; fixture users and data
+ * are removed on failure. Browser success alone does not qualify native deployment. */
 "use strict";
 const assert=require("node:assert/strict");
 const {chromium}=require("playwright");

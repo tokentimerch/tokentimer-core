@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Resolves committed mandatory scenario, capability and evidence-level contracts for qualification
+ * producers and verifiers. Imported by the report tools; this metadata neither probes a host
+ * nor treats supporting fixture tests as native certificate execution.
+ */
 function validateSuites(metadata) {
   const errors = [];
   if (metadata?.schemaVersion !== 1 || !metadata.suites || typeof metadata.suites !== "object" || Array.isArray(metadata.suites)) return ["Invalid qualification suite contract"];

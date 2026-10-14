@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Runs the real DNS hook subprocess against an owned local authoritative DNS/API fixture.
+ * Invoked by the DNS routing workflow to check zone selection, policy boundaries and propagation
+ * failure. This proves native hook routing, not authentication to an external DNS provider.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),os=require("node:os"),path=require("node:path"),crypto=require("node:crypto"),{spawn}=require("node:child_process"),{Resolver}=require("node:dns/promises");
 const {applyRestrictivePermissions}=require("../packages/agent/src/platform");
 const {createHostGate}=require("../packages/agent/scripts/host-gate"),{createDnsSolver}=require("../packages/agent/src/dns");

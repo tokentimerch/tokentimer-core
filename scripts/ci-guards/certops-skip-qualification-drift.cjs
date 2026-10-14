@@ -1,3 +1,6 @@
+/**
+ * Compare actual annotated skip sites with committed prerequisite/environment ownership.
+ * Regenerate deliberately after source changes; mapping a skip never marks it executed. */
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");

@@ -1,3 +1,8 @@
+/**
+ * Regression coverage: native cohort cleanup awaits an owned live child before state may be removed.
+ * Local fixtures verify this contract; measured native/environment execution
+ * is tracked separately in the qualification suites and their reports.
+ */
 "use strict";
 const {test}=require("node:test");
 const assert=require("node:assert/strict");

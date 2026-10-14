@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: real result API rejects forged nonce and attempt before consuming an owned lease.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * The registered fixture sends genuine machine-protocol requests; it does not run
+ * an installed native agent. Named strict reports and owned cleanup are mandatory. */
 "use strict";
 const { test } = require("node:test");
 const assert = require("node:assert/strict"), fs = require("node:fs"), crypto = require("node:crypto");

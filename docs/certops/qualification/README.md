@@ -54,9 +54,12 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## Cloud and Enterprise
 
-- [Edition qualification stays tied to its composition](editions/edition-qualification.md)
+- [Edition qualification stays tied to its composition](editions/downstream-qualification.md)
 
 ## Reports, skips and release qualification
+
+- [Finding a qualification harness](reporting/harness-layout.md)
+- [Selecting affected CI lanes and focused reruns](reporting/ci-selection.md)
 
 - [Certificate release qualification](reporting/release-qualification.md)
 - [Skip qualification ownership](reporting/skip-qualification.md)

@@ -1,3 +1,8 @@
+/**
+ * Entry point for installed Linux agent qualification on an owned GitHub-hosted VM.
+ * certops-linux-systemd.yml authorizes native installer/systemd and write-path changes.
+ * The child journey must emit every mandatory case; cleanup uses the separately proved
+ * unit/process ownership receipt. This must not run on a shared developer machine. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

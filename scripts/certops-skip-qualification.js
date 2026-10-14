@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Maps discovered test skip sites to prerequisite ownership and candidate execution environments.
+ * Run this CLI to regenerate or check the committed mapping after inventory changes. Entries
+ * describe routing and drift only; they never assert that a skipped test actually executed.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");

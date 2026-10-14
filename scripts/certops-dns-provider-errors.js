@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Exercises production DNS solvers under deterministic upstream faults. The manual DNS error
+ * workflow invokes this harness; fixed-endpoint providers use explicitly injected responses,
+ * while configurable adapters use owned loopback HTTP/UDP. No live provider account is qualified.
+ */
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const http = require("node:http"), dgram = require("node:dgram"), net = require("node:net");
 const { spawnSync } = require("node:child_process");

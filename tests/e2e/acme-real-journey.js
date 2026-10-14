@@ -1,3 +1,8 @@
+/**
+ * Full agent/API/filesystem certificate journey against the owned Pebble ACME CA.
+ * scripts/certops-real-acme.js provisions the local CA/challenge server and selected
+ * ACME client. Public discovery/claims, actual issuance/renewal, trusted served TLS and
+ * persisted evidence are checked; all keys, paths and child processes belong to the run. */
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");

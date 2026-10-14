@@ -1,4 +1,8 @@
 "use strict";
+/* Supporting worker-thread death/drain checks called by windows-host.test.js. Uses an exclusively
+ * created temporary state directory and real store-lock ownership; observes worker exit/recovery
+ * instead of changing native certificate stores.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

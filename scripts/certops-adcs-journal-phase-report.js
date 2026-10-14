@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 "use strict";
+/* Independent verifier for observed native journal-phase crash experiments. Rejects missing
+ * lease/process/key/recovery evidence and keeps these fault experiments separate from release
+ * qualification; reads only the supplied sanitized report.
+ */
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 function verify(report){

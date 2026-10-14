@@ -1,3 +1,7 @@
+/**
+ * Use real local HTTPS sockets to test Pebble fixture readiness trust and host validation.
+ * Generated temporary certificates cover the owned CA, unrelated CA and wrong SAN.
+ * These are readiness regressions, not ACME issuance or public-CA qualification. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),os=require("node:os"),path=require("node:path"),https=require("node:https"),{spawnSync}=require("node:child_process");
 const {probeHttpsReady}=require("../../scripts/certops-real-acme");

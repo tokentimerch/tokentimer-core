@@ -1,3 +1,8 @@
+<#
+Configure the genuine enterprise subordinate CA using the isolated standalone root-signed public
+certificate. Used only by the hierarchy workflow; all CA keys/requests remain in the disposable lab
+and public chain facts are verified independently.
+#>
 param([Parameter(Mandatory)][string]$RootCertificateBase64,[Parameter(Mandatory)][string]$SubordinateCertificateBase64,[Parameter(Mandatory)][string]$DomainPassword)
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Expected isolated qualification directory'}

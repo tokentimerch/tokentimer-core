@@ -1,4 +1,8 @@
 "use strict";
+/* Native retrieval of real unknown/foreign request IDs under the installed identity, with no
+ * accepted foreign certificate, new key or outgoing TLS change. Called only by the protected
+ * disposable-forest AD CS harness; native qualification requires that workflow to execute.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto");
 const {createAdcsIssuer,assertIssuanceOutcome,resolveAdcsCmcHelperPath,readEnrollmentJournal}=require("../../../packages/agent/src/issuers");
 async function qualifyRetrieveBoundaries({gate,configDir,workDir,run,issuedFixtures,ps,command}){

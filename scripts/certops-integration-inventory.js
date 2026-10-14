@@ -1,4 +1,9 @@
 "use strict";
+/**
+ * Defines the committed supporting database-integration test groups and mandatory case inventory.
+ * Imported by the integration runner/reporter; the group contracts describe API/PostgreSQL
+ * assertions and must not be interpreted as real Windows or enterprise CA execution.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const groups = require("../tests/integration/certops-qualification-groups.json");

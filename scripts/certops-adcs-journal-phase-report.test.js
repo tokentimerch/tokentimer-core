@@ -1,4 +1,7 @@
 "use strict";
+/* Portable adversarial report checks for journal-phase experiments. Run with node --test;
+ * synthetic report fixtures do not execute or qualify native Windows faults.
+ */
 const {test}=require("node:test");const assert=require("node:assert/strict");const {verify}=require("./certops-adcs-journal-phase-report");
 function fixture(phase="installing"){return {schemaVersion:1,scope:"enterprise-adcs-journal-phase-experimental",qualificationStatus:"not-qualified",status:"passed",candidateSha:"a".repeat(40),fixtureSource:{file:"tests/e2e/helpers/certops-adcs-journal-phase-experiment.js",sha256:"b".repeat(64)},phase,fault:{phase,observedDurablePhase:true,unchangedAfterTermination:true,ownedServiceTree:true,nativeIdentity:"LocalSystem"},actualRenewedLeaseObserved:true,actualOrphanedJobObserved:true,ownedScmRecoveryTemporarilyDisabled:true,ownedScmRecoveryRestored:true,operatorRecoveryAuditObserved:true,originalUnknownEffectEvidencePreserved:true,sameKeyAndCsrIdentityPreserved:true,leaseSeconds:60,hardGraceMs:60000,clocks:"actual-host-and-database",databasePhaseRewritten:false,journalRewritten:false,outcome:"same-key-installation-recovered",caRequestsAtFault:1,caRequestsAfterRecovery:1,trustedNativeTls:true};}
 test("observed native phase evidence remains explicitly experimental",()=>{assert.equal(verify(fixture()),true);assert.equal(verify({...fixture("prepared"),caRequestsAtFault:0}),true);});

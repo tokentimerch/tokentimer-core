@@ -1,3 +1,8 @@
+<#
+Owned CA-manager template-mismatch fixture. Changes only a verified pending qualification request,
+using actual CA issuance for the native validator oracle; the E2E parent owns late-issued
+certificate cleanup.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName,
   [Parameter(Mandatory)][ValidateRange(1,4294967295)][long]$RequestId,
   [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId,

@@ -1,3 +1,8 @@
+/**
+ * Supporting API/PostgreSQL qualification: missing log capability produces explicit disabled offer without inventing job completion.
+ * Run via scripts/certops-api-qualification.js with an explicitly disposable API stack.
+ * The registered fixture sends genuine machine-protocol requests; it does not run
+ * an installed native agent. Named strict reports and owned cleanup are mandatory. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),crypto=require("node:crypto");
 const {createApiFixture}=require("./helpers/certops-api-fixture"),{createRegisteredAgent}=require("./helpers/certops-registered-agent"),{createHostGate}=require("../../packages/agent/scripts/host-gate");

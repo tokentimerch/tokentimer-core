@@ -1,4 +1,6 @@
 "use strict";
+// Supply the disposable local ACME/ingress fixture used by HTTP01 qualification;
+// its owned processes and public CA material never authorize production traffic.
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),https=require("node:https"),net=require("node:net"),dgram=require("node:dgram"),{spawn}=require("node:child_process");
 const TRAEFIK_DIGEST="sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c";
 async function available(host,port,udp=false){await new Promise((resolve,reject)=>{const socket=udp?dgram.createSocket("udp4"):net.createServer();socket.once("error",error=>{try{socket.close();}catch{}reject(error);});if(udp)socket.bind(port,host,()=>socket.close(resolve));else socket.listen(port,host,()=>socket.close(resolve));});}

@@ -1,3 +1,8 @@
+<#
+Exact owned disposable CA service outage with receipt-backed original service-state restoration.
+Called by pending continuation tests; no production/domain host outside the qualification forest is
+accepted.
+#>
 param(
   [Parameter(Mandatory)][ValidateSet('stop','restore','status')][string]$Action,
   [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId

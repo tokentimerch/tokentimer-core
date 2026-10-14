@@ -1,4 +1,8 @@
 "use strict";
+/* Actual elapsed native retention qualification invoked by windows-host.test.js. Uses owned
+ * certificates/ledger state and the supported short grace period, retaining real clock semantics;
+ * checks deletion and interruption recovery without claiming a default 24-hour wait.
+ */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");

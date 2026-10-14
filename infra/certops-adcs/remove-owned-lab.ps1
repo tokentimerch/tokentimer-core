@@ -1,3 +1,8 @@
+<#
+Always-run teardown for the exact current workflow-owned disposable lab group. Requires its
+canonical name and ownership tags before deletion and writes bounded cleanup evidence; never deletes
+a foreign or unverified resource group.
+#>
 param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][string]$ResourceGroup)
 $ErrorActionPreference = 'Stop'
 $report = @{resourceGroup=$ResourceGroup;candidateSha=$env:GITHUB_SHA;cleanup='failed';completedAt=$null}

@@ -1,3 +1,6 @@
+/**
+ * Require an explicit qualified environment for every mandatory certificate suite.
+ * This schema guard prevents newly added suites from silently escaping full release collection. */
 "use strict";
 const { validateMatrix } = require("../certops-release-qualification");
 const errors = validateMatrix();

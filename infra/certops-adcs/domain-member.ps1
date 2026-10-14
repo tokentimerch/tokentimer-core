@@ -1,3 +1,8 @@
+<#
+Join the newly provisioned disposable Windows member to the qualification forest. Uses only its
+temporary lab credential and requires a subsequent real reboot/domain verification before installed-
+agent tests.
+#>
 param([Parameter(Mandatory)][string]$DomainPassword)
 $ErrorActionPreference = 'Stop'
 if ((Get-CimInstance Win32_ComputerSystem).PartOfDomain) { throw 'Refusing to rejoin an existing domain member' }

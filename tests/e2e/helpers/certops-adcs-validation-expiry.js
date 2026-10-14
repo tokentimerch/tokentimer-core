@@ -1,4 +1,9 @@
 "use strict";
+/* Actual configured five-minute native validation-deferral expiry: preserve its recorded deadline
+ * through restart, wait real time and verify exact unaccepted-key cleanup under a scoped CRL
+ * outage. Called only by the protected disposable-forest AD CS harness; native qualification
+ * requires that workflow to execute.
+ */
 const assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),crypto=require("node:crypto"),tls=require("node:tls");
 const {createCrlFault}=require("./certops-adcs-crl-fault");
 const {readEnrollmentJournal}=require("../../../packages/agent/src/issuers/adcs-enrollment");
@@ -19,7 +24,7 @@ async function qualifyValidationExpiry({gate,fixture,api,agentRowId,renewalFixtu
    assert.equal((await fault.probe()).verdict,"valid","Actual outgoing certificate must pass native online chain validation before the fault");
    const before=checkpoint();assert.equal(await served(),observed.fingerprint256);await fault.install();
    const created=await fixture.request(`${api}/enrollments`,"POST",{issuerId,certificateId,agentId:agentRowId,target:{type:"windows-iis",reference:item.domain,store:"My",binding:{site,port,sniHost:item.domain}},authorizedDnsNames:[item.domain],keyAlgorithm:"rsa",keySize:2048,pollInterval:60});assert.equal(created.status,201);enrollmentId=created.body.enrollmentId;ownedEnrollmentIds.push(enrollmentId);
-   const row=async()=>(await fixture.pool.query("SELECT state,request_id,next_poll_at,snapshot_sha256,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,enrollmentId])).rows[0];
+   const row=async()=>(await fixture.pool.query("SELECT state,operator_request_id AS request_id,next_poll_at,snapshot_sha256,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,enrollmentId])).rows[0];
    const deferred=await until(async()=>{const value=await row();return value.state==="validation_deferred"&&value.request_id&&value.next_poll_at?value:null;});requestId=deferred.request_id;
    const receipt=readEnrollmentJournal(configDir,enrollmentId);assert.equal(receipt.kind,"valid");assert.equal(receipt.journal.state,"validation_deferred");const deadline=receipt.journal.validationDeadlineAt,deadlineMs=Date.parse(deadline),windowMs=deadlineMs-Date.parse(receipt.journal.updatedAt);assert.ok(windowMs>=270000&&windowMs<=300000,"Native persisted deadline must reflect the bounded local five-minute configuration");
    const incoming=new crypto.X509Certificate(receipt.artifacts.leafPem);assert.equal(incoming.checkHost(item.domain),item.domain);assert.equal(incoming.verify(new crypto.X509Certificate(Buffer.from(authority.certificateB64,"base64")).publicKey),true);

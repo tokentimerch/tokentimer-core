@@ -78,7 +78,7 @@
     {
       "id": "4d3605ce26faa1d8bbfb",
       "file": "packages/agent/scripts/host/windows-host.test.js",
-      "line": 50,
+      "line": 54,
       "name": "Windows real-host discovery and service-host qualification",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -598,7 +598,7 @@
     {
       "id": "05aa960bbad451e36be4",
       "file": "tests/e2e/certops-adcs-gates-api-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "unqualified AD CS onboarding and dispatch gates through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -611,7 +611,7 @@
     {
       "id": "eae563654c30d58c0cc7",
       "file": "tests/e2e/certops-agent-alert-e2e.test.js",
-      "line": 11,
+      "line": 16,
       "name": "agent alert governance persists policy and rejects foreign groups and unauthorized roles",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -767,7 +767,7 @@
     {
       "id": "24b4753f8b3dd9e97a15",
       "file": "tests/e2e/certops-agent-lease-api-e2e.test.js",
-      "line": 13,
+      "line": 18,
       "name": "active claim force retirement fences real agent HTTP",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -780,7 +780,7 @@
     {
       "id": "c978c8144e5071a0153a",
       "file": "tests/e2e/certops-agent-log-boundaries-e2e.test.js",
-      "line": 13,
+      "line": 18,
       "name": "agent log size and ownership boundaries through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -793,7 +793,7 @@
     {
       "id": "9baef309303e005f3127",
       "file": "tests/e2e/certops-agent-log-order-e2e.test.js",
-      "line": 13,
+      "line": 18,
       "name": "actual agent telemetry ordering, conflict and final closure",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -806,7 +806,7 @@
     {
       "id": "5e77fcd26694941a7dd5",
       "file": "tests/e2e/certops-agent-logs-api-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "registered agent log redaction and replay through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -819,7 +819,7 @@
     {
       "id": "51c6442f8e20e0e34017",
       "file": "tests/e2e/certops-audit-history-e2e.test.js",
-      "line": 9,
+      "line": 14,
       "name": "certificate profile audit history remains searchable scoped and role restricted",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -832,7 +832,7 @@
     {
       "id": "1b8e14c14335097db009",
       "file": "tests/e2e/certops-bootstrap-fences-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "unused bootstrap revocation, expiry and workspace ownership through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -845,7 +845,7 @@
     {
       "id": "28e392f09cd33762a2ea",
       "file": "tests/e2e/certops-bulk-eligible-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "mixed eligible bulk renewal shares issuance capacity and conserves replay",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -858,7 +858,7 @@
     {
       "id": "29bd8f4cf84d755d5542",
       "file": "tests/e2e/certops-ca-capacity-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "public issuance shares race-safe CA admission and terminal release",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -871,7 +871,7 @@
     {
       "id": "523141a2d8d7ef6c0f50",
       "file": "tests/e2e/certops-certificate-transfer-e2e.test.js",
-      "line": 11,
+      "line": 16,
       "name": "public certificate token transfer preserves workspace authority and atomic identity conflicts",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -884,7 +884,7 @@
     {
       "id": "40613936d85d32e0faf8",
       "file": "tests/e2e/certops-credentials-api-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "public machine credential and agent enrollment lifecycle",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -897,7 +897,7 @@
     {
       "id": "9d19d8c9a1808d00ecb4",
       "file": "tests/e2e/certops-csr-algorithms-e2e.test.js",
-      "line": 15,
+      "line": 20,
       "name": "external CSR algorithm compatibility through public API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -910,7 +910,7 @@
     {
       "id": "d5a62574778d6f00e618",
       "file": "tests/e2e/certops-csr-bound-observation-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "real TLS CSR observation preserves selected active identity and expiry until name review",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -923,7 +923,7 @@
     {
       "id": "90aaa59855ad6f6a7f6b",
       "file": "tests/e2e/certops-csr-chain-e2e.test.js",
-      "line": 15,
+      "line": 20,
       "name": "external signing chain lifecycle through public CSR API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -936,7 +936,7 @@
     {
       "id": "9baa47be32168b6220a7",
       "file": "tests/e2e/certops-csr-frozen-e2e.test.js",
-      "line": 11,
+      "line": 16,
       "name": "signed CSR material freezes review until explicit cancel and restart",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -949,7 +949,7 @@
     {
       "id": "75817ca15c8fa34e9b45",
       "file": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
-      "line": 20,
+      "line": 25,
       "name": "CSR authenticated API lifecycle",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -962,7 +962,7 @@
     {
       "id": "86fcd5514e3de4a1d18a",
       "file": "tests/e2e/certops-csr-observation-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "real TLS CSR observation defers changed names then promotes through acknowledgement",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -975,7 +975,7 @@
     {
       "id": "0d8e07f560b3d7f255a2",
       "file": "tests/e2e/certops-derivation-failure-e2e.test.js",
-      "line": 14,
+      "line": 19,
       "name": "missing renewal derivation fields preserve real public certificate state",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -988,7 +988,7 @@
     {
       "id": "39885c86a8c4d543e35b",
       "file": "tests/e2e/certops-diagnostic-agent-e2e.test.js",
-      "line": 11,
+      "line": 16,
       "name": "diagnostic agent kind fences ordinary work and preserves bootstrap idempotency",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1001,7 +1001,7 @@
     {
       "id": "d1471011b9b7bf098822",
       "file": "tests/e2e/certops-enrollment-policy-api-e2e.test.js",
-      "line": 10,
+      "line": 15,
       "name": "public AD CS enrollment policy bounds and immutable snapshots",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1014,7 +1014,7 @@
     {
       "id": "494312abff4f0f054520",
       "file": "tests/e2e/certops-enrollment-recovery-api-e2e.test.js",
-      "line": 15,
+      "line": 20,
       "name": "AD CS installation retry through real API and PostgreSQL",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1027,7 +1027,7 @@
     {
       "id": "0b87720d6ce348c52a69",
       "file": "tests/e2e/certops-first-issuance-admission-e2e.test.js",
-      "line": 14,
+      "line": 19,
       "name": "public first issuance retains period and fresh execution admission fences",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1040,7 +1040,7 @@
     {
       "id": "587a24b873cd68a1da0f",
       "file": "tests/e2e/certops-governance-e2e.test.js",
-      "line": 16,
+      "line": 21,
       "name": "observed certificate governance through public API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1053,7 +1053,7 @@
     {
       "id": "add1fc960c094070ef71",
       "file": "tests/e2e/certops-import-metadata-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "public reimport preserves operator contacts and group assignments",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1066,7 +1066,7 @@
     {
       "id": "afef16116dc15fbe3ee4",
       "file": "tests/e2e/certops-integration-sources-e2e.test.js",
-      "line": 17,
+      "line": 22,
       "name": "certificate-producing integration source provenance survives authenticated import and replay",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1079,7 +1079,7 @@
     {
       "id": "52f765c459832f9275ac",
       "file": "tests/e2e/certops-inventory-lifecycle-e2e.test.js",
-      "line": 18,
+      "line": 23,
       "name": "real TLS endpoint certificate inventory lifecycle",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1092,7 +1092,7 @@
     {
       "id": "966f77c085c420a11089",
       "file": "tests/e2e/certops-job-decisions-e2e.test.js",
-      "line": 14,
+      "line": 19,
       "name": "real API approval rejection and protocol terminal transitions",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1105,7 +1105,7 @@
     {
       "id": "c0e9776c40a61c3aa9bb",
       "file": "tests/e2e/certops-jobs-api-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "manual job approval and pause boundaries through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1118,7 +1118,7 @@
     {
       "id": "c57fdcf8d82316248ac6",
       "file": "tests/e2e/certops-log-disabled-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "missing log capability produces explicit disabled offer without inventing job completion",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1131,7 +1131,7 @@
     {
       "id": "f43440bfe8f197860603",
       "file": "tests/e2e/certops-log-pagination-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "agent log cursor polling preserves live append and reconnect order",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1144,7 +1144,7 @@
     {
       "id": "1d40135f75cd3814a6ef",
       "file": "tests/e2e/certops-membership-fences-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "live workspace membership and machine workspace fences",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1157,7 +1157,7 @@
     {
       "id": "7c3e0675067d51867663",
       "file": "tests/e2e/certops-multi-target-deploy-e2e.test.js",
-      "line": 16,
+      "line": 21,
       "name": "production multi-target coordinator preserves files and exposes uncertain rollback",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1170,7 +1170,7 @@
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
-      "line": 25,
+      "line": 30,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1183,7 +1183,7 @@
     {
       "id": "d2c1d0eb1cec1a10a779",
       "file": "tests/e2e/certops-observe-only-e2e.test.js",
-      "line": 11,
+      "line": 16,
       "name": "observe-only polling preserves queued work until explicit execution advertisement",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1196,7 +1196,7 @@
     {
       "id": "aae9e3fbe69a56c66390",
       "file": "tests/e2e/certops-pause-ingestion-e2e.test.js",
-      "line": 14,
+      "line": 19,
       "name": "workspace pause blocks new work while retaining owned result ingestion",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1209,7 +1209,7 @@
     {
       "id": "29acf249784019f0683d",
       "file": "tests/e2e/certops-profile-issuer-switch-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "public renewal issuer changes retain runnable policy and atomic audit",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1222,7 +1222,7 @@
     {
       "id": "64c51129c31f06b8a413",
       "file": "tests/e2e/certops-profile-permissions-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "public renewal profile permissions and immutable execution policy",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1235,7 +1235,7 @@
     {
       "id": "2bfd008bc2b6756f6ed7",
       "file": "tests/e2e/certops-profiles-api-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "AD CS profile administration through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1248,7 +1248,7 @@
     {
       "id": "e041894ee3c906686378",
       "file": "tests/e2e/certops-public-import-e2e.test.js",
-      "line": 16,
+      "line": 21,
       "name": "public certificate import parsing, refusal and identity conservation",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1261,7 +1261,7 @@
     {
       "id": "96e36a1542fcb65ffeb3",
       "file": "tests/e2e/certops-queued-profile-snapshot-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "public queued renewal freezes profile across operator edits approval and signed claim",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1274,7 +1274,7 @@
     {
       "id": "895b316367e873d8be33",
       "file": "tests/e2e/certops-renewal-admission-e2e.test.js",
-      "line": 15,
+      "line": 20,
       "name": "renewal admission preserves monitored-only and terminal certificate policy",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1287,7 +1287,7 @@
     {
       "id": "93f33e2b94e60d82ca75",
       "file": "tests/e2e/certops-renewal-alert-worker-e2e.test.js",
-      "line": 10,
+      "line": 15,
       "name": "owned renewal failure outbox reaches actual delivery worker SMTP receipt",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1300,7 +1300,7 @@
     {
       "id": "2d3f16e1092344c1614c",
       "file": "tests/e2e/certops-result-fences-e2e.test.js",
-      "line": 11,
+      "line": 16,
       "name": "real result API rejects forged nonce and attempt before consuming an owned lease",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1313,7 +1313,7 @@
     {
       "id": "644f3a4a7edadc0b7bab",
       "file": "tests/e2e/certops-retired-observation-e2e.test.js",
-      "line": 17,
+      "line": 22,
       "name": "fresh TLS observation cannot reactivate a retired identity",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1326,7 +1326,7 @@
     {
       "id": "95a3a1ef54582e6edf86",
       "file": "tests/e2e/certops-scheduler-capacity-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "SQL clock scheduler shares public issuance capacity and pause fences",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1339,7 +1339,7 @@
     {
       "id": "bd5ad2d047a123ce1bbb",
       "file": "tests/e2e/certops-shared-sources-e2e.test.js",
-      "line": 17,
+      "line": 22,
       "name": "shared served fingerprint keeps source history and management accounting",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1352,7 +1352,7 @@
     {
       "id": "94e2bcb0b5057a56afe7",
       "file": "tests/e2e/certops-signing-rotation-native-e2e.test.js",
-      "line": 10,
+      "line": 15,
       "name": "isolated operator signing rotation adopts native pins and fences incomplete fleet completion",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1365,7 +1365,7 @@
     {
       "id": "0c14bc02d5f9753342d8",
       "file": "tests/e2e/certops-token-boundaries-e2e.test.js",
-      "line": 12,
+      "line": 17,
       "name": "scoped machine token expiry and revocation through executor HTTP",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1378,7 +1378,7 @@
     {
       "id": "c5d6a2bbcf8996446f7e",
       "file": "tests/e2e/certops-trust-api-e2e.test.js",
-      "line": 15,
+      "line": 20,
       "name": "trust approval and workspace pause through real API",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1391,7 +1391,7 @@
     {
       "id": "73ef780f3289ff37c0b2",
       "file": "tests/e2e/certops-trust-multiple-e2e.test.js",
-      "line": 8,
+      "line": 13,
       "name": "independent public trust anchors remain scoped through concurrent approval and retirement",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",
@@ -1404,7 +1404,7 @@
     {
       "id": "9255a15020b9b0ea070c",
       "file": "tests/e2e/certops-unmanaged-discovery-e2e.test.js",
-      "line": 15,
+      "line": 20,
       "name": "quota-blocked real filesystem discovery preserves unmanaged visibility",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",

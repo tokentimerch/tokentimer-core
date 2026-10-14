@@ -1,4 +1,9 @@
 "use strict";
+/* Disposable Windows IIS helper used by windows-host.test.js. Owns uniquely named sites/bindings
+ * and public certificate receipts; checks production binding operations with independently
+ * trusted TLS and restores only recorded resources. Requires elevated opted-in host, IIS and
+ * OpenSSL.
+ */
 
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");

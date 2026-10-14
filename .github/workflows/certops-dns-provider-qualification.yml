@@ -1,16 +1,43 @@
 name: "CertOps / Real DNS provider qualification"
 on:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: One enrolled provider, or all explicitly enrolled providers
+        type: choice
+        default: cloudflare
+        options: [cloudflare, route53, azure-dns, google-cloud-dns, rfc2136, acme-dns, ovhcloud, hetzner, infomaniak, exoscale, powerdns, all]
 permissions:
   contents: read
 jobs:
-  provider:
+  enrollment:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      providers: ${{ steps.plan.outputs.providers }}
+      enabled: ${{ steps.plan.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: plan
+        name: Select explicitly enrolled DNS providers
+        env:
+          CERTOPS_DNS_ENROLLED_PROVIDERS_JSON: ${{ vars.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON }}
+          CERTOPS_DNS_SELECTED_PROVIDER: ${{ inputs.provider }}
+        run: node scripts/certops-dns-cleanup-enrollment.js qualify
+  provider:
+    needs: enrollment
+    if: github.ref == 'refs/heads/main' && needs.enrollment.outputs.enabled == 'true'
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        provider: [cloudflare, route53, azure-dns, google-cloud-dns, rfc2136, acme-dns, ovhcloud, hetzner, infomaniak, exoscale, powerdns]
+        provider: ${{ fromJSON(needs.enrollment.outputs.providers) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: certops-dns-${{ matrix.provider }}
@@ -19,6 +46,7 @@ jobs:
       cancel-in-progress: false
     env:
       CERTOPS_DNS_DEDICATED_FIXTURE: '1'
+      CERTOPS_DNS_ENROLLED_PROVIDERS_JSON: ${{ vars.CERTOPS_DNS_ENROLLED_PROVIDERS_JSON }}
       CERTOPS_DNS_PROVIDER: ${{ matrix.provider }}
       CERTOPS_DNS_ZONE: ${{ vars.CERTOPS_DNS_ZONE }}
       CERTOPS_DNS_RESOLVERS_JSON: ${{ vars.CERTOPS_DNS_RESOLVERS_JSON }}

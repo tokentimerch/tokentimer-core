@@ -1,4 +1,9 @@
 "use strict";
+/* Real pending/installation recovery through public API, durable enrollment journals, SCM restart
+ * and CA officer actions. Protects exact CSR/key/request identity and checks terminal cleanup
+ * without fabricated native responses. Called only by the protected disposable-forest AD CS
+ * harness; native qualification requires that workflow to execute.
+ */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const path = require("node:path");
@@ -13,7 +18,7 @@ async function qualifyRecovery(context) {
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   const scheduler = require("../../../apps/api/services/certops/certificateEnrollments");
   const getEnrollment = async (id) => (await fixture.pool.query(
-    "SELECT state,request_id,next_poll_at,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId,id])).rows[0];
+    "SELECT state,operator_request_id AS request_id,next_poll_at,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId,id])).rows[0];
   function observe(item, requestId) {
     return JSON.parse(command("powershell.exe", ["-NoProfile","-NonInteractive","-File",
       path.resolve(__dirname,"../../../infra/certops-adcs/owned-request-observation.ps1"),

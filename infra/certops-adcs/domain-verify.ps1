@@ -1,3 +1,8 @@
+<#
+Native domain/CA connectivity preflight on the disposable member after reboot. Verifies actual
+forest membership, RPC and expected authority state; successful infrastructure setup does not itself
+qualify certificate E2E scenarios.
+#>
 param([ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64)
 $ErrorActionPreference = 'Stop'
 $machine = Get-CimInstance Win32_ComputerSystem

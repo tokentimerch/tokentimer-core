@@ -1,4 +1,8 @@
 "use strict";
+/* Native retention guard scenarios on recorded local certificate/key and unique IIS bindings.
+ * windows-host.test.js supplies ownership facts; production sweep decisions are compared with
+ * native store/key/TLS observations, with only fixture sites and directories cleaned.
+ */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");

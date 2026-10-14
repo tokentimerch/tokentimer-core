@@ -1,3 +1,7 @@
+/**
+ * Match a complete local AD CS enrollment rule across CA, template, names and key algorithm.
+ * The production enrollment executor must not combine partial permissions from different
+ * rules. CA/template-only entries remain valid for read-only preflight, not enrollment. */
 "use strict";
 const ZONE=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
 function normalizeRuleConstraints(rule,label="AD CS enrollment rule") {

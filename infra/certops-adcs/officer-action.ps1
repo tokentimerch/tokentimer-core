@@ -1,3 +1,8 @@
+<#
+Disposable lab CA officer action for an exact owned request/CN/requester. Approve/deny/revoke use
+actual native CA state; revocation resolves the real serial number. Called by AD CS E2E helpers with
+the temporary lab officer credential.
+#>
 param([Parameter(Mandatory)][ValidateRange(1,4294967295)][long]$RequestId,
   [Parameter(Mandatory)][ValidateSet('approve','deny','revoke')][string]$Action,
   [Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName)

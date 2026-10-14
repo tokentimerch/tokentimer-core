@@ -1,4 +1,9 @@
 "use strict";
+/* Installed Windows SYSTEM-agent certificate E2E, invoked by the trusted Windows ACME workflow.
+ * Owns the SCM service, protected config, local IIS fixtures and genuine API jobs; public Pebble
+ * DNS/CA material and independent TLS prove issuance/renewal. Cleanup preserves only bounded
+ * public evidence.
+ */
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");

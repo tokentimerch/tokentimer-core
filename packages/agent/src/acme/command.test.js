@@ -1,3 +1,7 @@
+/**
+ * Regression coverage for the production ACME runner's output bounds and owned-tree abort.
+ * Native child-process cases measure real termination; platform-specific cases keep
+ * their declared prerequisites. These checks do not stand in for the full ACME journey. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os"),cp=require("node:child_process");
 const {execWithoutShell}=require("./command");

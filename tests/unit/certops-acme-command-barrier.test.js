@@ -1,3 +1,7 @@
+/**
+ * Check the owned ACME command barrier used to measure cancellation of an actual child.
+ * These local fixtures test barrier identity and release behavior; the full native
+ * ACME lease-loss journey separately proves public cancellation and certificate custody. */
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),os=require("node:os"),path=require("node:path"),crypto=require("node:crypto"),{spawn}=require("node:child_process");
 const wrapper=path.resolve(__dirname,"../e2e/helpers/certops-acme-command-barrier.js");

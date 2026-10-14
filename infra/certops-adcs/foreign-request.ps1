@@ -1,3 +1,8 @@
+<#
+Create and clean an actual foreign-requester certificate in the disposable forest for native
+retrieval-boundary tests. A run-token receipt and native row identity fence cleanup; revocation uses
+the exact returned certificate serial, never a fabricated RequestID.
+#>
 param([Parameter(Mandatory)][ValidateSet('create','revoke')][string]$Action,
  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId,
  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9-]{36}$')][string]$OwnershipToken,
