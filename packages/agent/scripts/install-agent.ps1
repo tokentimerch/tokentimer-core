@@ -323,7 +323,7 @@ if ($script:Uninstall) {
         Write-Log "No $ServiceName service found; nothing to stop or delete."
     }
     Invoke-Step "Remove-Item -Recurse -Force $AppDir" {
-        if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
+        if (Test-Path -LiteralPath $AppDir) { Remove-Item -LiteralPath $AppDir -Recurse -Force }
     }
     Write-Log ""
     Write-Log "Uninstalled the service and app dir."
@@ -378,7 +378,7 @@ if (($script:ApiUrl + $script:WorkspaceId) -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x
 
 # Match the agent runtime serverUrl gate exactly (src/protocol parseServerUrl):
 # https always ok; plain http only for loopback when --allow-insecure-local-http.
-if (-not (Test-Path $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
+if (-not (Test-Path -LiteralPath $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
 $validateArgs = @($script:ApiUrl)
 if ($script:AllowInsecureLocalHttp) { $validateArgs += "--allow-insecure-local-http" }
 $normalizedApiUrl = & node $ValidateServerUrlJs @validateArgs 2>$null
@@ -388,21 +388,21 @@ if ($LASTEXITCODE -ne 0) {
 $script:ApiUrl = $normalizedApiUrl.Trim()
 
 if (-not [string]::IsNullOrEmpty($script:CaBundle)) {
-    if (-not (Test-Path $script:CaBundle -PathType Leaf)) { Fail "--ca-bundle file not found: $script:CaBundle" }
-    $caBundleContent = Get-Content -Raw $script:CaBundle
+    if (-not (Test-Path -LiteralPath $script:CaBundle -PathType Leaf)) { Fail "--ca-bundle file not found: $script:CaBundle" }
+    $caBundleContent = Get-Content -Raw -LiteralPath $script:CaBundle
     if ($caBundleContent -notmatch "BEGIN CERTIFICATE") { Fail "--ca-bundle contains no PEM certificate block" }
     if ($caBundleContent -match "PRIVATE KEY") {
         Fail "--ca-bundle contains private key material; a CA bundle must hold public certificates only"
     }
 }
 
-if (-not (Test-Path (Join-Path $PackageDir "package.json"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $PackageDir "package.json"))) {
     Fail "agent package.json not found next to this script (expected $PackageDir\package.json); run from an unpacked agent package"
 }
-if (-not (Test-Path (Join-Path $PackageDir "bin\tokentimer-agent.js"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $PackageDir "bin\tokentimer-agent.js"))) {
     Fail "agent entrypoint bin\tokentimer-agent.js not found in $PackageDir"
 }
-if (-not (Test-Path $HostSandboxJs)) { Fail "host sandbox helper not found: $HostSandboxJs" }
+if (-not (Test-Path -LiteralPath $HostSandboxJs)) { Fail "host sandbox helper not found: $HostSandboxJs" }
 
 # Windows-native absolute path validator for --write-path: a drive-letter
 # rooted path (C:\...) or a UNC path (\\server\share\...), no ".." segments.
@@ -424,8 +424,8 @@ function Test-WindowsAbsolutePath {
 
 # Merge --write-paths-file into WritePaths, then validate every path.
 if (-not [string]::IsNullOrEmpty($script:WritePathsFile)) {
-    if (-not (Test-Path $script:WritePathsFile -PathType Leaf)) { Fail "--write-paths-file not found: $script:WritePathsFile" }
-    foreach ($line in Get-Content $script:WritePathsFile) {
+    if (-not (Test-Path -LiteralPath $script:WritePathsFile -PathType Leaf)) { Fail "--write-paths-file not found: $script:WritePathsFile" }
+    foreach ($line in Get-Content -LiteralPath $script:WritePathsFile) {
         $trimmed = $line.Trim()
         if ($trimmed.Length -eq 0 -or $trimmed.StartsWith("#")) { continue }
         $script:WritePaths.Add($trimmed)
@@ -453,7 +453,7 @@ if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
 # engines.node is a single ">=x.y.z <a.b.c" range in this package; a plain
 # regex parse of the lower bound avoids needing node before the node check
 # itself, mirroring install-agent.sh's sed parse.
-$packageJsonText = Get-Content -Raw (Join-Path $PackageDir "package.json")
+$packageJsonText = Get-Content -Raw -LiteralPath (Join-Path $PackageDir "package.json")
 $engineMatch = [regex]::Match($packageJsonText, '"node"\s*:\s*"([^"]*)"')
 if (-not $engineMatch.Success) {
     Fail "could not find engines.node in $PackageDir\package.json"
@@ -511,7 +511,7 @@ function Invoke-PlatformAcl {
             Fail "failed to apply a restricted ACL to $TargetPath (kind=$Kind)"
         }
     } finally {
-        Remove-Item -Force -ErrorAction SilentlyContinue $scriptPath
+        Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -782,7 +782,7 @@ if (-not $script:DryRun) {
 
 $script:AppStaging = "$AppDir.staging.$PID"
 $script:AppPrevious = "$AppDir.previous.$PID"
-$script:IsUpgrade = (Test-Path $AppDir)
+$script:IsUpgrade = (Test-Path -LiteralPath $AppDir)
 
 if ($script:DryRun) {
     Write-Host "[dry-run] copy $PackageDir into $($script:AppStaging) (excluding node_modules, .git), then atomically swap into $AppDir"
@@ -846,10 +846,10 @@ $configPath = Join-Path $StateDir "config.json"
 $caBundleDest = ""
 if (-not [string]::IsNullOrEmpty($script:CaBundle)) {
     $caBundleDest = Join-Path $StateDir "ca-bundle.pem"
-    Invoke-Step "copy $($script:CaBundle) to $caBundleDest" { Copy-Item -Force $script:CaBundle $caBundleDest }
+    Invoke-Step "copy $($script:CaBundle) to $caBundleDest" { Copy-Item -LiteralPath $script:CaBundle -Destination $caBundleDest -Force }
 }
 
-if ((Test-Path $configPath) -and -not $script:DryRun) {
+if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     Write-Log "Existing $configPath found; leaving it untouched (delete it to re-generate)."
 } elseif ($script:DryRun) {
     $caNote = if ($caBundleDest) { " caBundlePath=$caBundleDest" } else { "" }
@@ -975,7 +975,7 @@ $quotedEntry = '"' + (Join-Path $AppDir "bin\tokentimer-agent.js") + '"'
 # selects which of the two binaries this OS can execute.
 $hostArchTag = $arch.ToLowerInvariant()
 $serviceHostExe = Join-Path $AppDir "bin\tokentimer-agent-host-$hostArchTag.exe"
-if (-not $script:DryRun -and -not (Test-Path $serviceHostExe)) {
+if (-not $script:DryRun -and -not (Test-Path -LiteralPath $serviceHostExe)) {
     Fail (
         "service host binary not found at $serviceHostExe; the staged app dir looks incomplete " +
         "or was not built with 'pnpm run build:windows-service-host' before packaging"
@@ -1063,10 +1063,10 @@ try {
 
 $healthy = Test-ServiceHealthy -TimeoutSeconds 20
 
-if (-not $healthy -and $script:IsUpgrade -and (Test-Path $script:AppPrevious)) {
+if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:AppPrevious)) {
     Write-Log "Health check failed after upgrade; rolling back to the previous version."
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force $AppDir
+    Remove-Item -LiteralPath $AppDir -Recurse -Force
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
     $rollbackBinPath = $binPath
     Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $rollbackBinPath -DisplayName $ServiceDisplayName
@@ -1075,13 +1075,13 @@ if (-not $healthy -and $script:IsUpgrade -and (Test-Path $script:AppPrevious)) {
     # The credential file's ACL must be re-asserted after rollback, not
     # inherited from whatever the failed install left behind.
     $credentialPath = Join-Path $StateDir "credential"
-    if (Test-Path $credentialPath) {
+    if (Test-Path -LiteralPath $credentialPath) {
         Invoke-PlatformAcl -TargetPath $credentialPath -Kind "file"
     }
     Fail "upgrade failed its post-install health check and was rolled back to the previous version; the agent credential and configuration were preserved and the credential file's ACL was re-asserted"
 }
 
-if (Test-Path $script:AppPrevious) { Remove-Item -Recurse -Force $script:AppPrevious }
+if (Test-Path -LiteralPath $script:AppPrevious) { Remove-Item -LiteralPath $script:AppPrevious -Recurse -Force }
 
 if (-not $healthy) {
     Fail "the $ServiceName service did not reach the Running state within 20 seconds; check 'Get-Service $ServiceName' and the agent's own logs"

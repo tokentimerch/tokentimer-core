@@ -49,3 +49,8 @@ test("every registered API suite has explicit skip ownership without qualifying 
   assert.equal(environmentFor({ file: "tests/e2e/unregistered-fixture.test.js", name: "unknown fixture", reason: "no-host" }), "prerequisite-review");
   assert.equal(environmentFor({ ...sites[0], reason: "unimplemented" }), "unsupported-feature");
 });
+
+test("literal installer filesystem prerequisite routes to actual Windows supporting step",()=>{
+ const site={file:"packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",line:1,name:"actual installer filesystem branches preserve literal brackets and wildcard siblings",kind:"dynamic",reason:"no-host"};
+ const result=generate([site]).sites[0];assert.equal(result.environment,"windows-powershell-filesystem");assert.equal(result.workflow,".github/workflows/certops-windows-e2e.yml");assert.equal(result.workflowStatus,"file-selected-not-qualified");assert.equal(result.executionStatus,"not-qualified");
+});

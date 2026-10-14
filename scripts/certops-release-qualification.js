@@ -231,6 +231,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-installed-handoff").verifyProof(native[0].nativeInstalledStateHandoff);
           require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(native[0].nativeWindowsKeyReuseRefusal);
           require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(native[0].nativeInstalledIisRefusal);
+          require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(native[0].nativeInstalledPaths);
         }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);

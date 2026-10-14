@@ -159,3 +159,5 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [IPv6 SNI shadow and rollback](windows/ipv6-sni-shadow-rollback.md): concrete IPv6 native failure/recovery with a separate preserved IPv4 sibling; native execution pending.
 
 - [IPv6 wildcard shadow and rollback](windows/ipv6-wildcard-shadow-rollback.md): separate [::] native scope and both-stack isolation prerequisites; native execution pending.
+
+- [Installed Unicode paths](windows/installed-unicode-paths.md): exact native SCM/Node/config paths with spaces, Unicode and literal brackets, actual public signed issuance and CNG/IIS/trusted TLS. Historical migration runs first in a separate ASCII supporting root. Native execution remains pending.

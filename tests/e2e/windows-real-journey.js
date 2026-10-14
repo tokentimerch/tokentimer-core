@@ -39,7 +39,17 @@ async function fetchPem(endpoint) {
   });
 }
 
-module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot, runNamedScenario }) {
+module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot, runNamedScenario, historicalSupportingOnly = false }) {
+  if (historicalSupportingOnly || process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE) {
+    assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048", "rsa-2048", "Historical supporting upgrade is limited to RSA2048");
+  }
+  if (process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE && !historicalSupportingOnly) {
+    // Fully drain the historical ASCII-root supporting migration before the
+    // mandatory current-candidate Unicode-root journey. Never rewrite old bytes.
+    return require("./helpers/certops-windows-installed-paths").runHistoricalThenCurrent(
+      (supporting) => qualifyWindows({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot, runNamedScenario, historicalSupportingOnly: supporting }),
+    );
+  }
   const keyProfiles = { "rsa-2048": { keyAlgorithm: "rsa", keySize: 2048 }, "rsa-3072": { keyAlgorithm: "rsa", keySize: 3072 }, "rsa-4096": { keyAlgorithm: "rsa", keySize: 4096 }, "ec-p256": { keyAlgorithm: "ecdsa", keySize: 256 }, "ec-p384": { keyAlgorithm: "ecdsa", keySize: 384 } };
   const keyProfile = keyProfiles[process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"];
   assert.ok(keyProfile, "unknown Windows qualification key profile");
@@ -57,7 +67,12 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const dnsEndpoint = new URL(process.env.CERTOPS_PEBBLE_DNS_API);
   assert.equal(caEndpoint.protocol, "https:"); assert.equal(dnsEndpoint.protocol, "http:");
   for (const endpoint of [caEndpoint, dnsEndpoint]) assert.ok(["localhost", "127.0.0.1"].includes(endpoint.hostname));
-  const workDir = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP, "certops-windows-journey-"));
+  const installedPaths = require("./helpers/certops-windows-installed-paths");
+  const installedPathReceipt = installedPaths.createOwnedRoot(process.env.RUNNER_TEMP, historicalSupportingOnly);
+  const workDir = installedPathReceipt.root;
+  let installedPathProof;
+  const installedPathProofPath=path.join(repoRoot,"qualification-results",`windows-installed-paths-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(installedPathProofPath),false,"Refuse stale Unicode installed-path proof");
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
   let outputPrivacy, keyReuseRefusalProof, installedIisRefusalProof;
   const ownedIisRefusalShadows=[];
@@ -146,7 +161,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       const name = `tokentimer-agent-host-${arch}.exe`;
       publicPackageEvidence.helperDigests[name] = crypto.createHash("sha256").update(fs.readFileSync(path.join(candidateRoot, "bin", name))).digest("hex");
     }
-    const reportDirectory = path.join(repoRoot, "qualification-results"); fs.mkdirSync(reportDirectory, { recursive: true });
+    const reportDirectory = path.join(repoRoot, "qualification-results", ...(historicalSupportingOnly ? ["historical-supporting-rsa-2048"] : []));
+    if (historicalSupportingOnly) { assert.equal(fs.existsSync(reportDirectory), false, "Refuse prior historical supporting output directory"); fs.mkdirSync(reportDirectory, { recursive: false }); }
+    else fs.mkdirSync(reportDirectory, { recursive: true });
     fs.writeFileSync(path.join(reportDirectory, `windows-candidate-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`), JSON.stringify(publicPackageEvidence));
     const installerSource = fs.readFileSync(path.join(candidateRoot, "scripts/install-agent.ps1"), "utf8");
     const fixedRoot = '$InstallRoot = "C:\\ProgramData\\TokenTimerAgent"';
@@ -241,6 +258,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       return { werPolicyPreserved:true,schedulerHistoryPreserved:true, distinctVersionObserved:true, credentialPreserved:true, configurationPreserved:true, signingKeyPinPreserved:true, sameAgentIdentity:true, authenticatedCandidateHeartbeat:true, candidateHelperActivated:true };
       } });
     }
+    if (historicalSupportingOnly) { assert.ok(historicalEvidence, "Historical subrun requires verified historical bytes"); return; }
     await require("./windows-adoption-retention-journey")({ pool, baseUrl, workspaceId, agentId, configDir, workDir, repoRoot, domain: adoptionDomain, keyProfile, caEndpoint: caEndpoint.href, caRoots: roots.map(root => root.pem), ps, command });
     publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl);
     const publicAdmission = require("./helpers/certops-windows-public-issuance");
@@ -261,6 +279,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, job.id])).rows.length, "agent result evidence must persist");
     publicIssuanceFacts.nativeJobSucceeded = true;
     publicIssuanceFacts.nativeCngIisTrustedTlsVerified = true;
+    installedPathProof = await runNamedScenario(installedPaths.scenarioName, () => installedPaths.qualifyInstalledPaths({ receipt: installedPathReceipt, configDir, candidateRoot, ps, pool, workspaceId, jobId: job.id, agentId, publicIssuanceFacts }));
     const credentialFile = path.join(configDir, "credential");
     for (const protectedPath of [configDir, credentialFile]) {
       assert.equal(ps(`$a=Get-Acl -LiteralPath '${protectedPath.replace(/'/g, "''")}'; if (!$a.AreAccessRulesProtected) { throw 'Inherited service state ACL' }; foreach ($r in $a.Access) { if ($r.AccessControlType -eq 'Allow') { $sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; if ($sid -notin @('S-1-5-18','S-1-5-32-544')) { throw 'Unexpected service state trustee' } } }; 'restricted'`),
@@ -659,6 +678,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     journeyFailure = error;
     throw error;
   } finally {
+    // Refuse all public/native cleanup after an owned-root replacement.
+    installedPaths.assertOwnedRoot(installedPathReceipt);
     // Unknown signed work or shadow ownership must preserve certificate/key,
     // public job and recovery files before any broad parent cleanup.
     require("./helpers/certops-windows-installed-iis-refusal").assertCleanupSafe(ownedIisRefusalShadows);
@@ -708,7 +729,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if (publicSession) await cleanup(async () => { assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM certificate_jobs WHERE requested_by_user_id=$1",[publicSession.userId])).rows[0].count,0,"Retain owned actor until all requesting jobs are removed"); await publicSession.cleanup(); if (publicIssuanceFacts) publicIssuanceFacts.ownedActorCleanup = true; });
     if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
-    if (!journeyFailure && errors.length === 0) {
+    if (!historicalSupportingOnly && !journeyFailure && errors.length === 0) {
+      installedPaths.verifyProof(installedPathProof);
+      fs.writeFileSync(installedPathProofPath, JSON.stringify(installedPathProof), { flag: "wx" });
       require("./helpers/certops-windows-installed-iis-refusal").verifyProof(installedIisRefusalProof);fs.writeFileSync(installedIisRefusalProofPath,JSON.stringify(installedIisRefusalProof),{flag:"wx"});
       require("./helpers/certops-windows-key-reuse-refusal").verifyProof(keyReuseRefusalProof);fs.writeFileSync(reuseProofPath,JSON.stringify(keyReuseRefusalProof),{flag:"wx"});
       require("./helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(publicIssuanceFacts);

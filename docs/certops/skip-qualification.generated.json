@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "windows-powershell-filesystem": {
+      "capabilities": [
+        "windows",
+        "powershell",
+        "owned-temporary-filesystem"
+      ],
+      "owner": "Windows installer path supporting controls",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "core-exclusive-scheduler-api": {
       "capabilities": [
         "postgres",
@@ -96,6 +106,19 @@
       "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": ".github/workflows/certops-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
+      "id": "75191f12f5ef96e1487a",
+      "file": "packages/agent/scripts/host/windows-installed-paths-filesystem.test.js",
+      "line": 14,
+      "name": "actual installer filesystem branches preserve literal brackets and wildcard siblings",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "windows-powershell-filesystem",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
       "workflowStatus": "file-selected-not-qualified",
       "executionStatus": "not-qualified",
       "classificationStatus": "candidate-needs-review"

@@ -18,7 +18,7 @@ async function main() {
   fs.mkdirSync("qualification-results", { recursive: true });
   await withPebble(async (fixtureEnv) => {
     const report = `qualification-results/windows-real-${keyProfile}.jsonl`;
-    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 1200000, env: { ...process.env, ...fixtureEnv, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_WINDOWS_REQUIRED: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REPORT_SCOPE: scope } });
+    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 1680000, env: { ...process.env, ...fixtureEnv, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_WINDOWS_REQUIRED: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REPORT_SCOPE: scope } });
     assert.equal(result.status, 0, "Windows installed-agent journey failed");
     const adoption = JSON.parse(fs.readFileSync(`qualification-results/windows-adoption-${keyProfile}.json`, "utf8"));
     assert.equal(adoption.suite, "windows-adoption-retention-real");
@@ -50,13 +50,15 @@ async function main() {
       require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(secondRename.nativeSecondRename);
     }
     if (process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE) {
-      const upgrade=JSON.parse(fs.readFileSync("qualification-results/windows-source-upgrade.json","utf8"));
+      const upgrade=JSON.parse(fs.readFileSync("qualification-results/historical-supporting-rsa-2048/windows-source-upgrade.json","utf8"));
       assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);
       require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(upgrade);
     }
     verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
     const journeyEvent=fs.readFileSync(report,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.name===journey);
     require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(journeyEvent.windowsPublicIssuance);
+    require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(journeyEvent.nativeInstalledPaths);
+    require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(journeyEvent.nativeInstalledIisRefusal);
     require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(journeyEvent.nativeWindowsKeyReuseRefusal);
     console.log("Windows installed-agent qualification report verified");
   });

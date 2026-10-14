@@ -250,6 +250,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -287,7 +288,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -301,6 +305,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -338,7 +343,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -352,6 +360,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -389,7 +398,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -403,6 +415,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -440,7 +453,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -454,6 +470,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -491,7 +508,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -568,6 +588,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -605,7 +626,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -619,6 +643,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -656,7 +681,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -670,6 +698,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -707,7 +736,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -721,6 +753,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -758,7 +791,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {
@@ -772,6 +808,7 @@
       },
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
       "requiredTests": [
+        "windows-installed-unicode-spaces-literal-brackets",
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
@@ -809,7 +846,10 @@
         "apps/api/services/certops/jobs.js",
         "apps/api/services/certops/agentDispatch.js",
         "apps/api/services/certops/workspaceKillSwitch.js",
-        "packages/agent/src/windows-iis/index.js"
+        "packages/agent/src/windows-iis/index.js",
+        "tests/e2e/helpers/certops-windows-installed-paths.js",
+        "scripts/certops-windows-e2e.js",
+        "packages/agent/scripts/install-agent.ps1"
       ]
     },
     {

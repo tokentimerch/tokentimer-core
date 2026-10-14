@@ -190,6 +190,10 @@ def elapsed_proof():
             "configuredRetentionHours": 24, "fullRetentionWindowQualified": False, "waitedMonotonicMs": 420000}
 
 
+def installed_paths_proof():
+    return {"scope": "installed-system-agent-unicode-spaces-literal-brackets-root", **dict.fromkeys(("ownedRootIdentityPreserved", "exactScmArgumentPaths", "actualSystemHostAndChild", "exactServiceConfigurationPath", "candidateEntryAndHostBytes", "actualSignedIssuance", "claimBoundResultEvidence", "actualCngIisTrustedTls"), True)}
+
+
 def installed_iis_refusal_proof():
     return json.loads('{"scope":"installed-agent-public-standalone-iis-deploy-refusal","jobId":"11111111-1111-1111-1111-111111111111","claimId":"22222222-2222-2222-2222-222222222222","genuinePriorIssuance":true,"publicDeployAdmitted":true,"sameInstalledAgentClaimedOnce":true,"specificUnsupportedTargetFailure":true,"claimBoundFailureAudit":true,"nativeInventoryAndCustodyUnchanged":true,"bothBindingsAndTrustedTlsUnchanged":true,"actualAcmeClientNotInvoked":true,"dnsTrafficUnchanged":true,"credentialAndPinUnchanged":true,"exactOwnedShadowRemoved":true}')
 
@@ -586,7 +590,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))
@@ -1415,6 +1419,26 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(ValueError): collector.installed_iis_refusal_fields(missing)
         self.assertEqual(collector.installed_iis_refusal_fields({**event, "scope": "real-agent-acme-filesystem"}), {})
         self.assertEqual(collector.installed_iis_refusal_fields({**event, "type": "test:fail"}), {})
+
+
+    def test_installed_unicode_paths_projection_requires_actual_facts_and_strips_private_paths(self):
+        proof = installed_paths_proof()
+        for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384"):
+            event = {"scope": "real-agent-windows-acme-iis/" + profile, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "nativeInstalledPaths": {**proof, "rawNativePath": "sentinel"}}
+            self.assertEqual(collector.installed_paths_fields(event), {"nativeInstalledPaths": proof})
+            self.assertNotIn("sentinel", json.dumps(collector.installed_paths_fields(event)))
+            for field in proof:
+                missing = json.loads(json.dumps(event)); del missing["nativeInstalledPaths"][field]
+                with self.assertRaises(ValueError): collector.installed_paths_fields(missing)
+                for invalid in (False, 1, "true", None):
+                    wrong = json.loads(json.dumps(event)); wrong["nativeInstalledPaths"][field] = invalid
+                    with self.assertRaises(ValueError): collector.installed_paths_fields(wrong)
+            for invalid in (None, [], "native"):
+                with self.assertRaises(ValueError): collector.installed_paths_fields({**event, "nativeInstalledPaths": invalid})
+            missing = dict(event); del missing["nativeInstalledPaths"]
+            with self.assertRaises(ValueError): collector.installed_paths_fields(missing)
+        self.assertEqual(collector.installed_paths_fields({**event, "scope": "real-agent-acme-filesystem"}), {})
+        self.assertEqual(collector.installed_paths_fields({**event, "type": "test:fail"}), {})
 
 
 if __name__ == "__main__":

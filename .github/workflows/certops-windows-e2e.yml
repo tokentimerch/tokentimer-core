@@ -73,6 +73,8 @@ jobs:
           go-version-file: packages/agent/windows-service-host/go.mod
           cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Verify literal installer filesystem paths without native service mutation
+        run: node --test packages/agent/scripts/host/windows-installed-paths-filesystem.test.js scripts/certops-windows-installed-paths.test.js
       - name: Checkout immutable historical release source
         if: inputs.historical_upgrade && matrix.key_profile == 'rsa-2048'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -158,13 +160,13 @@ jobs:
           $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $action = New-ScheduledTaskAction -Execute $powershellPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $env:GITHUB_WORKSPACE
           $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-          # Native test: 18min; producer: 20min. Leave three minutes for producer
+          # Native test: 26min; producer: 28min. Leave three minutes for producer
           # finalization before receipt timeout, then one minute before task termination.
-          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 24)
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 32)
           Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
           try {
             Start-ScheduledTask -TaskName $taskName
-            $deadline = [DateTime]::UtcNow.AddMinutes(23)
+            $deadline = [DateTime]::UtcNow.AddMinutes(31)
             while (!(Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 2 }
             if (!(Test-Path -LiteralPath $receipt)) { throw 'SYSTEM qualification exceeded its deadline' }
             if ((Get-Content -LiteralPath $receipt -Raw).Trim() -ne '0') { throw 'SYSTEM installed-agent qualification failed; inspect sanitized report' }
@@ -190,6 +192,7 @@ jobs:
           name: installed-windows-agent-acme-iis-${{ matrix.windows_server }}-${{ matrix.key_profile }}
           path: |
             qualification-results/windows-real-${{ matrix.key_profile }}.jsonl
+            qualification-results/windows-installed-paths-${{ matrix.key_profile }}.json
             qualification-results/windows-installed-handoff-${{ matrix.key_profile }}.json
             qualification-results/windows-adoption-${{ matrix.key_profile }}.json
             qualification-results/windows-output-privacy-${{ matrix.key_profile }}.json
@@ -197,7 +200,7 @@ jobs:
             qualification-results/windows-two-renewals-${{ matrix.key_profile }}.json
             qualification-results/windows-certificate-dry-run.json
             qualification-results/windows-candidate-${{ matrix.key_profile }}.json
-            qualification-results/windows-source-upgrade.json
+            qualification-results/historical-supporting-rsa-2048/windows-source-upgrade.json
             qualification-results/windows-first-rename-refusal.json
             qualification-results/windows-second-rename-activation.json
           if-no-files-found: error

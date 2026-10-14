@@ -151,3 +151,58 @@ test("installed IIS sidecar reporter validates real public file lookup for every
     fs.rmSync(root, { recursive: true });
   }
 });
+
+test("installed Unicode paths sidecar reporter validates real public file lookup for every key profile", () => {
+  const h = require("../tests/e2e/helpers/certops-windows-installed-paths"),
+    { installedPathsProof } = require("./certops-stack-reporter"),
+    base = path.resolve(__dirname, "../.build");
+  fs.mkdirSync(base, { recursive: true });
+  const root = fs.mkdtempSync(path.join(base, "unicode-paths-reporter-"));
+  assert.ok(
+    path.relative(base, root) && !path.relative(base, root).startsWith(".."),
+  );
+  fs.mkdirSync(path.join(root, "qualification-results"));
+  const proof = {
+      scope: h.SCOPE,
+      ...Object.fromEntries(h.FLAGS.map((flag) => [flag, true])),
+    },
+    name =
+      "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence";
+  try {
+    for (const profile of [
+      "rsa-2048",
+      "rsa-3072",
+      "rsa-4096",
+      "ec-p256",
+      "ec-p384",
+    ]) {
+      const scope = `real-agent-windows-acme-iis/${profile}`,
+        file = path.join(
+          root,
+          "qualification-results",
+          `windows-installed-paths-${profile}.json`,
+        );
+      assert.throws(() => installedPathsProof(scope, name, root));
+      fs.writeFileSync(file, JSON.stringify(proof), { flag: "wx" });
+      assert.deepEqual(installedPathsProof(scope, name, root), proof);
+      for (const change of [
+        { actualSystemHostAndChild: false },
+        { scope: "direct-executor" },
+        { privateCngReceipt: "must-not-qualify" },
+      ]) {
+        fs.writeFileSync(file, JSON.stringify({ ...proof, ...change }));
+        assert.throws(() => installedPathsProof(scope, name, root));
+      }
+      fs.unlinkSync(file);
+    }
+    assert.equal(
+      installedPathsProof("real-agent-acme-filesystem", name, root),
+      undefined,
+    );
+    assert.throws(() =>
+      installedPathsProof("real-agent-windows-acme-iis/unknown", name, root),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true });
+  }
+});
