@@ -91,6 +91,8 @@ async function runOperatorCreatedAmbiguity(session) {
     proof.caRequestsAfterAmbiguousRecovery = 2;
     const audits = (await query("SELECT actor_user_id,metadata FROM audit_events WHERE workspace_id=$1 AND action='certops.enrollment.recovery_requested' AND metadata->>'enrollmentId'=$2", [fixture.workspaceId, id])).rows; assert.equal(audits.length, 1); assert.equal(audits[0].metadata.acknowledgeUnknownEffect, true); assert.equal(String(audits[0].actor_user_id), String(fixture.userId));
   }, { evidenceLevel: "real-host", oracle: "actual zero-request fault, two explicitly operator-created same-CSR CA leaves, real lease/grace and public recovery refuse two matches without another CA request, key loss or TLS mutation" });
+  const foreignAttempt=context.foreignReconcileActor ? await context.foreignReconcileActor.beforeExplicit(session) : null;
+  if(foreignAttempt){assert.equal(foreignAttempt.additionalProposalCount,1);assert.match(foreignAttempt.failedJobId,UUID);assert.match(foreignAttempt.foreignRequestId,/^[1-9][0-9]{0,9}$/);}
   await gate.scenario(REQUIRED_SCENARIOS[1], async () => {
     const selected = requests[0];
     if(context.reconcileActor)await context.reconcileActor.reconcileEnrollment(id, selected.requestId);
@@ -105,7 +107,7 @@ async function runOperatorCreatedAmbiguity(session) {
     assert.equal((await peer(port, domain, tlsAuthority(live.authority))).fingerprint256, selected.leaf.fingerprint256); await preserveUnrelatedTls();
     const evidence = (await query("SELECT e.metadata FROM certificate_evidence e JOIN certificate_jobs j ON j.workspace_id=e.workspace_id AND j.id=e.job_id WHERE e.workspace_id=$1 AND e.job_id=$2 AND e.claim_id=j.claim_id AND e.evidence_type='validation.passed' AND e.metadata->>'step'='verify'", [fixture.workspaceId, explicit.jobId])).rows;
     assert.ok(evidence.some(row => String(row.metadata.fingerprintSha256).replace(/:/g, "").toLowerCase() === selected.fingerprint));
-    const audits = (await query("SELECT actor_user_id,metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ENROLLMENT_RECONCILE_PROPOSED' AND metadata->>'enrollmentId'=$2", [fixture.workspaceId, id])).rows; assert.equal(audits.length, 1); assert.equal(String(audits[0].metadata.requestId), selected.requestId); assert.equal(String(audits[0].actor_user_id), String(fixture.userId));
+    const audits = (await query("SELECT actor_user_id,metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ENROLLMENT_RECONCILE_PROPOSED' AND metadata->>'enrollmentId'=$2", [fixture.workspaceId, id])).rows; assert.equal(audits.length, foreignAttempt ? 2 : 1);const selectedAudits=audits.filter(row=>String(row.metadata.requestId)===selected.requestId);assert.equal(selectedAudits.length,1);assert.equal(String(selectedAudits[0].actor_user_id),String(fixture.userId));if(foreignAttempt){const foreignAudits=audits.filter(row=>String(row.metadata.requestId)===foreignAttempt.foreignRequestId);assert.equal(foreignAudits.length,1);assert.equal(String(foreignAudits[0].actor_user_id),String(fixture.userId));}
     for (const request of requests) { const actual = issued(request.fingerprint); assert.equal(actual.subjectRequestCount, 2); assert.equal(String(actual.requestId), request.requestId); }
     proof.caRequestsAfterExplicitRecovery = 2; const orphan = await job(created.body.jobId); assert.equal(orphan.status, "orphaned_unknown_effect"); assert.equal(orphan.needs_operator_reconciliation, true);
   }, { evidenceLevel: "real-host", oracle: "public operator RequestId proposal plus real-now signed continuation validates and installs only the selected actual same-CSR CA leaf with unchanged protected key, claim-bound evidence and distinct action audit" });
@@ -125,5 +127,6 @@ async function qualifyOperatorCreatedAmbiguity(context) {
   // The original fixture verifies its complete native proof only AFTER fault
   // restoration. Browser evidence cannot finish on an intermediate assertion.
   if(context.reconcileActor)await context.reconcileActor.observeNativeCompletion(context.gate.report.nativeUncertainOperatorAmbiguity);
+  if(context.foreignReconcileActor)await context.foreignReconcileActor.observeNativeCompletion(context.gate.report.nativeUncertainOperatorAmbiguity);
 }
 module.exports = { SCOPE, FLAGS, REQUIRED_SCENARIOS, REQUIRED_SOURCES, verifyProof, runOperatorCreatedAmbiguity, qualifyOperatorCreatedAmbiguity };

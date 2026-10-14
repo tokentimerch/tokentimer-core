@@ -937,7 +937,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1067,7 +1071,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1197,7 +1205,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1327,7 +1339,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1457,7 +1473,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1587,7 +1607,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1717,7 +1741,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1847,7 +1875,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -1977,7 +2009,11 @@
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
         "scripts/load-root-env.js",
-        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js"
+        "tests/e2e/helpers/certops-adcs-pending-ca-key-change.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
       ]
     },
     {
@@ -2640,7 +2676,12 @@
         "apps/worker/src/db.js",
         "apps/worker/src/logger.js",
         "apps/api/services/certops/jobSigning.js",
-        "scripts/load-root-env.js"
+        "scripts/load-root-env.js",
+        "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
+        "packages/agent/src/keys/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "apps/api/services/certops/enrollmentLifecycle.js"
       ]
     },
     {

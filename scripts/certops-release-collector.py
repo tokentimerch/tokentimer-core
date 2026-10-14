@@ -412,6 +412,42 @@ def journal_acl_fields(proof):
     return {"scope": proof["scope"], "installedServiceQualified": False, "nativeCngQualified": False, **dict.fromkeys(fields, True)}
 
 
+def public_foreign_spki_fields(proof):
+    """Bounded public projection of actual signed foreign-key candidate refusal."""
+    flags = ('ownedRequestRegisteredBeforeSubmit', 'softwarePrivateKeyRemovedBeforeSubmit', 'sameActualCaAndSystemRequester', 'sameAuthorizedSanAndTemplate', 'differentOwnedCnAndSpki', 'actualPublicProposalAccepted', 'actualSignedSpkiMismatchRefusal', 'originalUncertainJournalAndWatermarkPreserved', 'originalCngPossessionPreserved', 'noForeignCertificateAccepted', 'servingSiblingTrustedTlsPreserved', 'noAdditionalCaSubmissionOnRefusal', 'exactUnusedForeignRequestRevoked', 'matchingCandidatePositiveRecovery', 'cleanupOwnershipResolved')
+    if not isinstance(proof, dict) or proof.get("scope") != 'public-uncertain-request-rejects-owned-same-san-foreign-spki-before-positive-recovery' or any(proof.get(key) is not True for key in flags):
+        raise ValueError("Incomplete public foreign SPKI evidence")
+    result = {"scope": proof["scope"], **dict.fromkeys(flags, True)}
+    for key in ("enrollmentId", "failedJobId"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+            raise ValueError("Invalid public foreign SPKI identity")
+        result[key] = value
+    if result["enrollmentId"] == result["failedJobId"]:
+        raise ValueError("Repeated public foreign SPKI identity")
+    for key in ("foreignRequestId", "selectedRequestId"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", value) or int(value) > 0xffffffff:
+            raise ValueError("Invalid public foreign SPKI request")
+        result[key] = value
+    if result["foreignRequestId"] == result["selectedRequestId"]:
+        raise ValueError("Foreign request cannot be installed")
+    for key in ("foreignFingerprint", "selectedFingerprint", "foreignSpkiSha256", "originalSpkiSha256", "foreignCsrSha256"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("Invalid public foreign SPKI digest")
+        result[key] = value
+    if result["foreignFingerprint"] == result["selectedFingerprint"] or result["foreignSpkiSha256"] == result["originalSpkiSha256"]:
+        raise ValueError("Foreign and original native identities must differ")
+    floor = proof.get("reconcileSearchFrom")
+    if type(floor) is not int or not 1 <= floor <= 0xffffffff or int(result["foreignRequestId"]) < floor:
+        raise ValueError("Invalid original reconciliation floor")
+    if type(proof.get("foreignSubjectRequestCount")) is not int or proof["foreignSubjectRequestCount"] != 1 or type(proof.get("originalSubjectRequestCount")) is not int or proof["originalSubjectRequestCount"] != 2:
+        raise ValueError("Invalid actual foreign/original request counts")
+    result.update(reconcileSearchFrom=floor, foreignSubjectRequestCount=1, originalSubjectRequestCount=2)
+    return result
+
+
 def pending_ca_key_change_fields(proof):
     """Actual pending refusal after CA rekey plus fresh same-issuer recovery; public projection only."""
     flags = ('actualPendingBeforeRekey', 'pendingNativeSignatureVerified', 'actualSingleNewKeyRekey', 'originalSnapshotNeverRepinned', 'signedContinuationRefusedChangedKey', 'oldUnacceptedKeyRemoved', 'oldRequestDeniedByOwnedOfficer', 'oldRequestNeverResubmitted', 'predecessorCustodyAndTlsPreserved', 'sameIssuerPublicReconfirmed', 'freshSnapshotAndCngKey', 'freshActualPendingApproved', 'freshSignedNativeInstallation', 'claimBoundNativeEvidence', 'nativeIisAndTrustedTls', 'registeredCleanupResolved')
@@ -1310,6 +1346,12 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if ambiguity["selectedRequestId"] == ambiguity["unusedRequestId"]:
                 raise ValueError("Native ambiguity selected request cannot be revoked")
             result["nativeUncertainOperatorAmbiguity"] = bounded_ambiguity
+            public_foreign = public_foreign_spki_fields(value.get("nativePublicForeignSpki"))
+            expected_foreign = {"enrollmentId": bounded_ambiguity["enrollmentId"], "originalSpkiSha256": bounded_ambiguity["csrSpkiSha256"], "reconcileSearchFrom": bounded_ambiguity["reconcileSearchFrom"], "selectedRequestId": bounded_ambiguity["selectedRequestId"], "selectedFingerprint": bounded_ambiguity["fingerprints"][bounded_ambiguity["requestIds"].index(bounded_ambiguity["selectedRequestId"])]}
+            if any(public_foreign[key] != expected for key, expected in expected_foreign.items()) or public_foreign["foreignRequestId"] in bounded_ambiguity["requestIds"] or public_foreign["failedJobId"] in bounded_ambiguity["jobIds"]:
+                raise ValueError("Public foreign-key refusal must bind actual matching-candidate recovery")
+            result["nativePublicForeignSpki"] = public_foreign
+
             browser = result["nativeBrowserReconcile"]
             expected_browser = {"enrollmentId": bounded_ambiguity["enrollmentId"], "selectedRequestId": bounded_ambiguity["selectedRequestId"], "unusedRequestId": bounded_ambiguity["unusedRequestId"], "selectedFingerprint": bounded_ambiguity["fingerprints"][bounded_ambiguity["requestIds"].index(bounded_ambiguity["selectedRequestId"])], "continuationJobId": bounded_ambiguity["jobIds"][2]}
             if any(browser[key] != expected for key, expected in expected_browser.items()):

@@ -312,7 +312,9 @@
       "adcs-real-background-worker-native-key-cutovers": "real-host",
       "adcs-real-background-worker-profile-and-custody-preservation": "real-host",
       "adcs-real-pending-request-refuses-new-ca-key": "real-host",
-      "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers": "real-host"
+      "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers": "real-host",
+      "adcs-real-public-reconcile-foreign-spki-refused": "real-host",
+      "adcs-real-public-reconcile-foreign-spki-positive-recovery": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -646,7 +648,9 @@
       "adcs-real-browser-job-approval-native-capacity-completion": "real-host",
       "adcs-real-background-worker-natural-generations": "real-host",
       "adcs-real-background-worker-native-key-cutovers": "real-host",
-      "adcs-real-background-worker-profile-and-custody-preservation": "real-host"
+      "adcs-real-background-worker-profile-and-custody-preservation": "real-host",
+      "adcs-real-public-reconcile-foreign-spki-refused": "real-host",
+      "adcs-real-public-reconcile-foreign-spki-positive-recovery": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -2075,7 +2079,9 @@
       "adcs-real-background-worker-native-key-cutovers",
       "adcs-real-background-worker-profile-and-custody-preservation",
       "adcs-real-pending-request-refuses-new-ca-key",
-      "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers"
+      "adcs-real-pending-issuer-reconfirmation-fresh-request-recovers",
+      "adcs-real-public-reconcile-foreign-spki-refused",
+      "adcs-real-public-reconcile-foreign-spki-positive-recovery"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2409,7 +2415,9 @@
       "adcs-real-browser-job-approval-native-capacity-completion",
       "adcs-real-background-worker-natural-generations",
       "adcs-real-background-worker-native-key-cutovers",
-      "adcs-real-background-worker-profile-and-custody-preservation"
+      "adcs-real-background-worker-profile-and-custody-preservation",
+      "adcs-real-public-reconcile-foreign-spki-refused",
+      "adcs-real-public-reconcile-foreign-spki-positive-recovery"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

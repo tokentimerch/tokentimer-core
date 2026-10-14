@@ -156,6 +156,10 @@ def browser_reconcile_proof():
     return {"scope": "browser-requestid-reconcile-real-operator-created-same-csr-ambiguity", "fixtureOrigin": "operator-created-two-real-system-submissions-of-the-same-public-csr", **dict.fromkeys(["actualUncertainRequestIdForm","invalidRequestIdDidNotMutate","exactOwnedRequestIdPosted","exactPublicReconcileAcknowledged","browserAndTrustDrained","nativeSelectedRequestInstalled","nativeSameProtectedMachineKey","nativeClaimBoundVerification","nativeExactReconcileAudit","unusedOwnedRequestRevoked","unusedLeafNeverAccepted","originalOrphanPreserved"], True), "enrollmentId": native["enrollmentId"], "selectedRequestId": native["selectedRequestId"], "unusedRequestId": native["unusedRequestId"], "selectedFingerprint": native["fingerprints"][0], "continuationJobId": native["jobIds"][2], "reconcilePosts": 1, "invalidRequestPosts": 0}
 
 
+def public_foreign_spki_proof():
+    return json.loads('{"scope": "public-uncertain-request-rejects-owned-same-san-foreign-spki-before-positive-recovery", "enrollmentId": "11111111-1111-1111-1111-111111111111", "failedJobId": "55555555-5555-5555-5555-555555555555", "foreignRequestId": "103", "selectedRequestId": "101", "foreignFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "selectedFingerprint": "1111111111111111111111111111111111111111111111111111111111111111", "foreignSpkiSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "originalSpkiSha256": "3333333333333333333333333333333333333333333333333333333333333333", "foreignCsrSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "reconcileSearchFrom": 100, "foreignSubjectRequestCount": 1, "originalSubjectRequestCount": 2, "ownedRequestRegisteredBeforeSubmit": true, "softwarePrivateKeyRemovedBeforeSubmit": true, "sameActualCaAndSystemRequester": true, "sameAuthorizedSanAndTemplate": true, "differentOwnedCnAndSpki": true, "actualPublicProposalAccepted": true, "actualSignedSpkiMismatchRefusal": true, "originalUncertainJournalAndWatermarkPreserved": true, "originalCngPossessionPreserved": true, "noForeignCertificateAccepted": true, "servingSiblingTrustedTlsPreserved": true, "noAdditionalCaSubmissionOnRefusal": true, "exactUnusedForeignRequestRevoked": true, "matchingCandidatePositiveRecovery": true, "cleanupOwnershipResolved": true}')
+
+
 def operator_ambiguity_proof():
     flags = ("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "originalOrphanPreserved", "recoveryPolicyUnchanged", "operatorCreatedSameCsrAmbiguity", "nativeCaOwnershipVerified", "automaticAttachmentRefused", "unacceptedKeyPreserved", "unrelatedTrustedTlsPreserved", "publicExplicitReconcileAudited", "exactSelectedRequestInstalled", "claimBoundVerification", "sameProtectedMachineKeyInstalled", "unusedOwnedRequestRevoked", "unusedLeafNeverAccepted")
     enrollment = "11111111-1111-1111-1111-111111111111"
@@ -908,6 +912,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeCmcBoundaries"] = cmc_proof()
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
         value["nativeUncertainOperatorAmbiguity"] = operator_ambiguity_proof()
+        value["nativePublicForeignSpki"] = {**public_foreign_spki_proof(), "privateTrace": "sentinel"}
         value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
         value["nativeBrowserAdcs"] = browser_adcs_proof()
         value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
@@ -945,6 +950,16 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))
         self.assertEqual(result[0][1]["nativeUncertainOperatorAmbiguity"], operator_ambiguity_proof())
+        self.assertEqual(result[0][1]["nativePublicForeignSpki"], public_foreign_spki_proof())
+        for key in public_foreign_spki_proof():
+            invalid = json.loads(json.dumps(value)); del invalid["nativePublicForeignSpki"][key]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for patch_value in ({"foreignRequestId": "101"}, {"foreignSubjectRequestCount": True}, {"originalSubjectRequestCount": 3}, {"actualSignedSpkiMismatchRefusal": False}, {"selectedFingerprint": "f"*64}, {"failedJobId": operator_ambiguity_proof()["jobIds"][1]}, {"originalSpkiSha256": "f"*64}, {"reconcileSearchFrom": 99}):
+            invalid = json.loads(json.dumps(value)); invalid["nativePublicForeignSpki"].update(patch_value)
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+
         for key, expected in operator_ambiguity_proof().items():
             invalid = json.loads(json.dumps(value))
             del invalid["nativeUncertainOperatorAmbiguity"][key]

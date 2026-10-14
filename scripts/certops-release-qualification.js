@@ -148,6 +148,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-browser-admin-boundary").verifyProof(artifact.report.nativeBrowserAdminBoundary);
           if (artifact.report.nativeBrowserAdminBoundary.enrollmentId !== artifact.report.nativeBrowserAbandon.enrollmentId) throw new Error("Role boundary must bind the genuine abandoned enrollment");
           require("../tests/e2e/helpers/certops-adcs-browser-reconcile").verifyCrossProof(artifact.report.nativeBrowserReconcile, artifact.report.nativeUncertainOperatorAmbiguity);
+          require("../tests/e2e/helpers/certops-adcs-public-foreign-spki").verifyCrossProof(artifact.report.nativePublicForeignSpki, artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-cancel").verifyCrossProof(artifact.report.nativeBrowserCancel, artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-job-approval").verifyCrossProof(artifact.report.nativeBrowserJobApproval, artifact.report.nativeAdcsCapacity);

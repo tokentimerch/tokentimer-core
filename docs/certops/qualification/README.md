@@ -146,6 +146,7 @@ The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separate
 
 - [Pending request across same-key root CA renewal](adcs/pending-same-key-ca-renewal.md): actual pending custody and same-request continuation; native execution pending.
 - [Pending request across CA new-key rekey](adcs/pending-ca-new-key.md): signed frozen-request refusal and same-issuer fresh confirmation/approval/installation; native execution pending.
+- [Public unrelated-SPKI RequestId refusal](adcs/public-foreign-spki.md): actual same-SAN/template issuance, signed candidate refusal, guarded revocation and matching recovery; native execution pending.
 
 - [ARM64 installed agent/API](windows/arm64-installed-agent-api.md): original canonical installer, real signed jobs, file-plan/discovery scope and explicit pinned x64-emulated PostgreSQL; native execution pending.
 
