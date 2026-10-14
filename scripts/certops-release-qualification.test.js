@@ -270,6 +270,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativeForeignSpkiCandidate: foreignSpkiProof(),
     nativeUncertainOperatorAmbiguity: operatorAmbiguityProof(),
     nativePublicForeignSpki: require("./fixtures/certops-adcs-public-foreign-spki.cjs").proof(),
+    nativeRequiredTemplateAttributes: require("./fixtures/certops-adcs-template-required-attributes.cjs").proof(),
     nativeBrowserAdminBoundary: {"scope":"public-manager-viewer-adcs-admin-boundary-not-mounted-admin-withdrawal","enrollmentId":"11111111-1111-1111-1111-111111111111","forbiddenMutations":4,"roleChanges":2,"adminDemotions":0,"mountedAdminWithdrawalQualified":false,"distinctOwnedNonownerActors":true,"noGlobalAdminBypassAssumed":true,"publicManagerViewerManagerTransitions":true,"managerAndViewerUiDenied":true,"bothRolesReconcileAndAbandonForbidden":true,"publicOwnerAdminPatchDemotionRefused":true,"exactOwnerAdminUnchanged":true,"actualUncertainEnrollmentAndJobsUnchanged":true,"nativeCaAndUnacceptedKeyUnchanged":true,"servingNativeCustodyAndTrustedTlsUnchanged":true,"targetCertOpsAuditUnchanged":true,"exactMembershipAudits":true,"managerMembershipRestored":true,"browserAndTrustDrained":true},
     nativeBrowserReconcile: browserReconcileProof(),
     nativeIssuedSanBoundary: issuedSanProof(),
@@ -300,6 +301,9 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   const publicForeign = require("./fixtures/certops-adcs-public-foreign-spki.cjs").proof();
   for (const key of Object.keys(publicForeign)) { const missing=structuredClone(value);delete missing.report.nativePublicForeignSpki[key];assert.ok(verifyMatrix([missing],options).length); }
   for (const patch of [{foreignRequestId:"101"},{failedJobId:operatorAmbiguityProof().jobIds[1]},{selectedFingerprint:"f".repeat(64)},{originalSpkiSha256:"f".repeat(64)},{reconcileSearchFrom:99},{foreignSubjectRequestCount:2},{privateExtra:"sentinel"}]) { const wrong=structuredClone(value);Object.assign(wrong.report.nativePublicForeignSpki,patch);assert.ok(verifyMatrix([wrong],options).length); }
+  const requiredAttrs=require("./fixtures/certops-adcs-template-required-attributes.cjs").proof();
+  for(const key of Object.keys(requiredAttrs)){const wrong=structuredClone(value);delete wrong.report.nativeRequiredTemplateAttributes[key];assert.ok(verifyMatrix([wrong],options).length);}
+  for(const mutate of [v=>v.cases.pop(),v=>v.cases.reverse(),v=>v.cases[0].observedValue=false,v=>v.cases[1].observedValue=0,v=>v.cases[0].exactOriginalAttributesRestored=false,v=>v.cases[0].preflightVerdict="unsafe",v=>v.cases[1].jobId=v.cases[0].jobId,v=>v.privateReceipt="sentinel"]){const wrong=structuredClone(value);mutate(wrong.report.nativeRequiredTemplateAttributes);assert.ok(verifyMatrix([wrong],options).length);}
   const absentPending=structuredClone(value);delete absentPending.report.nativePendingCaRenewal;assert.ok(verifyMatrix([absentPending],options).length);
   const hierarchy = structuredClone(value), hierarchyOptions = structuredClone(options), hierarchySuite = "enterprise-adcs-hierarchy-real";
   delete hierarchy.report.nativePendingCaRenewal; // Root CA mutation is explicitly outside subordinate hierarchy scope.

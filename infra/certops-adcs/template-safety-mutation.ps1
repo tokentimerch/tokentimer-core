@@ -4,7 +4,7 @@ mutation and verifies all values after restoration; used by genuine candidate pr
 enrollment refusal cases, not simulated native output.
 #>
 param([Parameter(Mandatory)][ValidateSet('apply','restore')][string]$Action,
- [Parameter(Mandatory)][ValidateSet('schema-one','application-policy-absent','subject-client-auth','schema-three-algorithm-absent','eku-absent','subject-any-purpose','subject-enrollment-agent','subject-smartcard','subject-pkinit','application-policy-any-purpose','application-policy-client-mixed','minimum-key-absent','template-oid-absent','schema-out-of-range')][string]$CaseId,
+ [Parameter(Mandatory)][ValidateSet('schema-one','application-policy-absent','subject-client-auth','schema-three-algorithm-absent','eku-absent','subject-any-purpose','subject-enrollment-agent','subject-smartcard','subject-pkinit','application-policy-any-purpose','application-policy-client-mixed','minimum-key-absent','template-oid-absent','schema-out-of-range','minimum-key-zero','subject-name-flag-absent')][string]$CaseId,
  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{10}$')][string]$RunId,
  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9-]{36}$')][string]$OwnershipToken)
 $ErrorActionPreference='Stop'
@@ -32,6 +32,8 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
     'subject-client-auth' {$entry.Properties['msPKI-Certificate-Name-Flag'].Value=1;$entry.Properties['pKIExtendedKeyUsage'].Value='1.3.6.1.5.5.7.3.2'}
     'schema-three-algorithm-absent' {$entry.Properties['msPKI-Template-Schema-Version'].Value=3;$entry.Properties['msPKI-RA-Application-Policies'].Clear()}
     'minimum-key-absent' {$entry.Properties['msPKI-Minimal-Key-Size'].Clear()}
+    'minimum-key-zero' {$entry.Properties['msPKI-Minimal-Key-Size'].Value=0}
+    'subject-name-flag-absent' {$entry.Properties['msPKI-Certificate-Name-Flag'].Clear()}
     'template-oid-absent' {$entry.Properties['msPKI-Cert-Template-OID'].Clear()}
     'schema-out-of-range' {$entry.Properties['msPKI-Template-Schema-Version'].Value=17}
     'eku-absent' {$entry.Properties['pKIExtendedKeyUsage'].Clear()}

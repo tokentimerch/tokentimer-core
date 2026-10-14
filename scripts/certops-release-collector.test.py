@@ -160,6 +160,10 @@ def browser_reconcile_proof():
     return {"scope": "browser-requestid-reconcile-real-operator-created-same-csr-ambiguity", "fixtureOrigin": "operator-created-two-real-system-submissions-of-the-same-public-csr", **dict.fromkeys(["actualUncertainRequestIdForm","invalidRequestIdDidNotMutate","exactOwnedRequestIdPosted","exactPublicReconcileAcknowledged","browserAndTrustDrained","nativeSelectedRequestInstalled","nativeSameProtectedMachineKey","nativeClaimBoundVerification","nativeExactReconcileAudit","unusedOwnedRequestRevoked","unusedLeafNeverAccepted","originalOrphanPreserved"], True), "enrollmentId": native["enrollmentId"], "selectedRequestId": native["selectedRequestId"], "unusedRequestId": native["unusedRequestId"], "selectedFingerprint": native["fingerprints"][0], "continuationJobId": native["jobIds"][2], "reconcilePosts": 1, "invalidRequestPosts": 0}
 
 
+def required_template_attribute_proof():
+    return json.loads('{"scope": "actual-ldap-required-template-attribute-refusal-and-exact-native-restoration", "predecessorFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "templateOid": "1.3.6.1.4.1.311.21.8.2", "cases": [{"caseId": "minimum-key-zero", "preflightVerdict": "unreadable", "reason": "template_unreadable", "observedField": "minimalKeySize", "observedValue": 0, "enrollmentId": "00000001-1111-1111-1111-111111111111", "jobId": "00000002-1111-1111-1111-111111111111", "knownSafeNativeControlBefore": true, "restorationRegisteredBeforeMutation": true, "actualLdapMutationObserved": true, "actualNativePreflightUnreadable": true, "publicConfirmationRefused": true, "signedInstalledJobRefused": true, "noCaRequestOrCngAllocation": true, "installedPredecessorPreserved": true, "exactOriginalAttributesRestored": true, "freshNativeSafeControlAfter": true, "originalConfigCredentialPreserved": true}, {"caseId": "subject-name-flag-absent", "preflightVerdict": "unreadable", "reason": "template_unreadable", "observedField": "enrolleeSuppliesSubject", "observedValue": null, "enrollmentId": "00000003-1111-1111-1111-111111111111", "jobId": "00000004-1111-1111-1111-111111111111", "knownSafeNativeControlBefore": true, "restorationRegisteredBeforeMutation": true, "actualLdapMutationObserved": true, "actualNativePreflightUnreadable": true, "publicConfirmationRefused": true, "signedInstalledJobRefused": true, "noCaRequestOrCngAllocation": true, "installedPredecessorPreserved": true, "exactOriginalAttributesRestored": true, "freshNativeSafeControlAfter": true, "originalConfigCredentialPreserved": true}]}')
+
+
 def public_foreign_spki_proof():
     return json.loads('{"scope": "public-uncertain-request-rejects-owned-same-san-foreign-spki-before-positive-recovery", "enrollmentId": "11111111-1111-1111-1111-111111111111", "failedJobId": "55555555-5555-5555-5555-555555555555", "foreignRequestId": "103", "selectedRequestId": "101", "foreignFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "selectedFingerprint": "1111111111111111111111111111111111111111111111111111111111111111", "foreignSpkiSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "originalSpkiSha256": "3333333333333333333333333333333333333333333333333333333333333333", "foreignCsrSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "reconcileSearchFrom": 100, "foreignSubjectRequestCount": 1, "originalSubjectRequestCount": 2, "ownedRequestRegisteredBeforeSubmit": true, "softwarePrivateKeyRemovedBeforeSubmit": true, "sameActualCaAndSystemRequester": true, "sameAuthorizedSanAndTemplate": true, "differentOwnedCnAndSpki": true, "actualPublicProposalAccepted": true, "actualSignedSpkiMismatchRefusal": true, "originalUncertainJournalAndWatermarkPreserved": true, "originalCngPossessionPreserved": true, "noForeignCertificateAccepted": true, "servingSiblingTrustedTlsPreserved": true, "noAdditionalCaSubmissionOnRefusal": true, "exactUnusedForeignRequestRevoked": true, "matchingCandidatePositiveRecovery": true, "cleanupOwnershipResolved": true}')
 
@@ -932,6 +936,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
         value["nativeUncertainOperatorAmbiguity"] = operator_ambiguity_proof()
         value["nativePublicForeignSpki"] = {**public_foreign_spki_proof(), "privateTrace": "sentinel"}
+        value["nativeRequiredTemplateAttributes"] = {**required_template_attribute_proof(), "privateTrace": "sentinel"}
         value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
         value["nativeBrowserAdcs"] = browser_adcs_proof()
         value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
@@ -970,6 +975,16 @@ class CollectorTests(unittest.TestCase):
         self.assertNotIn("sentinel", json.dumps(result))
         self.assertEqual(result[0][1]["nativeUncertainOperatorAmbiguity"], operator_ambiguity_proof())
         self.assertEqual(result[0][1]["nativePublicForeignSpki"], public_foreign_spki_proof())
+        self.assertEqual(result[0][1]["nativeRequiredTemplateAttributes"], required_template_attribute_proof())
+        for key in required_template_attribute_proof():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeRequiredTemplateAttributes"][key]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for index, patch_value in ((0, {"observedValue": False}), (1, {"observedValue": 0}), (0, {"preflightVerdict": "unsafe"}), (1, {"exactOriginalAttributesRestored": False}), (0, {"caseId": "subject-name-flag-absent"})):
+            invalid = json.loads(json.dumps(value)); invalid["nativeRequiredTemplateAttributes"]["cases"][index].update(patch_value)
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+
         for key in public_foreign_spki_proof():
             invalid = json.loads(json.dumps(value)); del invalid["nativePublicForeignSpki"][key]
             with self.assertRaises(ValueError):

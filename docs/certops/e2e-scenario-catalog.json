@@ -1367,7 +1367,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Mandatory native source refuses confirmation for unsafe templates and shipped WebServer after genuine preflight. Fourteen additional live LDAP mutation cases cover schema bounds, missing or unsafe EKU/application policies, forbidden subject-purpose values, missing minimum-key constraints and template OID, requiring the production native preflight refusal. Source is implemented; the protected cross-version/language native matrix remains unexecuted. Additional unspecified template permutations are not implied."
+      "remainingCoverage": "Mandatory native source refuses confirmation for unsafe templates and shipped WebServer after genuine preflight. Sixteen additional live LDAP mutation cases cover schema bounds, missing or unsafe EKU/application policies, forbidden subject-purpose values, missing or zero minimum-key constraints, absent certificate-name flags and missing template OID, requiring the production native preflight refusal. Source is implemented; the protected cross-version/language native matrix remains unexecuted. Additional unspecified template permutations are not implied. The required-attribute cases register restoration ownership before mutation and require fresh known-safe native descriptors before and after exact LDAP restoration, a safe unchanged CA, public confirmation refusal and signed installed-agent refusal before CA/key allocation while preserving actual serving custody, binding, TLS and registered state."
     },
     {
       "id": "adcs-safety.unsafe-ca-flags",

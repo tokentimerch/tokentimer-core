@@ -422,6 +422,32 @@ def journal_acl_fields(proof):
     return {"scope": proof["scope"], "installedServiceQualified": False, "nativeCngQualified": False, **dict.fromkeys(fields, True)}
 
 
+def required_template_attribute_fields(proof):
+    """Only actual zero/missing required LDAP attribute observations qualify."""
+    flags = ('knownSafeNativeControlBefore', 'restorationRegisteredBeforeMutation', 'actualLdapMutationObserved', 'actualNativePreflightUnreadable', 'publicConfirmationRefused', 'signedInstalledJobRefused', 'noCaRequestOrCngAllocation', 'installedPredecessorPreserved', 'exactOriginalAttributesRestored', 'freshNativeSafeControlAfter', 'originalConfigCredentialPreserved')
+    if not isinstance(proof, dict) or proof.get("scope") != 'actual-ldap-required-template-attribute-refusal-and-exact-native-restoration':
+        raise ValueError("Invalid required template attribute scope")
+    fingerprint, oid, cases = proof.get("predecessorFingerprint"), proof.get("templateOid"), proof.get("cases")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[a-f0-9]{64}", fingerprint) or not isinstance(oid, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", oid) or not isinstance(cases, list) or len(cases) != 2:
+        raise ValueError("Invalid required template attribute identities")
+    result = {"scope": proof["scope"], "predecessorFingerprint": fingerprint, "templateOid": oid, "cases": []}
+    ids = set()
+    for item, expected in zip(cases, (("minimum-key-zero", "minimalKeySize", 0), ("subject-name-flag-absent", "enrolleeSuppliesSubject", None))):
+        if not isinstance(item, dict) or any(item.get(key) is not True for key in flags) or item.get("caseId") != expected[0] or item.get("observedField") != expected[1] or item.get("preflightVerdict") != "unreadable" or item.get("reason") != "template_unreadable":
+            raise ValueError("Incomplete live required template refusal/restoration")
+        observed = item.get("observedValue")
+        if "observedValue" not in item or (expected[2] is None and observed is not None) or (expected[2] == 0 and expected[2] is not None and (type(observed) is not int or observed != 0)):
+            raise ValueError("Wrong actual zero/null template observation")
+        bounded = {"caseId": expected[0], "observedField": expected[1], "observedValue": expected[2], "preflightVerdict": "unreadable", "reason": "template_unreadable", **dict.fromkeys(flags, True)}
+        for key in ("enrollmentId", "jobId"):
+            value = item.get(key)
+            if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value) or value in ids:
+                raise ValueError("Invalid or reused required template job identity")
+            ids.add(value); bounded[key] = value
+        result["cases"].append(bounded)
+    return result
+
+
 def public_foreign_spki_fields(proof):
     """Bounded public projection of actual signed foreign-key candidate refusal."""
     flags = ('ownedRequestRegisteredBeforeSubmit', 'softwarePrivateKeyRemovedBeforeSubmit', 'sameActualCaAndSystemRequester', 'sameAuthorizedSanAndTemplate', 'differentOwnedCnAndSpki', 'actualPublicProposalAccepted', 'actualSignedSpkiMismatchRefusal', 'originalUncertainJournalAndWatermarkPreserved', 'originalCngPossessionPreserved', 'noForeignCertificateAccepted', 'servingSiblingTrustedTlsPreserved', 'noAdditionalCaSubmissionOnRefusal', 'exactUnusedForeignRequestRevoked', 'matchingCandidatePositiveRecovery', 'cleanupOwnershipResolved')
@@ -1167,6 +1193,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Pending new-key proof must bind actual prior pending installation")
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
             result["nativeIssuedRevocation"] = issued_revocation_fields(value.get("nativeIssuedRevocation"))
+            result["nativeRequiredTemplateAttributes"] = required_template_attribute_fields(value.get("nativeRequiredTemplateAttributes"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
             result["nativeBrowserAdminBoundary"] = browser_admin_boundary_fields(value.get("nativeBrowserAdminBoundary"))

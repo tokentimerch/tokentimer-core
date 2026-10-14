@@ -983,7 +983,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1117,7 +1121,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1251,7 +1259,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1385,7 +1397,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1519,7 +1535,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1653,7 +1673,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1787,7 +1811,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -1921,7 +1949,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -2055,7 +2087,11 @@
         "tests/e2e/helpers/certops-adcs-public-foreign-spki.js",
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
-        "packages/agent/vendor/log-scrub/secret-material.js"
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
@@ -2723,7 +2759,11 @@
         "packages/agent/src/keys/index.js",
         "packages/agent/src/platform/index.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "apps/api/services/certops/enrollmentLifecycle.js"
+        "apps/api/services/certops/enrollmentLifecycle.js",
+        "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
+        "infra/certops-adcs/template-required-attribute-cases.json",
+        "packages/agent/src/issuers/adcs-preflight.js",
+        "packages/agent/src/config/index.js"
       ]
     },
     {
