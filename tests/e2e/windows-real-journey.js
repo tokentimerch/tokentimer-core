@@ -396,13 +396,17 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     ownedJobs.push(renewalJob.id);
     assert.ok(renewalJob.payload?.renewalProfile, "worker renewal must carry persisted renewal profile");
     await waitUntil(async () => { const row = (await pool.query("SELECT status FROM certificate_jobs WHERE id=$1", [renewalJob.id])).rows[0]; if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Windows real renewal terminated ${row.status}`); return row?.status === "succeeded"; });
-    const renewed = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate()); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Renewed IIS TLS timeout"))); });
+    let renewed = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate()); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Renewed IIS TLS timeout"))); });
     assert.notEqual(renewed.fingerprint256, observed.fingerprint256, "unattended renewal must replace served leaf");
     deployedThumbprint = renewed.fingerprint.replace(/:/g, "");
     assert.equal(new crypto.X509Certificate(renewed.raw).checkHost(domain), domain);
     assert.ok(command("netsh.exe", ["http", "show", "sslcert", `hostnameport=${domain}:${port}`]).toLowerCase().includes(deployedThumbprint.toLowerCase()), "renewal must update native binding");
     assert.equal(ps(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${thumbprint}')`), "True", "superseded issued certificate must survive its rollback window");
     assert.ok((await pool.query("SELECT 1 FROM certificate_evidence WHERE workspace_id=$1 AND job_id=$2", [workspaceId, renewalJob.id])).rows.length, "unattended renewal evidence must persist");
+    const twoRenewals = await require("./helpers/certops-windows-two-renewals").qualifyTwoRenewals({repoRoot,pool,workspaceId,certificateId,configDir,domain,port,site,roots,initialPeer:observed,firstPeer:renewed,initialManaged:managed,profile,firstRenewalJobId:renewalJob.id,worker,schedulerEnv,powershell:ps,run:command,waitUntil,ownedJobs,keyProfile});
+    renewed = twoRenewals.latestPeer;
+    deployedThumbprint = twoRenewals.latestThumbprint;
+
     const logs = await waitUntil(async () => { const rows = (await pool.query("SELECT message,fields,redaction_count FROM certops_agent_job_log WHERE workspace_id=$1 AND job_id=$2 ORDER BY seq", [workspaceId, job.id])).rows; return rows.length ? rows : null; });
     const serializedLogs = JSON.stringify(logs);
     assert.equal(serializedLogs.includes(plaintextToken), false, "bootstrap credential must not persist in streamed logs");
@@ -411,7 +415,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     // its real CNG key exists and the local mutation journal is durable.
     holdDns = true;
     await worker.runCertOpsMaintenance({ dbPool: pool, env: schedulerEnv });
-    const interruptedJob = await waitUntil(async () => (await pool.query("SELECT id,status,attempt_count FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND id<>$3 ORDER BY created_at DESC LIMIT 1", [workspaceId, String(certificateId), renewalJob.id])).rows[0]);
+    const interruptedJob = await waitUntil(async () => (await pool.query("SELECT id,status,attempt_count FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND operation='renew' AND source='automation' AND idempotency_key=$3", [workspaceId, String(certificateId), twoRenewals.nextGenerationKey])).rows[0]);
     ownedJobs.push(interruptedJob.id);
     await waitUntil(() => heldDnsObserved);
     const journalDir = path.join(configDir, "job-journal");

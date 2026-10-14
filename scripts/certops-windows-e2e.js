@@ -31,6 +31,10 @@ async function main() {
     assert.equal(wrongSpki.suite, "windows-acme-wrong-spki");
     assert.deepEqual(require("./certops-qualification-report").verifyReport(wrongSpki), []);
     require("../tests/e2e/helpers/certops-windows-wrong-leaf").verifyProof(wrongSpki.nativeWrongSpki);
+    const twoRenewals=JSON.parse(fs.readFileSync(`qualification-results/windows-two-renewals-${keyProfile}.json`,"utf8"));
+    assert.equal(twoRenewals.suite,"windows-two-unattended-renewals");
+    assert.deepEqual(require("./certops-qualification-report").verifyReport(twoRenewals),[]);
+    require("../tests/e2e/helpers/certops-windows-two-renewals").verifyProof(twoRenewals.nativeTwoRenewals);
     if (keyProfile === "rsa-2048") {
       const renameRefusal=JSON.parse(fs.readFileSync("qualification-results/windows-first-rename-refusal.json","utf8"));
       assert.equal(renameRefusal.suite,"windows-installer-first-rename-refusal");

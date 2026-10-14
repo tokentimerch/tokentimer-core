@@ -9,135 +9,596 @@ const fs = require("node:fs");
 const path = require("node:path");
 const tls = require("node:tls");
 const { freePort } = require("./iis-fixture");
-const { generateCsrViaCng, buildEnrollmentContainerName, acceptCertificateViaCng, removeAbandonedKeyContainer } = require("../../src/windows-cert-store");
+const {
+  generateCsrViaCng,
+  buildEnrollmentContainerName,
+  acceptCertificateViaCng,
+  removeAbandonedKeyContainer,
+} = require("../../src/windows-cert-store");
 const { deployIisBinding } = require("../../src/windows-iis");
 const retention = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
 async function trustedLeaf(port, ca, expected) {
-  const once = () => new Promise((resolve, reject) => {
-    const socket = tls.connect({ host: "127.0.0.1", port, servername: "certops-host.invalid", ca, rejectUnauthorized: true }, () => {
-      try { assert.equal(socket.authorized, true); assert.equal(socket.getPeerCertificate().fingerprint.replace(/:/g, ""), expected); resolve(); }
-      catch (error) { reject(error); }
-      finally { socket.destroy(); }
+  const once = () =>
+    new Promise((resolve, reject) => {
+      const socket = tls.connect(
+        {
+          host: "127.0.0.1",
+          port,
+          servername: "certops-host.invalid",
+          ca,
+          rejectUnauthorized: true,
+        },
+        () => {
+          try {
+            assert.equal(socket.authorized, true);
+            assert.equal(
+              socket.getPeerCertificate().fingerprint.replace(/:/g, ""),
+              expected,
+            );
+            resolve();
+          } catch (error) {
+            reject(error);
+          } finally {
+            socket.destroy();
+          }
+        },
+      );
+      socket.setTimeout(10000, () =>
+        socket.destroy(new Error("Trusted retention handshake timed out")),
+      );
+      socket.once("error", reject);
     });
-    socket.setTimeout(10000, () => socket.destroy(new Error("Trusted retention handshake timed out")));
-    socket.once("error", reject);
-  });
   const deadline = Date.now() + 20000;
   let failure;
   do {
-    try { await once(); return; }
-    catch (error) { failure = error; }
+    try {
+      await once();
+      return;
+    } catch (error) {
+      failure = error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   } while (Date.now() < deadline);
   throw failure;
 }
-async function qualifyElapsedRetention({ gate, powershell, run, workDir, replacementPem, replacementThumbprint }) {
-  const enrollmentId = crypto.randomUUID();
-  const containerName = buildEnrollmentContainerName(enrollmentId);
-  const directory = path.join(workDir, `elapsed-retention-${enrollmentId}`); fs.mkdirSync(directory);
-  const site = `CertOps-Elapsed-${enrollmentId}`;
-  const port = await freePort();
+function verifyElapsedProof(proof) {
+  assert.equal(proof.mode, "real-clock-two-cutover-expiry-grace");
+  for (const field of [
+    "successfulCutovers",
+    "predecessorCertificatesRemoved",
+    "predecessorKeysRemoved",
+    "lineageRowsFinalized",
+  ])
+    assert.equal(proof[field], 2, field);
+  for (const field of [
+    "immediateDeferralPreservedCustody",
+    "immutableHistoryPreserved",
+    "replacementTrustedBoundCustodyUnchanged",
+    "interruptedNativeDeleteRecovered",
+  ])
+    assert.equal(proof[field], true, field);
+  assert.equal(proof.configuredRetentionHours, 24);
+  assert.equal(proof.fullRetentionWindowQualified, false);
+  assert.ok(
+    Number.isFinite(proof.waitedMonotonicMs) &&
+      proof.waitedMonotonicMs >= 300000 &&
+      proof.waitedMonotonicMs < 600000,
+  );
+  return true;
+}
+async function qualifyElapsedRetention({
+  gate,
+  powershell,
+  run,
+  workDir,
+  replacementPem,
+  replacementThumbprint,
+}) {
+  const fixtureId = crypto.randomUUID();
+  const directory = path.join(workDir, `elapsed-retention-${fixtureId}`);
+  fs.mkdirSync(directory);
+  const site = `CertOps-Elapsed-${fixtureId}`,
+    port = await freePort();
   const quote = (value) => value.replace(/'/g, "''");
-  let siteOwned = false, endpointOwned = false, keyOwned = false, certificateOwned = false, oldThumbprint;
-  let primaryError;
+  const predecessors = [];
+  let siteOwned = false,
+    endpointOwned = false,
+    primaryError;
+  const nativeCustody = (thumb) => {
+    assert.match(thumb, /^[A-F0-9]{40}$/);
+    return JSON.parse(
+      powershell(
+        `$c=Get-Item 'Cert:\\LocalMachine\\My\\${thumb}';$k=$null;try{$k=if($c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1'){[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)}else{[Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)};@{name=$k.Key.KeyName;unique=$k.Key.UniqueName;exportPolicy=[string]$k.Key.ExportPolicy;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;der=[Convert]::ToBase64String($c.RawData);expiry=$c.NotAfter.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
+      ),
+    );
+  };
+  const history = (row) =>
+    Object.fromEntries(
+      [
+        "oldThumbprint",
+        "replacementThumbprint",
+        "cngKeyContainerId",
+        "verifiedCutoverAt",
+        "oldNotAfter",
+        "ownershipProvenance",
+        "store",
+        "jobOrRollbackJournalRefs",
+      ].map((field) => [field, row[field]]),
+    );
   try {
-    assert.ok(!run("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(containerName));
-    keyOwned = true; // deterministic key ownership precedes certreq mutation
-    const csr = await generateCsrViaCng({ commonName: "certops-host.invalid", altNames: ["certops-host.invalid"], algorithm: "rsa-2048", enrollmentId, workDir: directory });
-    assert.equal(csr.ok, true);
-    const csrPath = path.join(directory, "short-lived.csr"); fs.writeFileSync(csrPath, csr.csrPem);
-    const ca = fs.readFileSync(path.join(workDir, "ca.pem"), "utf8");
+    const ca = fs.readFileSync(path.join(workDir, "ca.pem"), "utf8"),
+      authority = new crypto.X509Certificate(ca);
+    const replacementCertificate = new crypto.X509Certificate(replacementPem);
+    assert.equal(
+      replacementCertificate.fingerprint.replace(/:/g, ""),
+      replacementThumbprint,
+    );
+    assert.equal(
+      replacementCertificate.checkHost("certops-host.invalid"),
+      "certops-host.invalid",
+    );
+    assert.equal(replacementCertificate.verify(authority.publicKey), true);
+    const replacementCustody = nativeCustody(replacementThumbprint);
+    assert.equal(replacementCustody.exportPolicy, "None");
+    assert.equal(replacementCustody.machine, true);
+    assert.equal(
+      new crypto.X509Certificate(Buffer.from(replacementCustody.der, "base64"))
+        .fingerprint256,
+      replacementCertificate.fingerprint256,
+    );
     const opensslPath = (file) => '"' + file.replaceAll("\\", "/") + '"';
-    fs.writeFileSync(path.join(directory, "index.txt"), ""); fs.writeFileSync(path.join(directory, "serial"), "B001\n");
+    fs.writeFileSync(path.join(directory, "index.txt"), "");
+    fs.writeFileSync(
+      path.join(directory, "index.txt.attr"),
+      "unique_subject = no\n",
+    );
+    fs.writeFileSync(path.join(directory, "serial"), "B001\n");
     const signer = path.join(directory, "signer.cnf");
-    fs.writeFileSync(signer, `[ca]\ndefault_ca=qualification\n[qualification]\ndatabase=${opensslPath(path.join(directory, "index.txt"))}\nserial=${opensslPath(path.join(directory, "serial"))}\nnew_certs_dir=${opensslPath(directory)}\ncertificate=${opensslPath(path.join(workDir, "ca.pem"))}\nprivate_key=${opensslPath(path.join(workDir, "ca.key"))}\ndefault_md=sha256\npolicy=subject\ncopy_extensions=copy\ndefault_days=1\n[subject]\ncommonName=supplied\n`);
-    const stamp = (date) => date.toISOString().replace(/[-:]/g, "").replace("T", "").replace(/\.\d+Z$/, "Z");
-    const leafPath = path.join(directory, "short-lived.pem");
-    const signingTime = Date.now();
-    run("openssl", ["ca", "-batch", "-notext", "-config", signer, "-in", csrPath, "-out", leafPath,
-      "-startdate", stamp(new Date(signingTime - 60000)), "-enddate", stamp(new Date(signingTime + 120000))]);
-    const oldPem = fs.readFileSync(leafPath, "utf8");
-    const oldCertificate = new crypto.X509Certificate(oldPem);
-    assert.equal(oldCertificate.verify(new crypto.X509Certificate(ca).publicKey), true);
-    oldThumbprint = oldCertificate.fingerprint.replace(/:/g, "");
-    assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${oldThumbprint}')`), "False");
-    certificateOwned = true;
-    assert.equal((await acceptCertificateViaCng({ certificatePem: oldPem, workDir: directory, store: "My" })).ok, true);
-    const custody = JSON.parse(powershell(`$c=Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}'; $k=$null; try { $k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c); [pscustomobject]@{name=$k.Key.KeyName;exportPolicy=[string]$k.Key.ExportPolicy} | ConvertTo-Json -Compress } finally { if ($null -ne $k) { $k.Dispose() }; $c.Dispose() }`));
-    assert.equal(custody.name, containerName);
-    assert.equal(custody.exportPolicy, "None");
-    const nativeExpiry = powershell(`(Get-Item 'Cert:\\LocalMachine\\My\\${oldThumbprint}').NotAfter.ToUniversalTime().ToString('o')`);
-    assert.equal(Date.parse(nativeExpiry), Date.parse(oldCertificate.validTo));
-    powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Refuse preexisting elapsed-retention endpoint' }; Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { throw 'Refuse preexisting fixture site' }`);
-    fs.writeFileSync(path.join(directory, "index.htm"), "Elapsed retention fixture");
+    fs.writeFileSync(
+      signer,
+      `[ca]\ndefault_ca=qualification\n[qualification]\ndatabase=${opensslPath(path.join(directory, "index.txt"))}\nserial=${opensslPath(path.join(directory, "serial"))}\nnew_certs_dir=${opensslPath(directory)}\ncertificate=${opensslPath(path.join(workDir, "ca.pem"))}\nprivate_key=${opensslPath(path.join(workDir, "ca.key"))}\ndefault_md=sha256\npolicy=subject\ncopy_extensions=copy\nunique_subject=no\ndefault_days=1\n[subject]\ncommonName=supplied\n`,
+    );
+    const stamp = (date) =>
+      date
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace("T", "")
+        .replace(/\.\d+Z$/, "Z");
+    for (const label of ["A", "B"]) {
+      const enrollmentId = crypto.randomUUID(),
+        containerName = buildEnrollmentContainerName(enrollmentId);
+      const item = {
+        label,
+        containerName,
+        keyOwned: false,
+        certificateOwned: false,
+      };
+      predecessors.push(item);
+      assert.ok(
+        !run("certutil.exe", [
+          "-csp",
+          "Microsoft Software Key Storage Provider",
+          "-key",
+        ]).includes(containerName),
+      );
+      item.keyOwned = true; // exact deterministic ownership before native mutation
+      const csr = await generateCsrViaCng({
+        commonName: "certops-host.invalid",
+        altNames: ["certops-host.invalid"],
+        algorithm: "rsa-2048",
+        enrollmentId,
+        workDir: directory,
+      });
+      assert.equal(csr.ok, true);
+      const csrPath = path.join(directory, `${label}.csr`),
+        leafPath = path.join(directory, `${label}.pem`);
+      fs.writeFileSync(csrPath, csr.csrPem, { flag: "wx" });
+      const signingTime = Date.now();
+      run("openssl", [
+        "ca",
+        "-batch",
+        "-notext",
+        "-config",
+        signer,
+        "-in",
+        csrPath,
+        "-out",
+        leafPath,
+        "-startdate",
+        stamp(new Date(signingTime - 60000)),
+        "-enddate",
+        stamp(new Date(signingTime + 120000)),
+      ]);
+      item.pem = fs.readFileSync(leafPath, "utf8");
+      item.certificate = new crypto.X509Certificate(item.pem);
+      assert.equal(item.certificate.verify(authority.publicKey), true);
+      item.thumbprint = item.certificate.fingerprint.replace(/:/g, "");
+      assert.equal(
+        powershell(
+          `[bool](Test-Path 'Cert:\\LocalMachine\\My\\${item.thumbprint}')`,
+        ),
+        "False",
+      );
+      item.certificateOwned = true;
+      assert.equal(
+        (
+          await acceptCertificateViaCng({
+            certificatePem: item.pem,
+            workDir: directory,
+            store: "My",
+          })
+        ).ok,
+        true,
+      );
+      item.custody = nativeCustody(item.thumbprint);
+      assert.equal(item.custody.name, containerName);
+      assert.equal(item.custody.exportPolicy, "None");
+      assert.equal(item.custody.machine, true);
+      item.nativeExpiry = item.custody.expiry;
+      assert.equal(
+        Date.parse(item.nativeExpiry),
+        Date.parse(item.certificate.validTo),
+      );
+    }
+    const [a, b] = predecessors;
+    assert.equal(
+      new Set([a.thumbprint, b.thumbprint, replacementThumbprint]).size,
+      3,
+    );
+    const spki = (certificate) =>
+      crypto
+        .createHash("sha256")
+        .update(certificate.publicKey.export({ type: "spki", format: "der" }))
+        .digest("hex");
+    assert.equal(
+      new Set([
+        spki(a.certificate),
+        spki(b.certificate),
+        spki(replacementCertificate),
+      ]).size,
+      3,
+    );
+    powershell(
+      `& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){throw 'Refuse preexisting elapsed-retention endpoint'};Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Refuse preexisting fixture site'}`,
+    );
+    fs.writeFileSync(
+      path.join(directory, "index.htm"),
+      "Elapsed two-cutover retention fixture",
+    );
     siteOwned = true;
-    powershell(`Import-Module WebAdministration; New-Website -Name '${site}' -PhysicalPath '${quote(directory)}' -IPAddress '127.0.0.1' -Port ${port} -Ssl | Out-Null`);
+    powershell(
+      `Import-Module WebAdministration;New-Website -Name '${site}' -PhysicalPath '${quote(directory)}' -IPAddress '127.0.0.1' -Port ${port} -Ssl | Out-Null`,
+    );
     endpointOwned = true;
-    powershell(`Import-Module WebAdministration; (Get-WebBinding -Name '${site}' -Protocol https | Where-Object { $_.bindingInformation -eq '127.0.0.1:${port}:' }).AddSslCertificate('${oldThumbprint}','My')`);
-    await trustedLeaf(port, ca, oldThumbprint);
-    assert.ok(Date.now() < Date.parse(nativeExpiry), "old certificate must really be valid at cutover");
-    assert.equal((await deployIisBinding({ binding: { site, address: "127.0.0.1", port, store: "My" }, certificatePem: replacementPem, verifyTimeoutMs: 15000 })).ok, true);
-    await trustedLeaf(port, ca, replacementThumbprint);
-    const cutover = new Date().toISOString();
-    const stateDir = path.join(directory, "state"); const ledgerDir = path.join(stateDir, "windows-retention");
-    retention.createLedgerRow({ ledgerDir, oldThumbprint, replacementThumbprint, cngKeyContainerId: containerName,
-      verifiedCutoverAt: cutover, oldNotAfter: nativeExpiry, ownershipProvenance: "tokentimer_installed", store: "My" });
-    const deadline = retention.computeCleanupDeadline({ verifiedCutoverAt: cutover, oldNotAfter: nativeExpiry, retentionHours: 24 });
-    assert.equal(deadline.getTime(), Date.parse(nativeExpiry) + 300000, "qualify actual supported expiry-grace deadline, not shortened configured retention");
-    assert.ok(deadline.getTime() > Date.now() && deadline.getTime() - Date.now() < 600000);
-    const sweep = () => runWindowsRetentionSweep({ stateDir, retentionHours: 24, log: { info() {}, error() {} } });
+    powershell(
+      `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','My')`,
+    );
+    await trustedLeaf(port, ca, a.thumbprint);
+    const stateDir = path.join(directory, "state"),
+      ledgerDir = path.join(stateDir, "windows-retention");
+    for (const [old, replacement] of [
+      [a, b],
+      [b, { pem: replacementPem, thumbprint: replacementThumbprint }],
+    ]) {
+      assert.ok(
+        Date.now() < Date.parse(old.nativeExpiry),
+        "Each actual predecessor must still be valid at its real cutover",
+      );
+      assert.equal(
+        (
+          await deployIisBinding({
+            binding: { site, address: "127.0.0.1", port, store: "My" },
+            certificatePem: replacement.pem,
+            verifyTimeoutMs: 15000,
+          })
+        ).ok,
+        true,
+      );
+      await trustedLeaf(port, ca, replacement.thumbprint);
+      old.cutover = new Date().toISOString();
+      old.replacement = replacement.thumbprint;
+      old.row = retention.createLedgerRow({
+        ledgerDir,
+        oldThumbprint: old.thumbprint,
+        replacementThumbprint: replacement.thumbprint,
+        cngKeyContainerId: old.containerName,
+        verifiedCutoverAt: old.cutover,
+        oldNotAfter: old.nativeExpiry,
+        ownershipProvenance: "tokentimer_installed",
+        store: "My",
+      });
+      old.deadline = retention.computeCleanupDeadline({
+        verifiedCutoverAt: old.cutover,
+        oldNotAfter: old.nativeExpiry,
+        retentionHours: 24,
+      });
+      assert.equal(
+        old.deadline.getTime(),
+        Date.parse(old.nativeExpiry) + 300000,
+        "Actual supported expiry grace must win without shortening configured retention",
+      );
+    }
+    const binding = () =>
+      JSON.parse(
+        powershell(
+          `Import-Module WebAdministration;$x=@(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'});if($x.Count -ne 1){throw 'Missing exact elapsed-retention binding'};$h=$x[0].certificateHash;if($h -is [byte[]]){$h=[BitConverter]::ToString($h).Replace('-','')};@{hash=([string]$h).ToUpperInvariant();store=[string]$x[0].certificateStoreName;flags=[int]$x[0].sslFlags}|ConvertTo-Json -Compress`,
+        ),
+      );
+    const finalBinding = binding();
+    assert.equal(finalBinding.hash, replacementThumbprint);
+    assert.equal(finalBinding.store, "My");
+    const preserveReplacement = async () => {
+      assert.deepEqual(binding(), finalBinding);
+      assert.deepEqual(
+        nativeCustody(replacementThumbprint),
+        replacementCustody,
+      );
+      assert.ok(
+        run("netsh.exe", [
+          "http",
+          "show",
+          "sslcert",
+          `ipport=127.0.0.1:${port}`,
+        ])
+          .toUpperCase()
+          .includes(replacementThumbprint),
+      );
+      await trustedLeaf(port, ca, replacementThumbprint);
+    };
+    const deadline = new Date(
+      Math.max(...predecessors.map((item) => item.deadline.getTime())),
+    );
+    assert.ok(
+      deadline.getTime() > Date.now() &&
+        deadline.getTime() - Date.now() < 600000,
+    );
+    const sweep = () =>
+      runWindowsRetentionSweep({
+        stateDir,
+        retentionHours: 24,
+        log: { info() {}, error() {} },
+      });
     const early = await sweep();
     assert.equal(early.removed.length, 0);
-    assert.ok(early.deferred.some((row) => row.oldThumbprint === oldThumbprint && row.reason === "deadline_not_reached"));
-    // Wait the real wall clock; no injected clock, ledger date rewrite,
-    // eligibility context, tool or TLS implementation is supplied.
+    for (const item of predecessors) {
+      assert.ok(
+        early.deferred.some(
+          (row) =>
+            row.oldThumbprint === item.thumbprint &&
+            row.reason === "deadline_not_reached",
+        ),
+      );
+      assert.deepEqual(nativeCustody(item.thumbprint), item.custody);
+      assert.deepEqual(
+        history(retention.readLedgerRow(ledgerDir, item.thumbprint)),
+        history(item.row),
+      );
+    }
+    await preserveReplacement();
+    assert.ok(
+      Math.max(...predecessors.map((item) => Date.parse(item.nativeExpiry))) >
+        Date.now(),
+      "At least the newest actual predecessor must remain valid when the shared wait starts",
+    );
+    // One shared real wait qualifies both expiry+300s deadlines, never two
+    // serial waits. No clocks, native queries, TLS or eligibility facts injected.
     const waitStarted = process.hrtime.bigint();
     while (Date.now() <= deadline.getTime()) {
-      assert.ok(process.hrtime.bigint() - waitStarted < 600000000000n, "real-clock deadline wait exceeded its independent ten-minute monotonic bound");
-      await new Promise((resolve) => setTimeout(resolve, Math.min(5000, deadline.getTime() - Date.now() + 250)));
+      assert.ok(
+        process.hrtime.bigint() - waitStarted < 600000000000n,
+        "Real deadline wait exceeded independent ten-minute monotonic bound",
+      );
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(5000, deadline.getTime() - Date.now() + 250),
+        ),
+      );
     }
-    await gate.scenario("windows-retention-native-interrupted-delete", async () => {
-      const child = require("node:child_process").spawnSync(process.execPath, [path.join(__dirname, "retention-interrupted-child.js"), stateDir, oldThumbprint, containerName], { encoding: "utf8", timeout: 90000, windowsHide: true });
-      assert.ifError(child.error); assert.equal(child.signal, null); assert.equal(child.status, 86, "Actual native certificate deletion must reach the required child fault boundary");
-      const fault = JSON.parse(fs.readFileSync(path.join(stateDir, "interrupted-native-delete.json"), "utf8"));
-      assert.equal(fault.nativeCommandSucceeded, true); assert.equal(fault.thumbprint, oldThumbprint); assert.equal(fault.containerName, containerName); assert.ok(Number.isInteger(fault.pid) && fault.pid > 0); assert.equal(fault.pid, child.pid, "Fault evidence must identify the exact completed owned child");
-      const lockPath = path.join(stateDir, "windows-cert-store", "My.lock"); const marker = fs.readFileSync(lockPath, "utf8").trim().split(/\r?\n/); assert.equal(marker.length, 3); assert.equal(marker[0], String(child.pid)); assert.ok(Number.isFinite(Date.parse(marker[1]))); assert.match(marker[2], /^[a-f0-9]{32}$/);
-      assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${oldThumbprint}')`), "False");
-      assert.ok(run("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(containerName), "Crash must leave the actual owned key awaiting cleanup");
-      assert.notEqual(retention.readLedgerRow(ledgerDir, oldThumbprint).lifecycleState, "removed", "Interrupted native collector cannot record a completed cleanup");
-      await trustedLeaf(port, ca, replacementThumbprint);
-      const retryDeadline = Date.now() + 30000; let resumed;
-      do { resumed = await sweep(); if (resumed.removed.includes(oldThumbprint)) break; await new Promise(resolve => setTimeout(resolve, 1000)); } while (Date.now() < retryDeadline);
-      assert.equal(fs.existsSync(lockPath), false, "Completed native retry must remove its own lock marker");
-      assert.deepEqual(resumed.removed, [oldThumbprint], "Native retry must reclaim the dead owned store lock, remove the retained key and persist cleanup");
-      assert.equal(retention.readLedgerRow(ledgerDir, oldThumbprint).lifecycleState, "removed");
-      assert.ok(!run("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(containerName));
-      await trustedLeaf(port, ca, replacementThumbprint);
-    }, { evidenceLevel: "real-host", oracle: "real expired eligible certificate, actual native delstore success followed by owned child crash before delkey, independently observed retained key/incomplete ledger, actual native sweep resumes and persists cleanup while trusted replacement survives" });
-    assert.equal(retention.readLedgerRow(ledgerDir, oldThumbprint).lifecycleState, "removed");
-    assert.equal(powershell(`[bool](Test-Path 'Cert:\\LocalMachine\\My\\${oldThumbprint}')`), "False");
-    assert.ok(!run("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(containerName));
-    await trustedLeaf(port, ca, replacementThumbprint);
-    fs.writeFileSync(path.join(workDir, "windows-retention-elapsed.log"), JSON.stringify({ mode: "real-clock-expiry-grace", configuredRetentionHours: 24,
-      oldNotAfter: nativeExpiry, verifiedCutoverAt: cutover, cleanupDeadline: deadline.toISOString(), observedCleanupAt: new Date().toISOString(),
-      waitedMonotonicMs: Number(process.hrtime.bigint() - waitStarted) / 1000000,
-      oldCertificateAndKeyAbsent: true, replacementTrustedTls: true, interruptedNativeDeletionQualified: true, faultMode: "owned-child-exit-after-native-delstore-before-delkey", fullRetentionWindowQualified: false }));
-  } catch (error) { primaryError = error; throw error; }
-  finally {
-    const failures = [];
-    const clean = (action) => { try { action(); } catch (error) { failures.push(error); } };
-    if (siteOwned) clean(() => powershell(`Import-Module WebAdministration; if (Test-Path 'IIS:\\Sites\\${site}') { Remove-Website -Name '${site}' }; if (Test-Path 'IIS:\\Sites\\${site}') { throw 'Elapsed-retention site remains' }`));
-    if (endpointOwned) clean(() => powershell(`& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { & netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'Elapsed-retention endpoint cleanup failed' } }; & netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null; if ($LASTEXITCODE -eq 0) { throw 'Elapsed-retention endpoint remains' }; 'absent'`));
-    if (certificateOwned) clean(() => powershell(`$p='Cert:\\LocalMachine\\My\\${oldThumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Owned elapsed-retention certificate remains' }`));
-    if (keyOwned) {
-      try {
-        assert.equal((await removeAbandonedKeyContainer({ containerName, allowAlreadyAbsent: true })).ok, true);
-        assert.ok(!run("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(containerName), "owned elapsed-retention key must be absent after cleanup");
-      }
-      catch (error) { failures.push(error); }
+    assert.ok(
+      process.hrtime.bigint() - waitStarted >= 300000000000n,
+      "The actual monotonic wait must independently cover the full expiry grace",
+    );
+    // Interrupt the first actually enumerated row so no other predecessor can
+    // have been silently removed before the delstore-before-delkey boundary.
+    const first = retention.listLedgerThumbprints(ledgerDir)[0],
+      target = predecessors.find((item) => item.thumbprint === first);
+    assert.ok(target);
+    await gate.scenario(
+      "windows-retention-native-interrupted-delete",
+      async () => {
+        const child = require("node:child_process").spawnSync(
+          process.execPath,
+          [
+            path.join(__dirname, "retention-interrupted-child.js"),
+            stateDir,
+            target.thumbprint,
+            target.containerName,
+          ],
+          { encoding: "utf8", timeout: 90000, windowsHide: true },
+        );
+        assert.ifError(child.error);
+        assert.equal(child.signal, null);
+        assert.equal(
+          child.status,
+          86,
+          "Actual deletion must reach the owned native interruption boundary",
+        );
+        const fault = JSON.parse(
+          fs.readFileSync(
+            path.join(stateDir, "interrupted-native-delete.json"),
+            "utf8",
+          ),
+        );
+        assert.equal(fault.nativeCommandSucceeded, true);
+        assert.equal(fault.thumbprint, target.thumbprint);
+        assert.equal(fault.containerName, target.containerName);
+        assert.ok(Number.isInteger(fault.pid) && fault.pid > 0);
+        assert.equal(fault.pid, child.pid);
+        const lockPath = path.join(stateDir, "windows-cert-store", "My.lock"),
+          marker = fs.readFileSync(lockPath, "utf8").trim().split(/\r?\n/);
+        assert.equal(marker.length, 3);
+        assert.equal(marker[0], String(child.pid));
+        assert.ok(Number.isFinite(Date.parse(marker[1])));
+        assert.match(marker[2], /^[a-f0-9]{32}$/);
+        assert.equal(
+          powershell(
+            `[bool](Test-Path 'Cert:\\LocalMachine\\My\\${target.thumbprint}')`,
+          ),
+          "False",
+        );
+        assert.ok(
+          run("certutil.exe", [
+            "-csp",
+            "Microsoft Software Key Storage Provider",
+            "-key",
+          ]).includes(target.containerName),
+        );
+        for (const item of predecessors)
+          assert.notEqual(
+            retention.readLedgerRow(ledgerDir, item.thumbprint).lifecycleState,
+            "removed",
+          );
+        await preserveReplacement();
+        const retryDeadline = Date.now() + 30000;
+        let resumed;
+        do {
+          resumed = await sweep();
+          if (
+            predecessors.every(
+              (item) =>
+                retention.readLedgerRow(ledgerDir, item.thumbprint)
+                  .lifecycleState === "removed",
+            )
+          )
+            break;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } while (Date.now() < retryDeadline);
+        assert.equal(fs.existsSync(lockPath), false);
+        assert.ok(resumed);
+        for (const item of predecessors)
+          assert.equal(
+            retention.readLedgerRow(ledgerDir, item.thumbprint).lifecycleState,
+            "removed",
+            "Real retry must finalize both independently eligible predecessors",
+          );
+        await preserveReplacement();
+      },
+      {
+        evidenceLevel: "real-host",
+        oracle:
+          "actual first enumerated eligible A/B delstore then owned child exit before delkey, retained key/incomplete immutable lineage, real sweep resumes both through live C without another elapsed wait",
+      },
+    );
+    const nativeKeys = run("certutil.exe", [
+      "-csp",
+      "Microsoft Software Key Storage Provider",
+      "-key",
+    ]);
+    for (const item of predecessors) {
+      assert.equal(
+        powershell(
+          `[bool](Test-Path 'Cert:\\LocalMachine\\My\\${item.thumbprint}')`,
+        ),
+        "False",
+      );
+      assert.ok(!nativeKeys.includes(item.containerName));
+      const removed = retention.readLedgerRow(ledgerDir, item.thumbprint);
+      assert.equal(removed.lifecycleState, "removed");
+      assert.deepEqual(history(removed), history(item.row));
     }
-    if (failures.length) throw new AggregateError(primaryError ? [primaryError, ...failures] : failures, "Elapsed-retention cleanup failed", { cause: primaryError });
+    await preserveReplacement();
+    const proof = {
+      mode: "real-clock-two-cutover-expiry-grace",
+      successfulCutovers: 2,
+      predecessorCertificatesRemoved: 2,
+      predecessorKeysRemoved: 2,
+      lineageRowsFinalized: 2,
+      immediateDeferralPreservedCustody: true,
+      immutableHistoryPreserved: true,
+      replacementTrustedBoundCustodyUnchanged: true,
+      interruptedNativeDeleteRecovered: true,
+      waitedMonotonicMs:
+        Number(process.hrtime.bigint() - waitStarted) / 1000000,
+      configuredRetentionHours: 24,
+      fullRetentionWindowQualified: false,
+    };
+    verifyElapsedProof(proof);
+    gate.report.nativeElapsedRetention = proof;
+    fs.writeFileSync(
+      path.join(workDir, "windows-retention-elapsed.log"),
+      JSON.stringify({
+        ...proof,
+        predecessors: predecessors.map((item) => ({
+          oldNotAfter: item.nativeExpiry,
+          verifiedCutoverAt: item.cutover,
+          cleanupDeadline: item.deadline.toISOString(),
+        })),
+        sharedCleanupDeadline: deadline.toISOString(),
+        observedCleanupAt: new Date().toISOString(),
+        faultMode: "owned-child-exit-after-native-delstore-before-delkey",
+      }),
+    );
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    const failures = [],
+      clean = (action) => {
+        try {
+          action();
+        } catch (error) {
+          failures.push(error);
+        }
+      };
+    if (siteOwned)
+      clean(() =>
+        powershell(
+          `Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){Remove-Website -Name '${site}'};if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Elapsed-retention site remains'}`,
+        ),
+      );
+    if (endpointOwned)
+      clean(() =>
+        powershell(
+          `& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){& netsh.exe http delete sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -ne 0){throw 'Elapsed-retention endpoint cleanup failed'}};& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){throw 'Elapsed-retention endpoint remains'}`,
+        ),
+      );
+    for (const item of predecessors) {
+      if (item.certificateOwned)
+        clean(() =>
+          powershell(
+            `$p='Cert:\\LocalMachine\\My\\${item.thumbprint}';if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p};if(Test-Path -LiteralPath $p){throw 'Owned elapsed-retention certificate remains'}`,
+          ),
+        );
+      if (item.keyOwned)
+        try {
+          assert.equal(
+            (
+              await removeAbandonedKeyContainer({
+                containerName: item.containerName,
+                allowAlreadyAbsent: true,
+              })
+            ).ok,
+            true,
+          );
+          assert.ok(
+            !run("certutil.exe", [
+              "-csp",
+              "Microsoft Software Key Storage Provider",
+              "-key",
+            ]).includes(item.containerName),
+          );
+        } catch (error) {
+          failures.push(error);
+        }
+    }
+    if (failures.length)
+      throw new AggregateError(
+        primaryError ? [primaryError, ...failures] : failures,
+        "Elapsed-retention cleanup failed",
+        { cause: primaryError },
+      );
   }
 }
-module.exports = { qualifyElapsedRetention };
+module.exports = { qualifyElapsedRetention, verifyElapsedProof };

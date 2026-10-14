@@ -28,6 +28,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Windows retention follows verified replacements after repeated IIS rotations, so older superseded certificates can become eligible for cleanup. Agent cutover, rollback and retention checks share the store lock through deletion and ledger updates.
 - Windows ACME issue and renewal jobs refuse returned certificates whose public key differs from their CNG CSR before acceptance or IIS cutover (`ACME_CERTIFICATE_KEY_MISMATCH`).
 - Manual and automatic renewal now honor revoked or decommissioned identity lifecycle even while inventory updates leave cached status behind or endpoints still serve the certificate. Manual renewal returns `409 CERTOPS_CERTIFICATE_NOT_RENEWABLE`, matching bulk per-item refusals.
 

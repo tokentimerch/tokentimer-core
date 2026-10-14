@@ -15,6 +15,7 @@ on:
       - 'apps/dashboard/src/utils/apiClient.js'
       - 'apps/dashboard/src/utils/lastWorkspacePreference.js'
       - 'apps/dashboard/src/App.jsx'
+      - 'apps/dashboard/src/pages/Audit.jsx'
       - 'apps/dashboard/tests/unit/AgentShellConsole.test.jsx'
       - 'apps/dashboard/tests/unit/RequireManagerRoute.test.jsx'
       - 'apps/dashboard/tests/unit/WorkspaceContext.test.jsx'

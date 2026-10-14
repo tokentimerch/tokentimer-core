@@ -224,9 +224,13 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
     }, { evidenceLevel: "real-host", oracle: "product retention collector reads real HTTP.sys bindings, actual shared CNG key association and replacement TLS; real clock blocks fresh ledger cleanup" });
     await gate.scenario("windows-retention-real-expiry-grace", async () => {
+      gate.report.fixtureSources ||= [];
+      for (const file of ["packages/agent/scripts/host/retention-elapsed-fixture.js", "packages/agent/scripts/host/retention-interrupted-child.js", "packages/agent/src/index.js", "packages/agent/src/windows-retention/index.js", "packages/agent/src/windows-discovery/index.js"]) {
+        if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+      }
       await require("./retention-elapsed-fixture").qualifyElapsedRetention({ gate, powershell, run, workDir,
         replacementPem: fs.readFileSync(path.join(workDir, "ec-p256-My/issued.pem"), "utf8"), replacementThumbprint: acceptedCertificates[1] });
-    }, { evidenceLevel: "real-host", oracle: "actual valid short-lived CNG leaf cutover, unchanged24h policy, real elapsed expiry-plus300s, native product sweep certificate/key absence and independently trusted replacement TLS; no full24h claim" });
+    }, { evidenceLevel: "real-host", oracle: "actual distinct CNG A→B→C cutovers and immutable lineage; unchanged24h policy, one real max(A,B expiry)-plus300s wait, interrupted native deletion recovery and both predecessor cert/key absence with trusted bound C custody unchanged; no full24h claim" });
     await gate.scenario("windows-iis-deploy-rollback", async () => {
       await require("./iis-fixture").qualifyIis({ powershell, run, workDir, gate });
     }, { evidenceLevel: "real-host", oracle: "independent TLS fingerprint and netsh binding" });

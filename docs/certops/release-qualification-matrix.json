@@ -199,7 +199,11 @@
         "packages/agent/src/platform/durability.js",
         "packages/agent/scripts/host/retention-ledger-atomic-fixture.js",
         "packages/agent/scripts/host/retention-ledger-file-hold.ps1",
-        "packages/agent/src/windows-retention/index.js"
+        "packages/agent/src/windows-retention/index.js",
+        "packages/agent/scripts/host/retention-elapsed-fixture.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-discovery/index.js",
+        "packages/agent/scripts/host/retention-interrupted-child.js"
       ]
     },
     {
@@ -340,7 +344,11 @@
         "packages/agent/src/platform/durability.js",
         "packages/agent/scripts/host/retention-ledger-atomic-fixture.js",
         "packages/agent/scripts/host/retention-ledger-file-hold.ps1",
-        "packages/agent/src/windows-retention/index.js"
+        "packages/agent/src/windows-retention/index.js",
+        "packages/agent/scripts/host/retention-elapsed-fixture.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-discovery/index.js",
+        "packages/agent/scripts/host/retention-interrupted-child.js"
       ]
     },
     {
@@ -2520,6 +2528,237 @@
         "identity": "LocalSystem",
         "measurement": "native",
         "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "browser-certificate-audit-ubuntu24",
+      "kind": "host",
+      "suite": "browser-certificate-audit",
+      "source": "scripts/certops-browser-audit.js",
+      "requiredSources": [
+        "scripts/certops-browser-audit.js",
+        "tests/e2e/helpers/certops-browser-audit-fixture.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "apps/dashboard/src/pages/Audit.jsx",
+        "apps/api/routes/usage.js",
+        "apps/api/services/certops/certificateIdentity.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host",
+        "measurement": "native"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2022-rsa-2048",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2022-rsa-3072",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-3072"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2022-rsa-4096",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-4096"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2022-ec-p256",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "ec-p256"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2022-ec-p384",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "ec-p384"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2025-rsa-2048",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-2048"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2025-rsa-3072",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-3072"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2025-rsa-4096",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "rsa-4096"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2025-ec-p256",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "ec-p256"
+      }
+    },
+    {
+      "id": "windows-two-renewals-2025-ec-p384",
+      "kind": "host",
+      "suite": "windows-two-unattended-renewals",
+      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-two-renewals.js",
+        "tests/e2e/windows-real-journey.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js"
+      ],
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025",
+        "identity": "LocalSystem",
+        "measurement": "native",
+        "keyProfile": "ec-p384"
       }
     }
   ]

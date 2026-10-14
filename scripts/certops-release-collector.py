@@ -337,12 +337,36 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete native second-rename activation evidence")
             result["nativeSecondRename"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "windows-two-unattended-renewals":
+            proof = value.get("nativeTwoRenewals")
+            fields = ("automaticSourceAndRealMode", "naturallyDueGenerations", "distinctIdempotencyKeys", "leafAndSpkiChangedTwice", "nativeBindingMatchesLatest", "nativeKeyProfilesVerified", "persistedEvidenceBothCycles", "inventoryMatchesActualLeaf", "profileAndManagementLineagePreserved", "retentionLineageMatchesBothCutovers", "predecessorCustodyPreserved", "noExpiryOrClockOverrides")
+            scope = "two-unattended-cycles-and-preserved-predecessors-not-expiry-cleanup"
+            if (not isinstance(proof, dict) or type(proof.get("successfulAutomationCycles")) is not int
+                    or proof["successfulAutomationCycles"] != 2 or proof.get("expiryCleanupQualified") is not False
+                    or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields)):
+                raise ValueError("Incomplete two-generation native renewal evidence")
+            result["nativeTwoRenewals"] = {**dict.fromkeys(fields, True), "successfulAutomationCycles": 2, "expiryCleanupQualified": False, "scope": scope}
         if value.get("suite") == "windows-host":
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete native retention atomic replacement evidence")
             result["nativeRetentionAtomicReplace"] = dict.fromkeys(fields, True)
+            elapsed = value.get("nativeElapsedRetention")
+            counts = ("successfulCutovers", "predecessorCertificatesRemoved", "predecessorKeysRemoved", "lineageRowsFinalized")
+            facts = ("immediateDeferralPreservedCustody", "immutableHistoryPreserved", "replacementTrustedBoundCustodyUnchanged", "interruptedNativeDeleteRecovered")
+            if (not isinstance(elapsed, dict) or elapsed.get("mode") != "real-clock-two-cutover-expiry-grace"
+                    or any(type(elapsed.get(field)) is not int or elapsed[field] != 2 for field in counts)
+                    or any(elapsed.get(field) is not True for field in facts)
+                    or type(elapsed.get("configuredRetentionHours")) is not int or elapsed["configuredRetentionHours"] != 24
+                    or elapsed.get("fullRetentionWindowQualified") is not False
+                    or type(elapsed.get("waitedMonotonicMs")) not in (int, float)
+                    or not 300000 <= elapsed["waitedMonotonicMs"] < 600000):
+                raise ValueError("Incomplete real-clock two-cutover retention evidence")
+            result["nativeElapsedRetention"] = {**dict.fromkeys(counts, 2), **dict.fromkeys(facts, True),
+                "mode": "real-clock-two-cutover-expiry-grace", "configuredRetentionHours": 24,
+                "fullRetentionWindowQualified": False, "waitedMonotonicMs": elapsed["waitedMonotonicMs"]}
+
         if value.get("suite") == "windows-acme-wrong-spki":
             proof = value.get("nativeWrongSpki")
             if not isinstance(proof, dict):

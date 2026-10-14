@@ -11,6 +11,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 - [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
 - [Certificate audit history qualification](api/audit-history-qualification.md)
+- [Certificate audit filtering and attribution in Chromium](api/browser-certificate-audit.md)
 - [Decommission acknowledgement and factual rediscovery](api/decommission-lifecycle.md)
 - [Certificate workspace transfer and CSR lineage](api/certificate-transfer-qualification.md)
 - [Browser console authorization and reconnects](api/browser-console.md)
@@ -44,7 +45,10 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Installed Windows agent qualification](windows/windows-real-journey.md)
 - [Installer first-rename refusal and preserved service](windows/installer-first-rename-refusal.md)
 - [Activation-function second-rename restoration](windows/installer-second-rename-restoration.md)
+- [Two successful unattended Windows renewal generations](windows/two-unattended-renewals.md)
 - [Retention-ledger atomic replacement refusal](windows/retention-ledger-atomic-replace.md)
+- [Retention replacement lineage and protected cleanup](windows/retention-replacement-lineage.md)
+- [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
 - [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)

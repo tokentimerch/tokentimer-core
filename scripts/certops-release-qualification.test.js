@@ -81,6 +81,38 @@ function suiteArtifact(suite, file, fields) {
   Object.assign(value.report, { suite, evidenceLevel: contract.suiteEvidenceLevels[suite], requiredCapabilities: contract.requiredCapabilities[suite], capabilities: Object.fromEntries(contract.requiredCapabilities[suite].map(name => [name, { available: true }])), requiredScenarios: contract.suites[suite], scenarios: contract.suites[suite].map(id => ({ ...value.report.scenarios[0], id, evidenceLevel: contract.scenarioEvidenceLevels[suite][id] })), fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }, ...fields });
   return value;
 }
+
+test("Windows two-cycle evidence requires both native generations and refuses expiry cleanup promotion", () => {
+  const suite = "windows-two-unattended-renewals", helper = require("../tests/e2e/helpers/certops-windows-two-renewals");
+  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(item => item.suite === suite);
+  assert.equal(slots.length, 10);
+  const fields = ["automaticSourceAndRealMode", "naturallyDueGenerations", "distinctIdempotencyKeys", "leafAndSpkiChangedTwice", "nativeBindingMatchesLatest", "nativeKeyProfilesVerified", "persistedEvidenceBothCycles", "inventoryMatchesActualLeaf", "profileAndManagementLineagePreserved", "retentionLineageMatchesBothCutovers", "predecessorCustodyPreserved", "noExpiryOrClockOverrides"];
+  const proof = { ...Object.fromEntries(fields.map(field => [field, true])), successfulAutomationCycles: 2, expiryCleanupQualified: false, scope: "two-unattended-cycles-and-preserved-predecessors-not-expiry-cleanup" };
+  for (const slot of slots) {
+    assert.deepEqual(slot.requiredSources, helper.requiredSources);
+    const value = suiteArtifact(suite, slot.source, { nativeTwoRenewals: proof });
+    value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+    value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+    const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+    assert.deepEqual(verifyMatrix([value], options), []);
+    for (const field of fields) { const invalid = structuredClone(value); invalid.report.nativeTwoRenewals[field] = false; assert.ok(verifyMatrix([invalid], options).length, field); }
+    for (const change of [{ successfulAutomationCycles: 1 }, { expiryCleanupQualified: true }, { scope: "complete-cleanup" }]) { const invalid = structuredClone(value); Object.assign(invalid.report.nativeTwoRenewals, change); assert.ok(verifyMatrix([invalid], options).length); }
+    const missing = structuredClone(value); delete missing.report.nativeTwoRenewals; assert.ok(verifyMatrix([missing], options).length);
+    const stale = structuredClone(value); stale.report.fixtureSources[0].sha256 = "0".repeat(64); assert.ok(verifyMatrix([stale], options).length);
+  }
+});
+
+test("browser audit requires all six executions and current UI/API source evidence", () => {
+  const suite = "browser-certificate-audit", slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+  const value = suiteArtifact(suite, slot.source, {});
+  value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  for (const mutate of [report => report.scenarios.pop(), report => { report.scenarios[0].status = "skipped"; }, report => { report.fixtureSources = []; }, report => { report.fixtureSources.find(source => source.file.endsWith("Audit.jsx")).sha256 = "0".repeat(64); }, report => { report.artifactQualification = "local-worktree-source-baseline-sha-only"; }]) {
+    const invalid = structuredClone(value); mutate(invalid.report); assert.ok(verifyMatrix([invalid], options).length);
+  }
+});
 test("systemd reapplication and real-elapsed worker facts cannot be omitted or weakened", () => {
   const cases = [
     ["linux-systemd-published-upgrade", {nativePublishedLinuxUpgrade:{baselineVersion:"0.17.2",publishedAssetId:612562598,publishedArchiveSha256:"c602fe36825c74d423c2c9b89680df3b1ac76542f71804de14dc5e2ec5aa85bf",publishedArchiveSize:410054,candidateVersion:require("../packages/agent/package.json").version,candidateArchiveSha256:"a".repeat(64),publishedFilesVerified:true,baselineJobExecuted:true,candidateFilesVerified:true,configBytesPreserved:true,credentialBytesPreserved:true,sameRegistration:true,bootstrapUnconsumed:true,freshHeartbeat:true,candidateJobExecuted:true,oldJobHistoryUnchanged:true,oldReplayEntryPreserved:true,privatePermissionsPreserved:true,originalConfigRestored:true,beforePid:100,afterPid:101,rollbackClaimed:false}},value=>{value.report.nativePublishedLinuxUpgrade.publishedAssetId=1;}],
@@ -290,10 +322,15 @@ test("Windows host release proof requires complete CNG custody and same-port SNI
  const facts={privateExportBytesWritten:false,privateExportBytesReported:false,workDirectoryUnchanged:true,cases:CASES.map(caseId=>({caseId,exportableControlSucceeded:true,controlBytesZeroed:true,protectedBytesZeroed:true,protectedExportDenied:true,publicNonceSignatureVerified:true,originalCustodyUnchanged:true,controlKeyRemoved:true,privateExportHResult:-2146893813}))};
  const sni={siteCount:2,hostnameCount:2,certificateStore:"My",twoSitesSamePort:true,distinctHostnameSelectors:true,primaryCutoverPeerUnchanged:true,primaryRollbackPeerUnchanged:true,peerCutoverPrimaryUnchanged:true,peerRollbackPrimaryUnchanged:true,sameCertificateReplayVerified:true,independentAuthenticatedTls:true,ownedCleanupVerified:true};
  const contention={winnerGeneratedRealCsr:true,loserLockedBeforeNativeExecution:true,retryAcquiredEnrollmentLock:true,retryExistingContainerRefused:true,sameCsrAndSpki:true,sameNonExportableKey:true,winnerSignatureVerified:true,ownedChildrenStopped:true,ownedKeyRemoved:true,loserNativeCalls:0,loserCertreqCalls:0,retryCertreqCalls:0,winnerCertreqCalls:1,retryNativeCalls:1};
- const value=suiteArtifact(suite,slot.source,{cngCustody:facts,nativeSamePortSni:sni,nativeEnrollmentContention:contention,nativeRetentionAtomicReplace:Object.fromEntries(require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").FIELDS.map(field=>[field,true]))});value.environment=value.report.qualificationEnvironment={...slot.environment,measurement:"native"};
+ const value=suiteArtifact(suite,slot.source,{cngCustody:facts,nativeSamePortSni:sni,nativeEnrollmentContention:contention,nativeElapsedRetention:elapsedRetentionProof(),nativeRetentionAtomicReplace:Object.fromEntries(require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").FIELDS.map(field=>[field,true]))});value.environment=value.report.qualificationEnvironment={...slot.environment,measurement:"native"};
  value.report.fixtureSources=slot.requiredSources.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
  const options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};assert.deepEqual(verifyMatrix([value],options),[]);
  for(const field of require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").FIELDS){const bad=structuredClone(value);bad.report.nativeRetentionAtomicReplace[field]=false;assert.ok(verifyMatrix([bad],options).length,field);}
+ for(const change of [{successfulCutovers:1},{predecessorKeysRemoved:1},{lineageRowsFinalized:1},{immutableHistoryPreserved:false},{waitedMonotonicMs:299999},{waitedMonotonicMs:600000},{fullRetentionWindowQualified:true},{configuredRetentionHours:1}]){const bad=structuredClone(value);Object.assign(bad.report.nativeElapsedRetention,change);assert.ok(verifyMatrix([bad],options).length);}
+ const missingElapsed=structuredClone(value);delete missingElapsed.report.nativeElapsedRetention;assert.ok(verifyMatrix([missingElapsed],options).length);
+ for(const file of ["packages/agent/scripts/host/retention-elapsed-fixture.js","packages/agent/scripts/host/retention-interrupted-child.js","packages/agent/src/index.js","packages/agent/src/windows-retention/index.js","packages/agent/src/windows-discovery/index.js"]){
+  const staleElapsed=structuredClone(value);staleElapsed.report.fixtureSources.find(row=>row.file===file).sha256="0".repeat(64);assert.ok(verifyMatrix([staleElapsed],options).length,file);
+ }
  const missingAtomic=structuredClone(value);delete missingAtomic.report.nativeRetentionAtomicReplace;assert.ok(verifyMatrix([missingAtomic],options).length);
  const staleAtomic=structuredClone(value);staleAtomic.report.fixtureSources.find(source=>source.file.endsWith("retention-ledger-atomic-fixture.js")).sha256="0".repeat(64);assert.ok(verifyMatrix([staleAtomic],options).length);
  for(const mutate of [v=>{delete v.report.nativeEnrollmentContention;},v=>{v.report.nativeEnrollmentContention.loserNativeCalls=1;},v=>{v.report.nativeEnrollmentContention.retryCertreqCalls=1;},v=>{v.report.nativeEnrollmentContention.sameNonExportableKey=false;},v=>{v.report.nativeEnrollmentContention.ownedChildrenStopped=false;},v=>{delete v.report.nativeSamePortSni;},v=>{v.report.nativeSamePortSni.hostnameCount=1;},v=>{v.report.nativeSamePortSni.peerRollbackPrimaryUnchanged=false;},v=>{v.report.nativeSamePortSni.ownedCleanupVerified=false;},v=>{delete v.report.cngCustody;},v=>{v.report.cngCustody.cases.pop();},v=>{v.report.cngCustody.cases[0].controlBytesZeroed=false;},v=>{v.report.cngCustody.privateExportBytesReported=true;},v=>{v.report.cngCustody.cases[0].privateExportHResult=0;}]){const bad=structuredClone(value);mutate(bad);assert.ok(verifyMatrix([bad],options).length);}
@@ -335,3 +372,7 @@ test("second-rename evidence cannot claim full CLI rollback or omit native owner
   const falseScope = structuredClone(value); falseScope.report.nativeSecondRename.scope = "complete-cli-rollback"; assert.ok(verifyMatrix([falseScope], options).length);
   const stale = structuredClone(value); stale.report.fixtureSources[0].sha256 = "0".repeat(64); assert.ok(verifyMatrix([stale], options).length);
 });
+
+function elapsedRetentionProof() {
+ return {mode:"real-clock-two-cutover-expiry-grace",successfulCutovers:2,predecessorCertificatesRemoved:2,predecessorKeysRemoved:2,lineageRowsFinalized:2,immediateDeferralPreservedCustody:true,immutableHistoryPreserved:true,replacementTrustedBoundCustodyUnchanged:true,interruptedNativeDeleteRecovered:true,configuredRetentionHours:24,fullRetentionWindowQualified:false,waitedMonotonicMs:420000};
+}

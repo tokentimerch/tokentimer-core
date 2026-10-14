@@ -21,7 +21,43 @@ collector = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(collector)
 
 
+def elapsed_proof():
+    return {"mode": "real-clock-two-cutover-expiry-grace", "successfulCutovers": 2,
+            "predecessorCertificatesRemoved": 2, "predecessorKeysRemoved": 2, "lineageRowsFinalized": 2,
+            "immediateDeferralPreservedCustody": True, "immutableHistoryPreserved": True,
+            "replacementTrustedBoundCustodyUnchanged": True, "interruptedNativeDeleteRecovered": True,
+            "configuredRetentionHours": 24, "fullRetentionWindowQualified": False, "waitedMonotonicMs": 420000}
+
+
 class CollectorTests(unittest.TestCase):
+    def test_two_unattended_renewals_retains_exact_scope_not_raw_key_or_ledger_state(self):
+        fields = ("automaticSourceAndRealMode", "naturallyDueGenerations", "distinctIdempotencyKeys", "leafAndSpkiChangedTwice", "nativeBindingMatchesLatest", "nativeKeyProfilesVerified", "persistedEvidenceBothCycles", "inventoryMatchesActualLeaf", "profileAndManagementLineagePreserved", "retentionLineageMatchesBothCutovers", "predecessorCustodyPreserved", "noExpiryOrClockOverrides")
+        proof = {**dict.fromkeys(fields, True), "successfulAutomationCycles": 2, "expiryCleanupQualified": False,
+                 "scope": "two-unattended-cycles-and-preserved-predecessors-not-expiry-cleanup"}
+        suite = "windows-two-unattended-renewals"
+        result = collector.sanitized_report({"suite": suite, "nativeTwoRenewals": {**proof, "rawCngMetadata": "sentinel", "rawLedger": "sentinel"}}, {suite}, set())
+        self.assertEqual(result["nativeTwoRenewals"], proof)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for field in fields:
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeTwoRenewals": {**proof, field: False}}, {suite}, set())
+        for change in ({"successfulAutomationCycles": 1}, {"successfulAutomationCycles": 3}, {"successfulAutomationCycles": True}, {"expiryCleanupQualified": True}, {"scope": "complete-expiry-cleanup"}):
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeTwoRenewals": {**proof, **change}}, {suite}, set())
+        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite}, {suite}, set())
+
+    def test_browser_audit_preserves_current_source_inventory_without_raw_events_or_sessions(self):
+        suite = "browser-certificate-audit"
+        files = ("scripts/certops-browser-audit.js", "tests/e2e/helpers/certops-browser-audit-fixture.js",
+                 "tests/e2e/helpers/certops-api-fixture.js", "apps/dashboard/src/pages/Audit.jsx",
+                 "apps/api/routes/usage.js", "apps/api/services/certops/certificateIdentity.js")
+        sources = [{"file": file, "sha256": "a" * 64} for file in files]
+        report = {"suite": suite, "fixtureSource": sources[0], "fixtureSources": sources,
+                  "rawAuditRows": [{"metadata": "sentinel"}], "cookies": "sentinel", "screenshot": "sentinel"}
+        result = collector.sanitized_report(report, {suite}, set())
+        self.assertEqual(result["fixtureSources"], sources)
+        self.assertNotIn("sentinel", json.dumps(result))
+        report["fixtureSources"] = [{"file": "uncommitted/private-path.js", "sha256": "a" * 64}]
+        self.assertEqual(collector.sanitized_report(report, {suite}, set())["fixtureSources"], [])
+
     def test_second_rename_proof_retains_scope_and_refuses_incomplete_restoration(self):
         fields = ("childIdentityVerifiedBeforeActivation", "actualProductionFunctions", "nativeOrderedRestoreEvents", "originalDirectoryIdentityRestored", "heldStagingIdentityUnchanged", "explicitStagingCleanupFailure", "candidateNeverActivated", "predecessorFilesUnchanged", "sameRunningServicePid", "configurationAndCredentialUnchanged", "cngCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "freshAuthenticatedHeartbeat", "nativeHandleReleased", "ownedStagingRemoved", "ownedChildDrained")
         proof = {**dict.fromkeys(fields, True), "scope": "production-activation-functions-not-installer-cli"}
@@ -41,11 +77,26 @@ class CollectorTests(unittest.TestCase):
         custody_fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True,
                    "cases": [{"caseId": profile + "/" + store, **dict.fromkeys(custody_fields, True), "privateExportHResult": -2146893813} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]}
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeRetentionAtomicReplace"], proof)
+        elapsed = elapsed_proof()
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeRetentionAtomicReplace": proof,
+            "nativeElapsedRetention": {**elapsed, "rawLedger": "sentinel", "nativeKeyPath": "sentinel"}}, {suite}, set())
+        self.assertEqual(result["nativeElapsedRetention"], elapsed)
+        self.assertNotIn("sentinel", json.dumps(result))
+        for change in ({"successfulCutovers": True}, {"predecessorCertificatesRemoved": 1}, {"predecessorKeysRemoved": 1},
+                       {"lineageRowsFinalized": 1}, {"immediateDeferralPreservedCustody": False}, {"immutableHistoryPreserved": False},
+                       {"replacementTrustedBoundCustodyUnchanged": False}, {"interruptedNativeDeleteRecovered": False},
+                       {"configuredRetentionHours": 1}, {"fullRetentionWindowQualified": True},
+                       {"waitedMonotonicMs": 299999}, {"waitedMonotonicMs": 600000}, {"waitedMonotonicMs": float("nan")},
+                       {"mode": "synthetic-clock"}):
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody,
+                "nativeRetentionAtomicReplace": proof, "nativeElapsedRetention": {**elapsed, **change}}, {suite}, set())
+        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeRetentionAtomicReplace": proof}, {suite}, set())
+
         self.assertNotIn("sentinel", json.dumps(result))
         for field in fields:
-            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": {**proof, field: False}}, {suite}, set())
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, field: False}}, {suite}, set())
         with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite}, {suite}, set())
     def test_browser_retirement_retains_declared_sources_without_browser_private_state(self):
         suite = "browser-retirement-visibility"
@@ -226,16 +277,16 @@ class CollectorTests(unittest.TestCase):
         cases = [{"caseId": profile + "/" + store, **dict.fromkeys(fields, True), "privateExportHResult": -2146893813, "rawPrivateBlob": "sentinel"} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True, "cases": cases, "signature": "sentinel"}
         sni = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My", **dict.fromkeys(("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified"), True), "privateConfig": "sentinel"}
-        result = collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeSamePortSni": sni}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeSamePortSni": sni}, {suite}, set())
         self.assertEqual(result["nativeSamePortSni"]["siteCount"], 2)
         self.assertTrue(result["nativeSamePortSni"]["peerRollbackPrimaryUnchanged"])
         for change in ({"siteCount": True}, {"hostnameCount": 1}, {"certificateStore": "Other"}):
             with self.assertRaises(ValueError):
                 collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeSamePortSni": {**sni, **change}}, {suite}, set())
-        missing = collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
+        missing = collector.sanitized_report({"suite": suite, "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
         self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
         contention = {**dict.fromkeys(("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved"), True), "loserNativeCalls": 0, "loserCertreqCalls": 0, "retryCertreqCalls": 0, "winnerCertreqCalls": 1, "retryNativeCalls": 1, "privateRaw": "sentinel"}
-        projected = collector.sanitized_report({"suite": suite, "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeEnrollmentContention": contention}, {suite}, set())
+        projected = collector.sanitized_report({"suite": suite, "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeEnrollmentContention": contention}, {suite}, set())
         self.assertEqual(projected["nativeEnrollmentContention"]["loserNativeCalls"], 0)
         self.assertNotIn("sentinel", json.dumps(projected))
         for bad in (True, "0", -1, 33):

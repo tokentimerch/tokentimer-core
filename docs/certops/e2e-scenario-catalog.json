@@ -843,8 +843,8 @@
       "requiredEnvironments": [
         "windows-2022-disposable-api-postgres-pebble"
       ],
-      "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "One successful worker-driven renewal plus a later genuinely interrupted renewal covered; two successful unattended cycles and eventual eligible cleanup remain."
+      "implementation": "tests/e2e/helpers/certops-windows-two-renewals.js",
+      "remainingCoverage": "Mandatory installed Windows source now performs two successful actual worker-driven renewals from naturally due real six-day CA leaves across all five key profiles on Server2022/2025. It independently requires three distinct trusted TLS fingerprints/SPKIs and non-exportable CNG containers, exact native IIS/HTTP.sys cutovers, matching claim-bound evidence/inventory, unchanged profile/management-period lineage and immutable predecessor A-to-B/B-to-C retention records with valid retained keys. A later interrupted renewal remains separately exercised. All ten hosted cases remain unexecuted. This proves preserved predecessors after two successful unattended generations, not eventual expiry cleanup, full24h retention or every multi-target/service permutation. Separate mandatory hosted native source now performs A-to-B-to-C cutovers with two genuinely expiring predecessors, one shared real expiry-plus300s wait, interrupted native deletion and ordinary collector resumption finalizing both immutable rows while C retains trusted TLS and custody. This source remains native-unexecuted; it does not qualify the full24h retention window."
     },
     {
       "id": "acme.windows-issue",
@@ -2216,7 +2216,7 @@
         "disposable-api-postgres"
       ],
       "implementation": "tests/e2e/certops-audit-history-e2e.test.js",
-      "remainingCoverage": "Eight actual API cases passed: public Windows-target profile create/edit audit exposes profile/issuer/reference identity; actual public Windows-target issue admission plus authenticated claimed protocol failure exposes store/site/port/SNI/agent/job and replay creates no duplicate audit. Exact action/reference/literal percent-underscore search, pagination, workspace isolation and viewer/manager authorization passed. Windows platform is protocol-declared, confirmed issuer metadata is seeded and no native CA/CNG/IIS operation occurs. Native success/preflight/retire/trust audit variants and browser filtering remain."
+      "remainingCoverage": "Eight actual API cases cover public Windows-target profile edits and issue admission/protocol failure with store/site/port/SNI/issuer/agent/job attribution, literal search, replay, pagination and authorization. A separate six-case real Chromium suite now covers genuine public certificate retirement actor/subject/workspace/identity/fingerprint/reason attribution, literal percent/underscore search excluding a wildcard decoy, exact action filters, forward/back completed-fixture pagination against independently ordered PostgreSQL IDs and foreign-workspace refusal. Focused local Windows browser cases passed with strict current-source evidence; the mandatory Ubuntu24 browser slot remains unexecuted. Browser audit rows and outcomes are not seeded. Native successful issuance/preflight/renewal/trust event lineage and additional audit UI role/date/concurrent-write variants remain separate source coverage."
     },
     {
       "id": "experience.evidence-integrity",

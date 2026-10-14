@@ -5061,6 +5061,65 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     assert.equal(row.lifecycleState, "removed");
   });
 
+  it("follows verified replacement lineage after two cutovers without rewriting the original retention clock", async () => {
+    workDir = makeTempConfigDir();
+    const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+    const first = seedRow(workDir);
+    seedRow(workDir, {
+      oldThumbprint: REPLACEMENT_THUMBPRINT,
+      replacementThumbprint: currentThumbprint,
+      cngKeyContainerId: "tokentimer-second-job-abcd1234",
+      verifiedCutoverAt: new Date(Date.now() - 20 * 86400000).toISOString(),
+    });
+    const removed = [];
+    const fallback = makeSweepExecStub();
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl(file, args, options, callback) {
+        if (isHttpSysBindingQuery(file, args)) {
+          process.nextTick(() => callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: currentThumbprint }]), ""));
+          return;
+        }
+        if (file === "certutil.exe" && args[0] === "-delstore") removed.push(args[2]);
+        fallback(file, args, options, callback);
+      },
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+    assert.deepEqual(new Set(summary.removed), new Set([OLD_THUMBPRINT, REPLACEMENT_THUMBPRINT]));
+    assert.deepEqual(new Set(removed), new Set([OLD_THUMBPRINT, REPLACEMENT_THUMBPRINT]));
+    const persisted = readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT);
+    assert.equal(persisted.replacementThumbprint, REPLACEMENT_THUMBPRINT);
+    assert.equal(persisted.verifiedCutoverAt, first.verifiedCutoverAt);
+    assert.equal(persisted.lifecycleState, "removed");
+  });
+
+  it("holds the actual store mutex while gathering native facts and deleting an eligible predecessor", async () => {
+    workDir = makeTempConfigDir();
+    const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+    seedRow(workDir, { replacementThumbprint: currentThumbprint });
+    const fallback = makeSweepExecStub();
+    let protectedChecks = 0;
+    const summary = await runWindowsRetentionSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl(file, args, options, callback) {
+        assert.throws(() => acquireStoreLock(workDir, "My"), { code: "STORE_LOCKED" });
+        protectedChecks += 1;
+        if (isHttpSysBindingQuery(file, args)) {
+          process.nextTick(() => callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: currentThumbprint }]), ""));
+          return;
+        }
+        fallback(file, args, options, callback);
+      },
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+    assert.deepEqual(summary.removed, [OLD_THUMBPRINT]);
+    assert.ok(protectedChecks >= 4);
+    const successor = acquireStoreLock(workDir, "My");
+    successor.release();
+  });
+
   it("defers (never calls performCleanup) when the old thumbprint is still bound", async () => {
     workDir = makeTempConfigDir();
     seedRow(workDir);

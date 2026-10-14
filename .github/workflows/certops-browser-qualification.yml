@@ -58,6 +58,12 @@ jobs:
         run: |
           node scripts/certops-browser-retirement.js
           node scripts/certops-qualification-report.js qualification-results/browser-retirement.json
+      - name: Genuine certificate audit attribution filters and pagination
+        env:
+          CERTOPS_BROWSER_AUDIT_REPORT: qualification-results/browser-audit.json
+        run: |
+          node scripts/certops-browser-audit.js
+          node scripts/certops-qualification-report.js qualification-results/browser-audit.json
       - name: Stop owned fixture processes and stack
         if: always()
         run: |
@@ -71,4 +77,5 @@ jobs:
             qualification-results/browser.json
             qualification-results/browser-console.json
             qualification-results/browser-retirement.json
+            qualification-results/browser-audit.json
           if-no-files-found: error

@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-14 against `main` baseline `2491d547`. The AD CS
+Last reviewed: 2026-10-14 against `main` baseline `d04e4d9f`. The AD CS
 issuer and enrollment surface target **0.18.0**; released agents keep the
 capability disabled until real-host qualification passes. Certificate
 lifecycle testing infrastructure and coverage remain in progress.

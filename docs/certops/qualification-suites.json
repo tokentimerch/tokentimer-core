@@ -1065,6 +1065,19 @@
       "windows-activation-second-rename-restores-predecessor": "e2e",
       "windows-activation-restoration-preserves-installed-custody": "e2e",
       "windows-activation-second-rename-owned-cleanup": "e2e"
+    },
+    "browser-certificate-audit": {
+      "browser-audit-genuine-retirement-attribution": "e2e",
+      "browser-audit-literal-search-decoy": "e2e",
+      "browser-audit-action-filter": "e2e",
+      "browser-audit-stable-pagination": "e2e",
+      "browser-audit-workspace-isolation": "e2e",
+      "browser-audit-owned-cleanup": "e2e"
+    },
+    "windows-two-unattended-renewals": {
+      "windows-two-unattended-natural-generations": "e2e",
+      "windows-two-unattended-native-cutovers": "e2e",
+      "windows-two-unattended-preserved-predecessors": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1499,6 +1512,19 @@
       "system",
       "installedAgent",
       "api"
+    ],
+    "browser-certificate-audit": [
+      "browser",
+      "api",
+      "postgres",
+      "openssl"
+    ],
+    "windows-two-unattended-renewals": [
+      "windows",
+      "system",
+      "installedAgent",
+      "api",
+      "pebble"
     ]
   },
   "suites": {
@@ -2561,6 +2587,19 @@
       "windows-activation-second-rename-restores-predecessor",
       "windows-activation-restoration-preserves-installed-custody",
       "windows-activation-second-rename-owned-cleanup"
+    ],
+    "browser-certificate-audit": [
+      "browser-audit-genuine-retirement-attribution",
+      "browser-audit-literal-search-decoy",
+      "browser-audit-action-filter",
+      "browser-audit-stable-pagination",
+      "browser-audit-workspace-isolation",
+      "browser-audit-owned-cleanup"
+    ],
+    "windows-two-unattended-renewals": [
+      "windows-two-unattended-natural-generations",
+      "windows-two-unattended-native-cutovers",
+      "windows-two-unattended-preserved-predecessors"
     ]
   },
   "suiteEvidenceLevels": {
@@ -2651,6 +2690,8 @@
     "retired-identity-scheduler-api": "integration",
     "windows-installer-first-rename-refusal": "e2e",
     "browser-retirement-visibility": "e2e",
-    "windows-activation-second-rename": "e2e"
+    "windows-activation-second-rename": "e2e",
+    "browser-certificate-audit": "e2e",
+    "windows-two-unattended-renewals": "e2e"
   }
 }

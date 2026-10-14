@@ -188,6 +188,7 @@ const { deployIisBinding, resolveVerificationTarget, queryCurrentBinding } = req
 const {
   createLedgerRow,
   readLedgerRow,
+  resolveBoundReplacement,
   sweepLedger,
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
@@ -3846,16 +3847,18 @@ function resolveSweepVerificationTarget(binding) {
  * @param {number} [input.timeoutMs]
  * @returns {Promise<string|null>} uppercase 40-hex-char thumbprint, or null.
  */
-function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.connect, timeoutMs = 5000 }) {
+function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.connect, timeoutMs = 5000, signal }) {
   return new Promise((resolve) => {
     let settled = false;
     let timer = null;
     let socket = null;
+    const onAbort = () => settle(null);
 
     function settle(value) {
       if (settled) return;
       settled = true;
       if (timer !== null) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       if (socket) {
         try {
           socket.destroy();
@@ -3866,6 +3869,8 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
       resolve(value);
     }
 
+    if (signal?.aborted) { settle(null); return; }
+    signal?.addEventListener("abort", onAbort, { once: true });
     timer = setTimeout(() => settle(null), timeoutMs);
 
     try {
@@ -3934,12 +3939,14 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
   const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
   if (!fs.existsSync(ledgerDir)) return null;
 
-  async function gatherContext(row) {
+  async function gatherContext(row, { signal, assertHeld }) {
     const store = row.store || "My";
 
     const bindingsResult = await listHttpSysBindings({
+      signal,
       ...(execFileImpl ? { execFileImpl } : {}),
     });
+    assertHeld();
     const bindingStillReferencesOldThumbprint =
       bindingsResult.ok !== true
         ? true
@@ -3951,8 +3958,10 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
 
     const storeResult = await listMachineStoreCertificates({
       store,
+      signal,
       ...(execFileImpl ? { execFileImpl } : {}),
     });
+    assertHeld();
     const keyContainerSharedWithSurvivor =
       storeResult.ok !== true
         ? true
@@ -3965,10 +3974,20 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
 
     let replacementPassesHandshakeNow = false;
     if (bindingsResult.ok === true) {
+      const replacementThumbprint = resolveBoundReplacement({
+        ledgerDir,
+        row,
+        isBound: (thumbprint, storeName) => bindingsResult.bindings.some(binding =>
+          isNonEmptyStringValue(binding.thumbprint) &&
+          normalizeRetentionThumbprint(binding.thumbprint) === thumbprint &&
+          (binding.storeName || "My").toUpperCase() === storeName),
+      });
       const replacementBinding = bindingsResult.bindings.find(
         (binding) =>
+          replacementThumbprint !== null &&
           isNonEmptyStringValue(binding.thumbprint) &&
-          normalizeRetentionThumbprint(binding.thumbprint) === row.replacementThumbprint,
+          normalizeRetentionThumbprint(binding.thumbprint) === replacementThumbprint &&
+          (binding.storeName || "My").toUpperCase() === store.toUpperCase(),
       );
       const target = replacementBinding ? resolveSweepVerificationTarget(replacementBinding) : null;
       if (target !== null) {
@@ -3976,50 +3995,52 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
           host: target.host,
           port: target.port,
           servername: target.servername,
+          signal,
           ...(connectImpl ? { connectImpl } : {}),
         });
-        replacementPassesHandshakeNow = observedThumbprint === row.replacementThumbprint;
+        assertHeld();
+        replacementPassesHandshakeNow = observedThumbprint === replacementThumbprint;
       }
     }
 
     return { bindingStillReferencesOldThumbprint, keyContainerSharedWithSurvivor, replacementPassesHandshakeNow };
   }
 
-  async function performCleanup(row) {
+  async function performCleanup(row, { signal, assertHeld }) {
     const store = row.store || "My";
-    const storeLock = acquireStoreLock(stateDir, store);
-    try {
-      await storeLock.run(async (signal) => {
-        const result = await removeCertificateAndKeyContainer({
-          thumbprint: row.oldThumbprint,
-          store,
-          containerName: row.cngKeyContainerId,
-          signal,
-          ...(execFileImpl ? { execFileImpl } : {}),
-        });
-        storeLock.assertHeld();
-        if (result.ok !== true) {
-          if (result.reason === "aborted") {
-            throw Object.assign(
-              new Error(
-                `removeCertificateAndKeyContainer aborted at stage ${result.stage}: store lock lost`,
-              ),
-              { code: "STORE_LOCK_LOST" },
-            );
-          }
-          throw new Error(
-            `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
-              result.stderrExcerpt,
-          );
-        }
-        removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
-      });
-    } finally {
-      storeLock.release();
+    assertHeld();
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: row.oldThumbprint,
+      store,
+      containerName: row.cngKeyContainerId,
+      signal,
+      ...(execFileImpl ? { execFileImpl } : {}),
+    });
+    assertHeld();
+    if (result.ok !== true) {
+      if (result.reason === "aborted") {
+        throw Object.assign(
+          new Error(`removeCertificateAndKeyContainer aborted at stage ${result.stage}: store lock lost`),
+          { code: "STORE_LOCK_LOST" },
+        );
+      }
+      throw new Error(
+        `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` + result.stderrExcerpt,
+      );
     }
+    removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
   }
 
-  const summary = await sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup });
+  const summary = await sweepLedger({
+    ledgerDir, retentionHours, gatherContext, performCleanup,
+    withRowLock: async (row, work) => {
+      // The same mutex used by agent cutover/rollback protects the complete
+      // eligibility transaction, including native observations and ledger state.
+      const storeLock = acquireStoreLock(stateDir, row.store || "My");
+      try { return await storeLock.run(signal => work({ signal, assertHeld: () => storeLock.assertHeld() })); }
+      finally { storeLock.release(); }
+    },
+  });
   emitLog(
     log,
     `windows-retention sweep: removed=${summary.removed.length} ` +
