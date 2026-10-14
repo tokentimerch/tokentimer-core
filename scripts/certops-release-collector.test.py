@@ -25,6 +25,11 @@ def survivor_proof():
     return dict.fromkeys(("differentCertificateCrossStoreProtected", "sameCertificateCrossStoreProtected", "originalKeyPreserved", "replacementTrustedTlsPreserved", "ownedCrossStoreCopiesRemoved"), True)
 
 
+def uncertain_abandon_proof():
+    result = dict.fromkeys(("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged"), True)
+    return {**result, "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 61000, "scope": "native-zero-request-uncertain-abandon", "resolvedIssuingCaAddress": "10.64.0.4", "caRequestsAtFault": 0, "caRequestsAfterRecovery": 0, "caRequestsAfterAbandon": 0}
+
+
 def elapsed_proof():
     return {"mode": "real-clock-two-cutover-expiry-grace", "successfulCutovers": 2,
             "predecessorCertificatesRemoved": 2, "predecessorKeysRemoved": 2, "lineageRowsFinalized": 2,
@@ -463,9 +468,26 @@ class CollectorTests(unittest.TestCase):
         cohort = {"workspaceId": "a" * 36, "agentId": "b" * 36, "dispatchCount": 18, "dispatchLimit": 18, "nativeIdentity": "LocalSystem", "runtime": "candidate-cli", "privateState": "sentinel"}
         value = {"suite": "enterprise-adcs-real", "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
+        value["nativeUncertainAbandon"] = uncertain_abandon_proof()
+        value["nativeUncertainAbandon"]["private"] = "sentinel"
         result = collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativePreflightCohorts"][0]["dispatchCount"], 18)
         self.assertNotIn("sentinel", json.dumps(result))
+        for key, expected in uncertain_abandon_proof().items():
+            with self.subTest(uncertain_abandon_field=key):
+                invalid = json.loads(json.dumps(value))
+                del invalid["nativeUncertainAbandon"][key]
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+                invalid = json.loads(json.dumps(value))
+                invalid["nativeUncertainAbandon"][key] = False if type(expected) is bool else 1 if type(expected) is int else "unqualified"
+                with self.assertRaises(ValueError):
+                    collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for key in ("caRequestsAtFault", "caRequestsAfterRecovery", "caRequestsAfterAbandon"):
+            invalid = json.loads(json.dumps(value))
+            invalid["nativeUncertainAbandon"][key] = False
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         cohort["dispatchCount"] = 19
         with self.assertRaises(ValueError):
             collector.extract_reports(self.archive("adcs.json", value), {"enterprise-adcs-real"}, set())

@@ -179,6 +179,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     requiredScenarios: contract.suites[suite], scenarios: contract.suites[suite].map(id => ({ ...value.report.scenarios[0], id, evidenceLevel: "real-host" })),
     fixtureSource: { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") },
     nativeIssuedCancellation: { requestId: "17", snapshotSha256: "a".repeat(64), pollIntervalSeconds: 900, schedulerClock: "default-real-now", actualCaIssuedBeforeCancel: true, caLeafSignatureAndCsrSpkiVerified: true, controlPlaneStillPendingBeforeCancel: true, nonExportableKeyPresentBeforeCancel: true, signedTerminalCleanupSucceeded: true, exactUnacceptedKeyAbsent: true, certificateNeverAccepted: true, sameRequestSnapshotAndCsrPreserved: true, noAdditionalCaRequest: true, outgoingTrustedTlsUnchanged: true, terminalReconcileRefused: true, unusedIssuedLeafRevoked: true, databaseDatesRewritten: false, journalRewritten: false },
+    nativeUncertainAbandon: { leaseRemainingAtFaultMs: 60000, recoveryWaitBudgetMs: 150000, actualLeaseWaitMs: 61000, scope: "native-zero-request-uncertain-abandon", resolvedIssuingCaAddress: "10.64.0.4", ownedObserverDrained: true, ownedTransportBlock: true, observedSubmittingTermination: true, actualLeaseExpiry: true, acknowledgedPublicRecovery: true, sameCsrAndKey: true, noAutomaticResubmit: true, publicAbandonAudited: true, unacceptedKeyRemoved: true, originalOrphanPreserved: true, recoveryPolicyUnchanged: true, caRequestsAtFault: 0, caRequestsAfterRecovery: 0, caRequestsAfterAbandon: 0 },
     nativeValidationExpiry: { configuredTimeoutSeconds: 300, defaultTimeoutSeconds: 86400, storedWindowSeconds: 299, monotonicObservedWaitSeconds: 301, actualDeadline: new Date().toISOString(), requestId: "17", snapshotSha256: "a".repeat(64), actualNativeRevocationUnknown: true, actualSignedContinuationExpired: true, persistedDeadlineSurvivedRestartAndPolicyRestoration: true, exactUnacceptedKeyFreed: true, noCertificateAccepted: true, noCaResubmission: true, outgoingTrustedTlsPreserved: true, chainCacheValueRestored: true, nativeAndCaClocks: "actual", qualificationScope: "configured-five-minute-window-not-default-24-hour-elapsed" },
     primaryNativePreflightDispatchCount: 18,
     nativePreflightCohorts: [{ workspaceId: "a".repeat(36), agentId: "b".repeat(36), dispatchCount: 18, dispatchLimit: 18, nativeIdentity: "LocalSystem", runtime: "candidate-cli" }],
@@ -186,6 +187,23 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "cohort", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
+  for (const key of Object.keys(value.report.nativeUncertainAbandon)) {
+    const invalid = structuredClone(value); delete invalid.report.nativeUncertainAbandon[key];
+    assert.ok(verifyMatrix([invalid], options).length, key);
+    const changed = structuredClone(value); const prior = changed.report.nativeUncertainAbandon[key];
+    changed.report.nativeUncertainAbandon[key] = typeof prior === "boolean" ? false : typeof prior === "number" ? 1 : "unqualified";
+    assert.ok(verifyMatrix([changed], options).length, key);
+  }
+  const requiredSources = require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").REQUIRED_SOURCES;
+  const sourceOptions = structuredClone(options); sourceOptions.specification.slots[0].requiredSources = requiredSources;
+  const sourced = structuredClone(value); sourced.report.fixtureSources = requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  assert.deepEqual(verifyMatrix([sourced], sourceOptions), []);
+  for (const file of requiredSources) {
+    const missing = structuredClone(sourced); missing.report.fixtureSources = missing.report.fixtureSources.filter(row => row.file !== file);
+    assert.ok(verifyMatrix([missing], sourceOptions).length, file);
+    const stale = structuredClone(sourced); stale.report.fixtureSources.find(row => row.file === file).sha256 = "0".repeat(64);
+    assert.ok(verifyMatrix([stale], sourceOptions).length, file);
+  }
   for (const mutate of [item => { item.report.nativeIssuedCancellation.unusedIssuedLeafRevoked = false; }, item => { item.report.nativeIssuedCancellation.certificateNeverAccepted = false; }, item => { delete item.report.nativePreflightCohorts; }, item => { item.report.primaryNativePreflightDispatchCount = 19; }, item => { item.report.nativePreflightCohorts[0].dispatchCount = 19; }, item => { item.report.nativePreflightCohorts.push(item.report.nativePreflightCohorts[0]); }, item => { item.report.nativePreflightCohorts[0].runtime = "mock"; }]) {
     const invalid = structuredClone(value); mutate(invalid); assert.ok(verifyMatrix([invalid], options).length);
   }

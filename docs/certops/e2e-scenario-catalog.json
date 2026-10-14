@@ -1320,8 +1320,8 @@
       "requiredEnvironments": [
         "enterprise-domain-native-adcs"
       ],
-      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
-      "remainingCoverage": "Native source attempts public abandon against a genuinely pending request and requires invalid-transition refusal, identical actual CA RequestId/disposition/count and protected CNG key. Native execution is pending; successful uncertain-state abandon and all protected-key acceptance boundaries remain."
+      "implementation": "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+      "remainingCoverage": "Native source covers known-pending public abandon refusal and zero-request uncertain-state abandonment after actual owned submitting interruption, real lease expiry and acknowledged public recovery. Exact CSR/native CNG identity, restored transport without resubmission, audit, key cleanup and original orphan evidence are checked. Native execution and remaining accepted/foreign-key boundary combinations remain pending."
     },
     {
       "id": "adcs.adcs-renewal",
@@ -1332,7 +1332,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native source covers public fresh-enrollment manual renewal, stored-profile service initiation, real SQL-NOW short-lived certificate selection and pending profile continuation. Host execution is pending; signed CMC renewal semantics, capacity contention and repeated unattended cycles remain."
+      "remainingCoverage": "Native source covers supported fresh-enrollment manual renewal with changed SPKI and exact new CNG container, stored-profile service initiation, real SQL-NOW short-lived certificate selection and pending profile continuation. ADR0014 requires a new key and CSR for every new enrollment; signed CMC renewal requests are not a supported capability. Host execution, capacity contention and repeated unattended cycles remain."
     },
     {
       "id": "adcs.control-plane-path",

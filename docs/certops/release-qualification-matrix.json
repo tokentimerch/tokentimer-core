@@ -506,7 +506,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -535,7 +548,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -564,7 +590,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -593,7 +632,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -622,7 +674,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -651,7 +716,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -680,7 +758,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -709,7 +800,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -738,7 +842,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {
@@ -1282,7 +1399,20 @@
         "tests/e2e/helpers/certops-adcs-validation-expiry.js",
         "tests/e2e/helpers/certops-adcs-crl-fault.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js",
-        "tests/e2e/helpers/certops-adcs-issued-cancellation.js"
+        "tests/e2e/helpers/certops-adcs-issued-cancellation.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js"
       ]
     },
     {

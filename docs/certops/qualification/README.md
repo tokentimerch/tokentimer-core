@@ -55,6 +55,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
 - [AD CS operator guide](../agent/adcs.md)
+- [Native uncertain submission, acknowledged recovery and safe abandonment](adcs/uncertain-abandon.md)
 
 ## Linux agents and deployment
 

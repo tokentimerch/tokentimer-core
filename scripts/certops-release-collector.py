@@ -481,6 +481,21 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            abandon = value.get("nativeUncertainAbandon")
+            flags = ("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged")
+            counts = ("caRequestsAtFault", "caRequestsAfterRecovery", "caRequestsAfterAbandon")
+            if (not isinstance(abandon, dict) or abandon.get("scope") != "native-zero-request-uncertain-abandon"
+                    or abandon.get("resolvedIssuingCaAddress") != "10.64.0.4"
+                    or any(abandon.get(key) is not True for key in flags)
+                    or any(type(abandon.get(key)) is not int or abandon[key] != 0 for key in counts)):
+                raise ValueError("Invalid native uncertain-abandon evidence")
+            result["nativeUncertainAbandon"] = {key: abandon[key] for key in ("scope", "resolvedIssuingCaAddress", *flags, *counts)}
+            timing = ("leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs")
+            if (any(type(abandon.get(key)) is not int or not 0 <= abandon[key] <= 900000 for key in timing)
+                    or abandon["recoveryWaitBudgetMs"] != abandon["leaseRemainingAtFaultMs"] + 90000
+                    or abandon["actualLeaseWaitMs"] + 1000 < abandon["leaseRemainingAtFaultMs"]):
+                raise ValueError("Invalid actual lease recovery timing")
+            result["nativeUncertainAbandon"].update({key: abandon[key] for key in timing})
             cancellation = value.get("nativeIssuedCancellation")
             if not isinstance(cancellation, dict):
                 raise ValueError("Missing native issued cancellation evidence")

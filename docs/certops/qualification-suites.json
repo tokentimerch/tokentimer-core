@@ -250,7 +250,10 @@
       "adcs-real-local-rule-extra-san-refused": "real-host",
       "adcs-real-local-rule-tightening-frees-pending-key": "real-host",
       "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host",
-      "adcs-real-cancel-ca-issued-unaccepted-key": "real-host"
+      "adcs-real-cancel-ca-issued-unaccepted-key": "real-host",
+      "adcs-real-uncertain-zero-request-owned-termination": "real-host",
+      "adcs-real-uncertain-zero-request-acknowledged-recovery": "real-host",
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -540,7 +543,10 @@
       "adcs-real-local-rule-extra-san-refused": "real-host",
       "adcs-real-local-rule-tightening-frees-pending-key": "real-host",
       "adcs-real-elapsed-validation-deadline-frees-unaccepted-key": "real-host",
-      "adcs-real-cancel-ca-issued-unaccepted-key": "real-host"
+      "adcs-real-cancel-ca-issued-unaccepted-key": "real-host",
+      "adcs-real-uncertain-zero-request-owned-termination": "real-host",
+      "adcs-real-uncertain-zero-request-acknowledged-recovery": "real-host",
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1809,7 +1815,10 @@
       "adcs-real-local-rule-extra-san-refused",
       "adcs-real-local-rule-tightening-frees-pending-key",
       "adcs-real-elapsed-validation-deadline-frees-unaccepted-key",
-      "adcs-real-cancel-ca-issued-unaccepted-key"
+      "adcs-real-cancel-ca-issued-unaccepted-key",
+      "adcs-real-uncertain-zero-request-owned-termination",
+      "adcs-real-uncertain-zero-request-acknowledged-recovery",
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2099,7 +2108,10 @@
       "adcs-real-local-rule-extra-san-refused",
       "adcs-real-local-rule-tightening-frees-pending-key",
       "adcs-real-elapsed-validation-deadline-frees-unaccepted-key",
-      "adcs-real-cancel-ca-issued-unaccepted-key"
+      "adcs-real-cancel-ca-issued-unaccepted-key",
+      "adcs-real-uncertain-zero-request-owned-termination",
+      "adcs-real-uncertain-zero-request-acknowledged-recovery",
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
