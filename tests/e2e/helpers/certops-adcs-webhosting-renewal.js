@@ -85,6 +85,7 @@ function verifyProof(proof) {
  * subject is only a selector; durable exact container/store/thumb ownership
  * authorizes removal. Missing receipts preserve the whole fixture. */
 function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
+  assert.notEqual(receipt.guiCancelPendingVerification, true, "Preserve native ownership while GUI Cancel remains unresolved");
   assert.equal(receipt.store, store);
   assert.match(receipt.domain, domainPattern);
   assert.match(receipt.certificateId, uuid);

@@ -269,6 +269,66 @@ def adcs_capacity_fields(proof):
     return result
 
 
+def browser_cancel_fields(proof):
+    flags = ['additionalSequentialPublicRenewal', 'requestedPendingApprovalObserved', 'newJobNeverClaimed', 'exactPublicCancelAcknowledged', 'browserAndTrustDrained', 'onlyNewEnrollmentAndJobCancelled', 'oldInstalledEnrollmentUnchanged', 'oldProtectedCngAndIisUnchanged', 'oldTrustedTlsUnchanged', 'newContainerAndJournalAbsent', 'subjectCaRequestsUnchanged', 'exactHumanCancelAudit', 'capacitySlotReleased', 'cleanupOwnershipRegistered']
+    if not isinstance(proof, dict) or proof.get("scope") != 'browser-cancel-requested-approval-gated-renewal-preserves-issued-native-custody' or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Missing native browser requested cancellation evidence")
+    result = {"scope": proof["scope"], **dict.fromkeys(flags, True)}
+    for key in ("enrollmentId", "jobId", "priorEnrollmentId", "priorJobId", "priorRequestId", "fingerprint"):
+        pattern = r"[a-f0-9]{64}" if key == "fingerprint" else r"[1-9][0-9]{0,9}" if key == "priorRequestId" else r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+        if not isinstance(proof.get(key), str) or not re.fullmatch(pattern, proof[key]):
+            raise ValueError("Invalid browser requested cancellation identity")
+        result[key] = proof[key]
+    if int(result["priorRequestId"]) > 0xffffffff or len({result[key] for key in ("enrollmentId", "jobId", "priorEnrollmentId", "priorJobId")}) != 4:
+        raise ValueError("Invalid browser cancellation request/UUID bounds")
+    for key, expected in (("cancelPosts", 1), ("otherMutations", 0), ("capacityBeforeCancel", 5), ("capacityAfterCancel", 4)):
+        if type(proof.get(key)) is not int or proof[key] != expected:
+            raise ValueError("Invalid browser cancellation mutation/capacity count")
+        result[key] = expected
+    for key in ("initialSixConcurrencyQualified", "caSubmissionCancellationQualified"):
+        if proof.get(key) is not False:
+            raise ValueError("Browser cancellation scope cannot be promoted")
+        result[key] = False
+    return result
+
+
+def browser_reconcile_fields(proof):
+    flags = ["actualUncertainRequestIdForm","invalidRequestIdDidNotMutate","exactOwnedRequestIdPosted","exactPublicReconcileAcknowledged","browserAndTrustDrained","nativeSelectedRequestInstalled","nativeSameProtectedMachineKey","nativeClaimBoundVerification","nativeExactReconcileAudit","unusedOwnedRequestRevoked","unusedLeafNeverAccepted","originalOrphanPreserved"]
+    if not isinstance(proof, dict) or proof.get("scope") != "browser-requestid-reconcile-real-operator-created-same-csr-ambiguity" or proof.get("fixtureOrigin") != "operator-created-two-real-system-submissions-of-the-same-public-csr" or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete native browser reconciliation evidence")
+    result = {"scope": proof["scope"], "fixtureOrigin": proof["fixtureOrigin"], **dict.fromkeys(flags, True)}
+    for key in ("enrollmentId", "continuationJobId", "selectedFingerprint", "selectedRequestId", "unusedRequestId"):
+        pattern = r"[a-f0-9]{64}" if key == "selectedFingerprint" else r"[1-9][0-9]{0,9}" if key.endswith("RequestId") else r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(pattern, value):
+            raise ValueError("Invalid native browser reconciliation identity")
+        result[key] = value
+    if any(int(result[key]) > 0xffffffff for key in ("selectedRequestId", "unusedRequestId")) or result["selectedRequestId"] == result["unusedRequestId"]:
+        raise ValueError("Invalid native browser reconciliation requests")
+    for key, expected in (("reconcilePosts", 1), ("invalidRequestPosts", 0)):
+        if type(proof.get(key)) is not int or proof[key] != expected:
+            raise ValueError("Invalid browser reconciliation mutation count")
+        result[key] = expected
+    return result
+
+
+def browser_abandon_fields(proof):
+    flags = ("actualUncertainEnrollmentVisible","keepDidNotMutate","explicitConfirmationRequired","exactPublicAbandonAcknowledged","browserAndTrustDrained","actualProductionContinuation","journalAndDatabaseAbandoned","exactUnacceptedKeyAbsent","noAcceptedLeaf","zeroNativeCaRequests","onePublicAudit","originalUnknownEffectPreserved")
+    if not isinstance(proof, dict) or proof.get("scope") != "browser-confirmed-real-uncertain-abandon-and-native-unaccepted-key-cleanup" or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete native browser abandonment evidence")
+    result = {"scope": proof["scope"], **dict.fromkeys(flags, True)}
+    for key in ("enrollmentId", "cleanupJobId"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+            raise ValueError("Invalid native browser abandonment identity")
+        result[key] = value
+    for key, expected in (("abandonPosts", 1), ("keepPosts", 0)):
+        if type(proof.get(key)) is not int or proof[key] != expected:
+            raise ValueError("Invalid browser abandonment mutation count")
+        result[key] = expected
+    return result
+
+
 def webhosting_fields(proof):
     flags = ("publicIssueAndRenewInstalled","twoIndependentCaRequests","freshSerialSpkiAndKey","webHostingProtectedCustody","myCopiesAbsent","exactNativeIisAndHttpSysStore","trustedSniTls","installedDiscoveryInventory","immutableAcceptedStore","predecessorRetentionStorePreserved","storeQualifiedCleanupRegistered")
     if (not isinstance(proof, dict) or proof.get("scope") != "real-adcs-webhosting-issue-and-fresh-key-manual-renewal" or proof.get("store") != "WebHosting" or proof.get("expiryCleanupQualified") is not False or any(proof.get(flag) is not True for flag in flags)):
@@ -777,7 +837,14 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
+            result["nativeBrowserReconcile"] = browser_reconcile_fields(value.get("nativeBrowserReconcile"))
             result["nativeAdcsCapacity"] = adcs_capacity_fields(value.get("nativeAdcsCapacity"))
+            result["nativeBrowserCancel"] = browser_cancel_fields(value.get("nativeBrowserCancel"))
+            capacity, browser_cancel = result["nativeAdcsCapacity"], result["nativeBrowserCancel"]
+            for key, field in (("priorEnrollmentId", "enrollmentIds"), ("priorJobId", "jobIds"), ("priorRequestId", "requestIds"), ("fingerprint", "fingerprints")):
+                if browser_cancel[key] != capacity[field][1]:
+                    raise ValueError("Browser cancellation does not preserve actual capacity issuance")
             result["nativeWebHostingRenewal"] = webhosting_fields(value.get("nativeWebHostingRenewal"))
             result["nativeAlgorithmBoundaries"] = algorithm_boundaries_fields(value.get("nativeAlgorithmBoundaries"))
             result["nativeCmcBoundaries"] = cmc_boundaries_fields(value.get("nativeCmcBoundaries"))
@@ -928,6 +995,10 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if ambiguity["selectedRequestId"] == ambiguity["unusedRequestId"]:
                 raise ValueError("Native ambiguity selected request cannot be revoked")
             result["nativeUncertainOperatorAmbiguity"] = bounded_ambiguity
+            browser = result["nativeBrowserReconcile"]
+            expected_browser = {"enrollmentId": bounded_ambiguity["enrollmentId"], "selectedRequestId": bounded_ambiguity["selectedRequestId"], "unusedRequestId": bounded_ambiguity["unusedRequestId"], "selectedFingerprint": bounded_ambiguity["fingerprints"][bounded_ambiguity["requestIds"].index(bounded_ambiguity["selectedRequestId"])], "continuationJobId": bounded_ambiguity["jobIds"][2]}
+            if any(browser[key] != expected for key, expected in expected_browser.items()):
+                raise ValueError("Browser reconciliation does not match native ownership proof")
             cancellation = value.get("nativeIssuedCancellation")
             if not isinstance(cancellation, dict):
                 raise ValueError("Missing native issued cancellation evidence")

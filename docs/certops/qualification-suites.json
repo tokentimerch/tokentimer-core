@@ -287,7 +287,13 @@
       "adcs-real-capacity-five-public-approvals": "real-host",
       "adcs-real-capacity-sixth-atomic-refusal": "real-host",
       "adcs-real-capacity-native-issuance-releases-slot": "real-host",
-      "adcs-real-capacity-approval-policy-restored": "real-host"
+      "adcs-real-capacity-approval-policy-restored": "real-host",
+      "adcs-real-browser-uncertain-abandon-confirmation": "real-host",
+      "adcs-real-browser-abandon-native-key-cleanup": "real-host",
+      "adcs-real-browser-owned-requestid-reconcile": "real-host",
+      "adcs-real-browser-reconcile-native-installed-and-unused-revoked": "real-host",
+      "adcs-real-browser-requested-renewal-cancel": "real-host",
+      "adcs-real-browser-cancel-native-custody-and-capacity": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -606,7 +612,13 @@
       "adcs-real-capacity-five-public-approvals": "real-host",
       "adcs-real-capacity-sixth-atomic-refusal": "real-host",
       "adcs-real-capacity-native-issuance-releases-slot": "real-host",
-      "adcs-real-capacity-approval-policy-restored": "real-host"
+      "adcs-real-capacity-approval-policy-restored": "real-host",
+      "adcs-real-browser-uncertain-abandon-confirmation": "real-host",
+      "adcs-real-browser-abandon-native-key-cleanup": "real-host",
+      "adcs-real-browser-owned-requestid-reconcile": "real-host",
+      "adcs-real-browser-reconcile-native-installed-and-unused-revoked": "real-host",
+      "adcs-real-browser-requested-renewal-cancel": "real-host",
+      "adcs-real-browser-cancel-native-custody-and-capacity": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1973,7 +1985,13 @@
       "adcs-real-capacity-five-public-approvals",
       "adcs-real-capacity-sixth-atomic-refusal",
       "adcs-real-capacity-native-issuance-releases-slot",
-      "adcs-real-capacity-approval-policy-restored"
+      "adcs-real-capacity-approval-policy-restored",
+      "adcs-real-browser-uncertain-abandon-confirmation",
+      "adcs-real-browser-abandon-native-key-cleanup",
+      "adcs-real-browser-owned-requestid-reconcile",
+      "adcs-real-browser-reconcile-native-installed-and-unused-revoked",
+      "adcs-real-browser-requested-renewal-cancel",
+      "adcs-real-browser-cancel-native-custody-and-capacity"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2292,7 +2310,13 @@
       "adcs-real-capacity-five-public-approvals",
       "adcs-real-capacity-sixth-atomic-refusal",
       "adcs-real-capacity-native-issuance-releases-slot",
-      "adcs-real-capacity-approval-policy-restored"
+      "adcs-real-capacity-approval-policy-restored",
+      "adcs-real-browser-uncertain-abandon-confirmation",
+      "adcs-real-browser-abandon-native-key-cleanup",
+      "adcs-real-browser-owned-requestid-reconcile",
+      "adcs-real-browser-reconcile-native-installed-and-unused-revoked",
+      "adcs-real-browser-requested-renewal-cancel",
+      "adcs-real-browser-cancel-native-custody-and-capacity"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

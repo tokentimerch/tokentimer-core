@@ -28,6 +28,10 @@ def adcs_capacity_proof():
     return {"scope": "actual-native-adcs-per-issuer-five-public-approvals-and-terminal-release", "cap": 5, "initialAccepted": 5, "initialRefused": 1, "nativeCompleted": 2, **dict.fromkeys(flags, True), "requestIds": ["17", "18"], "fingerprints": ["a" * 64, "b" * 64], "enrollmentIds": ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"], "jobIds": ["33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"]}
 
 
+def browser_abandon_proof():
+    return {"scope":"browser-confirmed-real-uncertain-abandon-and-native-unaccepted-key-cleanup","enrollmentId":"11111111-1111-1111-1111-111111111111","cleanupJobId":"22222222-2222-2222-2222-222222222222","abandonPosts":1,"keepPosts":0,"actualUncertainEnrollmentVisible":True,"keepDidNotMutate":True,"explicitConfirmationRequired":True,"exactPublicAbandonAcknowledged":True,"browserAndTrustDrained":True,"actualProductionContinuation":True,"journalAndDatabaseAbandoned":True,"exactUnacceptedKeyAbsent":True,"noAcceptedLeaf":True,"zeroNativeCaRequests":True,"onePublicAudit":True,"originalUnknownEffectPreserved":True}
+
+
 def webhosting_proof():
     return {"scope":"real-adcs-webhosting-issue-and-fresh-key-manual-renewal","store":"WebHosting","expiryCleanupQualified":False,"requestIds":["17","18"],"fingerprints":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"publicIssueAndRenewInstalled":True,"twoIndependentCaRequests":True,"freshSerialSpkiAndKey":True,"webHostingProtectedCustody":True,"myCopiesAbsent":True,"exactNativeIisAndHttpSysStore":True,"trustedSniTls":True,"installedDiscoveryInventory":True,"immutableAcceptedStore":True,"predecessorRetentionStorePreserved":True,"storeQualifiedCleanupRegistered":True}
 
@@ -104,6 +108,16 @@ def certificate_dry_run_proof():
 def uncertain_abandon_proof():
     result = dict.fromkeys(("ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged"), True)
     return {**result, "leaseRemainingAtFaultMs": 60000, "recoveryWaitBudgetMs": 150000, "actualLeaseWaitMs": 61000, "scope": "native-zero-request-uncertain-abandon", "resolvedIssuingCaAddress": "10.64.0.4", "caRequestsAtFault": 0, "caRequestsAfterRecovery": 0, "caRequestsAfterAbandon": 0}
+
+
+def browser_cancel_proof():
+    c = adcs_capacity_proof()
+    return {"scope": 'browser-cancel-requested-approval-gated-renewal-preserves-issued-native-custody', "enrollmentId": "55555555-5555-5555-5555-555555555555", "jobId": "66666666-6666-6666-6666-666666666666", "priorEnrollmentId": c["enrollmentIds"][1], "priorJobId": c["jobIds"][1], "priorRequestId": c["requestIds"][1], "fingerprint": c["fingerprints"][1], "cancelPosts": 1, "otherMutations": 0, "capacityBeforeCancel": 5, "capacityAfterCancel": 4, "initialSixConcurrencyQualified": False, "caSubmissionCancellationQualified": False, **dict.fromkeys(['additionalSequentialPublicRenewal', 'requestedPendingApprovalObserved', 'newJobNeverClaimed', 'exactPublicCancelAcknowledged', 'browserAndTrustDrained', 'onlyNewEnrollmentAndJobCancelled', 'oldInstalledEnrollmentUnchanged', 'oldProtectedCngAndIisUnchanged', 'oldTrustedTlsUnchanged', 'newContainerAndJournalAbsent', 'subjectCaRequestsUnchanged', 'exactHumanCancelAudit', 'capacitySlotReleased', 'cleanupOwnershipRegistered'], True)}
+
+
+def browser_reconcile_proof():
+    native = operator_ambiguity_proof()
+    return {"scope": "browser-requestid-reconcile-real-operator-created-same-csr-ambiguity", "fixtureOrigin": "operator-created-two-real-system-submissions-of-the-same-public-csr", **dict.fromkeys(["actualUncertainRequestIdForm","invalidRequestIdDidNotMutate","exactOwnedRequestIdPosted","exactPublicReconcileAcknowledged","browserAndTrustDrained","nativeSelectedRequestInstalled","nativeSameProtectedMachineKey","nativeClaimBoundVerification","nativeExactReconcileAudit","unusedOwnedRequestRevoked","unusedLeafNeverAccepted","originalOrphanPreserved"], True), "enrollmentId": native["enrollmentId"], "selectedRequestId": native["selectedRequestId"], "unusedRequestId": native["unusedRequestId"], "selectedFingerprint": native["fingerprints"][0], "continuationJobId": native["jobIds"][2], "reconcilePosts": 1, "invalidRequestPosts": 0}
 
 
 def operator_ambiguity_proof():
@@ -801,6 +815,9 @@ class CollectorTests(unittest.TestCase):
         value = {"suite": "enterprise-adcs-real", "nativeLocalRulePairs": local_pairs_proof(), "nativeForeignSpkiCandidate": foreign_spki_proof(), "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeAdcsCapacity"] = {**adcs_capacity_proof(), "privateManagerCredential": "sentinel"}
+        value["nativeBrowserCancel"] = {**browser_cancel_proof(), "privateTrace": "sentinel"}
+        value["nativeBrowserReconcile"] = {**browser_reconcile_proof(), "privateTrace": "sentinel"}
+        value["nativeBrowserAbandon"] = {**browser_abandon_proof(), "privateTrace": "sentinel"}
         value["nativeWebHostingRenewal"] = webhosting_proof()
         value["nativeWebHostingRenewal"]["privateJournal"] = "sentinel"
         value["nativeAlgorithmBoundaries"] = algorithm_proof()
@@ -922,6 +939,40 @@ class CollectorTests(unittest.TestCase):
         invalid["nativeBrowserAdcs"]["requestId"] = "4294967296"
         with self.assertRaises(ValueError):
             collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        self.assertEqual(result[0][1]["nativeBrowserCancel"], browser_cancel_proof())
+        self.assertNotIn("sentinel", json.dumps(result[0][1]["nativeBrowserCancel"]))
+        for key, expected in browser_cancel_proof().items():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeBrowserCancel"][key]
+            with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserCancel"][key] = not expected if type(expected) is bool else "invalid"
+            with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
+        for patch in ({"cancelPosts": True}, {"otherMutations": False}, {"priorRequestId": "4294967296"}, {"priorRequestId": "17"}, {"fingerprint": "a" * 64}, {"priorJobId": "55555555-5555-5555-5555-555555555555"}, {"initialSixConcurrencyQualified": True}):
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserCancel"].update(patch)
+            with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
+        self.assertEqual(result[0][1]["nativeBrowserReconcile"], browser_reconcile_proof())
+        for key, expected in browser_reconcile_proof().items():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeBrowserReconcile"][key]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserReconcile"][key] = False if expected is True else "invalid"
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for patch in ({"reconcilePosts": True}, {"invalidRequestPosts": False}, {"selectedRequestId": "4294967296"}, {"unusedRequestId": "101"}, {"selectedFingerprint": "a" * 64}, {"continuationJobId": "55555555-5555-5555-5555-555555555555"}, {"enrollmentId": "55555555-5555-5555-5555-555555555555"}):
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserReconcile"].update(patch)
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        self.assertEqual(result[0][1]["nativeBrowserAbandon"], browser_abandon_proof())
+        for key, expected in browser_abandon_proof().items():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeBrowserAbandon"][key]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserAbandon"][key] = False if expected is True else "invalid"
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for field in ("abandonPosts", "keepPosts"):
+            invalid = json.loads(json.dumps(value)); invalid["nativeBrowserAbandon"][field] = True if field == "abandonPosts" else False
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeWebHostingRenewal"], webhosting_proof())
         self.assertEqual(result[0][1]["nativeAdcsCapacity"], adcs_capacity_proof())
         self.assertNotIn("privateManagerCredential", result[0][1]["nativeAdcsCapacity"])

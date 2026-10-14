@@ -131,7 +131,10 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          require("../tests/e2e/helpers/certops-adcs-browser-abandon").verifyProof(artifact.report.nativeBrowserAbandon);
+          require("../tests/e2e/helpers/certops-adcs-browser-reconcile").verifyCrossProof(artifact.report.nativeBrowserReconcile, artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
+          require("../tests/e2e/helpers/certops-adcs-browser-cancel").verifyCrossProof(artifact.report.nativeBrowserCancel, artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-webhosting-renewal").verifyProof(artifact.report.nativeWebHostingRenewal);
           require("../tests/e2e/helpers/certops-adcs-algorithm-boundaries").verifyProof(artifact.report.nativeAlgorithmBoundaries);
           require("../tests/e2e/helpers/certops-adcs-cmc-signature-copy").verifyProof(artifact.report.nativeCmcBoundaries);

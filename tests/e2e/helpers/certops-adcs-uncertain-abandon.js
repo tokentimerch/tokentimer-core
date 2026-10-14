@@ -69,6 +69,8 @@ function assertProof(value) {
 async function qualifyUncertainScenario(context, mode = "abandon") {
   assert.ok(["abandon", "operator-created-ambiguity"].includes(mode));
   const ambiguity = mode === "operator-created-ambiguity";
+  const abandonActor=!ambiguity ? context.abandonActor : null;
+  if(abandonActor){assert.equal(typeof abandonActor.abandonEnrollment,"function");assert.equal(typeof abandonActor.observeNativeCompletion,"function");}
   const variant = ambiguity ? require("./certops-adcs-uncertain-operator-ambiguity") : null;
   const { gate, fixture, api, agentRowId, configDir, workDir, run, preflight, ps, command, until, jobFinished, ownedSites, ownedCertificateIds, ownedEnrollmentIds, ownedFirewallRules, ownedPhaseObservers, serviceOwned, caConfig } = context;
   assert.equal(process.platform, "win32");
@@ -170,16 +172,18 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
         proof.acknowledgedPublicRecovery = proof.sameCsrAndKey = proof.noAutomaticResubmit = true;
       }, { evidenceLevel: "real-host", oracle: "actual wall-clock lease expiry plus audited acknowledged public recovery preserves native CSR/key identity and reaches submission_uncertain without another CA request" });
       await gate.scenario("adcs-real-uncertain-zero-request-public-abandon-cleans-key", async () => {
-        assert.equal((await fixture.request(`${api}/enrollments/${created.body.enrollmentId}/abandon`, "POST", {})).status, 204);
+        if(abandonActor)await abandonActor.abandonEnrollment(created.body.enrollmentId);
+        else assert.equal((await fixture.request(`${api}/enrollments/${created.body.enrollmentId}/abandon`, "POST", {})).status, 204);
         const scheduled = (await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({ client: fixture.pool, now: new Date() })).find(row => row.enrollmentId === created.body.enrollmentId); assert.ok(scheduled); await jobFinished(scheduled.jobId);
         const final = readEnrollmentJournal(configDir, created.body.enrollmentId); assert.equal(final.kind, "valid"); assert.equal(final.journal.state, "abandoned");
-        assert.equal((await enrollment()).state, "abandoned");
-        assert.ok(!command("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(final.journal.containerName));
-        assert.equal(ps(`@(Get-ChildItem Cert:\\LocalMachine\\My|Where-Object Subject -eq 'CN=${domain}').Count`), "0");
+        const abandonedEnrollment=await enrollment();assert.equal(abandonedEnrollment.state, "abandoned");
+        const keyPresent=command("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(final.journal.containerName);assert.equal(keyPresent,false);
+        const acceptedLeafOutput=ps(`@(Get-ChildItem Cert:\\LocalMachine\\My|Where-Object Subject -eq 'CN=${domain}').Count`);assert.match(acceptedLeafOutput,/^(0|[1-9][0-9]*)$/);const acceptedLeafCount=Number(acceptedLeafOutput);assert.equal(acceptedLeafCount,0);
         proof.caRequestsAfterAbandon = observe().subjectRequestCount; assert.equal(proof.caRequestsAfterAbandon, 0);
         const audits = (await fixture.pool.query("SELECT action FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ENROLLMENT_ABANDONED' AND metadata->>'enrollmentId'=$2", [fixture.workspaceId, created.body.enrollmentId])).rows; assert.equal(audits.length, 1);
         const original = await getJob(created.body.jobId); assert.equal(original.status, "orphaned_unknown_effect"); assert.equal(original.needs_operator_reconciliation, true);
         proof.publicAbandonAudited = proof.unacceptedKeyRemoved = proof.originalOrphanPreserved = true;
+        if(abandonActor)await abandonActor.observeNativeCompletion({enrollmentId:created.body.enrollmentId,cleanupJobId:scheduled.jobId,journalState:final.journal.state,enrollmentState:abandonedEnrollment.state,keyPresent,acceptedLeafCount,actualCaRequests:proof.caRequestsAfterAbandon,auditCount:audits.length,originalJobStatus:original.status,needsOperatorReconciliation:original.needs_operator_reconciliation});
       }, { evidenceLevel: "real-host", oracle: "public abandon and normal cleanup job remove only the proven unaccepted owned key; actual CA count remains zero, no certificate installed, original unknown-effect job retained" });
     }
   } catch (error) { primaryError = error; }

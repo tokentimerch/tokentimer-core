@@ -129,8 +129,10 @@ function currentAuthorityGroup(certificates, expectedKey) {
   return certificate;
 }
 function createOwnedBrowserResource({ getServer, receipt, removeTrust }) {
+  let released = false;
   const resource = {
     hasLiveChild() {
+      if (released) return false;
       const server = getServer();
       if (!server) return false;
       const child = server.process();
@@ -138,8 +140,9 @@ function createOwnedBrowserResource({ getServer, receipt, removeTrust }) {
         !child?.pid || (child.exitCode === null && child.signalCode === null)
       );
     },
-    hasOwnershipReceipt: () => fs.existsSync(receipt),
+    hasOwnershipReceipt: () => !released && fs.existsSync(receipt),
     async close() {
+      if (released) return;
       const server = getServer();
       if (resource.hasLiveChild()) {
         try {
@@ -165,6 +168,7 @@ function createOwnedBrowserResource({ getServer, receipt, removeTrust }) {
         false,
         "Owned browser trust receipt remains; preserve state",
       );
+      released = true;
     },
   };
   return resource;

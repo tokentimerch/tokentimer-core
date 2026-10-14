@@ -76,6 +76,8 @@ test("store cleanup requires exact durable ownership before any public removal",
       .length,
     1,
   );
+  assert.throws(() => helper.cleanupPlan({ ...receipt, guiCancelPendingVerification: true }, [{ thumbprint, containerName }], () => { throw new Error("Must not inspect or delete protected key"); }), /GUI Cancel remains unresolved/);
+  assert.equal(record.status, "enrolled_by_agent"); assert.equal(receipt.cleanupCompleted, undefined);
   for (const change of [
     (r) => (r.acceptedStore = "My"),
     (r) => (r.acceptedThumbprint = "B".repeat(40)),

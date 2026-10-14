@@ -92,7 +92,9 @@ async function runOperatorCreatedAmbiguity(session) {
     const audits = (await query("SELECT actor_user_id,metadata FROM audit_events WHERE workspace_id=$1 AND action='certops.enrollment.recovery_requested' AND metadata->>'enrollmentId'=$2", [fixture.workspaceId, id])).rows; assert.equal(audits.length, 1); assert.equal(audits[0].metadata.acknowledgeUnknownEffect, true); assert.equal(String(audits[0].actor_user_id), String(fixture.userId));
   }, { evidenceLevel: "real-host", oracle: "actual zero-request fault, two explicitly operator-created same-CSR CA leaves, real lease/grace and public recovery refuse two matches without another CA request, key loss or TLS mutation" });
   await gate.scenario(REQUIRED_SCENARIOS[1], async () => {
-    const selected = requests[0]; assert.equal((await fixture.request(`${api}/enrollments/${id}/reconcile`, "POST", { requestId: Number(selected.requestId) })).status, 204);
+    const selected = requests[0];
+    if(context.reconcileActor)await context.reconcileActor.reconcileEnrollment(id, selected.requestId);
+    else assert.equal((await fixture.request(`${api}/enrollments/${id}/reconcile`, "POST", { requestId: Number(selected.requestId) })).status, 204);
     explicit = (await scheduler.scheduleDueEnrollments({ client: fixture.pool })).find(row => row.enrollmentId === id); assert.ok(explicit); await jobFinished(explicit.jobId);
     const installed = await enrollment(); assert.equal(installed.state, "installed"); assert.equal(String(installed.request_id), selected.requestId);
     const final = readEnrollmentJournal(configDir, id); assert.equal(final.kind, "valid"); assert.equal(final.journal.state, "installed");
@@ -117,5 +119,11 @@ async function runOperatorCreatedAmbiguity(session) {
     Object.assign(proof, Object.fromEntries(FLAGS.filter(flag => !["ownedObserverDrained", "recoveryPolicyUnchanged"].includes(flag)).map(flag => [flag, true])), { scope: SCOPE, fixtureOrigin: "operator-created-two-real-system-submissions-of-the-same-public-csr", requestIds: requests.map(row => row.requestId), fingerprints: requests.map(row => row.fingerprint), serialNumbers: requests.map(row => row.leaf.serialNumber.toLowerCase()), csrSpkiSha256: original.journal.csrSpkiSha256, csrSha256: original.journal.csrSha256, selectedRequestId: requests[0].requestId, unusedRequestId: requests[1].requestId, enrollmentId: id, containerName: original.journal.containerName, jobIds: [created.body.jobId, recovery.body.jobId, explicit.jobId], reconcileSearchFrom: original.journal.reconcileSearchFrom, scanWindowSize: 16 });
   }, { evidenceLevel: "real-host", oracle: "exact native requester/CSR/leaf ownership and complete accepted-store absence fence revocation of only the unused operator-created CA issuance; selected trusted TLS remains live" });
 }
-function qualifyOperatorCreatedAmbiguity(context) { return require("./certops-adcs-uncertain-abandon").qualifyUncertainScenario(context, "operator-created-ambiguity"); }
+async function qualifyOperatorCreatedAmbiguity(context) {
+  if(context.reconcileActor){assert.equal(typeof context.reconcileActor.reconcileEnrollment,"function");assert.equal(typeof context.reconcileActor.observeNativeCompletion,"function");}
+  await require("./certops-adcs-uncertain-abandon").qualifyUncertainScenario(context, "operator-created-ambiguity");
+  // The original fixture verifies its complete native proof only AFTER fault
+  // restoration. Browser evidence cannot finish on an intermediate assertion.
+  if(context.reconcileActor)await context.reconcileActor.observeNativeCompletion(context.gate.report.nativeUncertainOperatorAmbiguity);
+}
 module.exports = { SCOPE, FLAGS, REQUIRED_SCENARIOS, REQUIRED_SOURCES, verifyProof, runOperatorCreatedAmbiguity, qualifyOperatorCreatedAmbiguity };

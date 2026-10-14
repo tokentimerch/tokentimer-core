@@ -99,6 +99,7 @@ async function qualifyCapacity(context) {
       await issue(refused); assert.notEqual(completed[0].requestId, completed[1].requestId); assert.notEqual(completed[0].fingerprint, completed[1].fingerprint);
       Object.assign(flags, { twoClaimBoundNativeInstallations: true, twoDistinctOwnedCaRequests: true, twoNonexportableMachineKeys: true, twoNativeIisAndTrustedTls: true });
     }, { evidenceLevel: "real-host", oracle: "Independent manager approval produces a genuine claim-bound native CA/CNG/IIS/TLS installation, releases a capacity slot, and the originally refused subject enters publicly and completes its own distinct real issuance" });
+    if (context.cancelActor) await context.cancelActor.cancelRenewal({ issuerId, item: refused, authority, priorCompleted: completed[1] });
   } catch (error) { primaryError = error; }
   finally {
     const errors = [];
