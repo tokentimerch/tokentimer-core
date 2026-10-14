@@ -133,6 +133,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           }
         }
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
+          require("../tests/e2e/helpers/certops-adcs-issued-revocation").verifyProof(artifact.report.nativeIssuedRevocation);
           require("../tests/e2e/helpers/certops-adcs-issued-san-boundary").verifyProof(artifact.report.nativeIssuedSanBoundary);
           require("../tests/e2e/helpers/certops-adcs-browser-abandon").verifyProof(artifact.report.nativeBrowserAbandon);
           require("../tests/e2e/helpers/certops-adcs-browser-admin-boundary").verifyProof(artifact.report.nativeBrowserAdminBoundary);

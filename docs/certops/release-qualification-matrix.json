@@ -847,7 +847,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -953,7 +956,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1059,7 +1065,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1165,7 +1174,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1271,7 +1283,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1377,7 +1392,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1483,7 +1501,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1589,7 +1610,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -1695,7 +1719,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {
@@ -2338,7 +2365,10 @@
         "tests/e2e/helpers/certops-adcs-unaccepted-cleanup.js",
         "infra/certops-adcs/issued-san-fault.ps1",
         "packages/agent/src/issuers/issued-certificate-validation.js",
-        "apps/api/services/workspace.js"
+        "apps/api/services/workspace.js",
+        "tests/e2e/helpers/certops-adcs-issued-revocation.js",
+        "packages/agent/src/issuers/der-extensions.js",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go"
       ]
     },
     {

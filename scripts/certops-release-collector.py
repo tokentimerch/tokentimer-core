@@ -292,6 +292,22 @@ def browser_cancel_fields(proof):
     return result
 
 
+def issued_revocation_fields(proof):
+    flags = ["matchingNativePositiveControl","actualOwnedPendingRequest","actualCaSignatureAndOnlineRevoked","sameRequestCsrSpkiAndTemplate","actualOnlineChainValidBeforeRevocation","nativePendingIdentityBeforeManualDispatch","realRevokedLeafReachedProductionValidation","productionSignedContinuationRefused","rejectedBeforeCertificateAccept","predecessorBindingTlsAndCngUnchanged","unacceptedKeyRemovedAndJournalPreserved","noCaResubmission","ownedCaRequestRevoked","cleanupOwnershipRegistered"]
+    if not isinstance(proof, dict) or proof.get("scope") != "actual-ca-issued-owned-revoked-leaf-refused-before-accept" or proof.get("errorCode") != "ADCS_CERTIFICATE_INVALID" or proof.get("schedulerDefaultClockQualified") is not False or any(proof.get(flag) is not True for flag in flags):
+        raise ValueError("Incomplete native issued revocation refusal")
+    result = {"scope": proof["scope"], "errorCode": proof["errorCode"], "schedulerDefaultClockQualified": False, **dict.fromkeys(flags, True)}
+    for key in ("requestId", "enrollmentId", "continuationJobId"):
+        value = proof.get(key)
+        pattern = r"[1-9][0-9]{0,9}" if key == "requestId" else r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+        if not isinstance(value, str) or not re.fullmatch(pattern, value):
+            raise ValueError("Invalid native issued revocation identity")
+        result[key] = value
+    if int(result["requestId"]) > 0xffffffff:
+        raise ValueError("Invalid native revocation request bound")
+    return result
+
+
 def issued_san_fields(proof):
     flags = ["matchingNativePositiveControl","actualOwnedPendingCaMutation","actualCaSignature","sameRequestCsrSpkiAndTemplate","exactUnauthorizedDnsSan","productionSignedContinuationRefused","rejectedBeforeCertificateAccept","predecessorBindingTlsAndCngUnchanged","unacceptedKeyRemovedAndJournalPreserved","noCaResubmission","ownedCaRequestRevoked","cleanupOwnershipRegistered"]
     if not isinstance(proof, dict) or proof.get("scope") != "actual-ca-issued-owned-wrong-san-refused-before-accept" or proof.get("errorCode") != "ADCS_CERTIFICATE_INVALID" or any(proof.get(flag) is not True for flag in flags):
@@ -921,6 +937,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 bounded[key] = proof[key]
             result["nativeInstallerReapply"] = bounded
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
+            result["nativeIssuedRevocation"] = issued_revocation_fields(value.get("nativeIssuedRevocation"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
             result["nativeBrowserAdminBoundary"] = browser_admin_boundary_fields(value.get("nativeBrowserAdminBoundary"))

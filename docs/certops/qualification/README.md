@@ -76,6 +76,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Browser confirmation of uncertain AD CS abandonment](adcs/browser-uncertain-abandon.md)
 - [Browser RequestId reconciliation of owned AD CS ambiguity](adcs/browser-requestid-reconcile.md)
 - [Native issued unauthorized SAN refusal](adcs/native-issued-san-refusal.md)
+- [Native revoked leaf refused before acceptance](adcs/native-issued-revocation-before-accept.md)
 - [Browser cancellation of a never-approved AD CS renewal](adcs/browser-requested-cancel.md)
 - [AD CS renewal, discovery and retention coordinates in WebHosting](adcs/webhosting-renewal.md)
 - [Native AD CS per-issuer capacity and genuine approval release](adcs/native-issuer-capacity.md)

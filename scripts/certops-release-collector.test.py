@@ -123,6 +123,10 @@ def browser_cancel_proof():
     return {"scope": 'browser-cancel-requested-approval-gated-renewal-preserves-issued-native-custody', "enrollmentId": "55555555-5555-5555-5555-555555555555", "jobId": "66666666-6666-6666-6666-666666666666", "priorEnrollmentId": c["enrollmentIds"][1], "priorJobId": c["jobIds"][1], "priorRequestId": c["requestIds"][1], "fingerprint": c["fingerprints"][1], "cancelPosts": 1, "otherMutations": 0, "capacityBeforeCancel": 5, "capacityAfterCancel": 4, "initialSixConcurrencyQualified": False, "caSubmissionCancellationQualified": False, **dict.fromkeys(['additionalSequentialPublicRenewal', 'requestedPendingApprovalObserved', 'newJobNeverClaimed', 'exactPublicCancelAcknowledged', 'browserAndTrustDrained', 'onlyNewEnrollmentAndJobCancelled', 'oldInstalledEnrollmentUnchanged', 'oldProtectedCngAndIisUnchanged', 'oldTrustedTlsUnchanged', 'newContainerAndJournalAbsent', 'subjectCaRequestsUnchanged', 'exactHumanCancelAudit', 'capacitySlotReleased', 'cleanupOwnershipRegistered'], True)}
 
 
+def issued_revocation_proof():
+    return {"scope": "actual-ca-issued-owned-revoked-leaf-refused-before-accept", "errorCode": "ADCS_CERTIFICATE_INVALID", "schedulerDefaultClockQualified": False, "requestId": "17", "enrollmentId": "11111111-1111-1111-1111-111111111111", "continuationJobId": "22222222-2222-2222-2222-222222222222", **dict.fromkeys(["matchingNativePositiveControl","actualOwnedPendingRequest","actualCaSignatureAndOnlineRevoked","sameRequestCsrSpkiAndTemplate","actualOnlineChainValidBeforeRevocation","nativePendingIdentityBeforeManualDispatch","realRevokedLeafReachedProductionValidation","productionSignedContinuationRefused","rejectedBeforeCertificateAccept","predecessorBindingTlsAndCngUnchanged","unacceptedKeyRemovedAndJournalPreserved","noCaResubmission","ownedCaRequestRevoked","cleanupOwnershipRegistered"], True)}
+
+
 def issued_san_proof():
     return {"scope": "actual-ca-issued-owned-wrong-san-refused-before-accept", "errorCode": "ADCS_CERTIFICATE_INVALID", "requestId": "17", "enrollmentId": "11111111-1111-1111-1111-111111111111", "continuationJobId": "22222222-2222-2222-2222-222222222222", **dict.fromkeys(["matchingNativePositiveControl","actualOwnedPendingCaMutation","actualCaSignature","sameRequestCsrSpkiAndTemplate","exactUnauthorizedDnsSan","productionSignedContinuationRefused","rejectedBeforeCertificateAccept","predecessorBindingTlsAndCngUnchanged","unacceptedKeyRemovedAndJournalPreserved","noCaResubmission","ownedCaRequestRevoked","cleanupOwnershipRegistered"], True)}
 
@@ -839,6 +843,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeAdcsCapacity"] = {**adcs_capacity_proof(), "privateManagerCredential": "sentinel"}
         value["nativeBrowserCancel"] = {**browser_cancel_proof(), "privateTrace": "sentinel"}
+        value["nativeIssuedRevocation"] = {**issued_revocation_proof(), "privateTrace": "sentinel"}
         value["nativeIssuedSanBoundary"] = {**issued_san_proof(), "privateTrace": "sentinel"}
         value["nativeBrowserReconcile"] = {**browser_reconcile_proof(), "privateTrace": "sentinel"}
         value["nativeBrowserAdminBoundary"] = {**browser_admin_boundary_proof(), "privateTrace": "sentinel"}
@@ -974,6 +979,18 @@ class CollectorTests(unittest.TestCase):
         for patch in ({"cancelPosts": True}, {"otherMutations": False}, {"priorRequestId": "4294967296"}, {"priorRequestId": "17"}, {"fingerprint": "a" * 64}, {"priorJobId": "55555555-5555-5555-5555-555555555555"}, {"initialSixConcurrencyQualified": True}):
             invalid = json.loads(json.dumps(value)); invalid["nativeBrowserCancel"].update(patch)
             with self.assertRaises(ValueError): collector.sanitized_report(invalid, {value["suite"]}, set())
+        self.assertEqual(result[0][1]["nativeIssuedRevocation"], issued_revocation_proof())
+        for key, expected in issued_revocation_proof().items():
+            invalid = json.loads(json.dumps(value)); del invalid["nativeIssuedRevocation"][key]
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+            invalid = json.loads(json.dumps(value)); invalid["nativeIssuedRevocation"][key] = not expected if isinstance(expected, bool) else "invalid"
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        for patch in ({"requestId": "4294967296"}, {"requestId": 17}, {"schedulerDefaultClockQualified": 0}):
+            invalid = json.loads(json.dumps(value)); invalid["nativeIssuedRevocation"].update(patch)
+            with self.assertRaises(ValueError):
+                collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeIssuedSanBoundary"], issued_san_proof())
         for key, expected in issued_san_proof().items():
             invalid = json.loads(json.dumps(value)); del invalid["nativeIssuedSanBoundary"][key]
