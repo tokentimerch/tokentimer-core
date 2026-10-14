@@ -20,7 +20,7 @@ test("cross-store proof refuses missing, coerced and unbounded native facts", ()
   for (const slot of slots) for (const file of REQUIRED_SOURCES) assert.ok(slot.requiredSources.includes(file), file);
 });
 test("clean Windows host lanes build the current metadata helper before any host cleanup case", () => {
-  for (const file of ["certops-qualification.yml", "certops-windows-arm64-host.yml"]) {
+  for (const file of ["certops-qualification.yml"]) {
     let source = fs.readFileSync(path.join(root, ".github/workflows", file), "utf8").replace(/\r\n/g, "\n");
     if (file === "certops-qualification.yml") source = source.split("  windows:\n")[1].split("  agent-stack:")[0];
     const setup = source.indexOf("actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff");
@@ -29,4 +29,11 @@ test("clean Windows host lanes build the current metadata helper before any host
     assert.ok(setup >= 0 && setup < build && build < host, file);
     assert.ok(source.includes("go-version-file: packages/agent/windows-service-host/go.mod"), file);
   }
+});
+
+test("unsupported historical ARM64 full-host dispatch fails before checkout or native mutation", () => {
+ const source=fs.readFileSync(path.join(root,".github/workflows/certops-windows-arm64-host.yml"),"utf8");
+ assert.match(source,/permissions: \{\}/);assert.match(source,/runs-on: ubuntu-latest/);assert.match(source,/exit 1/);
+ for(const workflow of ["certops-windows-arm64-cng.yml","certops-windows-arm64-scm.yml"])assert.ok(source.includes(workflow));
+ assert.doesNotMatch(source,/uses:|if:|windows-host\.test\.js|CERTOPS_HOST_TESTS|upload-artifact/);
 });

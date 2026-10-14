@@ -137,3 +137,5 @@ The [Windows ACME key rotation policy](windows/acme-key-rotation-policy.md) requ
 The [HTTP.sys client-certificate policy fixture](windows/http-sys-client-policy.md) measures native revocation and usage settings across real cutover and rollback without claiming a client-auth handshake.
 
 The [packaged chain runtime fixture](windows/packaged-chain-runtime.md) separates actual candidate path/protocol behavior from lab-built CMC and reference Go verifier qualification.
+
+- [Native ARM64 candidate packaged service-host mock-child lifecycle](windows/arm64-packaged-scm.md)

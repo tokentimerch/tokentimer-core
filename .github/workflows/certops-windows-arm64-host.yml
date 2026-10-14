@@ -1,85 +1,16 @@
-name: "CertOps / CertOps Windows ARM64 desktop host qualification"
-
+name: "CertOps / Unsupported Windows ARM64 full host qualification"
+# This historical manual entry cannot qualify the AMD64-only full host suite.
+# Fail every dispatch before checkout, credentials or native host mutations.
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: certops-windows-arm64-host-${{ github.ref }}
-  cancel-in-progress: false
-
+permissions: {}
 jobs:
-  native-arm64:
-    if: github.ref == 'refs/heads/main'
-    runs-on: windows-11-arm
-    timeout-minutes: 35
-    env:
-      CERTOPS_HOST_TESTS: '1'
-      CERTOPS_QUALIFICATION_STRICT: '1'
-      CERTOPS_QUALIFICATION_REPORT: qualification-results/windows-arm64-desktop.json
-      CERTOPS_HOST_ARTIFACTS: qualification-results/host
+  unsupported-full-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-        with:
-          version: '11.13.0'
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
-        with:
-          node-version: '24'
-          architecture: arm64
-          cache: pnpm
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-        with:
-          go-version-file: packages/agent/windows-service-host/go.mod
-          architecture: arm64
-          cache: false
-      - name: Require actual ARM64 desktop and native candidate runtimes
-        shell: pwsh
+      - name: Refuse unsupported full host scope
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          $os = Get-CimInstance Win32_OperatingSystem
-          $cpus = @(Get-CimInstance Win32_Processor)
-          if ($os.ProductType -ne 1 -or $cpus.Count -eq 0 -or @($cpus | Where-Object Architecture -ne 12).Count) {
-            throw 'This lane requires an actual Windows ARM64 desktop'
-          }
-          node -e "if(process.platform!=='win32'||process.arch!=='arm64')throw Error('Native ARM64 Node required')"
-          if ($LASTEXITCODE) { throw 'Node runtime architecture mismatch' }
-          if ((go env GOHOSTARCH) -ne 'arm64' -or (go env GOHOSTOS) -ne 'windows') { throw 'Native ARM64 Go required' }
-          $directory = @('C:\Program Files\Git\usr\bin', 'C:\Program Files\Git\mingw64\bin') |
-            Where-Object { Test-Path (Join-Path $_ 'openssl.exe') } | Select-Object -First 1
-          if (-not $directory) { throw 'Hosted Git OpenSSL prerequisite missing' }
-          & (Join-Path $directory 'openssl.exe') version
-          if ($LASTEXITCODE) { throw 'Hosted OpenSSL unusable' }
-          $directory | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - run: pnpm install --frozen-lockfile
-      - name: Enable actual desktop IIS without a pending restart
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($feature in @('IIS-WebServerRole', 'IIS-ManagementScriptingTools')) {
-            $result = Enable-WindowsOptionalFeature -Online -FeatureName $feature -All -NoRestart
-            if ($result.RestartNeeded) { throw 'Desktop IIS requires restart; native qualification cannot proceed' }
-            if ((Get-WindowsOptionalFeature -Online -FeatureName $feature).State -ne 'Enabled') { throw 'Desktop IIS capability unavailable' }
-          }
-      - name: Build candidate machine-store query helper before native cleanup cases
-        run: node packages/agent/scripts/build-windows-chain-helper.js
-      - name: Execute all mandatory supporting Windows host cases
-        run: node --test packages/agent/scripts/host/windows-host.test.js
-      - name: Verify mandatory cases and independent desktop architecture evidence
-        shell: pwsh
-        run: |
-          node scripts/certops-qualification-report.js qualification-results/windows-arm64-desktop.json
-          if ($LASTEXITCODE) { throw 'Mandatory native host scenario missing or failed' }
-          node -e "const r=require('./qualification-results/windows-arm64-desktop.json');if(r.architecture!=='arm64'||r.qualificationEnvironment.productType!==1||!/^desktop-[0-9]+$/.test(r.qualificationEnvironment.osVersion)||r.qualificationEnvironment.measurement!=='native')throw Error('Actual ARM64 desktop report required')"
-          if ($LASTEXITCODE) { throw 'Measured architecture/OS evidence mismatch' }
-      - name: Preserve bounded public execution evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: certops-windows-arm64-desktop-host
-          path: qualification-results/
-          if-no-files-found: error
+          echo '::error::Full windows-host qualification on ARM64 is unsupported. Use certops-windows-arm64-cng.yml for native desktop CNG and certops-windows-arm64-scm.yml for candidate packaged service-host/mock-child lifecycle. These separate scopes do not qualify the full host suite, real agent, API, installer, IIS, Server or domain AD CS.'
+          exit 1

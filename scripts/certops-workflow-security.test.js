@@ -46,3 +46,10 @@ test("resident finalizer and janitor require unattended cleanup and fixed serial
  const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module");const yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
  for(const mode of ["finalize","janitor"]){const name=`certops-retention24h-${mode}.yml`,w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));assert.deepEqual(validateWorkflow(w,name),[]);w.jobs[mode].environment="certops-adcs-lab";assert.ok(validateWorkflow(w,name).some(error=>error.includes("dedicated unattended")));w.jobs[mode].environment="certops-adcs-cleanup";w.concurrency.group="foreign";assert.ok(validateWorkflow(w,name).length);}
 });
+
+test("unsupported ARM full-host notice exception admits only exact credential-free failure",()=>{
+ const fs=require("node:fs"),path=require("node:path"),{createRequire}=require("node:module"),yaml=createRequire(require.resolve(path.resolve(__dirname,"../node_modules/mocha/package.json")))("js-yaml");
+ const name="certops-windows-arm64-host.yml",baseline=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));assert.deepEqual(validateWorkflow(baseline,name),[]);
+ assert.ok(validateWorkflow(baseline,"certops-other.yml").length);
+ for(const change of [w=>w.permissions.contents="read",w=>w.permissions["id-token"]="write",w=>w.on.push={branches:["main"]},w=>w.jobs["unsupported-full-host"].if="github.ref == 'refs/heads/main'",w=>w.jobs["unsupported-full-host"]["runs-on"]="windows-11-arm",w=>w.jobs["unsupported-full-host"].steps.push({uses:"actions/checkout@"+"a".repeat(40)}),w=>w.jobs["unsupported-full-host"].steps[0].run="echo ignored\nexit 0\n",w=>w.jobs["unsupported-full-host"].steps[0].shell="pwsh",w=>w.env={TOKEN:"secret"},w=>w.jobs["unsupported-full-host"].steps[0].env={TOKEN:"secret"}]){const w=structuredClone(baseline);change(w);assert.ok(validateWorkflow(w,name).length);}
+});

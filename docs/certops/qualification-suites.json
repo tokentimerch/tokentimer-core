@@ -1210,6 +1210,12 @@
       "retention24h-real-adcs-production-cutover": "real-host",
       "retention24h-real-resident-production-collector": "real-host",
       "retention24h-independent-native-final-and-owned-cleanup": "real-host"
+    },
+    "windows-arm64-packaged-scm": {
+      "windows-arm64-packaged-servicehost-and-native-desktop": "real-host",
+      "windows-arm64-scm-start-stop-restart": "real-host",
+      "windows-arm64-scm-failure-recovery-and-retirement": "real-host",
+      "windows-arm64-scm-exact-owned-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1702,6 +1708,11 @@
       "elevated",
       "domain",
       "sameVmResidentKeeper"
+    ],
+    "windows-arm64-packaged-scm": [
+      "windows",
+      "native-arm64",
+      "optIn"
     ]
   },
   "suites": {
@@ -2909,6 +2920,12 @@
       "retention24h-real-adcs-production-cutover",
       "retention24h-real-resident-production-collector",
       "retention24h-independent-native-final-and-owned-cleanup"
+    ],
+    "windows-arm64-packaged-scm": [
+      "windows-arm64-packaged-servicehost-and-native-desktop",
+      "windows-arm64-scm-start-stop-restart",
+      "windows-arm64-scm-failure-recovery-and-retirement",
+      "windows-arm64-scm-exact-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3007,6 +3024,7 @@
     "windows-certificate-dry-run": "e2e",
     "windows-installer-cli-second-rename": "e2e",
     "windows-arm64-cng-runtime": "real-host",
-    "windows-domain-adcs-retention24h": "real-host"
+    "windows-domain-adcs-retention24h": "real-host",
+    "windows-arm64-packaged-scm": "real-host"
   }
 }

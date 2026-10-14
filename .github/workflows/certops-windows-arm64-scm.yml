@@ -1,0 +1,56 @@
+name: "CertOps / Windows ARM64 packaged SCM lifecycle"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-windows-arm64-scm-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  packaged-scm:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CERTOPS_ARM64_SCM_REQUIRED: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/windows-arm64-packaged-scm.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          architecture: arm64
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+          architecture: arm64
+          cache: false
+      - name: Select actual native ARM64 PowerShell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne 'Arm64') { throw 'Native ARM64 PowerShell required' }
+          node -e "if(process.platform!=='win32'||process.arch!=='arm64')throw Error('Native ARM64 Node required')"
+          if ($LASTEXITCODE) { throw 'Native Node prerequisite missing' }
+          if ((go env GOHOSTARCH) -ne 'arm64' -or (go env GOHOSTOS) -ne 'windows') { throw 'Native ARM64 Go required' }
+          "CERTOPS_ARM64_SCM_PWSH=$((Get-Process -Id $PID).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run actual candidate packaged service host with controlled mock child
+        run: node scripts/certops-arm64-scm-runtime.js
+      - name: Independently refuse unsafe or finish exact owned cleanup
+        if: always() && env.CERTOPS_ARM64_SCM_RECEIPT != ''
+        run: node scripts/certops-arm64-scm-runtime.js --cleanup
+      - name: Verify strict desktop SCM report
+        if: success()
+        run: node scripts/certops-qualification-report.js qualification-results/windows-arm64-packaged-scm.json
+      - name: Preserve bounded public qualification report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-windows-arm64-packaged-scm
+          path: qualification-results/windows-arm64-packaged-scm.json
+          if-no-files-found: error

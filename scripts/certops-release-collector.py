@@ -28,7 +28,7 @@ WORKFLOWS = {
         "certops-browser-qualification.yml", "certops-kubernetes-qualification.yml",
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
-        "certops-windows-arm64-cng.yml",
+        "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml",
         "certops-windows-fixed-root.yml",
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
@@ -469,6 +469,47 @@ def installed_handoff_fields(event):
     return {"nativeInstalledStateHandoff": {key: value[key] for key in ("scope", *flags)}}
 
 
+def arm64_scm_fields(value):
+    """Closed measured packaged-host/mock-child scope; no raw command/path receipts."""
+    proof = value.get("nativeArm64Scm")
+    flags = ['canonicalServiceInitiallyAbsent', 'candidateArchiveDigestVerified', 'packagedHostExactDigestAndArm64Pe', 'nativeArm64DesktopAndRuntimes', 'exactLocalSystemServiceConfiguration', 'actualScmRunningWithOwnedChild', 'stopDrainedExactProcessTree', 'restartCreatedFreshOwnedProcesses', 'nonzeroChildExitTriggeredScmRecovery', 'retiredChildExitStoppedWithoutRespawn', 'exactServiceAndRegistryAbsent', 'allCapturedProcessesAbsent', 'ownedFixtureRemoved', 'originalFileIdentitiesPreserved']
+    excluded = ("realAgentQualified", "apiQualified", "fullInstallerQualified", "iisQualified", "serverQualified")
+    keys = {"scope", "architecture", "productType", "build", "hostSha256", "archiveSha256", "retirementObservationMs", "generations", *flags, *excluded}
+    if not isinstance(proof, dict) or set(proof) != keys or proof.get("scope") != 'native-windows11-arm64-candidate-packaged-servicehost-mockchild-lifecycle' or proof.get("architecture") != "arm64" or type(proof.get("productType")) is not int or proof["productType"] != 1 or any(proof.get(flag) is not True for flag in flags) or any(proof.get(flag) is not False for flag in excluded):
+        raise ValueError("Missing native ARM64 packaged SCM mock-child scope")
+    if not isinstance(proof.get("build"), str) or not re.fullmatch(r"[0-9]{5,6}", proof["build"]) or int(proof["build"]) < 22000:
+        raise ValueError("Actual Windows 11 desktop required")
+    if any(not isinstance(proof.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", proof[key]) for key in ("hostSha256", "archiveSha256")) or type(proof.get("retirementObservationMs")) is not int or not 5000 <= proof["retirementObservationMs"] <= 20000:
+        raise ValueError("Invalid native packaged identity/retirement observation")
+    environment = value.get("qualificationEnvironment", {})
+    if value.get("platform") != "win32" or value.get("architecture") != "arm64" or type(environment.get("productType")) is not int or any(environment.get(key) != expected for key, expected in (("osFamily", "windows"), ("productType", 1), ("architecture", "arm64"), ("osVersion", "desktop-" + proof["build"]), ("measurement", "native"))) or value.get("cleanup", {}).get("status") != "passed":
+        raise ValueError("ARM64 SCM report lacks native desktop/cleanup binding")
+    rows = proof.get("generations")
+    if not isinstance(rows, list) or len(rows) != 3:
+        raise ValueError("Three actual SCM process generations required")
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"hostPid", "hostCreated", "childPid", "childCreated"}:
+            raise ValueError("Invalid bounded native process identity")
+        for key in ("hostPid", "childPid"):
+            if type(row.get(key)) is not int or not 0 < row[key] <= 0xffffffff:
+                raise ValueError("Invalid actual process PID")
+        if row["hostPid"] == row["childPid"]:
+            raise ValueError("Host and child must be distinct")
+        for prefix in ("host", "child"):
+            created = row.get(prefix + "Created")
+            if not isinstance(created, str) or not re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z", created):
+                raise ValueError("Invalid actual process creation timestamp")
+            datetime.fromisoformat(created.replace("Z", "+00:00"))
+            identity = (row[prefix + "Pid"], created)
+            if identity in seen:
+                raise ValueError("SCM recovery reused an actual process generation")
+            seen.add(identity)
+        if datetime.fromisoformat(row["childCreated"].replace("Z", "+00:00")) < datetime.fromisoformat(row["hostCreated"].replace("Z", "+00:00")):
+            raise ValueError("Child predates its host")
+    return {"platform": "win32", "architecture": "arm64", "nativeArm64Scm": {**proof, "generations": [dict(row) for row in rows]}}
+
+
 def arm64_runtime_fields(value):
     """Retain only closed native desktop/CNG facts; never raw host inventories."""
     proof = value.get("nativeArm64CngRuntime")
@@ -589,6 +630,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                                if isinstance(item, dict)]
         if value.get("suite") == "windows-domain-adcs-retention24h":
             result["nativeRetention24h"] = retention24h_fields(value)
+        if value.get("suite") == "windows-arm64-packaged-scm":
+            result.update(arm64_scm_fields(value))
         if value.get("suite") == "windows-arm64-cng-runtime":
             result.update(arm64_runtime_fields(value))
         for scenario in result["scenarios"]:

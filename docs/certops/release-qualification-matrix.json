@@ -4303,6 +4303,35 @@
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
         "packages/agent/src/issuers/adcs-validation-deadline.js"
       ]
+    },
+    {
+      "id": "windows-arm64-packaged-scm",
+      "kind": "host",
+      "suite": "windows-arm64-packaged-scm",
+      "source": "scripts/certops-arm64-scm-runtime.js",
+      "environment": {
+        "osFamily": "windows",
+        "productType": 1,
+        "architecture": "arm64"
+      },
+      "requiredSources": [
+        "scripts/certops-arm64-scm-runtime.js",
+        "scripts/certops-arm64-scm-proof.js",
+        "scripts/certops-arm64-scm-native.ps1",
+        ".github/workflows/certops-windows-arm64-scm.yml",
+        "packages/agent/scripts/pack-release.js",
+        "packages/agent/scripts/build-windows-service-host.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        "packages/agent/windows-service-host/go.mod",
+        "packages/agent/windows-service-host/go.sum",
+        "packages/agent/windows-service-host/main.go",
+        "packages/agent/windows-service-host/service_windows.go",
+        "packages/agent/windows-service-host/console_windows.go",
+        "packages/agent/windows-service-host/host.go",
+        "packages/agent/windows-service-host/testdata/mock-agent.js",
+        "packages/agent/scripts/host/package-fixture.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     }
   ]
 }

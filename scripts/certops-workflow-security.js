@@ -18,7 +18,19 @@ function retainedDayProtocol(workflow,id,job){
  const cleanup=locate(step=>step.if==="failure() || cancelled()"&&step.run==="node scripts/certops-retention24h-azure.js abort");
  return provision>=0&&provision<seal&&seal<original&&original<handoff&&handoff<owned&&owned<cleanup&&cleanup===steps.length-1;
 }
+// A historical manual entry only prints a fixed failure notice. It has no
+// checkout, credentials, actions, input interpolation or qualification scope;
+// every ref receives an explicit unsupported failure without qualification privileges.
+function unsupportedArmNotice(workflow,name){
+ const keys=(value,expected)=>!!value&&typeof value==="object"&&!Array.isArray(value)&&JSON.stringify(Object.keys(value).sort())===JSON.stringify(expected.sort());
+ if(name!=="certops-windows-arm64-host.yml"||!keys(workflow,["name","on","permissions","jobs"])||workflow.name!=="CertOps / Unsupported Windows ARM64 full host qualification")return false;
+ if(!keys(workflow.on,["workflow_dispatch"])||workflow.on.workflow_dispatch!==null||!keys(workflow.permissions,[])||!keys(workflow.jobs,["unsupported-full-host"]))return false;
+ const job=workflow.jobs["unsupported-full-host"];
+ if(!keys(job,["runs-on","timeout-minutes","steps"])||job["runs-on"]!=="ubuntu-latest"||job["timeout-minutes"]!==1||!Array.isArray(job.steps)||job.steps.length!==1)return false;
+ const step=job.steps[0];return keys(step,["name","shell","run"])&&step.name==="Refuse unsupported full host scope"&&step.shell==="bash"&&step.run==="echo '::error::Full windows-host qualification on ARM64 is unsupported. Use certops-windows-arm64-cng.yml for native desktop CNG and certops-windows-arm64-scm.yml for candidate packaged service-host/mock-child lifecycle. These separate scopes do not qualify the full host suite, real agent, API, installer, IIS, Server or domain AD CS.'\nexit 1\n";
+}
 function validateWorkflow(workflow,name="workflow"){
+  if(unsupportedArmNotice(workflow,name))return [];
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
   if(/^certops-.*\.yml$/.test(name)&&!workflow.name?.startsWith("CertOps / "))fail("qualification workflow display name must use the CertOps / prefix");
   const events=typeof workflow.on==="string"?[workflow.on]:Object.keys(workflow.on||{});
