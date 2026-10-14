@@ -478,7 +478,7 @@ describe('CertOpsCertificates list states', () => {
   );
 
   it.each(['/', '/?showRetired=true'])(
-    'excludes all retired fingerprints from Not retired, including still-observed rows and legacy links (%s)',
+    'excludes all retired fingerprints from All (except retired), including still-observed rows and legacy links (%s)',
     entry => {
       useCertOpsCertificatesMock.mockReturnValue(
         certState({
@@ -730,7 +730,7 @@ describe('CertOpsCertificates filters', () => {
   it('does not force excludeRetired once an explicit status filter is chosen', () => {
     renderPage();
 
-    fireEvent.change(screen.getByDisplayValue('Not retired'), {
+    fireEvent.change(screen.getByDisplayValue('All (except retired)'), {
       target: { value: 'revoked' },
     });
 
@@ -1579,7 +1579,7 @@ describe('CertOpsCertificates combined lifecycle filters', () => {
 
     renderPage();
 
-    fireEvent.change(screen.getByDisplayValue('Not retired'), {
+    fireEvent.change(screen.getByDisplayValue('All (except retired)'), {
       target: { value: 'revoked' },
     });
 
