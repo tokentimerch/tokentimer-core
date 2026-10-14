@@ -16,7 +16,7 @@ Reports must identify the actual OS and language where required, current test so
 
 Database integration reports retain their supporting classification. Every required named case must pass without pending tests, and each selected source file must match its current digest. They cannot substitute for the domain or native host scenarios.
 
-New host-gate reports automatically record native platform/OS build observations. Enterprise reports additionally prove the service identity and installed native language. OS/language selection inputs alone are insufficient. The matrix schema guard requires every mandatory suite to retain a release environment when scenarios expand.
+New host-gate reports automatically record native platform/OS build observations. Domain-backed AD CS reports additionally prove the service identity and installed native language. OS/language selection inputs alone are insufficient. The matrix schema guard requires every mandatory suite to retain a release environment when scenarios expand.
 
 This tool never changes AD CS feature flags or production configuration. It verifies evidence only. Native host scenarios that have not yet executed remain unqualified, even when their test implementation exists and local supporting tests pass.
 

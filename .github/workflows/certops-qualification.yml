@@ -82,6 +82,15 @@ jobs:
           node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install checksum-pinned official Actions schema validator
+        run: |
+          set -euo pipefail
+          actionlint_directory=$(mktemp -d "$RUNNER_TEMP/certops-actionlint.XXXXXX")
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$actionlint_directory/actionlint.tar.gz"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$actionlint_directory/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$actionlint_directory/actionlint.tar.gz" -C "$actionlint_directory" actionlint
+          chmod 0755 "$actionlint_directory/actionlint"
+          echo "$actionlint_directory" >> "$GITHUB_PATH"
       - name: Qualification framework and ownership regressions
         run: pnpm run test:certops:qualification
       - name: Release collector regression tests

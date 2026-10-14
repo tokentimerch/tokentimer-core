@@ -1,16 +1,44 @@
 name: "CertOps / Native Linux consuming-server certificate reload qualification"
 on:
   workflow_dispatch:
+    inputs:
+      os:
+        description: Select one os or explicitly all supported values
+        type: choice
+        default: 'ubuntu-24.04'
+        options: ['ubuntu-22.04', 'ubuntu-24.04', 'all']
+      service:
+        description: Select one service or explicitly all supported values
+        type: choice
+        default: 'nginx'
+        options: ['nginx', 'apache', 'haproxy', 'all']
 permissions:
   contents: read
 jobs:
+  selection:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: select
+        name: Validate bounded manual qualification selection
+        env:
+          CERTOPS_MATRIX_INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: node scripts/certops-manual-matrix.js server
   nginx:
+    needs: selection
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
-        service: [nginx, apache, haproxy]
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:

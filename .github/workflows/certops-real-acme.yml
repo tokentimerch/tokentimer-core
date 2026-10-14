@@ -1,16 +1,44 @@
 name: "CertOps / Real agent API ACME filesystem qualification"
 on:
   workflow_dispatch:
+    inputs:
+      client:
+        description: Select one client or explicitly all supported values
+        type: choice
+        default: 'certbot'
+        options: ['certbot', 'acme.sh', 'all']
+      eab:
+        description: Select one eab or explicitly all supported values
+        type: choice
+        default: 'none'
+        options: ['none', 'required', 'all']
 permissions:
   contents: read
 jobs:
+  selection:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: select
+        name: Validate bounded manual qualification selection
+        env:
+          CERTOPS_MATRIX_INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: node scripts/certops-manual-matrix.js linux-acme
   real-acme:
+    needs: selection
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
-      matrix:
-        client: [certbot, acme.sh]
-        eab: [none, required]
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

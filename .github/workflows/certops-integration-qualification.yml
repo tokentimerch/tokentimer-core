@@ -1,18 +1,42 @@
 name: "CertOps / CertOps supporting integration qualification"
 on:
   workflow_dispatch:
+    inputs:
+      group:
+        description: Select one group or explicitly all supported values
+        type: choice
+        default: 'adcs'
+        options: ['adcs', 'controller', 'inventory', 'trust', 'identity', 'jobs', 'worker', 'csr', 'import-absence', 'alerts', 'renewal-health', 'all']
 permissions:
   contents: read
 jobs:
+  selection:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: select
+        name: Validate bounded manual qualification selection
+        env:
+          CERTOPS_MATRIX_INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: node scripts/certops-manual-matrix.js integration
   integration:
+    needs: selection
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        group: [adcs, controller, inventory, trust, identity, jobs, worker, csr, import-absence, alerts, renewal-health]
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
     env:
       NODE_ENV: test
       CERTOPS_ENABLED: 'true'

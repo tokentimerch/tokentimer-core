@@ -22,7 +22,6 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       DB_HOST: 127.0.0.1
-      DB_PORT: ${{ job.services.postgres.ports[5432] }}
       DB_NAME: certops_migration
       DB_USER: migration_fixture
       DB_PASSWORD: migration-fixture-only
@@ -60,6 +59,14 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir ../baseline install --frozen-lockfile
           openssl version
+      - name: Resolve actual disposable PostgreSQL port
+        env:
+          MIGRATION_DB_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          [[ "$MIGRATION_DB_PORT" =~ ^[0-9]+$ ]]
+          test "$MIGRATION_DB_PORT" -gt 0
+          test "$MIGRATION_DB_PORT" -lt 65536
+          echo "DB_PORT=$MIGRATION_DB_PORT" >> "$GITHUB_ENV"
       - name: Measure actual disposable PostgreSQL image
         run: echo "CERTOPS_MIGRATION_PG_IMAGE_ID=$(docker inspect --format '{{.Image}}' '${{ job.services.postgres.id }}')" >> "$GITHUB_ENV"
       - name: Run real historical-to-candidate public API migration journey
