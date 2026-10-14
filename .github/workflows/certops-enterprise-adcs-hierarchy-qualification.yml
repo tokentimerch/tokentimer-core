@@ -1,4 +1,4 @@
-name: CertOps enterprise ADCS offline-root hierarchy
+name: "CertOps / CertOps enterprise ADCS offline-root hierarchy"
 on:
   workflow_dispatch:
     inputs:

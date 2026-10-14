@@ -1,4 +1,4 @@
-name: Renewal outbox and SMTP delivery qualification
+name: "CertOps / Renewal outbox and SMTP delivery qualification"
 on:
   workflow_dispatch:
 permissions:

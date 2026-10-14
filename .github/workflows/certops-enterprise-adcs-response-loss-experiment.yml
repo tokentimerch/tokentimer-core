@@ -1,4 +1,4 @@
-name: Experimental enterprise AD CS submission response loss
+name: "CertOps / Experimental enterprise AD CS submission response loss"
 on:
   workflow_dispatch:
     inputs:

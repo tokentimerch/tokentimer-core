@@ -1,4 +1,4 @@
-name: CertOps Windows ARM64 desktop host qualification
+name: "CertOps / CertOps Windows ARM64 desktop host qualification"
 
 on:
   workflow_dispatch:

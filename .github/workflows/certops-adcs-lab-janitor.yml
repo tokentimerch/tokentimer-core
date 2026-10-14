@@ -1,4 +1,4 @@
-name: Expired disposable AD CS lab cleanup
+name: "CertOps / Expired disposable AD CS lab cleanup"
 on:
   schedule:
     - cron: '17 * * * *'

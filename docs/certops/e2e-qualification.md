@@ -26,6 +26,8 @@ The installation recovery API suite independently tests real HTTP, authenticatio
 
 ## Commands and current implementation
 
+Qualification entrypoints retain `certops-*.yml` filenames and use a `CertOps / ` display-name prefix in the Actions sidebar, separately from normal CI. Keep runnable YAML directly in `.github/workflows`: GitHub [does not support workflow subdirectories](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#creating-a-reusable-workflow). The substantive harnesses, fixtures and infrastructure are already grouped under `scripts`, `tests/e2e`, `packages/agent/scripts/host` and `infra/certops-adcs`. Moving an entrypoint into a workflow subdirectory would prevent GitHub from discovering it; it would not create a CI category.
+
 Run `pnpm test:certops:qualification` for the focused gate/report regression tests and `pnpm check:certops:catalog` to validate specification mappings. These commands do not run full CI or mutate host certificate stores.
 
 The trusted `certops-qualification.yml` workflow runs Windows Server 2022/2025 host qualification and a disposable PostgreSQL agent protocol suite. Windows host execution is explicitly opted in with `CERTOPS_HOST_TESTS=1`; strict reports require the candidate SHA and committed mandatory scenario IDs. The Windows suite covers native discovery/fingerprint, RSA/EC CNG CSR generation, isolated IIS cutover/rollback, cleanup and supporting Go module assertions. Go results are labeled unit evidence. These paths have implementation coverage; actual hosted execution evidence must still be collected.

@@ -1,4 +1,4 @@
-name: CertOps host qualification
+name: "CertOps / CertOps host qualification"
 
 on:
   push:

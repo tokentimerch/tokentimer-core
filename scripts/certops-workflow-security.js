@@ -2,6 +2,7 @@
 const fs=require("node:fs"),path=require("node:path");
 function validateWorkflow(workflow,name="workflow"){
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
+  if(/^certops-.*\.yml$/.test(name)&&!workflow.name?.startsWith("CertOps / "))fail("qualification workflow display name must use the CertOps / prefix");
   const events=typeof workflow.on==="string"?[workflow.on]:Object.keys(workflow.on||{});
   if(!events.length||events.some(event=>!["push","workflow_dispatch","schedule"].includes(event)))fail("qualification may run only trusted push, manual or cleanup schedule events");
   if(events.includes("push")&&JSON.stringify(workflow.on.push?.branches)!==JSON.stringify(["main"]))fail("push qualification must select only main");

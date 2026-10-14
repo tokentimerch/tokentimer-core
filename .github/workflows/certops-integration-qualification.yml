@@ -1,4 +1,4 @@
-name: CertOps supporting integration qualification
+name: "CertOps / CertOps supporting integration qualification"
 on:
   workflow_dispatch:
 permissions:

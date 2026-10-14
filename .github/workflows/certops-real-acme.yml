@@ -1,4 +1,4 @@
-name: Real agent API ACME filesystem qualification
+name: "CertOps / Real agent API ACME filesystem qualification"
 on:
   workflow_dispatch:
 permissions:

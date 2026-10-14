@@ -1,4 +1,4 @@
-name: Installed Windows agent API ACME IIS qualification
+name: "CertOps / Installed Windows agent API ACME IIS qualification"
 on:
   workflow_dispatch:
     inputs:

@@ -1,4 +1,4 @@
-name: Real certificate dashboard qualification
+name: "CertOps / Real certificate dashboard qualification"
 on:
   workflow_dispatch:
 permissions:

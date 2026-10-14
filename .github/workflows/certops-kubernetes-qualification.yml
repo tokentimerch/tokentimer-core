@@ -1,4 +1,4 @@
-name: CertOps disposable Kubernetes qualification
+name: "CertOps / CertOps disposable Kubernetes qualification"
 on:
   workflow_dispatch:
 permissions:

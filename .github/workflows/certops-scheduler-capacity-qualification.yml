@@ -1,4 +1,4 @@
-name: Renewal scheduler shared capacity qualification
+name: "CertOps / Renewal scheduler shared capacity qualification"
 on:
   workflow_dispatch:
 permissions:

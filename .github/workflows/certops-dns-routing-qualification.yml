@@ -1,4 +1,4 @@
-name: CertOps real DNS hook routing qualification
+name: "CertOps / CertOps real DNS hook routing qualification"
 on:
   workflow_dispatch:
 permissions:

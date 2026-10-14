@@ -1,4 +1,4 @@
-name: Collect Certificate release qualification
+name: "CertOps / Collect Certificate release qualification"
 on:
   workflow_dispatch:
     inputs:

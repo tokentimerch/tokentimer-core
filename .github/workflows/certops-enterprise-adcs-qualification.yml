@@ -1,4 +1,4 @@
-name: Disposable enterprise AD CS native qualification
+name: "CertOps / Disposable enterprise AD CS native qualification"
 on:
   workflow_dispatch:
     inputs:

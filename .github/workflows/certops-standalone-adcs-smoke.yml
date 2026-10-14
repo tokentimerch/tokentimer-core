@@ -1,4 +1,4 @@
-name: Standalone AD CS hosted feasibility smoke
+name: "CertOps / Standalone AD CS hosted feasibility smoke"
 on:
   workflow_dispatch:
 permissions:

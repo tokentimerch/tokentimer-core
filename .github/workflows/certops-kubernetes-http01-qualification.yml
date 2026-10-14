@@ -1,4 +1,4 @@
-name: CertOps controller HTTP-01 qualification
+name: "CertOps / CertOps controller HTTP-01 qualification"
 on:
   workflow_dispatch:
 permissions:

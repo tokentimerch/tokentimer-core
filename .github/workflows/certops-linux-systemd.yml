@@ -1,4 +1,4 @@
-name: Real Linux installer and systemd qualification
+name: "CertOps / Real Linux installer and systemd qualification"
 on:
   workflow_dispatch:
 permissions:

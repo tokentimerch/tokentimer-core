@@ -1,4 +1,4 @@
-name: CertOps DNS provider error qualification
+name: "CertOps / CertOps DNS provider error qualification"
 on:
   workflow_dispatch:
 permissions:

@@ -1,4 +1,4 @@
-name: Isolated native signing key rotation qualification
+name: "CertOps / Isolated native signing key rotation qualification"
 on:
   workflow_dispatch:
 permissions:

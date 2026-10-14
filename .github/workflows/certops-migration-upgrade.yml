@@ -1,4 +1,4 @@
-name: CertOps historical API migration qualification
+name: "CertOps / CertOps historical API migration qualification"
 on:
   workflow_dispatch:
 permissions:

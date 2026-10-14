@@ -1,4 +1,4 @@
-name: Published Windows upgrade baseline preflight
+name: "CertOps / Published Windows upgrade baseline preflight"
 on:
   workflow_dispatch:
 permissions:

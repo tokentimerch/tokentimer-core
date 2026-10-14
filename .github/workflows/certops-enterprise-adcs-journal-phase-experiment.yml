@@ -1,4 +1,4 @@
-name: Experimental enterprise AD CS observed journal phase recovery
+name: "CertOps / Experimental enterprise AD CS observed journal phase recovery"
 on:
   workflow_dispatch:
     inputs:

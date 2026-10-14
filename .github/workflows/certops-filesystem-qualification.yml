@@ -1,4 +1,4 @@
-name: Native certificate filesystem qualification
+name: "CertOps / Native certificate filesystem qualification"
 on:
   workflow_dispatch:
 permissions:

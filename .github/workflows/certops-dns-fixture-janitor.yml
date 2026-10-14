@@ -1,4 +1,4 @@
-name: Independent DNS qualification fixture cleanup
+name: "CertOps / Independent DNS qualification fixture cleanup"
 on:
   schedule:
     - cron: '17 * * * *'

@@ -1,4 +1,4 @@
-name: Real native Linux agent fault qualification
+name: "CertOps / Real native Linux agent fault qualification"
 on:
   workflow_dispatch:
 permissions:

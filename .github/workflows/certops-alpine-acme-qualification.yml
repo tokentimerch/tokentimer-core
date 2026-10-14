@@ -1,4 +1,4 @@
-name: Native Alpine foreground certificate qualification
+name: "CertOps / Native Alpine foreground certificate qualification"
 on:
   workflow_dispatch:
 permissions:
