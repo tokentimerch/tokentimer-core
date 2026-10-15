@@ -22,6 +22,11 @@ async function finish(status) {
   const expected = new crypto.X509Certificate(
     fs.readFileSync(dir + "/cert.pem"),
   ).fingerprint256;
+  // Agent command children intentionally receive a restricted environment.
+  // Read the customer's approved probe instead of relying on a lab env var.
+  const bindings = JSON.parse(fs.readFileSync(dir + "/config.json", "utf8")).materialBindings;
+  const servername = Object.values(bindings || {})[0]?.probes?.[0]?.sni;
+  if (typeof servername !== "string" || !servername) process.exit(2);
   const deadline = Date.now() + 15000;
   let readySince = null;
   while (Date.now() < deadline) {
@@ -29,7 +34,7 @@ async function finish(status) {
       const socket = tls.connect({
         host: "127.0.0.1",
         port: name === "nginx" ? 8443 : 9443,
-        servername: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
+        servername,
         ca: fs.readFileSync("/lab/issuer-root.pem"),
         rejectUnauthorized: true,
       });
