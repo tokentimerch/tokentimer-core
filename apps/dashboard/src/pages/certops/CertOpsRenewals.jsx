@@ -10,6 +10,8 @@ import { FiRefreshCw, FiServer } from 'react-icons/fi';
 import { useOutletContext } from 'react-router';
 import { SettingsIntegrationCard } from '../../components/SettingsIntegrationHub.jsx';
 import RenewalProfilesPanel from '../../components/certops/RenewalProfilesPanel.jsx';
+import { DashboardPanel } from '../../components/DashboardPrimitives';
+import DistributionGroupsPanel from '../../components/certops/DistributionGroupsPanel.jsx';
 import CertOpsAdcs from './CertOpsAdcs.jsx';
 
 function ProfilesDisclosure() {
@@ -61,6 +63,9 @@ export default function CertOpsRenewals() {
 
   return (
     <SimpleGrid columns={{ base: 1 }} spacing={3}>
+      <DashboardPanel>
+        <DistributionGroupsPanel />
+      </DashboardPanel>
       {certOpsPaused ? (
         // A per-profile badge can only say whether that profile renews; it
         // cannot say the whole workspace is paused.

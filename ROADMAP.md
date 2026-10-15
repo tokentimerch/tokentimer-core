@@ -1,9 +1,12 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-14 against `main` baseline `d04e4d9f`. The AD CS
-issuer and enrollment surface target **0.18.0**; released agents keep the
-capability disabled until real-host qualification passes. Certificate
-lifecycle testing infrastructure and coverage remain in progress.
+Last reviewed: 2026-10-15 for the integrated AD CS, distribution and real-host
+qualification candidate targeting **0.18.0**. Released agent capabilities remain
+gated until independent real-host qualification passes; lifecycle testing
+infrastructure and coverage remain in progress. Dropped the optional
+already-expired-import notification ask
+([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
+quiet historical imports stay the default without a toggle.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -42,6 +45,10 @@ called stable while they are open.
   Name filesystem, IIS, or customer Vault locations on a certificate.
   One issuance can deploy to those destinations. The control plane
   never stores private keys. Shared-key Vault mode is explicit opt-in.
+  [PR #329](https://github.com/tokentimerch/tokentimer-core/pull/329) adds
+  customer Vault publication and independent consumer rollouts for any shared
+  certificate, including ordinary and wildcard certificates. Agent capabilities
+  remain gated pending qualification; this item is still open.
 - **Shared outbound policy**
   ([#233](https://github.com/tokentimerch/tokentimer-core/issues/233)).
   Wire offline mode and outbound allowlists into API and worker egress.

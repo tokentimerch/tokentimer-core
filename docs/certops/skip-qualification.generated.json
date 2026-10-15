@@ -603,6 +603,32 @@
       "classificationStatus": "candidate-needs-review"
     },
     {
+      "id": "0b022e58e2d61f2eee08",
+      "file": "packages/agent/src/material-store/material-store.test.js",
+      "line": 88,
+      "name": "real isolated Vault KV v2: pinned publication and idempotent CAS",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "prerequisite-review",
+      "workflow": null,
+      "workflowStatus": "exact-site-execution-not-configured",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
+      "id": "501fb9619042e3d53d38",
+      "file": "packages/agent/src/material-store/material-store.test.js",
+      "line": 106,
+      "name": "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "prerequisite-review",
+      "workflow": null,
+      "workflowStatus": "exact-site-execution-not-configured",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "fa3bcd874625c1befd31",
       "file": "packages/agent/src/platform/platform.test.js",
       "line": 454,

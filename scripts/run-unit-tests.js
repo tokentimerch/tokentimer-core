@@ -16,7 +16,9 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ["--test", ...files], {
+const concurrency = process.env.TEST_CONCURRENCY;
+if (concurrency && !/^[1-9][0-9]?$/.test(concurrency)) throw new Error("TEST_CONCURRENCY must be 1..99");
+const result = spawnSync(process.execPath, ["--test", ...(concurrency ? [`--test-concurrency=${concurrency}`] : []), ...files], {
   stdio: "inherit",
   env: { ...process.env, NODE_ENV: "test" },
 });

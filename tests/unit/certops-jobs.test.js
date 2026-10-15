@@ -3145,7 +3145,7 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
         }
 
         if (normalizedSql.includes("idempotency_key = $2")) {
-          return { rows: [] };
+          return { rows: jobs.filter((row) => row.workspace_id === params[0] && row.idempotency_key === params[1]) };
         }
 
         if (normalizedSql.includes("INSERT INTO certificate_jobs")) {
@@ -3241,6 +3241,118 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
     assert.equal(job.operation, "renew");
     assert.equal(job.subjectType, "managed_certificate");
     assert.equal(job.subjectId, MANUAL_RENEWAL_CERT_ID);
+  });
+
+  it("replays a completed renewal after expiry/profile changes without creating another job", async () => {
+    const { manualRenewalJobCreator } = require("../../apps/api/services/certops/jobs");
+    const certificate = certificateRow();
+    const client = createManualRenewalMemoryClient({ certificates: [certificate] });
+    const create = manualRenewalJobCreator({ certificateId: certificate.id });
+    const options = { client, workspaceId: WORKSPACE_A, source: "api", requestedByUserId: 42,
+      idempotencyKey: "completed-renewal", requiresApproval: true, payload: { reason: "requested" }, returnOutcome: true };
+    const first = await create(options);
+    const snapshot = structuredClone(first.job.payload);
+    client.jobs[0].status = "succeeded";
+    client.jobs[0].result_metadata = { certificateRenewed: true };
+    certificate.not_after = new Date("2026-11-01T00:00:00.000Z");
+    certificate.profile_public_metadata.renewalProfile.keyRotationPolicy.rotateOnRenew = false;
+    const replay = await create(options);
+    assert.equal(replay.created, false);
+    assert.equal(replay.job.id, first.job.id);
+    assert.equal(replay.job.status, "succeeded");
+    assert.deepEqual(replay.job.payload, snapshot);
+    assert.deepEqual(replay.job.resultMetadata, { certificateRenewed: true });
+    assert.equal(client.jobs.length, 1);
+    const fresh = await create({ ...options, idempotencyKey: "next-renewal" });
+    assert.equal(fresh.created, true);
+    assert.equal(fresh.job.payload.notAfter, certificate.not_after.toISOString());
+    assert.equal(fresh.job.payload.keyRotation, false);
+    assert.equal(client.jobs.length, 2);
+  });
+
+  it("still conflicts on changed reason, requesting user, approval or explicit agent", async () => {
+    const { manualRenewalJobCreator, CERTOPS_JOB_IDEMPOTENCY_CONFLICT } = require("../../apps/api/services/certops/jobs");
+    const certificate = certificateRow();
+    const client = createManualRenewalMemoryClient({ certificates: [certificate] });
+    const create = manualRenewalJobCreator({ certificateId: certificate.id });
+    const options = { client, workspaceId: WORKSPACE_A, source: "api", requestedByUserId: 42,
+      idempotencyKey: "changed-intent", requiresApproval: true, assignedAgentId: "issuer-a", payload: { reason: "requested" } };
+    const first = await create(options);
+    for (const change of [{ payload: { reason: "different" } }, { requestedByUserId: 43 },
+      { requiresApproval: false }, { mode: "dry_run" }, { assignedAgentId: "issuer-b" }]) {
+      await assert.rejects(create({ ...options, ...change }), { code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT });
+    }
+    const replay = await create(options);
+    assert.equal(replay.id, first.id);
+    assert.equal(replay.status, "pending_approval");
+    assert.equal(client.jobs.length, 1);
+  });
+
+  it("preserves a retained publication version on renewal replay", async () => {
+    const { manualRenewalJobCreator } = require("../../apps/api/services/certops/jobs");
+    const client = createManualRenewalMemoryClient();
+    const publication = { materialVersionId: "d1111111-1111-5111-8111-111111111111" };
+    const snapshot = structuredClone(publication);
+    client.jobs.push({ id: "retained-job", workspace_id: WORKSPACE_A, operation: "renew",
+      subject_type: "managed_certificate", subject_id: MANUAL_RENEWAL_CERT_ID,
+      idempotency_key: "retained-publication", status: "succeeded", payload: { publication, reason: "manual" } });
+    const replay = await manualRenewalJobCreator({ certificateId: MANUAL_RENEWAL_CERT_ID,
+      loadCertificate: async () => { throw new Error("A replay must not reload current profile state"); },
+      createJob: async options => {
+        assert.deepEqual(options.payload.publication, snapshot);
+        return { id: "retained-job", created: false };
+      } })({ client, workspaceId: WORKSPACE_A, idempotencyKey: "retained-publication" });
+    assert.equal(replay.id, "retained-job");
+    assert.deepEqual(client.jobs[0].payload.publication, snapshot);
+    assert.equal(client.jobs.length, 1);
+  });
+
+  it("keeps replay behind the workspace gate and emits only the original creation audit", async () => {
+    const { manualRenewalJobCreator } = require("../../apps/api/services/certops/jobs");
+    const { createManualCertificateJob } = require("../../apps/api/services/certops/workspaceKillSwitch");
+    const certificate = certificateRow();
+    const memory = createManualRenewalMemoryClient({ certificates: [certificate] });
+    let paused = false, audits = 0;
+    const client = { release() {}, query(sql, params) {
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return Promise.resolve({ rows: [] });
+      if (sql.includes("FROM workspaces") && sql.includes("FOR SHARE")) return Promise.resolve({ rows: [{
+        id: WORKSPACE_A, certops_paused: paused, certops_require_approval_always: false,
+      }] });
+      return memory.query(sql, params);
+    } };
+    const options = { workspaceId: WORKSPACE_A, dbPool: { connect: async () => client },
+      certOpsEnabledResolver: async () => true, auditWriter: async () => { audits++; },
+      jobCreator: manualRenewalJobCreator({ certificateId: certificate.id }), requestedByUserId: 42,
+      idempotencyKey: "audited-renewal", requiresApproval: true };
+    const first = await createManualCertificateJob(options);
+    assert.equal(first.job.status, "pending_approval");
+    certificate.not_after = new Date("2026-11-01T00:00:00Z");
+    memory.jobs[0].status = "succeeded";
+    const replay = await createManualCertificateJob(options);
+    assert.equal(replay.created, false);
+    assert.equal(replay.job.id, first.job.id);
+    assert.equal(audits, 1);
+    assert.equal(memory.jobs.length, 1);
+    paused = true;
+    await assert.rejects(createManualCertificateJob(options), { code: "CERTOPS_WORKSPACE_PAUSED" });
+    assert.equal(audits, 1);
+    assert.equal(memory.jobs.length, 1);
+  });
+
+  it("does not replay a different operation or certificate and validates overrides on replay", async () => {
+    const { manualRenewalJobCreator, createCertificateJob, CERTOPS_JOB_IDEMPOTENCY_CONFLICT } = require("../../apps/api/services/certops/jobs");
+    const certificate = certificateRow();
+    const second = certificateRow({ id: "c2222222-2222-4222-8222-222222222222" });
+    const client = createManualRenewalMemoryClient({ certificates: [certificate, second] });
+    const options = { client, workspaceId: WORKSPACE_A, source: "api", idempotencyKey: "identity-bound" };
+    const create = manualRenewalJobCreator({ certificateId: certificate.id });
+    await create(options);
+    await assert.rejects(create({ ...options, payload: { caEndpoint: "https://unapproved.example" } }), { code: "CERTOPS_RENEWAL_OVERRIDE_INVALID" });
+    await assert.rejects(manualRenewalJobCreator({ certificateId: second.id })(options), { code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT });
+    await createCertificateJob({ ...options, idempotencyKey: "different-operation", operation: "deploy",
+      subjectType: "managed_certificate", subjectId: certificate.id });
+    await assert.rejects(create({ ...options, idempotencyKey: "different-operation" }), { code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT });
+    assert.equal(client.jobs.length, 2);
   });
 
   it("fails at creation time, before any row is inserted, when the certificate has no stored renewal profile", async () => {

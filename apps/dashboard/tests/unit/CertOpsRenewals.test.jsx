@@ -26,6 +26,7 @@ const {
   stopManagingSourceMock,
   replaceManagingSourceMock,
   showSuccessMock,
+  distributionApiGetMock,
 } = vi.hoisted(() => ({
   useCertOpsAvailabilityMock: vi.fn(),
   useCertOpsIsWorkspaceAdminMock: vi.fn(),
@@ -39,6 +40,11 @@ const {
   stopManagingSourceMock: vi.fn(),
   replaceManagingSourceMock: vi.fn(),
   showSuccessMock: vi.fn(),
+  distributionApiGetMock: vi.fn(),
+}));
+
+vi.mock('../../src/utils/apiClient', () => ({
+  default: { get: distributionApiGetMock },
 }));
 
 vi.mock('../../src/hooks/useDashboardShellProps.js', () => ({
@@ -103,7 +109,9 @@ vi.mock('../../src/components/certops/certopsAgentsApi.js', async () => {
 });
 
 vi.mock('../../src/components/certops/certopsApi.js', async () => {
-  const actual = await vi.importActual('../../src/components/certops/certopsApi.js');
+  const actual = await vi.importActual(
+    '../../src/components/certops/certopsApi.js'
+  );
   return {
     ...actual,
     listCertificates: listCertificatesMock,
@@ -130,7 +138,9 @@ vi.mock('../../src/components/certops/certopsRenewalApi.js', async () => {
 });
 
 async function openRenewalProfiles() {
-  const header = await screen.findByRole('button', { name: /Renewal profiles/ });
+  const header = await screen.findByRole('button', {
+    name: /Renewal profiles/,
+  });
   if (header.getAttribute('aria-expanded') !== 'true') {
     fireEvent.click(header);
   }
@@ -195,6 +205,9 @@ function profile(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  distributionApiGetMock.mockResolvedValue({
+    data: { groups: [], consumers: [] },
+  });
   useCertOpsAvailabilityMock.mockReturnValue({
     ready: true,
     enabled: true,
@@ -221,9 +234,28 @@ beforeEach(() => {
 });
 
 describe('CertOpsRenewals page', () => {
+  it('retains distribution status beside profiles and AD CS issuer management', async () => {
+    renderPage();
+    expect(
+      await screen.findByText('Certificate distribution')
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText('No distribution groups configured.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Renewal profiles/ })
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /AD CS issuers/ }));
+    expect(screen.getAllByText('AD CS issuers').length).toBeGreaterThan(1);
+    expect(distributionApiGetMock).toHaveBeenCalledWith(
+      '/api/v1/workspaces/ws-1/certops/distribution-groups'
+    );
+  });
   it('starts with renewal profiles closed', async () => {
     renderPage();
-    const header = await screen.findByRole('button', { name: /Renewal profiles/ });
+    const header = await screen.findByRole('button', {
+      name: /Renewal profiles/,
+    });
     expect(header).toHaveAttribute('aria-expanded', 'false');
   });
 
@@ -234,12 +266,15 @@ describe('CertOpsRenewals page', () => {
     expect(await screen.findByText('Renewal profiles')).toBeInTheDocument();
     expect(screen.queryByText('Upcoming renewals')).not.toBeInTheDocument();
     expect(screen.queryByText(/Step 2/)).not.toBeInTheDocument();
-    expect(screen.getByText(/ACME profiles appear after issuance/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/ACME profiles appear after issuance/)
+    ).toBeInTheDocument();
     expect(screen.getByText('Derived: app.example.com')).toBeInTheDocument();
     const profiles = screen.getByRole('button', { name: /Renewal profiles/ });
     const issuers = screen.getByText('AD CS issuers');
     expect(
-      profiles.compareDocumentPosition(issuers) & Node.DOCUMENT_POSITION_FOLLOWING
+      profiles.compareDocumentPosition(issuers) &
+        Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
   });
 
@@ -627,8 +662,12 @@ describe('CertOpsRenewals page', () => {
     renderPage();
     await openRenewalProfiles();
     fireEvent.click(await screen.findByRole('button', { name: 'Details' }));
-    expect(await screen.findByRole('link', { name: 'one.example.com' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'two.example.com' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('link', { name: 'one.example.com' })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'two.example.com' })
+    ).toBeInTheDocument();
   });
 
   async function walkToAttach(dnsName = 'www.example.com') {
@@ -645,8 +684,12 @@ describe('CertOpsRenewals page', () => {
     });
     renderPage();
     await openRenewalProfiles();
-    fireEvent.click(await screen.findByRole('button', { name: 'New AD CS profile' }));
-    expect(await screen.findByRole('option', { name: 'TTLab Issuing CA' })).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'New AD CS profile' })
+    );
+    expect(
+      await screen.findByRole('option', { name: 'TTLab Issuing CA' })
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Profile name'), {
       target: { value: 'Web profile' },
     });
@@ -664,13 +707,21 @@ describe('CertOpsRenewals page', () => {
 
   it('says where to attach later when no certificate uses the DNS name', async () => {
     listCertificatesMock.mockResolvedValue({
-      items: [{ id: 'other', commonName: 'mail.example.com', name: 'mail.example.com' }],
+      items: [
+        {
+          id: 'other',
+          commonName: 'mail.example.com',
+          name: 'mail.example.com',
+        },
+      ],
     });
 
     await walkToAttach();
 
     expect(
-      await screen.findByText(/No certificate in inventory uses www.example.com/)
+      await screen.findByText(
+        /No certificate in inventory uses www.example.com/
+      )
     ).toBeInTheDocument();
     expect(screen.getByText(/Open Certificates later/)).toBeInTheDocument();
     expect(screen.getByText(/inside the 30 day lead time/)).toBeInTheDocument();
@@ -703,7 +754,9 @@ describe('CertOpsRenewals page', () => {
 
     await walkToAttach();
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Attach and enable automation' })
+      await screen.findByRole('button', {
+        name: 'Attach and enable automation',
+      })
     );
 
     await waitFor(() => {
@@ -751,7 +804,9 @@ describe('CertOpsRenewals page', () => {
     expect(
       await screen.findByText(/stops that period and starts a new one/)
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Attach and enable automation' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Attach and enable automation' })
+    );
 
     await waitFor(() => {
       expect(replaceManagingSourceMock).toHaveBeenCalledWith('ws-1', 'mc-1', {

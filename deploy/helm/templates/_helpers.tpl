@@ -187,7 +187,11 @@ Rendered ConfigMap data keys only (stable input for checksum/config).
 NODE_ENV: {{ .Values.config.nodeEnv | default "production" | quote }}
 APP_URL: {{ .Values.config.baseUrl | quote }}
 API_URL: {{ .Values.config.apiUrl | default .Values.config.baseUrl | quote }}
-TRUST_PROXY_HOPS: {{ .Values.config.trustProxyHops | default 2 | quote }}
+{{- if ne .Values.config.trustProxyHops nil }}
+TRUST_PROXY_HOPS: {{ .Values.config.trustProxyHops | quote }}
+{{- else }}
+TRUST_PROXY_HOPS: "2"
+{{- end }}
 {{- if or .Values.postgresql.cloudnative.enabled (not .Values.postgresql.external.existingSecret) }}
 DB_HOST: {{ include "tokentimer.databaseHost" . | quote }}
 DB_PORT: {{ include "tokentimer.databasePort" . | quote }}

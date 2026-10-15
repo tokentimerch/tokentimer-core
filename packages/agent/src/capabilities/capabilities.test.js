@@ -24,6 +24,9 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
         "iis-binding-v1",
         "trust-anchor-deploy-v1",
         "adcs-enroll-v1",
+        "material-store-vault-kv2-v1",
+        "certificate-publication-v1",
+        "deploy-from-store-v1",
       ],
     );
   });
@@ -31,6 +34,11 @@ describe("qualified-capabilities manifest gate (ADR-0012 decision 14)", () => {
   it("does not qualify adcs-enroll-v1 in the shipped manifest", () => {
     const manifest = loadQualifiedCapabilitiesManifest();
     assert.equal(manifest.qualified.includes("adcs-enroll-v1"), false);
+  });
+
+  it("keeps AD CS and distribution implemented but absent from production advertisement", () => {
+    const candidates = ["adcs-enroll-v1", "material-store-vault-kv2-v1", "certificate-publication-v1", "deploy-from-store-v1"];
+    assert.deepEqual(filterQualifiedCapabilities(candidates), []);
   });
 
   it("ships with all three gated capabilities qualified after real-host verification (Windows, Debian/Ubuntu, RHEL/AlmaLinux)", () => {

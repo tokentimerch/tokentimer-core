@@ -116,6 +116,16 @@ export default function RetireCertificateModal({
       setError('Choose the certificate to retire.');
       return;
     }
+    const fingerprint = String(selectedCertificate.fingerprintSha256 || '')
+      .replace(/:/g, '')
+      .trim()
+      .toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
+      setError(
+        'Retirement is unavailable until a certificate SHA-256 fingerprint is available. Refresh the inventory after issuance completes.'
+      );
+      return;
+    }
     if (!reason.trim()) {
       setError('Enter a reason for this lifecycle change.');
       return;
@@ -169,9 +179,10 @@ export default function RetireCertificateModal({
         <ModalHeader {...headerProps}>
           <DashboardModalTitle>Retire certificate</DashboardModalTitle>
           <DashboardModalDescription>
-            This asset is backed by a managed certificate, so it cannot be
-            deleted. Revoke or decommission it instead; the record and its
-            history are kept.
+            This asset is linked to certificate records, so it cannot be
+            deleted. Record a lifecycle retirement instead; the record and its
+            history are kept. This does not revoke the certificate at its
+            certificate authority or remove it from a host.
           </DashboardModalDescription>
         </ModalHeader>
         <ModalCloseButton {...closeButtonProps} />
@@ -203,7 +214,7 @@ export default function RetireCertificateModal({
                 <Text fontSize='sm'>
                   This asset tracks several certificate identities. Choose the
                   certificate for this lifecycle change; the others keep their
-                  status.
+                  status. Stopping management does not unlink these records.
                 </Text>
                 <Select
                   id={certificateSelectId}

@@ -13,6 +13,7 @@ const {
   CERTOPS_RENEWAL_PROFILE_INVALID,
   AUTO_RENEW_DISABLED_PROFILE_STATUSES,
   buildManualRenewalJobPayload,
+  validateRenewalManualOverrides,
   validateRenewalProfile,
 } = require("./renewalProfile");
 const {
@@ -188,6 +189,7 @@ const JOB_OPERATIONS = Object.freeze([
   "issue",
   "renew",
   "deploy",
+  "deploy-from-store",
   "reload",
   "revoke",
   "noop",
@@ -832,6 +834,7 @@ function requiredExecutionFieldsForOperation(payload, operation) {
   if (!base) return base;
   if (operation !== "issue") return base;
   const required = new Set(base);
+  if (payload?.publication) return required;
   required.add(payload?.target?.type === "windows-iis" ? "keyMode" : "certPath");
   return required;
 }
@@ -883,8 +886,19 @@ function validateExecutionFields(payload, operation) {
       CERTOPS_JOB_EXECUTION_FIELD_INVALID,
     );
   }
+  if (payload.publication || payload.materialDeployment || operation === "deploy-from-store") {
+    const { validateDistributionContract } = require("./materialDistribution");
+    if (payload.publication) {
+      if (!["issue", "renew"].includes(operation) || payload.materialDeployment) throw executionFieldError("publication");
+      validateDistributionContract("publication", payload.publication);
+    } else {
+      if (operation !== "deploy-from-store") throw executionFieldError("materialDeployment");
+      validateDistributionContract("materialDeployment", payload.materialDeployment);
+    }
+    if (payload.keyMode !== "vault-managed" || ["certPath", "keyPath", "chainPath", "deploymentTargets", "reloadService", "reloadCommandRefs", "verifyHost", "verifyPort"].some((field) => payload[field] != null)) throw executionFieldError("publication");
+  }
   const allowedForOperation =
-    EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
+    operation === "deploy-from-store" ? new Set(["keyMode"]) : EXECUTION_FIELDS_BY_OPERATION[operation] || new Set();
   for (const fieldName of EXECUTION_FIELD_NAMES) {
     if (!Object.prototype.hasOwnProperty.call(payload, fieldName)) continue;
     const value = payload[fieldName];
@@ -1118,6 +1132,7 @@ function normalizeExplicitLifecycleTimestamps(options) {
 const SUBJECT_REQUIRED_OPERATIONS = new Set([
   "renew",
   "deploy",
+  "deploy-from-store",
   "reload",
   "revoke",
   "distribute-trust",
@@ -1315,6 +1330,21 @@ function isAgentDeployableKeyMode(certificateOrKeyMode) {
       : certificateOrKeyMode;
   return AGENT_DEPLOYABLE_KEY_MODES.has(keyMode);
 }
+
+// Renewal custody is broader than direct file/store deployment. This is a
+// projection only: publication job creation still validates the live group,
+// management period, profile revision and pinned issuer in materialDistribution.
+function isAgentRenewableKeyMode(certificateOrKeyMode) {
+  const mode = typeof certificateOrKeyMode === "object" && certificateOrKeyMode
+    ? certificateOrKeyMode.key_mode : certificateOrKeyMode;
+  if (isAgentDeployableKeyMode(mode)) return true;
+  if (mode !== "vault-managed" || !certificateOrKeyMode || typeof certificateOrKeyMode !== "object") return false;
+  try {
+    return Boolean(require("./renewalProfile").resolveRenewalProfileSnapshot(certificateOrKeyMode).publicationDestination);
+  } catch {
+    return false;
+  }
+}
 const SUBJECT_ID_UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -1358,7 +1388,13 @@ async function resolveManagedCertificateJobDefaults({
   operation,
   subjectType,
   subjectId,
+  payload,
+  assignedAgentId,
 }) {
+  if (payload?.publication || payload?.materialDeployment) {
+    return require("./materialDistribution").resolveDistributionJobDefaults({ client: db,
+      workspaceId, operation, subjectId, payload, assignedAgentId });
+  }
   if (source === CONTROLLER_PROVISIONING_JOB_SOURCE) {
     return { autoAssignedAgentId: null };
   }
@@ -1476,7 +1512,7 @@ const MANUAL_RENEWAL_DEFAULT_REASON = "manual";
 async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId }) {
   if (!SUBJECT_ID_UUID_PATTERN.test(String(certificateId || ""))) return null;
   const result = await db.query(
-    `SELECT mc.id,
+    `SELECT mc.id, mc.workspace_id,
             mc.status,
             ci.lifecycle_status AS identity_lifecycle_status,
             mc.common_name,
@@ -1567,16 +1603,51 @@ function manualRenewalJobCreator({
 } = {}) {
   return async function manualRenewalJobCreator(options) {
     const { client, workspaceId } = options;
-    const payload = await materializeManualRenewalPayload({
-      db: client,
-      workspaceId,
-      certificateId,
-      overrides: options.payload,
-      loadCertificate,
-    });
+    const overrides = validateRenewalManualOverrides(options.payload);
+    const idempotencyKey = normalizeOptionalShortText(options.idempotencyKey, "idempotencyKey");
+    let existing = null;
+    if (idempotencyKey) {
+      // Serialize lookup/materialization with same-key manual renewals. The
+      // workspace side-effect gate already owns this transaction's client.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        JSON.stringify(["manual-renew", workspaceId, idempotencyKey]),
+      ]);
+      existing = await getJobByIdempotencyKey(client, workspaceId, idempotencyKey);
+    }
+    const assignedAgentId = normalizeOptionalShortText(options.assignedAgentId, "assignedAgentId");
+    if (existing && (existing.operation !== "renew" ||
+      existing.subjectType !== "managed_certificate" || existing.subjectId !== certificateId ||
+      assignedAgentId && assignedAgentId !== existing.assignedAgentId)) {
+      throw serviceError("Idempotency key was already used with a different CertOps job request",
+        CERTOPS_JOB_IDEMPOTENCY_CONFLICT);
+    }
+    // Expiry, profile and derived routing can change after execution. Reuse
+    // the original public execution snapshot for replay, but reapply caller
+    // input so createJob still compares reason, actor, mode and approval to
+    // the immutable creation hash. It also retains all current safety gates.
+    const payload = existing
+      ? { ...existing.payload, reason: overrides.reason || MANUAL_RENEWAL_DEFAULT_REASON }
+      : await materializeManualRenewalPayload({
+          db: client, workspaceId, certificateId, overrides, loadCertificate,
+        });
+
+    // Distinct manual requests need distinct immutable versions even if the
+    // source expiry has not changed (e.g. rejection followed by correction).
+    // A replay of the same idempotency key must still produce the same intent.
+    if (payload.publication && !existing) {
+      const bytes = require("node:crypto").createHash("sha256")
+        .update(JSON.stringify(["manual-renew-material", workspaceId, certificateId,
+          idempotencyKey || require("node:crypto").randomUUID()]))
+        .digest().subarray(0, 16);
+      bytes[6] = (bytes[6] & 15) | 0x50;
+      bytes[8] = (bytes[8] & 63) | 0x80;
+      const hex = bytes.toString("hex");
+      payload.publication.materialVersionId = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    }
 
     return createJob({
       ...options,
+      ...(existing ? { assignedAgentId: existing.assignedAgentId } : {}),
       operation: "renew",
       subjectType: "managed_certificate",
       subjectId: certificateId,
@@ -1802,6 +1873,9 @@ async function resolveWorkspaceRequiresApprovalAlways(
 }
 
 async function createCertificateJob(options) {
+  if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.distributionRollout) && !options.client) {
+    throw serviceError("Material distribution requires a transaction-owned client", "CERTOPS_PUBLICATION_TRANSACTION_REQUIRED");
+  }
   const db = options.client || pool;
   const workspaceId = normalizeWorkspaceId(options.workspaceId);
   const operation = normalizeEnum(
@@ -1964,6 +2038,8 @@ async function createCertificateJob(options) {
     operation,
     subjectType,
     subjectId,
+    payload,
+    assignedAgentId: options.assignedAgentId || payload.assignedAgentId,
   });
   const {
     executorKind,
@@ -2039,6 +2115,27 @@ async function createCertificateJob(options) {
         "Idempotency key was already used with a different CertOps job request",
         CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
       );
+    }
+  }
+
+  if (subjectType === "managed_certificate" && SUBJECT_ID_UUID_PATTERN.test(subjectId || "") &&
+      ["renew", "deploy", "reload"].includes(operation)) {
+    const lifecycle = await db.query(
+      `SELECT identity.lifecycle_status, identity.fingerprint_sha256,
+              certops_is_initial_provisioning(mc.workspace_id,mc.id,$3,$4,$5) AS initial_provisioning
+         FROM managed_certificates mc
+         LEFT JOIN certops_certificate_identities identity
+           ON identity.workspace_id = mc.workspace_id
+          AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+        WHERE mc.workspace_id = $1 AND mc.id = $2::uuid`,
+      [workspaceId, subjectId, operation, executorKind, source],
+    );
+    const identity = lifecycle.rows[0];
+    if (identity?.lifecycle_status === null && identity.initial_provisioning !== true) {
+      throw serviceError("An observed certificate fingerprint is required before this operation", CERTOPS_JOB_INVALID);
+    }
+    if (["revoked", "decommissioned"].includes(identity?.lifecycle_status)) {
+      throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
     }
   }
 
@@ -2124,6 +2221,10 @@ async function createCertificateJob(options) {
 
     const job = jobFromRow(result.rows[0]);
     if (job) {
+      if (payload.publication) {
+        await require("./materialDistribution").allocateMaterialVersion({ client: db, workspaceId,
+          groupId: payload.publication.groupId, job: { ...result.rows[0], payload } });
+      }
       if (options.enrollmentId) {
         await db.query(
           `UPDATE certificate_jobs
@@ -2735,6 +2836,7 @@ module.exports = {
   findActiveJobForSubject,
   getCertificateJobById,
   isAgentDeployableKeyMode,
+  isAgentRenewableKeyMode,
   isTerminalJobStatus,
   isTrustAnchorOperation,
   jobCreationRequestFingerprint,

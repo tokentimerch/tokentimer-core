@@ -121,7 +121,8 @@ function normalizeQueueRow(row) {
   const alertId = finiteInteger(row.alert_id ?? row.id);
   const thresholdDays = finiteInteger(row.threshold_days);
   const events = [];
-  const thresholdDate = formatThresholdDate(row.expiration, thresholdDays);
+  const previousExpiration = /:previous_expiration:(\d{4}-\d{2}-\d{2}):/.exec(rowAlertKey(row))?.[1];
+  const thresholdDate = formatThresholdDate(previousExpiration || row.expiration, thresholdDays);
   if (thresholdDate) {
     events.push(
       baseEvent(row, {

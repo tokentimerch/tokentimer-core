@@ -116,7 +116,9 @@ export function certificateLifecycleDescriptor(certificate) {
     : certificate?.status || certificate?.lifecycleStatus;
   return {
     status,
-    label: (identified && certificate?.lifecycleDisplay) || statusLabel(status),
+    label:
+      (identified && certificate?.lifecycleDisplay) ||
+      `${statusLabel(status)}${certificate?.stillObserved && isRetiredStatus(status) ? ' · Still observed' : ''}`,
     scheme: statusScheme(status),
   };
 }
@@ -456,15 +458,12 @@ export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
 }
 
-/** A certificate object is retired when either status field says so. */
+/** Identity lifecycle is authoritative; status supports legacy source rows. */
 export function isRetiredCertificate(certificate) {
   if (!certificate || typeof certificate !== 'object') {
     return isRetiredStatus(certificate);
   }
-  return (
-    isRetiredStatus(certificate.status) ||
-    isRetiredStatus(certificate.lifecycleStatus)
-  );
+  return isRetiredStatus(certificate.lifecycleStatus || certificate.status);
 }
 
 /**
@@ -502,7 +501,23 @@ export function summarizeManagedCertificates(certificates, options = {}) {
     ? options.highlightLimit
     : 5;
   const items = Array.isArray(certificates) ? certificates : [];
-  const active = items.filter(cert => !isRetiredCertificate(cert));
+  const identities = new Map();
+  for (const [index, cert] of sortCertificatesForToken(items).entries()) {
+    if (isRetiredCertificate(cert)) continue;
+    const fingerprint = String(cert?.fingerprintSha256 || '')
+      .replace(/:/g, '')
+      .trim()
+      .toLowerCase();
+    const key =
+      cert?.identityId ||
+      (/^[a-f0-9]{64}$/.test(fingerprint)
+        ? fingerprint
+        : `provisional:${index}`);
+    const previous = identities.get(key);
+    if (!previous || (previous.tokenId == null && cert?.tokenId != null))
+      identities.set(key, cert);
+  }
+  const active = [...identities.values()];
 
   const linked = active.filter(cert => cert?.tokenId != null);
   const unlinked = active.filter(cert => cert?.tokenId == null);

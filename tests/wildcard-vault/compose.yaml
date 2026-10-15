@@ -1,0 +1,74 @@
+name: tt-wildcard-vault-20261008
+services:
+  registry:
+    profiles: [images]
+    image: registry:2
+    ports: ["127.0.0.1:58600:5000"]
+    cpus: 0.25
+    mem_limit: 128m
+    volumes: ["registry:/var/lib/registry"]
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wildcard_fixture
+      POSTGRES_PASSWORD: isolated-fixture-only
+      POSTGRES_DB: wildcard_fixture
+    ports: ["127.0.0.1:57470:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    cpus: 0.5
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U wildcard_fixture"]
+      interval: 2s
+      retries: 30
+  vault:
+    image: hashicorp/vault:1.21
+    command: [server, -dev, -dev-listen-address=0.0.0.0:8200]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: isolated-vault-fixture-only
+    ports: ["127.0.0.1:58200:8200"]
+    cap_add: [IPC_LOCK]
+    cpus: 0.5
+    mem_limit: 256m
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --save, "", --appendonly, "no", --maxmemory, 64mb]
+    ports: ["127.0.0.1:57379:6379"]
+    cpus: 0.25
+    mem_limit: 96m
+  mail:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:58025:8025", "127.0.0.1:51025:1025"]
+    cpus: 0.25
+    mem_limit: 64m
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
+    command: ["-defaultIPv6", "", "-defaultIPv4", "127.0.0.1"]
+    ports: ["127.0.0.1:58055:8055", "127.0.0.1:58053:8053/udp"]
+    cpus: 0.25
+    mem_limit: 64m
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    command: ["-config", "/fixture/pebble.json", "-strict", "-dnsserver", "challtestsrv:8053"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+    volumes: ["./pebble.json:/fixture/pebble.json:ro"]
+    ports: ["127.0.0.1:58400:14000", "127.0.0.1:58500:15000"]
+    cpus: 0.5
+    mem_limit: 128m
+    depends_on: [challtestsrv]
+  lifecycle:
+    profiles: [qualification]
+    image: tt-wildcard-vault-fixture:20261008
+    build:
+      context: .
+      dockerfile: Dockerfile.fixture
+    volumes: ["../..:/repo:ro", "lifecycle:/fixture"]
+    ports: ["127.0.0.1:58443:8443", "127.0.0.1:59443:9443"]
+    cpus: 1
+    mem_limit: 512m
+    depends_on: [vault, pebble]
+volumes:
+  registry:
+  postgres:
+  lifecycle:

@@ -31,22 +31,21 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 61).name, "auto_sync_multi_configuration");
     assert.equal(migrations.find((entry) => entry.version === 62).name, "certops_certificate_identity_and_management_periods");
     assert.equal(migrations.find((entry) => entry.version === 67).name, "inventory_and_auto_sync_name_length");
-    assert.equal(
-      migrations.find((entry) => entry.version === 68).name,
-      "certops_adcs_awaiting_issuer_and_continue_enrollment",
-    );
-    assert.equal(migrations.at(-1).version, 72);
-    assert.equal(migrations.at(-1).name, "certops_profile_issuer");
-    assert.match(
-      migrations.find((entry) => entry.version === 71).sql,
-      /'adcs-template-verdict', 'adcs-submitted', 'adcs-pending'/,
-    );
-    assert.match(migrations.at(-1).sql, /fk_certificate_profiles_issuer/);
-    assert.match(migrations.at(-1).sql, /ON DELETE SET NULL \(issuer_id\)/);
+    assert.equal(migrations.find((entry) => entry.version === 68).name, "certops_adcs_awaiting_issuer_and_continue_enrollment");
+    assert.equal(migrations.find((entry) => entry.version === 69).name, "certops_agent_job_logs");
+    assert.equal(migrations.find((entry) => entry.version === 70).name, "certops_certificate_enrollments");
+    assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
+    assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
+    assert.equal(migrations.at(-1).version, 76);
+    assert.equal(migrations.at(-1).name, "certops_distribution_transfer");
+    assert.equal(migrations.find(entry => entry.version === 71).name, "certops_adcs_evidence_types");
+    assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 72 }, (_, index) => index + 1),
+      Array.from({ length: 76 }, (_, index) => index + 1),
     );
+    assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
+    assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
       "certops_agents_capabilities_freshness_epoch",
@@ -125,6 +124,16 @@ describe("operational notifications migration", () => {
       () => validateMigrationHistory([{ version: 45, name: "unrecognized_migration" }]),
       /Migration 45 has unexpected name/,
     );
+  });
+
+  it("rejects distribution candidate numbers that collide with applied AD CS migrations", () => {
+    for (const row of [
+      {version:71,name:"certops_material_distribution"},
+      {version:72,name:"certops_distribution_review"},
+      {version:73,name:"certops_distribution_transfer"},
+    ]) assert.throws(() => validateMigrationHistory([row]), /unexpected name|Unsupported Core migration history/);
+    assert.throws(() => validateMigrationHistory([{version:77,name:"future_migration"}]), /not supported|Unsupported Core migration history/);
+    assert.doesNotThrow(() => validateMigrationHistory(migrations.map(({version,name}) => ({version,name}))));
   });
 });
 const { JOB_OPERATIONS, SUBJECT_TYPES } = require(
@@ -1459,16 +1468,23 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
     assert.match(migration.sql, /certificate_jobs_operation_check/);
   });
 
-  it("accepts exactly the operations the service layer declares today", () => {
+  it("preserves the operation vocabulary as of migration 68", () => {
     const operationDeclared = migration.sql.match(/operation IN \(([^)]+)\)/);
     assert.ok(operationDeclared, "operation IN (...) list expected");
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    const operationsAsOfMigration68 = JOB_OPERATIONS.filter(
-      (operation) => operation !== "adcs-preflight",
-    );
-    assert.deepEqual([...operationValues].sort(), [...operationsAsOfMigration68].sort());
+    assert.deepEqual([...operationValues].sort(), JOB_OPERATIONS.filter(operation => operation !== "deploy-from-store" && operation !== "adcs-preflight").sort());
+  });
+});
+
+describe("migration 74 distribution operation compatibility", () => {
+  it("adds deploy-from-store while retaining AD CS continuation and preflight", () => {
+    const migration = migrations.find(entry => entry.version === 74);
+    const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
+    assert.ok(declared);
+    const values = declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, ""));
+    assert.deepEqual(values.sort(), [...JOB_OPERATIONS].sort());
   });
 });
 
@@ -1585,14 +1601,7 @@ describe("migration 44 trust-anchor job operation and subject type", () => {
     const operationValues = operationDeclared[1]
       .split(",")
       .map((entry) => entry.trim().replace(/^'|'$/g, ""));
-    // Migration 68 adds continue-enrollment; keep this snapshot pinned to v44.
-    const operationsAsOfMigration44 = JOB_OPERATIONS.filter(
-      (operation) => operation !== "continue-enrollment" && operation !== "adcs-preflight",
-    );
-    assert.deepEqual(
-      [...operationValues].sort(),
-      [...operationsAsOfMigration44].sort(),
-    );
+    assert.deepEqual([...operationValues].sort(), [...JOB_OPERATIONS].filter((operation)=>operation!=="deploy-from-store" && operation!=="adcs-preflight" && operation!=="continue-enrollment").sort());
 
     const subjectTypeDeclared = migration.sql.match(
       /subject_type IS NULL OR subject_type IN \(([^)]+)\)/,
@@ -1871,7 +1880,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 72);
+    assert.equal(sorted[sorted.length - 1], 76);
   });
 });
 

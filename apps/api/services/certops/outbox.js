@@ -23,6 +23,9 @@ const {
 } = require("../../utils/secretMaterial");
 
 const OUTBOX_EVENT_TYPES = Object.freeze({
+  MATERIAL_PUBLISHED: "material_published",
+  DISTRIBUTION_APPROVAL_GRANTED: "distribution_approval_granted",
+  DISTRIBUTION_ROLLOUT_REQUESTED: "distribution_rollout_requested",
   RENEWAL_ALERT_REQUESTED: "renewal_alert_requested",
   PROFILE_DERIVATION_REQUESTED: "profile_derivation_requested",
 });
@@ -41,6 +44,9 @@ const CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE = "CERTOPS_OUTBOX_EVENT_NOT_RETRYABLE";
 // rejected rather than dropped: a caller passing something unexpected is a bug
 // worth surfacing, not data worth silently discarding.
 const PAYLOAD_FIELDS_BY_EVENT_TYPE = Object.freeze({
+  material_published: new Set(["groupId","materialVersionId"]),
+  distribution_approval_granted: new Set(["jobId"]),
+  distribution_rollout_requested: new Set(["groupId","rolloutId"]),
   [OUTBOX_EVENT_TYPES.RENEWAL_ALERT_REQUESTED]: Object.freeze(
     new Set([
       "jobId",

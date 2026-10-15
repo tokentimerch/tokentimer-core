@@ -115,3 +115,23 @@ TokenTimer creates the admin user automatically on first startup from `ADMIN_EMA
 Recommended next steps: invite team members (Workspace Settings, Members), add your first [token](https://tokentimer.ch/docs/self-hosted/tokens), configure alert thresholds and channels in [Expiry reminders and thresholds](https://tokentimer.ch/docs/self-hosted/alerts), and configure SMTP (via System Settings UI or [env vars](CONFIGURATION.md)).
 
 Continue with [First asset and alert check](FIRST_ASSET.md). For settings and restarts, see [Configuration basics](CONFIGURATION_BASICS.md).
+
+## Private-CA Vault connections
+
+The API forwards `NODE_EXTRA_CA_CERTS`, but the referenced PEM CA file must also
+be mounted in its container. Use a customer Compose override, for example:
+
+```yaml
+services:
+  api:
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/tokentimer/ca/vault-ca.pem
+    volumes:
+      - ./vault-ca.pem:/etc/tokentimer/ca/vault-ca.pem:ro
+```
+
+Run Compose with the main file and this override. Use only the public CA
+certificate, keep TLS verification enabled, and verify the mount exists before
+starting the API. This is the server inventory scanner's trust configuration;
+customer distribution agents configure Vault trust independently on their hosts.
+The production Compose file requires an explicit non-empty `DB_PASSWORD`.

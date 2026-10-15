@@ -302,6 +302,7 @@ async function loadAlertStates(tokenIds, { queryable = pool, referenceDate } = {
        FROM alert_queue aq1
        WHERE aq1.token_id = t.id
          AND aq1.alert_key LIKE 'token_expiry:%'
+         AND aq1.alert_key NOT LIKE '%:previous_expiration:%'
        ORDER BY aq1.created_at DESC, aq1.id DESC
        LIMIT 1
      ) aq ON TRUE

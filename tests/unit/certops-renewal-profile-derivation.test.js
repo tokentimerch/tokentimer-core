@@ -85,7 +85,10 @@ describe("renewal profile derivation from an issued certificate", () => {
     assert.equal(profile.dns.zone, "example.com");
     assert.equal(profile.keyAlgorithm, "ecdsa");
     assert.equal(profile.keySize, 256);
-    assert.equal(profile.target.certPath, "/etc/ssl/tokentimer/web-01.example.com.pem");
+    assert.equal(
+      profile.target.certPath,
+      "/etc/ssl/tokentimer/web-01.example.com.pem",
+    );
     assert.equal(profile.deploymentTargets.length, 1);
     assert.equal(profile.deploymentTargets[0].reloadService, "nginx");
     assert.equal(
@@ -103,7 +106,9 @@ describe("renewal profile derivation from an issued certificate", () => {
     // If the CA normalised or dropped a name, renewing against the requested
     // set would produce a different certificate than the one on the host.
     const profile = deriveRenewalProfileFromIssuedCertificate({
-      payload: issuePayload({ sans: ["web-01.example.com", "dropped.example.com"] }),
+      payload: issuePayload({
+        sans: ["web-01.example.com", "dropped.example.com"],
+      }),
       certificate: issuedCertificate({
         subjectAltNames: ["web-01.example.com", "alt.example.com"],
       }),
@@ -158,7 +163,10 @@ describe("renewal profile derivation from an issued certificate", () => {
 
   it("carries the verification host forward when the issuance used one", () => {
     const profile = deriveRenewalProfileFromIssuedCertificate({
-      payload: issuePayload({ verifyHost: "web-01.example.com", verifyPort: 443 }),
+      payload: issuePayload({
+        verifyHost: "web-01.example.com",
+        verifyPort: 443,
+      }),
       certificate: issuedCertificate(),
     });
     assert.equal(profile.verification.host, "web-01.example.com");
@@ -192,12 +200,24 @@ describe("renewal profile derivation from an issued certificate", () => {
     }
   });
 
-  it("rejects a certificate with no common name", () => {
+  it("derives a SAN-only certificate from the approved domain", () => {
+    const profile = deriveRenewalProfileFromIssuedCertificate({
+      payload: issuePayload(),
+      certificate: issuedCertificate({ commonName: null }),
+    });
+    assert.equal(profile.target.reference, "web-01.example.com");
+    assert.deepEqual(profile.sanPolicy.sans, ["web-01.example.com"]);
+  });
+
+  it("never guesses an unapproved domain from a SAN-only certificate", () => {
     assert.throws(
       () =>
         deriveRenewalProfileFromIssuedCertificate({
           payload: issuePayload(),
-          certificate: issuedCertificate({ commonName: null }),
+          certificate: issuedCertificate({
+            commonName: null,
+            subjectAltNames: ["other.example.com"],
+          }),
         }),
       /no common name/,
     );
@@ -214,8 +234,16 @@ describe("renewal profile derivation from an issued certificate", () => {
         deriveRenewalProfileFromIssuedCertificate({
           payload: issuePayload({
             deploymentTargets: [
-              { type: "endpoint", reference: "web-01", certPath: "/a/cert.pem" },
-              { type: "endpoint", reference: "web-02", certPath: "/b/cert.pem" },
+              {
+                type: "endpoint",
+                reference: "web-01",
+                certPath: "/a/cert.pem",
+              },
+              {
+                type: "endpoint",
+                reference: "web-02",
+                certPath: "/b/cert.pem",
+              },
             ],
           }),
           certificate: issuedCertificate(),
@@ -267,7 +295,11 @@ function windowsIssuePayload(overrides = {}) {
       type: "windows-iis",
       reference: "web-01.example.com",
       store: "My",
-      binding: { site: "Default Web Site", port: 443, sniHost: "web-01.example.com" },
+      binding: {
+        site: "Default Web Site",
+        port: 443,
+        sniHost: "web-01.example.com",
+      },
       ...targetOverrides,
     },
     sans: ["web-01.example.com"],

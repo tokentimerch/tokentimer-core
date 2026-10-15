@@ -32,6 +32,7 @@ const {
 } = require("./renewalAlertPolicy");
 const {
   shouldSkipRetiredCertificateAlert,
+  loadRenewalAlertCertificate,
 } = require("../../src/shared/retiredCertificateAlerts");
 const {
   resolveContactGroupsForAsset,
@@ -127,15 +128,9 @@ async function queueCertRenewalFailedAlert({
   }
 
   // Anchor token: the linked token row of the subject managed certificate.
-  const certRes = await client.query(
-    `SELECT id, token_id, status
-       FROM managed_certificates
-      WHERE id = $1
-        AND workspace_id = $2
-      LIMIT 1`,
-    [subjectId, resolvedWorkspaceId],
-  );
-  const cert = certRes.rows[0] || null;
+  const cert = await loadRenewalAlertCertificate(client, {
+    certificateId: subjectId, workspaceId: resolvedWorkspaceId, jobId: resolvedJobId,
+  });
   if (!cert) return { queued: false, reason: "managed_certificate_not_found" };
   if (!cert.token_id) return { queued: false, reason: "no_linked_token" };
 

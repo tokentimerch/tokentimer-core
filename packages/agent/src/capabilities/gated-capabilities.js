@@ -1,7 +1,10 @@
 "use strict";
 
 /**
- * The three capability strings ADR-0012 decision 14 marks as depending on
+ * Capability strings that depend on independent real-host evidence under
+ * ADR-0012 decision 14. AD CS and material distribution remain gated while
+ * the original Windows/IIS/trust capabilities retain their qualification.
+ * These strings are gated
  * real-host evidence, gated at ADVERTISEMENT time, not only at claim time:
  * windows-cert-store-v1 and iis-binding-v1 depend on the real Windows
  * store/site/binding execution path, and trust-anchor-deploy-v1 depends on
@@ -36,6 +39,9 @@ const GATED_CAPABILITIES = Object.freeze([
   "iis-binding-v1",
   "trust-anchor-deploy-v1",
   "adcs-enroll-v1",
+  "material-store-vault-kv2-v1",
+  "certificate-publication-v1",
+  "deploy-from-store-v1",
 ]);
 
 module.exports = { GATED_CAPABILITIES };

@@ -10,6 +10,7 @@ node_modules
 # Build artifacts
 # Qualification workspaces can contain private local fixtures and never belong
 # in image build contexts, even when a Dockerfile copies only selected sources.
+.scratch/
 .build/
 qualification-results/
 apps/dashboard/dist

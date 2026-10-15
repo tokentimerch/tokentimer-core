@@ -86,9 +86,10 @@ import EndpointSslMonitorModal from './components/EndpointSslMonitorModal.jsx';
 import RetireCertificateModal from './components/certops/RetireCertificateModal.jsx';
 import RequireManagerRoute from './components/RequireManagerRoute.jsx';
 import { useWorkspaceCertOps } from './components/certops/useCertOps.js';
-import { retireCertificate } from './components/certops/certopsApi.js';
+import { retireCertificateAndRefreshAssets } from './components/certops/certificateRetirement.js';
 import {
   resolveTokenCertificate,
+  isRetiredStatus,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './components/certops/certopsFormat.js';
 import {
@@ -3384,24 +3385,41 @@ function DashboardView({
   const handleRetireConfirm = useCallback(
     async ({ certificate: cert, status, reason, acknowledgeUncertainty }) => {
       if (!cert?.id) return;
-      await retireCertificate(workspaceId, cert.id, {
+      const { refreshFailed } = await retireCertificateAndRefreshAssets({
+        workspaceId,
+        certificate: cert,
         status,
         reason,
         acknowledgeUncertainty,
-        fingerprintSha256: cert.fingerprintSha256,
+        tokenId: retireTarget?.token?.id,
+        managedByTokenId,
+        updateTokens: _setTokens,
+        isCurrentWorkspace: () =>
+          dashboardSelectionIdRef.current === workspaceId,
+        refreshCertOps,
       });
-      refreshCertOps();
       onRetireModalClose();
       setRetireTarget(null);
       try {
         showSuccessMessage(
           status === 'revoked'
-            ? 'Certificate revoked.'
+            ? 'Certificate marked revoked in CertOps.'
             : 'Certificate decommissioned.'
         );
+        if (refreshFailed)
+          toast.error(
+            'Certificate retired. Refresh inventory to reload asset details.'
+          );
       } catch (_) {}
     },
-    [workspaceId, refreshCertOps, onRetireModalClose]
+    [
+      workspaceId,
+      retireTarget,
+      managedByTokenId,
+      _setTokens,
+      refreshCertOps,
+      onRetireModalClose,
+    ]
   );
 
   const {
@@ -4379,8 +4397,11 @@ function DashboardView({
 
   const isTokenRetired = useCallback(
     token => {
-      return resolveTokenCertificate(managedByTokenId.get(Number(token?.id)))
-        .allRetired;
+      return (
+        isRetiredStatus(token?.cert_lifecycle_status) ||
+        resolveTokenCertificate(managedByTokenId.get(Number(token?.id)))
+          .allRetired
+      );
     },
     [managedByTokenId]
   );
@@ -4395,7 +4416,10 @@ function DashboardView({
   const scopedLoadedTokens = useMemo(
     () =>
       showRetired
-        ? allLoadedTokens
+        ? allLoadedTokens.map(token => ({
+            ...token,
+            __managedCertificatesRetired: isTokenRetired(token),
+          }))
         : allLoadedTokens.filter(token => !isTokenRetired(token)),
     [allLoadedTokens, isTokenRetired, showRetired]
   );
@@ -4429,16 +4453,18 @@ function DashboardView({
           managedByTokenId.get(Number(token.id))
         );
         const managedCert = resolution.certificate;
-        const retired = resolution.allRetired;
+        const retired =
+          isRetiredStatus(token.cert_lifecycle_status) || resolution.allRetired;
         if (retired && !showRetired) continue;
         const status = getDashboardStatusMeta(token.expiresAt).key;
         const matchesStatus =
           statusFilter === 'all' ||
-          statusFilter === status ||
-          (statusFilter === 'due' && status === 'due-soon') ||
-          (statusFilter === 'critical' &&
-            (status === 'critical' || status === 'expired')) ||
-          (statusFilter === 'healthy' && status === 'healthy');
+          (!retired &&
+            (statusFilter === status ||
+              (statusFilter === 'due' && status === 'due-soon') ||
+              (statusFilter === 'critical' &&
+                (status === 'critical' || status === 'expired')) ||
+              (statusFilter === 'healthy' && status === 'healthy')));
         if (matchesStatus) {
           dedupe.set(
             String(token.id),

@@ -19,6 +19,15 @@
       "type": "string",
       "description": "Owning workspace identifier."
     },
+    "identityId": {
+      "type": ["string", "null"],
+      "description": "Immutable identity for the current SHA-256 fingerprint. Null until public material identifies the certificate."
+    },
+    "lifecycleStatus": {
+      "type": ["string", "null"],
+      "enum": ["active", "revoked", "decommissioned", null],
+      "description": "Authoritative CertOps lifecycle of this exact certificate. Marking revoked records lifecycle and does not contact the certificate authority."
+    },
     "tokenId": {
       "type": ["integer", "null"],
       "description": "Optional link to the underlying tokens row (tokens.id is INTEGER) this certificate maps to."
