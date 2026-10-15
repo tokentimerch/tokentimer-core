@@ -22,7 +22,11 @@ import zipfile
 import certops_retention24h_collection as retention24h_collection
 from certops_retention_policy_expiry import fields as retention_policy_expiry_fields, interruption_fields as retention_interruption_fields
 import certops_adcs_ttl24h_collection as adcs_ttl24h_collection
+import certops_retention_cadence_collection as retention_cadence_collection
 import certops_linux_backup_dac_proof as linux_backup_dac_proof
+import certops_filesystem_concurrent_proof as filesystem_concurrent_proof
+import certops_linux_trust_independent_proof as linux_trust_independent_proof
+import certops_daemon_coordinator_proof as daemon_coordinator_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -215,7 +219,7 @@ def supporting_sources(value):
     declared = declared_sources()
     # Full native AD CS journeys bind 102 reviewed dependencies including real job-decision UI.
     # Keep an explicit collection ceiling; declared-path and digest checks remain.
-    if not isinstance(value, list) or len(value) > 128:
+    if not isinstance(value, list) or len(value) > 256:
         raise ValueError("Invalid supporting source inventory")
     result, seen = [], set()
     for source in value:
@@ -292,6 +296,33 @@ def browser_cancel_fields(proof):
         if proof.get(key) is not False:
             raise ValueError("Browser cancellation scope cannot be promoted")
         result[key] = False
+    return result
+
+
+def cancelled_late_approval_fields(proof):
+    flags = ["publicCancellationAuditVerified","terminalCleanupAlreadyCompleted","distinctActualSuccessorInstalled","nativePendingCsrRequesterTemplateOwned","actualOfficerLateApproval","actualCaLeafMatchesOriginalCsr","defaultClockDoesNotRevive","overdueSchedulerDoesNotRevive","publicInstallationRetryRefused","originalJournalAndJobsUnchanged","cancelledKeyRemainsAbsent","lateLeafNeverAccepted","successorClaimEvidenceUnchanged","successorNativeCustodyBindingTlsUnchanged","noCaResubmission","ownedUnusedLateLeafRevoked"]
+    scope = "real-cancelled-request-late-issued-after-distinct-same-endpoint-successor"
+    if (not isinstance(proof, dict) or proof.get("scope") != scope
+            or proof.get("sameCertificateRenewalQualified") is not False
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Incomplete native cancelled late approval evidence")
+    result = {"scope": scope, "sameCertificateRenewalQualified": False, **dict.fromkeys(flags, True)}
+    for key in ("cancelledEnrollmentId", "successorEnrollmentId"):
+        value = proof.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value):
+            raise ValueError("Invalid late approval enrollment identity")
+        result[key] = value
+    if result["cancelledEnrollmentId"] == result["successorEnrollmentId"]:
+        raise ValueError("Late approval requires a distinct actual successor")
+    for key, pattern in (("requestIds", r"[1-9][0-9]{0,9}"), ("fingerprints", r"[a-f0-9]{64}")):
+        value = proof.get(key)
+        if (not isinstance(value, list) or len(value) != 2
+                or any(not isinstance(item, str) or not re.fullmatch(pattern, item) for item in value)
+                or len(set(value)) != 2):
+            raise ValueError("Invalid late approval public native identities")
+        result[key] = value[:]
+    if any(int(value) > 0xffffffff for value in result["requestIds"]):
+        raise ValueError("Late approval request exceeds native uint32")
     return result
 
 
@@ -933,6 +964,10 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                                 ("id", "status", "evidenceLevel", "startedAt", "finishedAt")
                                 if key in item} for item in value.get("scenarios", [])
                                if isinstance(item, dict)]
+        if value.get("suite") == retention_cadence_collection.SUITE:
+            result["nativeRetentionCadence"] = retention_cadence_collection.report_fields(value)
+            result["platform"] = "win32"
+            result["architecture"] = "x64"
         if value.get("suite") == "windows-domain-adcs-retention24h":
             result["nativeRetention24h"] = retention24h_fields(value)
         if value.get("suite") == adcs_ttl24h_collection.SUITE:
@@ -1232,6 +1267,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Pending new-key proof must bind actual prior pending installation")
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
             result["nativeIssuedRevocation"] = issued_revocation_fields(value.get("nativeIssuedRevocation"))
+            result["nativeCancelledLateApproval"] = cancelled_late_approval_fields(value.get("nativeCancelledLateApproval"))
             result["nativeRequiredTemplateAttributes"] = required_template_attribute_fields(value.get("nativeRequiredTemplateAttributes"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
@@ -1518,6 +1554,12 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Invalid compaction certificate identity")
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
+        if value.get("suite") in daemon_coordinator_proof.SUITES:
+            result.update(daemon_coordinator_proof.project_report(value))
+        if value.get("suite") == linux_trust_independent_proof.SUITE:
+            result.update(linux_trust_independent_proof.project_report(value))
+        if value.get("suite") == filesystem_concurrent_proof.SUITE:
+            result.update(filesystem_concurrent_proof.project_report(value))
         if value.get("suite") == linux_backup_dac_proof.SUITE:
             result.update(linux_backup_dac_proof.project_report(value))
         if value.get("suite") == "windows-installer-cli-second-rename":
@@ -1828,7 +1870,8 @@ def main():
             endpoint = f"https://api.github.com/repos/{repository}/actions/runs/{run_id}"
             run = json.loads(download(endpoint, token))
             owner_auth = {retention24h_collection.FINALIZER: retention24h_collection,
-                          adcs_ttl24h_collection.FINALIZER: adcs_ttl24h_collection}.get(run.get("path"))
+                          adcs_ttl24h_collection.FINALIZER: adcs_ttl24h_collection,
+                          retention_cadence_collection.FINALIZER: retention_cadence_collection}.get(run.get("path"))
             elapsed_finalizer = owner_auth is not None
             if elapsed_finalizer:
                 owner_auth.validate_finalizer_run(run, repository, run_id)

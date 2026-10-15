@@ -800,7 +800,7 @@
         "windows-2025-host"
       ],
       "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js; scripts/certops-retention-boundaries.test.js; packages/agent/scripts/host/retention-policy-expiry-fixture.js",
-      "remainingCoverage": "Native short-expiry source runs separate real two-cutover collector cases at 24 hours, explicit 168 hours (the production default) and the maximum 720 hours. Each uses actual native expiry plus 300 seconds, real monotonic and wall-clock passage, predeadline preservation, interrupted native deletion recovery, both predecessor certificate/key absence and unchanged trusted replacement custody. These direct collector cases do not qualify installed-service configuration delivery, default timer cadence or full 168/720-hour passage. The separate domain AD CS resident keeper qualifies actual 24-hour passage only when native execution succeeds; native evidence remains pending. The installed polling loop waits a 21600000ms base interval with 20% jitter after each completed sweep (4.8–7.2 hours before scheduling delay), so its genuine cadence remains a separate implementation and execution gap. Supporting loader/filesystem controls cover the default 168-hour policy and six-hour base interval, minimum 24 hours, maximum 720 hours, supported positive intervals and invalid/coerced values without rewriting configuration or custody state. Additional service/configuration cross-products remain."
+      "remainingCoverage": "Native short-expiry source runs separate real two-cutover collector cases at 24 hours, explicit 168 hours (the production default) and the maximum 720 hours. Each uses actual native expiry plus 300 seconds, real monotonic and wall-clock passage, predeadline preservation, interrupted native deletion recovery, both predecessor certificate/key absence and unchanged trusted replacement custody. These direct collector cases do not qualify installed-service configuration delivery, default timer cadence or full 168/720-hour passage. The separate domain AD CS resident keeper qualifies actual 24-hour passage only when native execution succeeds; native evidence remains pending. A separate mandatory domain-member source now leaves the actual installed service running with both retention timing fields omitted, observes its immediate and genuinely jittered default timer atomic ledger rewrites, and binds the same service/Node/boot/configuration, native protected custody, healthy pinned API and replacement trusted TLS across 4.8–7.2 hours plus a bounded sweep/observation margin. Immutable original artifacts and independent final native readback/owned Azure absence are required. Native timer execution remains pending; this deferral-only campaign does not qualify full 168/720-hour retention or deletion. Supporting loader/filesystem controls cover the default 168-hour policy and six-hour base interval, minimum 24 hours, maximum 720 hours, supported positive intervals and invalid/coerced values without rewriting configuration or custody state. Additional service/configuration cross-products remain."
     },
     {
       "id": "windows-retention.durable-ledger",
@@ -1244,8 +1244,8 @@
       "requiredEnvironments": [
         "enterprise-domain-native-adcs"
       ],
-      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js",
-      "remainingCoverage": "Native source approves an actual expired pending RequestId after exact-key cleanup, independently observes CA issuance and requires no scheduler revival, key recreation or IIS binding. Native execution is pending; late approval after superseding renewal and all validity/snapshot variants remain."
+      "implementation": "tests/e2e/helpers/certops-adcs-recovery.js; tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+      "remainingCoverage": "Native expired-request source approves an actual expired pending RequestId after exact-key cleanup, independently observes CA issuance and requires no scheduler revival, key recreation or IIS binding. Separate mandatory source now approves an actual PUBLIC-CANCELLED pending request only after a distinct real successor has installed on the same owned endpoint. Exact CA requester/template/public CSR/SPKI and issued DER authorize the action and unused-leaf revocation; default-clock and separate overdue eligibility sweeps cannot revive the cancelled enrollment, public retry is refused, its original key stays absent and the issued late leaf never enters a machine store. Successor claim-bound evidence, durable journal, CNG possession, native IIS/HTTP.sys bindings and trusted TLS remain unchanged. The successor uses a distinct certificate identity, so same-certificate superseding-renewal and remaining validity/snapshot variants remain separate gaps. Source and supporting controls are implemented; protected native execution remains pending."
     },
     {
       "id": "adcs.denied-timeout-cancel",
@@ -1655,7 +1655,7 @@
         "filesystem-host"
       ],
       "implementation": "scripts/certops-filesystem-host.js",
-      "remainingCoverage": "Mandatory direct native source verifies first deployment, actual replay, certificate/key/chain backups after rotation and bounded finalization cleanup. Native execution, interrupted fsync/replace fault injection and retention age permutations remain pending."
+      "remainingCoverage": "Mandatory native source verifies first deployment, replay, certificate/key/chain backups and bounded finalization cleanup. Two actual overlapping same-process rotations to one target and the default shared backup location require FIFO paired predecessor lineage, six distinct backup files, exact permissions and stable trusted TLS checkpoints. Source and pure checks are implemented; native execution, interrupted fsync/replace fault injection and retention age permutations remain pending. This does not qualify cross-process locking or uninterrupted TLS availability. Native source also refuses an actual explicit backup-directory symlink/junction escape before predecessor mutation or outside private-key backup, then verifies genuine rotation with a real allowed directory. Native execution remains pending. Native generation-retention source additionally uses actual backupRetentionCount1 across two same-basename destinations and four real rotations, requiring exact scoped pruning, current rollback files, sibling backups and legacy/operator/outside preservation; protected host execution remains pending."
     },
     {
       "id": "deploy.reload-services",
@@ -1666,7 +1666,7 @@
         "linux-native-qualification"
       ],
       "implementation": "scripts/certops-nginx-host.js",
-      "remainingCoverage": "Actual native nginx/direct production filesystem deploy and validate/reload source asserts trusted served leaf cutover plus invalid-config and missing-command refusals on Ubuntu22.04/24.04. Native execution is pending; Apache/HAProxy and signed/API/service journeys remain uncovered."
+      "remainingCoverage": "Mandatory native nginx, Apache and HAProxy source uses genuine local files and actual consuming processes on Ubuntu22.04/24.04. Direct validation/missing-command refusals preserve trusted TLS. A separate production runDeployReloadVerify case independently observes distinct candidate pair deployment through a read-only local evidence recorder, genuine invalid-config validation failure, actual paired predecessor rollback and restored bytes/permissions, followed by exact configuration recovery, successful real validation/reload and trusted predecessor TLS. Native execution and signed/API/service dispatch remain pending; no uninterrupted availability or signed evidence-ingestion qualification is claimed."
     },
     {
       "id": "deploy.validate-failure",
@@ -1679,7 +1679,7 @@
         "haproxy-host"
       ],
       "implementation": "scripts/certops-nginx-host.js",
-      "remainingCoverage": "Mandatory native process source requires actual service configuration validation failure to block reload and preserves independently observed trusted TLS. Native execution and signed agent/API deployment rollback permutations remain pending."
+      "remainingCoverage": "Mandatory native nginx, Apache and HAProxy source uses genuine local files and actual consuming processes on Ubuntu22.04/24.04. Direct validation/missing-command refusals preserve trusted TLS. A separate production runDeployReloadVerify case independently observes distinct candidate pair deployment through a read-only local evidence recorder, genuine invalid-config validation failure, actual paired predecessor rollback and restored bytes/permissions, followed by exact configuration recovery, successful real validation/reload and trusted predecessor TLS. Native execution and signed/API/service dispatch remain pending; no uninterrupted availability or signed evidence-ingestion qualification is claimed."
     },
     {
       "id": "deploy.multi-target",
@@ -1850,7 +1850,7 @@
         "disposable-api-postgres"
       ],
       "implementation": "tests/e2e/certops-trust-multiple-e2e.test.js",
-      "remainingCoverage": "Actual public CA-anchor API preserves a single identity under concurrent approval of one fingerprint; two distinct anchors remain independently active/retired/reapproved and multi-certificate anchor input is rejected atomically. Focused execution passed. This is desired-anchor API state only; native per-store/reference ownership, multi-anchor distribution and concurrent OS cleanup remain separately qualified."
+      "remainingCoverage": "Actual public CA-anchor API preserves a single identity under concurrent approval of one fingerprint; two distinct anchors remain independently active/retired/reapproved and multi-certificate anchor input is rejected atomically. Focused execution passed. This is desired-anchor API state only; native per-store/reference ownership, multi-anchor distribution and concurrent OS cleanup remain separately qualified. Separate native sequential source installs two independent roots and issued leaves, then revokes one while preserving the other source/receipt identities, derived reference and default OS leaf trust, before actual final removal. This is not concurrent OS refresh; native execution remains pending."
     },
     {
       "id": "trust.trust-rbac",

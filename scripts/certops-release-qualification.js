@@ -40,7 +40,7 @@ function validateMatrix(specification = matrix) {
     if (!["host", "stack", "database"].includes(slot.kind) || !slot.suite || !slot.source || !slot.environment || !["windows", "linux"].includes(slot.environment.osFamily)) errors.push(`${slot.id}: invalid environment specification`);
     if (typeof slot.source !== "string" || path.isAbsolute(slot.source) || slot.source.split(/[\\/]/).includes("..")) errors.push(`${slot.id}: source must remain inside the repository`);
     if (slot.requiredSources !== undefined && (!Array.isArray(slot.requiredSources) ||
-        !slot.requiredSources.length || slot.requiredSources.length > 128 || new Set(slot.requiredSources).size !== slot.requiredSources.length ||
+        !slot.requiredSources.length || slot.requiredSources.length > 256 || new Set(slot.requiredSources).size !== slot.requiredSources.length ||
         slot.requiredSources.some(source => typeof source !== "string" || !source || path.isAbsolute(source) || /^[A-Za-z]:|^[\\/]/.test(source) || source.split(/[\\/]/).includes("..")))) {
       errors.push(`${slot.id}: invalid supporting source inventory`);
     }
@@ -73,7 +73,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
       if (!Array.isArray(entries) || !entries.length) throw new Error("Empty artifact evidence");
       const expectedDigest = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, slot.source))).digest("hex");
       for (const entry of entries) {
-        if (entry.fixtureSources !== undefined && (!Array.isArray(entry.fixtureSources) || entry.fixtureSources.length > 128 || new Set(entry.fixtureSources.map(item => item?.file)).size !== entry.fixtureSources.length || entry.fixtureSources.some(item => typeof item?.file !== "string" || path.isAbsolute(item.file) || /^[A-Za-z]:/.test(item.file) || item.file.split(/[\\/]/).includes("..")))) throw new Error("Supporting source inventory exceeds bounds or ownership");
+        if (entry.fixtureSources !== undefined && (!Array.isArray(entry.fixtureSources) || entry.fixtureSources.length > 256 || new Set(entry.fixtureSources.map(item => item?.file)).size !== entry.fixtureSources.length || entry.fixtureSources.some(item => typeof item?.file !== "string" || path.isAbsolute(item.file) || /^[A-Za-z]:/.test(item.file) || item.file.split(/[\\/]/).includes("..")))) throw new Error("Supporting source inventory exceeds bounds or ownership");
         if (entry.qualificationStatus === "not-qualified" || entry.experimental === true) throw new Error("Experimental evidence cannot qualify a release");
         if (entry.candidateSha !== candidateSha) throw new Error("Candidate identity mismatch");
         if (entry.qualificationEnvironment?.measurement !== "native" || !Object.entries(slot.environment).every(([key, value]) => entry.qualificationEnvironment?.[key] === value)) throw new Error("Host measurement mismatch");
@@ -101,6 +101,10 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-domain-adcs-default-ttl24h") {
           const helper = require("./certops-adcs-ttl24h-proof"); helper.verifyProof(artifact.report[helper.FIELD]);
           if (artifact.report[helper.FIELD].candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Actual TTL native environment, candidate and cleanup required");
+        }
+        if (slot.suite === "windows-domain-installed-retention-default-timer") {
+          const native = require("./certops-retention-cadence-proof").verifyProof(artifact.report.nativeRetentionCadence);
+          if (native.candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Installed timer native environment, original candidate and cleanup required");
         }
         if (slot.suite === "windows-domain-adcs-retention24h") require("./certops-retention24h-proof").verifyProof(artifact.report.nativeRetention24h);
         if (slot.suite === "windows-canonical-root-lifecycle") require("../tests/e2e/helpers/certops-windows-fixed-root").verifyProof(artifact.report.nativeCanonicalRoot);
@@ -151,6 +155,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-key-change").verifyCrossProof(artifact.report.nativePendingCaKeyChange,artifact.report.nativePendingCaRenewal);
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
           require("../tests/e2e/helpers/certops-adcs-issued-revocation").verifyProof(artifact.report.nativeIssuedRevocation);
+          require("../tests/e2e/helpers/certops-adcs-cancelled-late-approval").verifyProof(artifact.report.nativeCancelledLateApproval);
           require("../tests/e2e/helpers/certops-adcs-issued-san-boundary").verifyProof(artifact.report.nativeIssuedSanBoundary);
           require("../tests/e2e/helpers/certops-adcs-browser-abandon").verifyProof(artifact.report.nativeBrowserAbandon);
           require("../tests/e2e/helpers/certops-adcs-browser-admin-boundary").verifyProof(artifact.report.nativeBrowserAdminBoundary);
@@ -201,6 +206,22 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
             if (rows.length !== 1 || rows[0].template !== "TTQualificationRSAShort" || !["unsafe", "unreadable"].includes(rows[0].preflightVerdict) ||
                 !["originalConfirmedIssuerReused", "actualSignedJobRefused", "noCaRequestAllocated", "noKeyGenerated", "outgoingTrustedTlsPreserved"].every(key => rows[0][key] === true)) throw new Error("Native template mutation refusal evidence invalid");
           }
+        }
+        if (["nginx-host","apache-host","haproxy-host"].includes(slot.suite)) {
+          const p=artifact.report.nativeDaemonCoordinatorRollback,n=artifact.report.qualificationEnvironment;require("./certops-daemon-coordinator-rollback").verifyProof(p);
+          if(p.service+"-host"!==slot.suite || artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || n.distributionId!=="ubuntu" || !["22.04","24.04"].includes(n.distributionVersion) || n.executionSurface!=="host")throw new Error("Native consuming-daemon rollback environment required");
+        }
+        if (slot.suite === "linux-trust-host") {
+          const h=require("./certops-linux-trust-independent-roots"),p=artifact.report.nativeIndependentTrustRoots,n=artifact.report.qualificationEnvironment;h.verifyProof(p);
+          if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || !((p.family==="debian" && n.distribution==="ubuntu" && ["22.04","24.04"].includes(n.osVersion) && n.executionSurface==="disposable-vm")||(p.family==="rhel" && n.distribution==="almalinux" && n.osVersion==="9.6" && n.executionSurface==="disposable-container")))throw new Error("Native independent trust platform required");
+        }
+        if (slot.suite === "filesystem-host") {
+          require("./certops-filesystem-concurrent").verifyProof(artifact.report.nativeFilesystemConcurrency);
+          require("./certops-filesystem-backup-alias").verifyProof(artifact.report.nativeFilesystemBackupAlias);
+          require("./certops-filesystem-backup-retention").verifyProof(artifact.report.nativeFilesystemBackupRetention);
+          if (artifact.report.nativeFilesystemBackupAlias.aliasKind !== (artifact.report.platform === "win32" ? "junction" : "symlink")) throw new Error("Native backup alias kind differs from host");
+          const native = artifact.report.qualificationEnvironment;
+          if (artifact.report.architecture !== "x64" || !((artifact.report.platform === "linux" && native.osFamily === "linux" && native.distributionId === "ubuntu" && ["22.04", "24.04"].includes(native.distributionVersion) && native.executionSurface === "host") || (artifact.report.platform === "win32" && native.osFamily === "windows" && ["2022", "2025"].includes(native.osVersion) && [2,3].includes(native.productType)))) throw new Error("Native filesystem concurrency environment required");
         }
         if (slot.suite === "filesystem-linux-backup-dac-host") {
           require("./certops-linux-filesystem-permission").verifyProof(artifact.report.nativeLinuxBackupDac);

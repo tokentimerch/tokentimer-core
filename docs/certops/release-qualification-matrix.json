@@ -1121,7 +1121,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -1261,7 +1264,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -1401,7 +1407,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -1541,7 +1550,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -1681,7 +1693,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -1821,7 +1836,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -1961,7 +1979,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -2101,7 +2122,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -2241,7 +2265,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -2477,7 +2504,20 @@
         "distribution": "ubuntu",
         "osVersion": "22.04",
         "executionSurface": "disposable-vm"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-linux-trust-independent-roots.js",
+        "scripts/certops-linux-trust.js",
+        "scripts/certops-linux-trust-receipt-fault.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/trust-store/index.js",
+        "packages/agent/src/trust-store/receipt.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "linux-trust-host-ubuntu-24.04",
@@ -2489,7 +2529,20 @@
         "distribution": "ubuntu",
         "osVersion": "24.04",
         "executionSurface": "disposable-vm"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-linux-trust-independent-roots.js",
+        "scripts/certops-linux-trust.js",
+        "scripts/certops-linux-trust-receipt-fault.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/trust-store/index.js",
+        "packages/agent/src/trust-store/receipt.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "linux-trust-host-alma-9.6",
@@ -2501,7 +2554,20 @@
         "distribution": "almalinux",
         "osVersion": "9.6",
         "executionSurface": "disposable-container"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-linux-trust-independent-roots.js",
+        "scripts/certops-linux-trust.js",
+        "scripts/certops-linux-trust-receipt-fault.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/trust-store/index.js",
+        "packages/agent/src/trust-store/receipt.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "linux-real-acmesh",
@@ -2541,7 +2607,19 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "22.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-filesystem-concurrent.js",
+        "scripts/certops-filesystem-host.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-filesystem-backup-alias.js",
+        "scripts/certops-filesystem-backup-retention.js"
+      ]
     },
     {
       "id": "filesystem-linux-24.04",
@@ -2551,7 +2629,19 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "24.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-filesystem-concurrent.js",
+        "scripts/certops-filesystem-host.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-filesystem-backup-alias.js",
+        "scripts/certops-filesystem-backup-retention.js"
+      ]
     },
     {
       "id": "filesystem-windows-2022",
@@ -2561,7 +2651,19 @@
       "environment": {
         "osFamily": "windows",
         "osVersion": "2022"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-filesystem-concurrent.js",
+        "scripts/certops-filesystem-host.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-filesystem-backup-alias.js",
+        "scripts/certops-filesystem-backup-retention.js"
+      ]
     },
     {
       "id": "filesystem-windows-2025",
@@ -2571,7 +2673,19 @@
       "environment": {
         "osFamily": "windows",
         "osVersion": "2025"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-filesystem-concurrent.js",
+        "scripts/certops-filesystem-host.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-filesystem-backup-alias.js",
+        "scripts/certops-filesystem-backup-retention.js"
+      ]
     },
     {
       "id": "linux-csr-observation-api",
@@ -2590,7 +2704,21 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "22.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-daemon-coordinator-rollback.js",
+        "scripts/certops-nginx-host.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/reload/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "nginx-ubuntu-24.04",
@@ -2600,7 +2728,21 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "24.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-daemon-coordinator-rollback.js",
+        "scripts/certops-nginx-host.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/reload/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "linux-observe-only-api",
@@ -2915,7 +3057,10 @@
         "tests/e2e/helpers/certops-adcs-template-required-attributes.js",
         "infra/certops-adcs/template-required-attribute-cases.json",
         "packages/agent/src/issuers/adcs-preflight.js",
-        "packages/agent/src/config/index.js"
+        "packages/agent/src/config/index.js",
+        "tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-recovery.js",
+        "infra/certops-adcs/owned-request-csr.ps1"
       ]
     },
     {
@@ -2944,7 +3089,21 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "22.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-daemon-coordinator-rollback.js",
+        "scripts/certops-nginx-host.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/reload/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "apache-ubuntu-24.04",
@@ -2954,7 +3113,21 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "24.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-daemon-coordinator-rollback.js",
+        "scripts/certops-nginx-host.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/reload/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "haproxy-ubuntu-22.04",
@@ -2964,7 +3137,21 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "22.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-daemon-coordinator-rollback.js",
+        "scripts/certops-nginx-host.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/reload/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "haproxy-ubuntu-24.04",
@@ -2974,7 +3161,21 @@
       "environment": {
         "osFamily": "linux",
         "distributionVersion": "24.04"
-      }
+      },
+      "requiredSources": [
+        "scripts/certops-daemon-coordinator-rollback.js",
+        "scripts/certops-nginx-host.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/reload/index.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "packages/agent/scripts/host-gate.js"
+      ]
     },
     {
       "id": "linux-native-agent-api",
@@ -5130,6 +5331,83 @@
         "distributionVersion": "24.04",
         "executionSurface": "disposable-vm"
       }
+    },
+    {
+      "id": "windows-domain-installed-retention-default-timer-2022-en-US",
+      "kind": "host",
+      "suite": "windows-domain-installed-retention-default-timer",
+      "source": "scripts/certops-retention-cadence-runtime.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem",
+        "architecture": "x64"
+      },
+      "requiredSources": [
+        ".github/workflows/certops-adcs-lab-janitor.yml",
+        ".github/workflows/certops-retention-cadence-finalize.yml",
+        ".github/workflows/certops-retention-cadence-janitor.yml",
+        ".github/workflows/certops-retention-cadence-prepare.yml",
+        "apps/api/routes/certops-enrollments.js",
+        "apps/api/services/certops/adcsPreflightGate.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "infra/certops-adcs/control-plane.sh",
+        "infra/certops-adcs/login-oidc.ps1",
+        "infra/certops-adcs/main.bicep",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "infra/certops-adcs/provision-lab.ps1",
+        "infra/certops-adcs/remove-owned-lab.ps1",
+        "infra/certops-adcs/run-retention-cadence-prepare.ps1",
+        "infra/certops-adcs/run-windows-tests.ps1",
+        "infra/certops-adcs/templates.ps1",
+        "infra/certops-adcs/windows-tools.ps1",
+        "packages/agent/reference/adcs-chain/build.cjs",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "packages/agent/reference/adcs-chain/chaincore/result.go",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "packages/agent/reference/adcs-chain/go.mod",
+        "packages/agent/reference/adcs-chain/go.sum",
+        "packages/agent/reference/adcs-chain/keyrefs/result.go",
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
+        "packages/agent/reference/adcs-chain/main.go",
+        "packages/agent/scripts/build-windows-service-host.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/config/index.js",
+        "packages/agent/src/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-journal.js",
+        "packages/agent/src/issuers/adcs-enrollment-rules.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "packages/agent/src/issuers/adcs.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/protocol/index.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-discovery/index.js",
+        "packages/agent/src/windows-iis/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/windows-retention/index.js",
+        "packages/agent/windows-service-host/host.go",
+        "scripts/certops-release-collector.py",
+        "scripts/certops-release-qualification.js",
+        "scripts/certops-retention-cadence-azure.js",
+        "scripts/certops-retention-cadence-contract.js",
+        "scripts/certops-retention-cadence-ledger.js",
+        "scripts/certops-retention-cadence-native.ps1",
+        "scripts/certops-retention-cadence-proof.js",
+        "scripts/certops-retention-cadence-runtime.js",
+        "scripts/certops-retention-cadence-sources.js",
+        "scripts/certops-retention-cadence-stop-agent.ps1",
+        "scripts/certops-retention-cadence-task.ps1",
+        "scripts/certops-retention24h-azure.js",
+        "scripts/certops_retention_cadence_collection.py",
+        "tests/e2e/certops-adcs-retention-cadence-prepare.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1"
+      ]
     }
   ]
 }

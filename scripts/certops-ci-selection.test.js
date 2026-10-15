@@ -121,3 +121,26 @@ test("Linux backup DAC Python proof changes select tooling only and explicitly t
  assert.ok(workflow.on.push.paths.includes(file));
  assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
 });
+
+test("concurrent filesystem Python projection selects tooling only and explicitly triggers CI",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ const file="scripts/certops_filesystem_concurrent_proof.py";
+ assert.ok(workflow.on.push.paths.includes(file));
+ assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+});
+
+test("independent native trust Python projection selects only tooling",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));const file="scripts/certops_linux_trust_independent_proof.py";assert.ok(workflow.on.push.paths.includes(file));assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+});
+
+// The Python owner authenticator affects cheap tooling, never auto-provisions a forest.
+test("installed timer collector path is explicitly triggered without native lanes",()=>{
+ const file="scripts/certops_retention_cadence_collection.py";
+ assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+ const source=fs.readFileSync(require("node:path").resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8");
+ assert.ok(source.includes("- '"+file+"'"));
+});
+
+test("daemon native proof projection changes select tooling and explicitly trigger CI",()=>{const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");const w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));const f="scripts/certops_daemon_coordinator_proof.py";assert.ok(w.on.push.paths.includes(f));assert.deepEqual(selectFiles([f]),{tooling:true,windows:false,stack:false,reason:"changed-files"});});

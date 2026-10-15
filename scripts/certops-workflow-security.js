@@ -18,6 +18,22 @@ function retainedDayProtocol(workflow,id,job){
  const cleanup=locate(step=>step.if==="failure() || cancelled()"&&step.run==="node scripts/certops-retention24h-azure.js abort");
  return provision>=0&&provision<seal&&seal<original&&original<handoff&&handoff<owned&&owned<cleanup&&cleanup===steps.length-1;
 }
+function retainedCadenceProtocol(workflow,id,job){
+ // The cadence campaign has its own immutable receipts and bounded observer;
+ // borrowing the day-long campaign's exception would bypass those controls.
+ if(id!=="prepare"||JSON.stringify(Object.keys(workflow.jobs||{}))!==JSON.stringify(["prepare"])||JSON.stringify(Object.keys(workflow.on||{}))!==JSON.stringify(["workflow_dispatch"])||job.environment!=="certops-adcs-lab")return false;
+ if(workflow.concurrency?.group!=="certops-retention-cadence-prepare-${{ github.run_id }}-${{ github.run_attempt }}"||workflow.concurrency?.["cancel-in-progress"]!==false)return false;
+ const steps=job.steps||[];
+ const locate=predicate=>{const found=steps.map((step,index)=>predicate(step)?index:-1).filter(index=>index>=0);return found.length===1?found[0]:-1;};
+ const success=step=>step.if===undefined||step.if==="success()";
+ const provision=locate(step=>step.run==="./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -RetentionCadencePrepare 1 -RetentionCadenceNonce $env:CERTOPS_RETENTION_CADENCE_NONCE"&&success(step));
+ const seal=locate(step=>step.run==="node scripts/certops-retention-cadence-azure.js seal"&&success(step));
+ const original=locate(step=>step.uses?.startsWith("actions/upload-artifact@")&&step.if==="always()"&&step.with?.path==="qualification-results/retention-cadence-original.json"&&step.with?.name==="retention-cadence-original-${{ github.run_attempt }}-${{ env.CERTOPS_RETENTION_CADENCE_NONCE }}"&&step.with?.["if-no-files-found"]==="error");
+ const handoff=locate(step=>step.run==="node scripts/certops-retention-cadence-azure.js handoff"&&success(step));
+ const owned=locate(step=>step.uses?.startsWith("actions/upload-artifact@")&&step.if==="always()"&&step.with?.path==="qualification-results/retention-cadence-ownership.json"&&step.with?.name==="retention-cadence-ownership-${{ github.run_attempt }}-${{ env.CERTOPS_RETENTION_CADENCE_NONCE }}"&&step.with?.["if-no-files-found"]==="error");
+ const cleanup=locate(step=>step.if==="failure() || cancelled()"&&step.run==="node scripts/certops-retention-cadence-azure.js abort");
+ return provision>=0&&provision<seal&&seal<original&&original<handoff&&handoff<owned&&owned<cleanup&&cleanup===steps.length-1;
+}
 function retainedAdcsTtlProtocol(workflow,id,job){
  if(id!=="prepare"||JSON.stringify(Object.keys(workflow.jobs||{}))!==JSON.stringify(["prepare"])||JSON.stringify(Object.keys(workflow.on||{}))!==JSON.stringify(["workflow_dispatch"])||job.environment!=="certops-adcs-lab")return false;
  if(workflow.concurrency?.group!=="certops-adcs-ttl24h-prepare-${{ github.run_id }}-${{ github.run_attempt }}"||workflow.concurrency?.["cancel-in-progress"]!==false)return false;
@@ -69,6 +85,12 @@ function validateWorkflow(workflow,name="workflow"){
     if((permissions["id-token"]==="write"||job.permissions?.["id-token"]==="write")&&!job.environment)fail(`${id} OIDC requires a protected qualification environment`);
     const steps=job.steps||[],runs=steps.map(step=>step.run||"").join("\n");
     const retainedDay=name==="certops-retention24h-prepare.yml"&&retainedDayProtocol(workflow,id,job);
+    const retainedCadence=name==="certops-retention-cadence-prepare.yml"&&retainedCadenceProtocol(workflow,id,job);
+    if(name==="certops-retention-cadence-prepare.yml"&&!retainedCadence)fail(`${id} installed timer handoff requires its complete original-artifact-first owned lifecycle`);
+    if(["certops-retention-cadence-finalize.yml","certops-retention-cadence-janitor.yml"].includes(name)){
+      if(job.environment!=="certops-adcs-cleanup")fail(`${id} installed timer cleanup requires its dedicated unattended environment`);
+      if(workflow.concurrency?.group!=="certops-retention24h-owned-azure-lifecycle"||workflow.concurrency?.["cancel-in-progress"]!==false)fail(`${id} installed timer cleanup requires fixed non-cancelling serialization`);
+    }
     const retainedAdcsTtl=name==="certops-adcs-ttl24h-prepare.yml"&&retainedAdcsTtlProtocol(workflow,id,job);
     if(name==="certops-adcs-ttl24h-prepare.yml"&&!retainedAdcsTtl)fail(`${id} ADCS default TTL handoff requires its complete original-artifact-first owned lifecycle`);
     if(["certops-adcs-ttl24h-finalize.yml","certops-adcs-ttl24h-janitor.yml"].includes(name)&&job.environment!=="certops-adcs-cleanup")fail(`${id} ADCS default TTL cleanup requires its dedicated unattended environment`);
@@ -87,7 +109,7 @@ function validateWorkflow(workflow,name="workflow"){
       if(typeof step.run==="string"&&/\$\{\{\s*(inputs\.|github\.event\.inputs\.)/.test(step.run))fail(`${id} manual inputs must be passed through environment or typed arguments, not interpolated into shell code`);
     }
     for(const [creates,destroys,label] of [[/docker compose[^\n]*\bup\b/,/docker compose[^\n]*\bdown\b/,"Compose"],[/kind create cluster/,/kind delete cluster/,"kind"],[/provision-lab\.ps1/,/remove-owned-lab\.ps1/,"Azure lab"]]){
-      if(creates.test(runs)&&!(label==="Azure lab"&&(retainedDay||retainedAdcsTtl))&&!steps.some(step=>step.if==="always()"&&destroys.test(step.run||"")))fail(`${id} ${label} requires independent always cleanup`);
+      if(creates.test(runs)&&!(label==="Azure lab"&&(retainedDay||retainedAdcsTtl||retainedCadence))&&!steps.some(step=>step.if==="always()"&&destroys.test(step.run||"")))fail(`${id} ${label} requires independent always cleanup`);
     }
   }
   return errors;

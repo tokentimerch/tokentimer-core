@@ -13,10 +13,13 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$Retention24hNonce,
   [ValidateSet('0','1')][string]$AdcsTtl24hPrepare = '0',
   [string]$AdcsTtl24hNonce,
+  [ValidateSet('0','1')][string]$RetentionCadencePrepare = '0',
+  [string]$RetentionCadenceNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
   [string]$Location = 'westeurope')
 $ErrorActionPreference = 'Stop'
+if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
 if($HierarchyRole -eq 'subordinate' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Hierarchy and experimental fault profiles cannot be combined'}
 if($ResponseLossExperiment -ne '0' -and $JournalPhaseExperiment -ne 'none'){throw 'Only one native fault experiment may own a lab'}
 if($PendingElapsedQualification -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Elapsed pending qualification requires its isolated four-hour Server2022 en-US profile'}
@@ -93,6 +96,7 @@ try {
     $initialTags+=@('retentionPrepareKind=certops-native-retention24h',"retentionPrepareNonce=$Retention24hNonce","retentionPrepareRunId=$env:GITHUB_RUN_ID","retentionPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")
   }
   if($AdcsTtl24hPrepare -eq '1'){$initialTags+=@('ttl24hPrepareKind=certops-native-adcs-ttl24h',"ttl24hPrepareNonce=$AdcsTtl24hNonce","ttl24hPrepareRunId=$env:GITHUB_RUN_ID","ttl24hPrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
+  if($RetentionCadencePrepare -eq '1'){$initialTags+=@('cadencePrepareKind=certops-native-installed-retention-cadence',"cadencePrepareNonce=$RetentionCadenceNonce","cadencePrepareRunId=$env:GITHUB_RUN_ID","cadencePrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
   az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
   if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
   @{ expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
@@ -123,7 +127,7 @@ try {
   $safetyCasesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'safety-cases.json')))
   Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'templates.ps1') 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password","SafetyCasesBase64=$safetyCasesBase64")
   Start-ControlPlane
-  if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1'){
+  if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){
     Refresh-LabAuthentication
     $browserResponse=az vm run-command invoke -g $ResourceGroup -n control-plane --command-id RunShellScript --scripts "@$(Join-Path $PSScriptRoot 'browser-control-plane.sh')" --parameters "candidate=$candidateSha" -o json | ConvertFrom-Json
     if($LASTEXITCODE -ne 0 -or -not (($browserResponse.value | ForEach-Object message) -join "`n").Contains('CERTOPS_STAGE=private-same-origin-dashboard-ready')){throw 'Private browser dashboard bootstrap failed'}
@@ -138,8 +142,13 @@ try {
   foreach($node in @('domain-ca','windows-agent')){Invoke-Stage $node (Join-Path $PSScriptRoot 'language-verify.ps1') 'CERTOPS_STAGE=installed-language-verified' @("Language=$Language")}
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
-  if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
-  if($AdcsTtl24hPrepare -eq '1'){
+  if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
+  if($RetentionCadencePrepare -eq '1'){
+    # This producer leaves the original service running. Its separate immutable
+    # owner handoff, never this guest stage, authorizes the bounded timer wait.
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-retention-cadence-prepare.ps1') 'CERTOPS_STAGE=retention-cadence-prepared' @("DomainPassword=$password","Nonce=$RetentionCadenceNonce","CreatedAt=$($createdAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))","RunId=$env:GITHUB_RUN_ID","RunAttempt=$env:GITHUB_RUN_ATTEMPT")
+    $reportStatus='prepared-actual-service-timer-awaiting-independent-handoff'
+  }elseif($AdcsTtl24hPrepare -eq '1'){
     Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-ttl24h-prepare.ps1') 'CERTOPS_STAGE=adcs-ttl24h-prepared' @("DomainPassword=$password","AdcsTtl24hNonce=$AdcsTtl24hNonce","AdcsTtl24hCreatedAt=$($createdAt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ"))","AdcsTtl24hRunId=$env:GITHUB_RUN_ID","AdcsTtl24hRunAttempt=$env:GITHUB_RUN_ATTEMPT")
     $reportStatus='prepared'
   }elseif($Retention24hPrepare -eq '1'){
@@ -159,7 +168,7 @@ try {
   }
 } finally {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
-  $scenarioReport=if($AdcsTtl24hPrepare -eq '1'){'adcs-ttl24h-prepare-public.json'}elseif($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
+  $scenarioReport=if($RetentionCadencePrepare -eq '1'){'retention-cadence-prepare-public.json'}elseif($AdcsTtl24hPrepare -eq '1'){'adcs-ttl24h-prepare-public.json'}elseif($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
   @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
   Remove-Item -LiteralPath $parameterPath -Force -ErrorAction SilentlyContinue
   $password = $null

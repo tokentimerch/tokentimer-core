@@ -44,6 +44,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 ## Windows and AD CS
 
 - [Native preflight process containment](adcs/preflight-process-containment.md)
+- [Cancelled-request late approval with an installed successor](adcs/cancelled-late-approval.md)
 
 
 - [Temporary file response barriers (supporting controls)](adcs/response-delivery-barrier-support.md)
@@ -73,6 +74,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Retention replacement lineage, cross-store key survivors and protected cleanup](windows/retention-replacement-lineage.md)
 - [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
 - [Default and maximum retention policies with actual expiry-grace cleanup](windows/native-retention-policy-expiry.md)
+- [Actual installed-service default retention timer](windows/installed-default-retention-timer.md)
 - [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
@@ -97,6 +99,11 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 ## Linux agents and deployment
 
 - [Native certificate filesystem qualification](linux/filesystem-qualification.md)
+- [Same-process concurrent filesystem rotations](linux/filesystem-concurrent-rotation.md)
+- [Native backup-directory alias refusal](linux/filesystem-backup-directory-alias.md)
+- [Native destination-scoped backup retention](linux/filesystem-backup-retention.md)
+- [Independent native trust ownership](linux/trust-independent-roots.md)
+- [Native consuming-daemon coordinator rollback](linux/daemon-coordinator-rollback.md)
 - [Real Linux ACME qualification](linux/linux-acme-qualification.md)
 - [Manual and scheduled Linux ACME key reuse](linux/acme-key-reuse.md)
 - [Installed Linux agent qualification](linux/linux-systemd-qualification.md)

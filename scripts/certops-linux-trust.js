@@ -8,11 +8,12 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { X509Certificate, createHash, randomUUID } = require("node:crypto");
 const { receiptFinalizeRecovery } = require("./certops-linux-trust-receipt-fault");
+const independentRoots = require("./certops-linux-trust-independent-roots");
 const trust = require("../packages/agent/src/trust-store");
 const { executeTrustJob } = require("../packages/agent/src");
 const { loadPolicyConfig, createPolicyEngine } = require("../packages/agent/src/policy");
 const { createHostGate } = require("../packages/agent/scripts/host-gate");
-const scenarios = ["linux-trust-root-derived", "linux-trust-intermediate-derived", "linux-trust-restart-replay", "linux-trust-preexisting-protected", "linux-trust-invalid-anchor", "linux-trust-refresh-recovery", "linux-trust-corrupt-receipt", "linux-trust-owned-revoke", "linux-trust-cleanup", "linux-trust-renewal-policy-refusal", "linux-trust-receipt-finalize-recovery"];
+const scenarios = ["linux-trust-root-derived", "linux-trust-intermediate-derived", "linux-trust-restart-replay", "linux-trust-preexisting-protected", "linux-trust-invalid-anchor", "linux-trust-refresh-recovery", "linux-trust-corrupt-receipt", "linux-trust-owned-revoke", "linux-trust-cleanup", "linux-trust-renewal-policy-refusal", "linux-trust-receipt-finalize-recovery", independentRoots.SCENARIO];
 function native(file, args, expectedSuccess = true) {
   const result = spawnSync(file, args, { encoding: "utf8", timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
   if (expectedSuccess) assert.equal(result.status, 0, `${path.basename(file)} failed; raw output withheld`);
@@ -55,6 +56,7 @@ async function main() {
   });
   const gate = createHostGate({ suite: "linux-trust-host", strict: true, requiredCapabilities: ["native-linux-trust-refresh", "openssl-chain-oracle"], fixtureSource: { file: "scripts/certops-linux-trust.js", sha256: createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => ({ "native-linux-trust-refresh": { available: fs.existsSync(anchorsDir) && refreshExecutable }, "openssl-chain-oracle": { available: native("openssl", ["version"]).status === 0 } }) });
   gate.report.qualificationEnvironment = { osFamily: "linux", osVersion: field("VERSION_ID"), distribution: field("ID"), measurement: "native", executionSurface: containerObserved ? "disposable-container" : "disposable-vm" };
+  gate.report.fixtureSources=independentRoots.REQUIRED_SOURCES.map(file=>({file,sha256:createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
   function openssl(args) { return native("openssl", args); }
   function cert(name, issuer) {
     const key = path.join(workDir, `${name}.key`), csr = path.join(workDir, `${name}.csr`), pem = path.join(workDir, `${name}.crt`);
@@ -154,6 +156,9 @@ async function main() {
       await receiptFinalizeRecovery({ family, receiptDir, certificate, payload: job(certificate, "root"), input, job, verify, sourcePath });
       assert.notEqual(native("openssl", ["verify", certificate.pem], false).status, 0);
     }, { oracle: "Actual native OS refresh succeeds, then an owned receipt path directory collision forces truthful finalize failure; pending ownership refuses revoke, redistribute repairs and real revoke removes derived trust" });
+    await gate.scenario(independentRoots.SCENARIO, async () => {
+      gate.report.nativeIndependentTrustRoots=await independentRoots.qualifyIndependentRoots({family,workDir,receiptDir,input,job,sourcePath,ownedPaths,ownedAnchors,native});
+    }, {oracle:"Two real independent CA/leaf pairs have default native trust; selective owned revocation preserves sibling receipt, source and derived trust before final owned removal"});
     await gate.scenario(scenarios[7], async () => {
       for (const [certificate, type] of [[intermediate, "intermediate"], [root, "root"]]) {
         const result = await trust.revokeTrust(input(job(certificate, type, "revoke-trust")));
@@ -165,6 +170,7 @@ async function main() {
   finally {
     try {
       const clean = async () => {
+        independentRoots.assertCleanupSafe(workDir);
         const errors = [];
         for (const file of ownedPaths) { try { assert.equal(path.dirname(file), anchorsDir); fs.rmSync(file, { force: true }); } catch (error) { errors.push(error); } }
         try { update(); } catch (error) { errors.push(error); }
@@ -176,8 +182,10 @@ async function main() {
             assert.ok(Number.isInteger(observed.status) && observed.status !== 0 && !observed.error, "Derived OS trust must no longer accept the removed fixture anchor");
           } catch (error) { errors.push(error); }
         }
+        // Preserve original CA files and durable receipts if native removal or
+        // derived-store verification is uncertain; diagnostics need that state.
+        assert.equal(errors.length, 0, "Owned trust fixture cleanup failed; preserve fixture state");
         fs.rmSync(workDir, { recursive: true, force: true });
-        assert.equal(errors.length, 0, "Owned trust fixture cleanup failed");
       };
       if (ready) await gate.scenario(scenarios[8], clean); else await clean();
       cleanup = "passed";

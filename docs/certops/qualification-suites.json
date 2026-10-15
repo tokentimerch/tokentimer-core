@@ -321,7 +321,8 @@
       "adcs-real-public-reconcile-foreign-spki-refused": "real-host",
       "adcs-real-public-reconcile-foreign-spki-positive-recovery": "real-host",
       "adcs-real-required-template-minimum-key-zero-refused-restored": "real-host",
-      "adcs-real-required-template-subject-name-flag-absent-refused-restored": "real-host"
+      "adcs-real-required-template-subject-name-flag-absent-refused-restored": "real-host",
+      "adcs-real-cancelled-late-approval-preserves-installed-successor": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -447,7 +448,8 @@
       "linux-trust-owned-revoke": "real-host",
       "linux-trust-cleanup": "real-host",
       "linux-trust-renewal-policy-refusal": "real-host",
-      "linux-trust-receipt-finalize-recovery": "real-host"
+      "linux-trust-receipt-finalize-recovery": "real-host",
+      "linux-trust-independent-root-selective-revoke": "real-host"
     },
     "filesystem-host": {
       "filesystem-first-deploy": "real-host",
@@ -456,7 +458,10 @@
       "filesystem-path-containment": "real-host",
       "filesystem-input-refusals": "real-host",
       "filesystem-backup-finalize": "real-host",
-      "filesystem-cleanup": "real-host"
+      "filesystem-cleanup": "real-host",
+      "filesystem-concurrent-paired-rotation": "real-host",
+      "filesystem-backup-directory-alias-refusal": "real-host",
+      "filesystem-backup-retention-destination-isolation": "real-host"
     },
     "csr-observation-api": {
       "csr-observation-public-target": "e2e",
@@ -471,7 +476,8 @@
       "nginx-production-reload-cutover": "real-host",
       "nginx-invalid-config-refusal": "real-host",
       "nginx-missing-command-refusal": "real-host",
-      "nginx-cleanup": "real-host"
+      "nginx-cleanup": "real-host",
+      "nginx-coordinator-validation-paired-rollback": "real-host"
     },
     "observe-only-api": {
       "observe-only-empty-actions": "integration",
@@ -659,7 +665,8 @@
       "adcs-real-public-reconcile-foreign-spki-refused": "real-host",
       "adcs-real-public-reconcile-foreign-spki-positive-recovery": "real-host",
       "adcs-real-required-template-minimum-key-zero-refused-restored": "real-host",
-      "adcs-real-required-template-subject-name-flag-absent-refused-restored": "real-host"
+      "adcs-real-required-template-subject-name-flag-absent-refused-restored": "real-host",
+      "adcs-real-cancelled-late-approval-preserves-installed-successor": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -681,14 +688,16 @@
       "apache-production-reload-cutover": "real-host",
       "apache-invalid-config-refusal": "real-host",
       "apache-missing-command-refusal": "real-host",
-      "apache-cleanup": "real-host"
+      "apache-cleanup": "real-host",
+      "apache-coordinator-validation-paired-rollback": "real-host"
     },
     "haproxy-host": {
       "haproxy-initial-trusted-tls": "real-host",
       "haproxy-production-reload-cutover": "real-host",
       "haproxy-invalid-config-refusal": "real-host",
       "haproxy-missing-command-refusal": "real-host",
-      "haproxy-cleanup": "real-host"
+      "haproxy-cleanup": "real-host",
+      "haproxy-coordinator-validation-paired-rollback": "real-host"
     },
     "native-agent-api": {
       "native-agent-registration": "e2e",
@@ -1269,6 +1278,11 @@
     "filesystem-linux-backup-dac-host": {
       "filesystem-linux-nonroot-backup-dac-refusal": "real-host",
       "filesystem-linux-backup-dac-cleanup": "real-host"
+    },
+    "windows-domain-installed-retention-default-timer": {
+      "windows-retention-default-timer-real-immediate-sweep": "real-host",
+      "windows-retention-default-timer-real-jittered-sweep": "real-host",
+      "windows-retention-default-timer-independent-final-and-owned-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1783,6 +1797,13 @@
     "filesystem-linux-backup-dac-host": [
       "native-linux-nonroot-dac",
       "openssl-key-oracle"
+    ],
+    "windows-domain-installed-retention-default-timer": [
+      "windows",
+      "system",
+      "domain",
+      "sameVmResidentKeeper",
+      "api"
     ]
   },
   "suites": {
@@ -2106,7 +2127,8 @@
       "adcs-real-public-reconcile-foreign-spki-refused",
       "adcs-real-public-reconcile-foreign-spki-positive-recovery",
       "adcs-real-required-template-minimum-key-zero-refused-restored",
-      "adcs-real-required-template-subject-name-flag-absent-refused-restored"
+      "adcs-real-required-template-subject-name-flag-absent-refused-restored",
+      "adcs-real-cancelled-late-approval-preserves-installed-successor"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2232,7 +2254,8 @@
       "linux-trust-owned-revoke",
       "linux-trust-cleanup",
       "linux-trust-renewal-policy-refusal",
-      "linux-trust-receipt-finalize-recovery"
+      "linux-trust-receipt-finalize-recovery",
+      "linux-trust-independent-root-selective-revoke"
     ],
     "filesystem-host": [
       "filesystem-first-deploy",
@@ -2241,7 +2264,10 @@
       "filesystem-path-containment",
       "filesystem-input-refusals",
       "filesystem-backup-finalize",
-      "filesystem-cleanup"
+      "filesystem-cleanup",
+      "filesystem-concurrent-paired-rotation",
+      "filesystem-backup-directory-alias-refusal",
+      "filesystem-backup-retention-destination-isolation"
     ],
     "csr-observation-api": [
       "csr-observation-public-target",
@@ -2256,7 +2282,8 @@
       "nginx-production-reload-cutover",
       "nginx-invalid-config-refusal",
       "nginx-missing-command-refusal",
-      "nginx-cleanup"
+      "nginx-cleanup",
+      "nginx-coordinator-validation-paired-rollback"
     ],
     "observe-only-api": [
       "observe-only-empty-actions",
@@ -2444,7 +2471,8 @@
       "adcs-real-public-reconcile-foreign-spki-refused",
       "adcs-real-public-reconcile-foreign-spki-positive-recovery",
       "adcs-real-required-template-minimum-key-zero-refused-restored",
-      "adcs-real-required-template-subject-name-flag-absent-refused-restored"
+      "adcs-real-required-template-subject-name-flag-absent-refused-restored",
+      "adcs-real-cancelled-late-approval-preserves-installed-successor"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -2466,14 +2494,16 @@
       "apache-production-reload-cutover",
       "apache-invalid-config-refusal",
       "apache-missing-command-refusal",
-      "apache-cleanup"
+      "apache-cleanup",
+      "apache-coordinator-validation-paired-rollback"
     ],
     "haproxy-host": [
       "haproxy-initial-trusted-tls",
       "haproxy-production-reload-cutover",
       "haproxy-invalid-config-refusal",
       "haproxy-missing-command-refusal",
-      "haproxy-cleanup"
+      "haproxy-cleanup",
+      "haproxy-coordinator-validation-paired-rollback"
     ],
     "native-agent-api": [
       "native-agent-registration",
@@ -3049,6 +3079,11 @@
     "filesystem-linux-backup-dac-host": [
       "filesystem-linux-nonroot-backup-dac-refusal",
       "filesystem-linux-backup-dac-cleanup"
+    ],
+    "windows-domain-installed-retention-default-timer": [
+      "windows-retention-default-timer-real-immediate-sweep",
+      "windows-retention-default-timer-real-jittered-sweep",
+      "windows-retention-default-timer-independent-final-and-owned-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3151,6 +3186,7 @@
     "windows-arm64-packaged-scm": "real-host",
     "windows-arm64-installed-agent": "e2e",
     "windows-domain-adcs-default-ttl24h": "real-host",
-    "filesystem-linux-backup-dac-host": "real-host"
+    "filesystem-linux-backup-dac-host": "real-host",
+    "windows-domain-installed-retention-default-timer": "real-host"
   }
 }

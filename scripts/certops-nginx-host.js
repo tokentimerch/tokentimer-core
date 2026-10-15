@@ -16,7 +16,8 @@ const { deployCertificateAndKey } = require("../packages/agent/src/deploy");
 const { reloadService } = require("../packages/agent/src/reload");
 const { createPolicyEngine, loadPolicyConfig } = require("../packages/agent/src/policy");
 const { createHostGate } = require("../packages/agent/scripts/host-gate");
-const scenarios = ["nginx-initial-trusted-tls", "nginx-production-reload-cutover", "nginx-invalid-config-refusal", "nginx-missing-command-refusal", "nginx-cleanup"];
+const coordinatorRollback = require("./certops-daemon-coordinator-rollback");
+const scenarios = ["nginx-initial-trusted-tls", "nginx-production-reload-cutover", "nginx-invalid-config-refusal", "nginx-missing-command-refusal", "nginx-cleanup", "nginx-coordinator-validation-paired-rollback"];
 const scenariosFor = (service) => scenarios.map((id) => id.replace(/^nginx-/, `${service}-`));
 function native(file, args) {
   const result = spawnSync(file, args, { encoding: "utf8", timeout: 30000, maxBuffer: 2 * 1024 * 1024 });
@@ -32,6 +33,7 @@ async function main() {
     const runtime = native(binary, ["-v"]), openssl = native("openssl", ["version"]);
     return { [`native-${service}`]: { available: runtime.status === 0, evidence: `${runtime.stdout}${runtime.stderr}`.trim() }, "openssl-chain-oracle": { available: openssl.status === 0, evidence: openssl.stdout.trim() } };
   } });
+  gate.report.fixtureSources=coordinatorRollback.REQUIRED_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
   gate.report.qualificationEnvironment.distributionVersion = fs.readFileSync("/etc/os-release", "utf8").match(/^VERSION_ID="?([^"\n]+)/m)?.[1];
   let child, fixturePort, failure, ready = false, cleanup = "failed";
   try {
@@ -110,6 +112,9 @@ async function main() {
       const result = await reloadService({ service, commandProfiles: { ...profiles(), reloadArgv: [path.join(root, "missing-reload-command")] } });
       assert.equal(result.reloaded, false); assert.equal(result.stage, "reload"); assert.equal(await observe(), secondFingerprint);
     });
+    await gate.scenario(coordinatorRollback.scenarioFor(service), async () => {
+      gate.report.nativeDaemonCoordinatorRollback=await coordinatorRollback.qualifyCoordinatorRollback({root,service,target,config,configText,candidate:first,predecessor:second,profiles,observe});
+    }, {oracle:"Actual production coordinator deploys a distinct native pair, genuine daemon validation refuses, paired rollback restores exact predecessor bytes and trusted TLS, and real validation/reload recovers"});
   } catch (error) { failure = error; }
   finally {
     const clean = async () => {
@@ -144,7 +149,13 @@ async function main() {
           });
         }
       } catch (error) { errors.push(error); }
+      // Certificate/key files remain owned by a possibly live consumer until
+      // both its process group and listening socket are independently drained.
+      // Preserve the fixture on any uncertain teardown instead of deleting the
+      // only remaining recovery material before reporting cleanup failure.
+      assert.equal(errors.length, 0, "Owned consuming-server drain unconfirmed; preserve fixture root");
       try {
+        coordinatorRollback.assertCleanupSafe(root);
         assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir())); assert.ok(path.basename(root).startsWith(`certops-${service}-`));
         fs.rmSync(root, { recursive: true, force: true }); assert.equal(fs.existsSync(root), false);
       } catch (error) { errors.push(error); }

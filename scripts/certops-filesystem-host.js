@@ -14,7 +14,10 @@ const deploy = require("../packages/agent/src/deploy");
 const policy = require("../packages/agent/src/policy");
 const verify = require("../packages/agent/src/verify");
 const { createHostGate } = require("../packages/agent/scripts/host-gate");
-const scenarios = ["filesystem-first-deploy", "filesystem-process-replay", "filesystem-rotation-backups", "filesystem-path-containment", "filesystem-input-refusals", "filesystem-backup-finalize", "filesystem-cleanup"];
+const concurrent = require("./certops-filesystem-concurrent");
+const backupAlias = require("./certops-filesystem-backup-alias");
+const backupRetention = require("./certops-filesystem-backup-retention");
+const scenarios = ["filesystem-first-deploy", "filesystem-process-replay", "filesystem-rotation-backups", "filesystem-path-containment", "filesystem-input-refusals", "filesystem-backup-finalize", "filesystem-cleanup", concurrent.SCENARIO, backupAlias.SCENARIO, backupRetention.SCENARIO];
 function guard() {
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
@@ -34,9 +37,11 @@ async function replay(file) {
 }
 async function main() {
   guard();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "certops-filesystem-"));
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "certops-outside-"));
+  const temporaryRoot = fs.realpathSync.native(os.tmpdir());
+  const root = concurrent.canonicalDirectory(fs.mkdtempSync(path.join(temporaryRoot, "certops-filesystem-")));
+  const outside = concurrent.canonicalDirectory(fs.mkdtempSync(path.join(temporaryRoot, "certops-outside-")));
   const gate = createHostGate({ suite: "filesystem-host", strict: true, requiredCapabilities: ["native-filesystem", "openssl-key-oracle"], fixtureSource: { file: "scripts/certops-filesystem-host.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: () => ({ "native-filesystem": { available: fs.statSync(root).isDirectory() }, "openssl-key-oracle": { available: native("openssl", ["version"]).status === 0 } }) });
+  gate.report.fixtureSources = backupRetention.REQUIRED_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
   if (process.platform === "linux") {
     const release = fs.readFileSync("/etc/os-release", "utf8");
     gate.report.qualificationEnvironment.distributionVersion = release.match(/^VERSION_ID="?([^"\n]+)/m)?.[1];
@@ -118,13 +123,26 @@ async function main() {
       for (const file of Object.values(rotated.backupPaths)) assert.equal(fs.existsSync(file), false);
       independentlyObserve(second);
     });
+    await gate.scenario(concurrent.SCENARIO, async () => {
+      const third = fixture("third");
+      gate.report.nativeFilesystemConcurrency = await concurrent.qualifyConcurrentRotation({workDir:root,materials:[first,second,third],independentlyCheckKeyPermissions});
+    }, {oracle:"Two actual same-process default-backup-directory rotations preserve FIFO paired lineage, all six independent backups and stable trusted TLS checkpoints"});
+    await gate.scenario(backupAlias.SCENARIO, async () => {
+      gate.report.nativeFilesystemBackupAlias = await backupAlias.qualifyBackupDirectoryAlias({workDir:root,materials:[first,second],independentlyCheckKeyPermissions});
+    }, {oracle:"Actual native backup-directory alias escapes are refused before mutation; a real allowed directory then rotates and preserves all three predecessor backups"});
+    await gate.scenario(backupRetention.SCENARIO, async () => {
+      gate.report.nativeFilesystemBackupRetention = await backupRetention.qualifyBackupRetention({workDir:root,materials:[first,second,fixture("retention-third")],independentlyCheckKeyPermissions});
+    }, {oracle:"Actual retentionCount1 prunes only an exact destination generation while preserving same-basename sibling backups, current rollback files and legacy/operator/outside sentinels"});
   } catch (error) { failure = error; }
   finally {
     const clean = () => {
+      concurrent.assertCleanupSafe(root);
+      backupAlias.assertCleanupSafe(root);
+      backupRetention.assertCleanupSafe(root);
       const errors = [];
       for (const [directory, prefix] of [[root, "certops-filesystem-"], [outside, "certops-outside-"]]) {
         try {
-          assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir())); assert.ok(path.basename(directory).startsWith(prefix));
+          assert.equal(path.dirname(path.resolve(directory)), path.resolve(temporaryRoot)); assert.ok(path.basename(directory).startsWith(prefix));
           fs.rmSync(directory, { recursive: true, force: true });
         } catch (error) { errors.push(error); }
       }
