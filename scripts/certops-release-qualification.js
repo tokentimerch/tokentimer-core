@@ -237,6 +237,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         }
         if (["nginx-host","apache-host","haproxy-host"].includes(slot.suite)) {
           const p=artifact.report.nativeDaemonCoordinatorRollback,n=artifact.report.qualificationEnvironment;require("./certops-daemon-coordinator-rollback").verifyProof(p);
+          const served=artifact.report.nativeDaemonServedLeafMismatch;require("./certops-daemon-served-leaf-mismatch").verifyProof(served);if(served.service!==p.service || JSON.stringify(served.fingerprints)!==JSON.stringify(p.fingerprints))throw new Error("Native served-leaf mismatch original fixture binding required");
           if(p.service+"-host"!==slot.suite || artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || n.distributionId!=="ubuntu" || !["22.04","24.04"].includes(n.distributionVersion) || n.executionSurface!=="host")throw new Error("Native consuming-daemon rollback environment required");
         }
         if (slot.suite === "linux-trust-host") {
@@ -302,6 +303,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(native[0].nativeInstalledIisRefusal);
           require("../tests/e2e/helpers/certops-windows-owned-process").verifyPublicProof(native[0].nativeInstalledCrash);
           require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(native[0].nativeInstalledPaths);
+          require("../tests/e2e/helpers/certops-windows-multi-target-admission-refusal").verifyProof(native[0].nativeWindowsMultiTargetAdmission);
           require("../tests/e2e/helpers/certops-windows-active-service-controls").verifyProof(native[0].nativeInstalledActiveServiceControls);
           require("../tests/e2e/helpers/certops-windows-service-controls").verifyProof(native[0].nativeInstalledServiceControls);
           require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(native[0].nativeInstalledConfigEncoding);

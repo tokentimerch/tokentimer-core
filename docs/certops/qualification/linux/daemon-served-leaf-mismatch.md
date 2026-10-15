@@ -1,0 +1,11 @@
+# Native consuming-daemon served-leaf mismatch and rollback
+
+This source extends the existing disposable Linux nginx, Apache and HAProxy qualification fixtures. It invokes the actual production deploy/reload/verify coordinator with genuine native command profiles and a local, read-only evidence recorder. It does not use signed public API admission.
+
+The healthy predecessor and candidate have distinct certificate fingerprints and key pairs. The fixture first copies the owned predecessor certificate and key into exclusive mode-0600 files and points the actual daemon configuration at those copies. Native validation and reload must succeed, and an independent TLS connection must still trust the predecessor chain and hostname. The coordinator then deploys the candidate pair into the normal target paths and performs genuine native validation and reload. Because the daemon deliberately consumes the separate predecessor copies, the production fingerprint verifier must refuse the live leaf. The actual production paired rollback must restore the target's original certificate and key bytes, owner and permissions.
+
+The evidence recorder independently observes the deployed candidate pair, successful native reload, trusted predecessor, exact verification refusal and restored pair. It cannot change coordinator outcomes or commands. Afterward, the fixture restores only the exact owned alternate configuration, performs real validation and reload, verifies trusted predecessor TLS, checks private staging files, and removes only the unchanged owned predecessor copies and guard.
+
+A sticky root-local guard remains after any unknown configuration, file identity, cleanup or recovery outcome. Parent cleanup must check this guard after the native daemon has drained and before deleting the private fixture root. An unexpected replacement is preserved. No report contains private key bytes or paths.
+
+Supporting proof and file-identity tests can run without installed daemons. Actual daemon execution remains pending until the protected disposable-host workflows are run. This case demonstrates a trusted served-leaf fingerprint mismatch and rollback; it does not claim a reload outage, uninterrupted availability or cross-process coordination.

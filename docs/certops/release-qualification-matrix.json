@@ -273,6 +273,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -333,7 +334,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -357,6 +359,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -417,7 +420,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -441,6 +445,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -501,7 +506,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -525,6 +531,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -585,7 +592,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -609,6 +617,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -669,7 +678,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -769,6 +779,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -829,7 +840,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -853,6 +865,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -913,7 +926,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -937,6 +951,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -997,7 +1012,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -1021,6 +1037,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -1081,7 +1098,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -1105,6 +1123,7 @@
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
         "windows-installed-scm-controls-active-certificate-phase",
+        "windows-public-multi-target-admission-refusal",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -1165,7 +1184,8 @@
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
         "tests/e2e/helpers/certops-windows-credential-refusal.js",
-        "tests/e2e/helpers/certops-windows-active-service-controls.js"
+        "tests/e2e/helpers/certops-windows-active-service-controls.js",
+        "tests/e2e/helpers/certops-windows-multi-target-admission-refusal.js"
       ]
     },
     {
@@ -3087,7 +3107,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-daemon-served-leaf-mismatch.js"
       ]
     },
     {
@@ -3111,7 +3132,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-daemon-served-leaf-mismatch.js"
       ]
     },
     {
@@ -3489,7 +3511,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-daemon-served-leaf-mismatch.js"
       ]
     },
     {
@@ -3513,7 +3536,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-daemon-served-leaf-mismatch.js"
       ]
     },
     {
@@ -3537,7 +3561,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-daemon-served-leaf-mismatch.js"
       ]
     },
     {
@@ -3561,7 +3586,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-daemon-served-leaf-mismatch.js"
       ]
     },
     {

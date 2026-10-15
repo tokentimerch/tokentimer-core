@@ -31,6 +31,7 @@ on:
       - 'scripts/certops_filesystem_concurrent_proof.py'
       - 'scripts/certops_linux_trust_independent_proof.py'
       - 'scripts/certops_daemon_coordinator_proof.py'
+      - 'scripts/certops_daemon_served_leaf_proof.py'
       - 'scripts/certops_acme_stage_proof.py'
       - 'scripts/certops_acme_background_proof.py'
       - 'scripts/certops_acme_native_console_proof.py'

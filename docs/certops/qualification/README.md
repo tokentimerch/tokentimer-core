@@ -212,3 +212,7 @@ The [real-day interrupted deletion case](windows/resident-retention24h-interrupt
 - [WebHosting expiry-based certificate and key reclamation](windows/webhosting-expiry-reclamation.md) — separate manual hosted Windows lane, without Azure or a full-window timer claim.
 
 - [Installed service controls during an actual certificate phase](windows/active-certificate-service-controls.md) — held real DNS operation, unchanged claim/journal/CNG and trusted serving leaf; no interruption or default-grace claim.
+
+- [Native daemon served-leaf mismatch and paired rollback](linux/daemon-served-leaf-mismatch.md)
+
+- [Public Windows multi-target admission refusal](windows/multi-target-admission-refusal.md) — immutable profile/edit and manual override rejection, without a signed multi-target execution claim.

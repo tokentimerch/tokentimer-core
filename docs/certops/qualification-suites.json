@@ -489,7 +489,8 @@
       "nginx-invalid-config-refusal": "real-host",
       "nginx-missing-command-refusal": "real-host",
       "nginx-cleanup": "real-host",
-      "nginx-coordinator-validation-paired-rollback": "real-host"
+      "nginx-coordinator-validation-paired-rollback": "real-host",
+      "nginx-coordinator-served-leaf-mismatch-paired-rollback": "real-host"
     },
     "observe-only-api": {
       "observe-only-empty-actions": "integration",
@@ -708,7 +709,8 @@
       "apache-invalid-config-refusal": "real-host",
       "apache-missing-command-refusal": "real-host",
       "apache-cleanup": "real-host",
-      "apache-coordinator-validation-paired-rollback": "real-host"
+      "apache-coordinator-validation-paired-rollback": "real-host",
+      "apache-coordinator-served-leaf-mismatch-paired-rollback": "real-host"
     },
     "haproxy-host": {
       "haproxy-initial-trusted-tls": "real-host",
@@ -716,7 +718,8 @@
       "haproxy-invalid-config-refusal": "real-host",
       "haproxy-missing-command-refusal": "real-host",
       "haproxy-cleanup": "real-host",
-      "haproxy-coordinator-validation-paired-rollback": "real-host"
+      "haproxy-coordinator-validation-paired-rollback": "real-host",
+      "haproxy-coordinator-served-leaf-mismatch-paired-rollback": "real-host"
     },
     "native-agent-api": {
       "native-agent-registration": "e2e",
@@ -2355,7 +2358,8 @@
       "nginx-invalid-config-refusal",
       "nginx-missing-command-refusal",
       "nginx-cleanup",
-      "nginx-coordinator-validation-paired-rollback"
+      "nginx-coordinator-validation-paired-rollback",
+      "nginx-coordinator-served-leaf-mismatch-paired-rollback"
     ],
     "observe-only-api": [
       "observe-only-empty-actions",
@@ -2574,7 +2578,8 @@
       "apache-invalid-config-refusal",
       "apache-missing-command-refusal",
       "apache-cleanup",
-      "apache-coordinator-validation-paired-rollback"
+      "apache-coordinator-validation-paired-rollback",
+      "apache-coordinator-served-leaf-mismatch-paired-rollback"
     ],
     "haproxy-host": [
       "haproxy-initial-trusted-tls",
@@ -2582,7 +2587,8 @@
       "haproxy-invalid-config-refusal",
       "haproxy-missing-command-refusal",
       "haproxy-cleanup",
-      "haproxy-coordinator-validation-paired-rollback"
+      "haproxy-coordinator-validation-paired-rollback",
+      "haproxy-coordinator-served-leaf-mismatch-paired-rollback"
     ],
     "native-agent-api": [
       "native-agent-registration",

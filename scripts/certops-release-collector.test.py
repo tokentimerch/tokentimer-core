@@ -278,6 +278,11 @@ def config_encoding_proof():
     return {"scope":"installed-system-unsupported-config-encoding-startup-refusal","encodings":["utf8-bom","utf16le-bom","utf16be-bom"],"startupFailureCount":3,**dict.fromkeys(("threeActualSystemStartupParseFailures","freshStoppedServiceForEach","credentialAndPinPreserved","nativeCngAndBindingPreserved","trustedTlsPreserved","noNewAgentOrJob","exactOriginalConfigurationRestored","actualRepairedSystemChild","freshAuthenticatedHeartbeat","ownedEncodingGuardCleared"),True)}
 
 
+def multi_target_admission_proof():
+    flags = ("publicProfileTargetEditRefused", "publicRenewalSnapshotOverrideRefused", "storedProfileUnchanged", "noJobAllocated", "sameInstalledSystemProcesses", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged", "credentialAndPinUnchanged", "actualAcmeAndDnsUnchanged", "ownedAdmissionGuardCleared")
+    return {"scope": "public-immutable-windows-multi-target-admission-refusal", "profilePatchStatus": 422, "renewOverrideStatus": 400, "signedJobExecutionQualified": False, "multiTargetDeploymentQualified": False, **dict.fromkeys(flags, True)}
+
+
 def active_service_controls_proof():
     flags = ("actualDnsPostBarrier", "sameCurrentClaimAndAttempt", "sameDurablePendingJournal", "samePendingNonexportableCngKey", "interrogateSucceeded", "pauseAndContinueRefused", "sameInstalledSystemProcesses", "sameServingCngBindingAndTrustedTls", "sameProtectedStateBytes", "ownedControlGuardCleared")
     return {"scope": "installed-scm-controls-during-real-cng-dns-renewal", "controlCount": 3, "certificateOperationInterruptionQualified": False, "defaultLeaseGraceQualified": False, **dict.fromkeys(flags, True)}
@@ -296,6 +301,17 @@ def installed_iis_refusal_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_windows_multi_target_public_refusal_strips_private_and_refuses_missing_or_promoted_facts(self):
+        proof=multi_target_admission_proof()
+        event={"scope":"real-agent-windows-acme-iis/rsa-2048","name":"real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence","type":"test:pass","nativeWindowsMultiTargetAdmission":{**proof,"privateNative":"sentinel"}}
+        self.assertEqual(collector.multi_target_admission_fields(event),{"nativeWindowsMultiTargetAdmission":proof})
+        for key in proof:
+            missing=dict(proof);del missing[key]
+            with self.subTest(key=key),self.assertRaises(ValueError):collector.multi_target_admission_fields({**event,"nativeWindowsMultiTargetAdmission":missing})
+        for patch in ({"noJobAllocated":False},{"profilePatchStatus":True},{"signedJobExecutionQualified":True},{"multiTargetDeploymentQualified":True}):
+            with self.assertRaises(ValueError):collector.multi_target_admission_fields({**event,"nativeWindowsMultiTargetAdmission":{**proof,**patch}})
+        self.assertEqual(collector.multi_target_admission_fields({**event,"scope":"real-agent-acme-filesystem"}),{})
+
     def test_active_certificate_scm_controls_are_bounded_and_private_identity_is_stripped(self):
         proof = active_service_controls_proof()
         event = {"scope": "real-agent-windows-acme-iis/rsa-2048", "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "nativeInstalledActiveServiceControls": {**proof,"privateNative":"sentinel"}}
@@ -883,7 +899,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPublicRetirement": public_retirement_proof(), "nativeInstalledRetentionConfig": retention_config_proof(), "nativeInstalledCredentialRefusal": credential_refusal_proof(), "nativeInstalledConfigEncoding": config_encoding_proof(), "nativeInstalledActiveServiceControls": active_service_controls_proof(), "nativeInstalledServiceControls": service_controls_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPublicRetirement": public_retirement_proof(), "nativeInstalledRetentionConfig": retention_config_proof(), "nativeInstalledCredentialRefusal": credential_refusal_proof(), "nativeInstalledConfigEncoding": config_encoding_proof(), "nativeWindowsMultiTargetAdmission": multi_target_admission_proof(), "nativeInstalledActiveServiceControls": active_service_controls_proof(), "nativeInstalledServiceControls": service_controls_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))

@@ -754,7 +754,7 @@
         "disposable-windows-server-native"
       ],
       "implementation": "packages/agent/scripts/host/unsupported-target-fixture.js; tests/e2e/helpers/certops-windows-installed-iis-refusal.js",
-      "remainingCoverage": "Mandatory host source reaches direct product standalone IIS deploy and unsupported multi-SNI renewal refusal. Separate installed-agent source now publicly creates a genuine signed standalone deploy job; the same registered agent must claim once and fail with the specific unsupported-target error and claim-bound production failure audit. Two genuinely served trusted SNI endpoints, protected CNG custody, global store/key metadata, credentials, actual ACME child receipts and DNS activity remain unchanged. Exact owned shadow cleanup and a sticky parent recovery guard are required. All ten Server2022/2025/key-profile cells remain unexecuted. Installed multi-target renewal refusal and additional selector/IPv6 layouts remain separate gaps."
+      "remainingCoverage": "Mandatory host source reaches direct product standalone IIS deploy and unsupported multi-SNI renewal refusal. Separate installed-agent source now publicly creates a genuine signed standalone deploy job; the same registered agent must claim once and fail with the specific unsupported-target error and claim-bound production failure audit. Two genuinely served trusted SNI endpoints, protected CNG custody, global store/key metadata, credentials, actual ACME child receipts and DNS activity remain unchanged. Exact owned shadow cleanup and a sticky parent recovery guard are required. All ten Server2022/2025/key-profile cells remain unexecuted. A separate public installed-fixture source now requires immutable-target PATCH422 and manual renewal snapshot-override400 while preserving profile/jobs/native custody/TLS and actual ACME/DNS traffic. These APIs cannot establish a signed multi-target Windows profile; this refusal does not qualify unreachable signed multi-target execution. Native execution and additional supported layouts remain separate qualification."
     },
     {
       "id": "windows-retention.cutover-clock",
@@ -1668,7 +1668,7 @@
         "linux-native-qualification"
       ],
       "implementation": "scripts/certops-nginx-host.js",
-      "remainingCoverage": "Mandatory native nginx, Apache and HAProxy source uses genuine local files and actual consuming processes on Ubuntu22.04/24.04. Direct validation/missing-command refusals preserve trusted TLS. A separate production runDeployReloadVerify case independently observes distinct candidate pair deployment through a read-only local evidence recorder, genuine invalid-config validation failure, actual paired predecessor rollback and restored bytes/permissions, followed by exact configuration recovery, successful real validation/reload and trusted predecessor TLS. Native execution and signed/API/service dispatch remain pending; no uninterrupted availability or signed evidence-ingestion qualification is claimed."
+      "remainingCoverage": "Mandatory native nginx, Apache and HAProxy source uses genuine local files and actual consuming processes on Ubuntu22.04/24.04. Direct validation/missing-command refusals preserve trusted TLS. A separate production runDeployReloadVerify case independently observes distinct candidate pair deployment through a read-only local evidence recorder, genuine invalid-config validation failure, actual paired predecessor rollback and restored bytes/permissions, followed by exact configuration recovery, successful real validation/reload and trusted predecessor TLS. Native execution and signed/API/service dispatch remain pending; no uninterrupted availability or signed evidence-ingestion qualification is claimed. A distinct native source also isolates successful validate/reload followed by trusted served-leaf fingerprint mismatch and actual production verification rollback; execution remains pending."
     },
     {
       "id": "deploy.validate-failure",
@@ -1681,7 +1681,7 @@
         "haproxy-host"
       ],
       "implementation": "scripts/certops-nginx-host.js",
-      "remainingCoverage": "Mandatory native nginx, Apache and HAProxy source uses genuine local files and actual consuming processes on Ubuntu22.04/24.04. Direct validation/missing-command refusals preserve trusted TLS. A separate production runDeployReloadVerify case independently observes distinct candidate pair deployment through a read-only local evidence recorder, genuine invalid-config validation failure, actual paired predecessor rollback and restored bytes/permissions, followed by exact configuration recovery, successful real validation/reload and trusted predecessor TLS. Native execution and signed/API/service dispatch remain pending; no uninterrupted availability or signed evidence-ingestion qualification is claimed."
+      "remainingCoverage": "Mandatory native nginx, Apache and HAProxy source uses genuine local files and actual consuming processes on Ubuntu22.04/24.04. Direct validation/missing-command refusals preserve trusted TLS. A separate production runDeployReloadVerify case independently observes distinct candidate pair deployment through a read-only local evidence recorder, genuine invalid-config validation failure, actual paired predecessor rollback and restored bytes/permissions, followed by exact configuration recovery, successful real validation/reload and trusted predecessor TLS. Native execution and signed/API/service dispatch remain pending; no uninterrupted availability or signed evidence-ingestion qualification is claimed. A distinct native source also isolates successful validate/reload followed by trusted served-leaf fingerprint mismatch and actual production verification rollback; execution remains pending."
     },
     {
       "id": "deploy.multi-target",
@@ -1712,10 +1712,16 @@
       "evidenceLevel": "real-host",
       "requiredEnvironments": [
         "windows-2022",
-        "windows-2025"
+        "windows-2025",
+        "nginx-ubuntu-22.04",
+        "nginx-ubuntu-24.04",
+        "apache-ubuntu-22.04",
+        "apache-ubuntu-24.04",
+        "haproxy-ubuntu-22.04",
+        "haproxy-ubuntu-24.04"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "IIS fixture checks served thumbprint before/after replacement and rollback; file targets/full issuer journey and all verify failures remain required."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; scripts/certops-daemon-served-leaf-mismatch.js; scripts/certops-nginx-host.js",
+      "remainingCoverage": "IIS fixture checks served thumbprint before/after replacement and rollback; full issuer workflows remain separately qualified. Mandatory native nginx/Apache/HAProxy source additionally deploys a genuine candidate pair, succeeds actual native validation/reload while an owned alternate configuration serves the independently trusted predecessor, requires the exact production live-fingerprint refusal, then independently verifies actual paired rollback and exact configuration/reload recovery. Native source and supporting checks are implemented; protected native execution remains pending. This is a trusted fingerprint mismatch, not a reload outage."
     },
     {
       "id": "deploy.os-service",

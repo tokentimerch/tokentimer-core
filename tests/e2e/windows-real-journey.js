@@ -73,6 +73,10 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   let installedPathProof;
   const serviceControls = require("./helpers/certops-windows-service-controls");
   const activeServiceControls=require("./helpers/certops-windows-active-service-controls");
+  const multiTargetAdmission=require("./helpers/certops-windows-multi-target-admission-refusal");
+  let multiTargetAdmissionProof;
+  const multiTargetAdmissionProofPath=path.join(repoRoot,"qualification-results",`windows-multi-target-admission-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(multiTargetAdmissionProofPath),false,"Refuse stale public multi-target admission proof");
   let activeServiceControlProof;
   const activeServiceProofPath=path.join(repoRoot,"qualification-results",`windows-active-service-controls-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(activeServiceProofPath),false,"Refuse stale active-phase SCM proof");
@@ -608,6 +612,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const reuseHelper = require("./helpers/certops-windows-key-reuse-refusal");
     keyReuseRefusalProof = await runNamedScenario(reuseHelper.scenarioName, () => reuseHelper.qualifyKeyReuseRefusal({publicSession,pool,workspaceId,certificateId,profileId:managed.profile_id,configDir,domain,port,roots,thumbprint,powershell:ps,run:command,dnsRequestCount:()=>dnsProxyRequests}));
     reuseHelper.verifyProof(keyReuseRefusalProof);
+    multiTargetAdmissionProof=await runNamedScenario(multiTargetAdmission.SCENARIO,()=>multiTargetAdmission.qualify({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,certificateId,profileId:managed.profile_id,agentId,publicSession,dnsRequestCount:()=>dnsProxyRequests,acmeReceiptDirectory:outputPrivacy.directory,ownedJobs,thumbprint,domain,port,roots}));
     await require("./helpers/certops-windows-wrong-leaf").qualifyWrongLeaf({publicSession,pool,workspaceId,agentId,certificateId,configDir,workDir,repoRoot,domain,port,roots,thumbprint,powershell:ps,run:command,waitUntil,ownedJobs});
     const worker = await import(require("node:url").pathToFileURL(path.join(repoRoot, "apps/worker/src/certops-worker.js")).href);
     const schedulerEnv = { ...process.env, CERTOPS_ENABLED: "true" };
@@ -715,6 +720,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   } finally {
     publicRetirement.assertCleanupSafe(workDir);
     configEncoding.assertCleanupSafe(workDir);
+    multiTargetAdmission.assertCleanupSafe(workDir);
     activeServiceControls.assertCleanupSafe(workDir);
     serviceControls.assertCleanupSafe(workDir);
     // Missing/tampered receipts cannot release unresolved in-memory process ownership.
@@ -782,6 +788,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       fs.writeFileSync(retentionConfigProofPath,JSON.stringify(retentionConfigProof),{flag:"wx"});
       configEncoding.verifyProof(configEncodingProof);
       fs.writeFileSync(configEncodingProofPath,JSON.stringify(configEncodingProof),{flag:"wx"});
+      multiTargetAdmission.verifyProof(multiTargetAdmissionProof);
+      fs.writeFileSync(multiTargetAdmissionProofPath,JSON.stringify(multiTargetAdmissionProof),{flag:"wx"});
       activeServiceControls.verifyProof(activeServiceControlProof);
       fs.writeFileSync(activeServiceProofPath,JSON.stringify(activeServiceControlProof),{flag:"wx"});
       serviceControls.verifyProof(serviceControlProof);

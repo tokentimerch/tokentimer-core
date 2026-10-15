@@ -4,6 +4,7 @@ const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto");
 const helper = require("../certops-daemon-coordinator-rollback");
+const mismatch = require("../certops-daemon-served-leaf-mismatch");
 const root = path.resolve(__dirname, "../..");
 const SUITE = "nginx-host",
   CANDIDATE = "a".repeat(40);
@@ -71,7 +72,8 @@ function artifact(service = "nginx", version = "24.04") {
       finishedAt,
     })),
     fixtureSource: source("scripts/certops-nginx-host.js"),
-    fixtureSources: helper.REQUIRED_SOURCES.map(source),
+    fixtureSources: [...new Set([...helper.REQUIRED_SOURCES,...mismatch.REQUIRED_SOURCES])].map(source),
+    nativeDaemonServedLeafMismatch: {schemaVersion:1,scope:mismatch.SCOPE,service,evidenceTransport:"read-only-local-recorder-not-signed-api",fingerprints:["a","b"].map(c=>c.repeat(64)),...Object.fromEntries(mismatch.FLAGS.map(flag=>[flag,true]))},
     nativeDaemonCoordinatorRollback: nativeProof(service),
   };
   return { kind: "host", suite: SUITE, environment, report };

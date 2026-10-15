@@ -28,6 +28,7 @@ import certops_linux_backup_dac_proof as linux_backup_dac_proof
 import certops_filesystem_concurrent_proof as filesystem_concurrent_proof
 import certops_linux_trust_independent_proof as linux_trust_independent_proof
 import certops_daemon_coordinator_proof as daemon_coordinator_proof
+import certops_daemon_served_leaf_proof as daemon_served_leaf_proof
 import certops_acme_stage_proof as acme_stage_proof
 import certops_acme_background_proof as acme_background_proof
 import certops_adcs_live_enroll_acl_proof as live_enroll_acl_proof
@@ -878,6 +879,22 @@ def config_encoding_fields(event):
             or type(proof.get("startupFailureCount")) is not int or proof["startupFailureCount"]!=3 or proof.get("encodings")!=encodings or any(proof.get(flag) is not True for flag in flags)):
         raise ValueError("Missing actual installed configuration encoding refusals")
     return {"nativeInstalledConfigEncoding":{"scope":proof["scope"],"encodings":list(encodings),"startupFailureCount":3,**dict.fromkeys(flags,True)}}
+
+
+def multi_target_admission_fields(event):
+    """Public refusal cannot qualify an unreachable signed multi-target executor."""
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof = event.get("nativeWindowsMultiTargetAdmission")
+    flags = ("publicProfileTargetEditRefused", "publicRenewalSnapshotOverrideRefused", "storedProfileUnchanged", "noJobAllocated", "sameInstalledSystemProcesses", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged", "credentialAndPinUnchanged", "actualAcmeAndDnsUnchanged", "ownedAdmissionGuardCleared")
+    if (not isinstance(proof, dict) or proof.get("scope") != "public-immutable-windows-multi-target-admission-refusal"
+            or type(proof.get("profilePatchStatus")) is not int or proof["profilePatchStatus"] != 422
+            or type(proof.get("renewOverrideStatus")) is not int or proof["renewOverrideStatus"] != 400
+            or proof.get("signedJobExecutionQualified") is not False or proof.get("multiTargetDeploymentQualified") is not False
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Incomplete public Windows multi-target admission refusal")
+    return {"nativeWindowsMultiTargetAdmission": {"scope": proof["scope"], "profilePatchStatus": 422, "renewOverrideStatus": 400, "signedJobExecutionQualified": False, "multiTargetDeploymentQualified": False, **dict.fromkeys(flags, True)}}
 
 
 def active_service_controls_fields(event):
@@ -1762,6 +1779,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result.update(linux_installed_discovery_proof.project_report(value))
         if value.get("suite") in daemon_coordinator_proof.SUITES:
             result.update(daemon_coordinator_proof.project_report(value))
+            result.update(daemon_served_leaf_proof.project_report(value))
         if value.get("suite") == linux_trust_independent_proof.SUITE:
             result.update(linux_trust_independent_proof.project_report(value))
         if value.get("suite") == filesystem_concurrent_proof.SUITE:
@@ -1862,7 +1880,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                  **installed_iis_refusal_fields(event),
                  **installed_crash_fields(event),
                  **installed_paths_fields(event),
-                 **active_service_controls_fields(event), **service_controls_fields(event),
+                 **multi_target_admission_fields(event), **active_service_controls_fields(event), **service_controls_fields(event),
                  **config_encoding_fields(event),
                  **credential_refusal_fields(event),
                  **retention_config_fields(event),

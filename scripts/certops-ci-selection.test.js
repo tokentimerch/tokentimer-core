@@ -172,3 +172,5 @@ test("native console projection selects tooling without automatic native lanes",
  const native=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-acme-native-console.yml"),"utf8"));
  assert.deepEqual(Object.keys(native.on),["workflow_dispatch"]);assert.equal(native.jobs["native-console"].if,"github.ref == 'refs/heads/main'");
 });
+
+test("served-leaf proof projection selects tooling only",()=>{const file="scripts/certops_daemon_served_leaf_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});

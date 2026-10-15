@@ -26,7 +26,7 @@ class DaemonProjection(unittest.TestCase):
                 value["localPrivateState"] = "must-not-survive"
                 result = collector.sanitized_report(value, proof.SUITES, set())
                 self.assertEqual(result[proof.FIELD], value[proof.FIELD])
-                self.assertEqual(len(result["fixtureSources"]), 12)
+                self.assertEqual(len(result["fixtureSources"]), 13)
                 self.assertNotIn("must-not-survive", json.dumps(result))
 
     def test_every_native_fact_is_mandatory_and_cannot_promote_signed_or_wrong_service_evidence(self):
