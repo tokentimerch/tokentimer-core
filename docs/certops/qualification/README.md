@@ -96,6 +96,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Live same-template machine Enroll permission denial and restoration](adcs/live-machine-enroll-acl.md)
 - [Hierarchy HTTP intermediate CRL fault and native recovery](adcs/http-intermediate-crl-fault.md)
 - [HTTP-only leaf CRL endpoint availability and restored-publication renewal](adcs/http-only-leaf-crl.md): real installed renewals and independent native chain probes; signed-agent fault continuation and OCSP remain separate.
+- [Native Microsoft OCSP responder](adcs/native-ocsp-responder.md): existing disposable CA, delegated signer, OCSP-only renewal, independent signed-good/native endpoint probes and guarded active-resource drainage; native execution remains pending.
+- [AD CS native result outbox and SCM restart](adcs/native-result-outbox-restart.md): real installation before result-delivery failure, actual durable retry timing, retained original process drainage and same-claim delivery after restart; native execution remains pending.
 - [Manual hierarchy Windows and display-language environments](adcs/hierarchy-environments.md)
 - [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
 - [Experimental new IIS binding before durable completion](adcs/bound-install-recovery-experiment.md)
@@ -114,6 +116,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native consuming-daemon coordinator rollback](linux/daemon-coordinator-rollback.md)
 - [Real Linux ACME qualification](linux/linux-acme-qualification.md)
 - [Manual and scheduled Linux ACME key reuse](linux/acme-key-reuse.md)
+- [Retained-process ownership during Linux ACME lease loss](linux/acme-lease-process-ownership.md)
 - [Installed Linux agent qualification](linux/linux-systemd-qualification.md)
 - [Installed Linux file discovery and guarded restoration](linux/installed-file-discovery.md)
 - [Same-candidate Linux installer reapplication](linux/linux-systemd-reapply-qualification.md)
@@ -216,3 +219,23 @@ The [real-day interrupted deletion case](windows/resident-retention24h-interrupt
 - [Native daemon served-leaf mismatch and paired rollback](linux/daemon-served-leaf-mismatch.md)
 
 - [Public Windows multi-target admission refusal](windows/multi-target-admission-refusal.md) — immutable profile/edit and manual override rejection, without a signed multi-target execution claim.
+
+- [Public bulk renewal with two genuine native ACME completions](linux/public-bulk-native-renewal.md)
+- [Public native renewal setup](linux/public-native-renewal-setup.md)
+- [Certificate result outbox and native agent restart](linux/certificate-result-outbox-restart.md)
+
+- [Installed service stop with real lease expiry and offline reconciliation](windows/stopped-offline-renewal-recovery.md) — separate manual hosted Windows lane; no alive-agent grace or original-operation recovery claim.
+
+The [installed public renewal verification/rollback journey](windows/installed-public-verify-rollback.md) requires real signed current-claim failure evidence, accepted native custody, restored trusted TLS and a fresh public retry in the existing Windows profile cells. Native execution remains pending; transient binding observation and AppID preservation are not qualified.
+
+- [Installed corrupt signing-pin startup refusals](windows/installed-signing-pin-refusal.md): two actual production reader failures with exact pin repair and preserved registered/native state; native execution remains pending.
+
+- [Readable public credential with weak native ACL](windows/native-credential-weak-acl.md): production-reader refusal and exact retained-handle repair, supporting host scope only; native execution remains pending.
+
+- [Native manual renewal under a disabled automatic profile](linux/disabled-profile-native-manual-renewal.md)
+
+- [Alive installed agent with genuine default lease and hard-grace classification](windows/alive-agent-default-hard-grace.md) — separate manual Azure-free two-Server lane, actual 75-minute boundary; no worker-loop or automatic recovery claim.
+
+- [Native IIS public-only certificate association refusal](windows/native-iis-public-only-association.md) — exact public My copy, absent original key, actual refusal/rollback and trusted sibling preservation; no installed signed-job claim.
+
+- [Installed public renewal with failed rollback](windows/installed-failed-rollback.md) — separate manual Azure-free Server 2022/2025 lane, actual signed failure/native absent predecessor, retained original association restoration and distinct public retry; native execution pending.

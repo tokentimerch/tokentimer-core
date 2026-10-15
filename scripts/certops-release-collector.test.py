@@ -1,4 +1,17 @@
 
+def adcs_result_outbox_evidence():
+    import certops_adcs_result_outbox_proof as proof
+    return {"scope": proof.SCOPE, "enrollmentId": "10000000-0000-4000-8000-000000000001", "jobId": "10000000-0000-4000-8000-000000000002", "claimId": "10000000-0000-4000-8000-000000000003", "requestId": 42, "fingerprints": ["1" * 64, "2" * 64], "caRequestCounts": [10, 11, 11], "recordedAttempts": 1, "retryDelayMs": 15000, "atomicTreeContainmentQualified": False, "backgroundTimerQualified": False, **{key: True for key in proof.FLAGS}}
+
+
+def signing_pin_refusal_proof():
+    return json.loads("{\"scope\":\"installed-system-corrupt-signing-pin-startup-refusal\",\"pins\":[\"malformed-pin-json\",\"invalid-pin-shape\"],\"startupFailureCount\":2,\"missingPinQualified\":false,\"inFlightMutationQualified\":false,\"twoActualSystemPinFailures\":true,\"freshStoppedServiceForEach\":true,\"configurationAndCredentialPreserved\":true,\"nativeCngAndBindingPreserved\":true,\"trustedTlsPreserved\":true,\"noNewAgentOrJob\":true,\"exactOriginalPinRestored\":true,\"actualRepairedSystemChild\":true,\"freshAuthenticatedHeartbeat\":true,\"ownedPinGuardCleared\":true}")
+
+
+def installed_verify_rollback_proof():
+    return json.loads("{\"scope\":\"installed-public-renewal-native-shadow-verify-failure-rollback-and-retry\",\"certificateId\":\"11111111-1111-4111-8111-111111111111\",\"jobIds\":[\"22222222-2222-4222-8222-222222222222\",\"44444444-4444-4444-8444-444444444444\"],\"claimIds\":[\"33333333-3333-4333-8333-333333333333\",\"55555555-5555-4555-8555-555555555555\"],\"fingerprints\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"],\"spkiFingerprints\":[\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"],\"failedJobStatus\":\"failed\",\"failureCode\":\"VERIFY_FAILED\",\"rolledBack\":true,\"retryJobStatus\":\"succeeded\",\"bindFailureQualified\":false,\"rollbackFailureQualified\":false,\"expiryCleanupQualified\":false,\"transientNewBindingObservationQualified\":false,\"appIdPreservationQualified\":false,\"originalNativeSniAndTrustedTls\":true,\"exactOwnedShadowAndSiblingAdmission\":true,\"shadowInitiallyServedSamePredecessor\":true,\"actualPublicSignedCurrentClaim\":true,\"actualCaLeafAndProtectedCngAccepted\":true,\"claimBoundVerifyFailureAndRollbackEvidence\":true,\"nativePredecessorBindingRestored\":true,\"predecessorKeyAndTrustedTlsPreserved\":true,\"siblingBindingAndTrustedTlsPreserved\":true,\"exactShadowRemovedBeforeRetry\":true,\"freshPublicSignedRetrySucceeded\":true,\"freshLeafSpkiProtectedKeyAndTrustedTls\":true,\"profileAndProtectedStatePreserved\":true,\"failedAcceptedLeafOwnershipRecorded\":true,\"ownedEndpointCleanupCompleted\":true}")
+
+
 def cng_journal_acl_proof():
     return {"scope":"native-prepared-cng-preserved-through-unreadable-adcs-journal","caEnrollmentQualified":False,"installedServiceQualified":False,"actualPreparedNativeKeyPrerequisite":True,"actualFreshOsReadAndListDenied":True,"productionJournalNotAbsent":True,"actualOrphanReconciliationDeferred":True,"sameNativePrivateKeyPossession":True,"sameJournalBytesAndFileIdentities":True,"exactRetainedHandleAclsRestored":True,"ownedNativeChildrenDrained":True,"productionJournalReadersRecovered":True}
 # Exercise release collection trust, archive bounds and sanitized evidence retention offline.
@@ -15,9 +28,25 @@ import unittest
 import zipfile
 import tempfile
 import subprocess
+from certops_adcs_ocsp_proof import FLAGS as OCSP_FLAGS, FALSE_FLAGS as OCSP_FALSE_FLAGS, SCOPE as OCSP_SCOPE
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
+
+
+def ocsp_evidence():
+    return {
+        "scope": OCSP_SCOPE,
+        "enrollmentIds": ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+        "jobIds": ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"],
+        "requestIds": [41, 42], "signerRequestId": 40,
+        "leafFingerprints": ["a" * 64, "b" * 64], "signerFingerprint": "c" * 64,
+        "issuerKeySha256": "d" * 64, "nativeHelperSha256": "e" * 64, "publicCrlSha256": "f" * 64,
+        "responseSha256": ["1" * 64, "2" * 64, "3" * 64],
+        "caRequestCounts": [39, 40, 41, 42], "nativeVerdicts": ["valid", "revocation_unknown", "valid"],
+        "deferredRecovery": {"originalJobId":"55555555-5555-4555-8555-555555555555","originalClaimId":"66666666-6666-4666-8666-666666666666","continuationJobId":"33333333-3333-4333-8333-333333333333","continuationClaimId":"77777777-7777-4777-8777-777777777777","requestId":41},
+        **{key: True for key in OCSP_FLAGS}, **{key: False for key in OCSP_FALSE_FLAGS},
+    }
 
 sys.dont_write_bytecode = True
 
@@ -92,6 +121,14 @@ def ledger_read_proof():
 
 def journal_read_proof():
     return {"scope":"native-temporary-adcs-journal-acl-refusals-not-installed-enrollment","installedServiceQualified":False,"nativeCngQualified":False,"genuinePreparedPublicCsr":True,"twoActualNativeAccessDenials":True,"journalUnreadableNotAbsent":True,"globalProtectionScanDeferred":True,"exactFileIdentitiesAndBytesPreserved":True,"exactNativeAclsRestored":True,"productionReadersRecovered":True,"ownedTemporaryStateRemoved":True}
+
+
+def iis_public_only_proof():
+    return {"scope":'native-iis-public-only-certificate-association-refusal',"refusalCode":"BIND_FAILED","installedSignedJobQualified":False,"candidateFingerprint":"a"*64,"predecessorFingerprint":"b"*64,**{k:True for k in ['actualPublicOnlyMyCertificate', 'originalNativeKeyAbsent', 'actualProductionDeploymentRefused', 'actualRollbackSucceeded', 'predecessorBindingAndTrustedTlsPreserved', 'unrelatedBindingAndTrustedTlsPreserved', 'exactOwnedPublicCopyRemoved']}}
+
+
+def credential_weak_acl_proof():
+    return json.loads("{\"scope\":\"native-public-control-credential-weak-acl-refusal\",\"installedServiceStartupQualified\":false,\"nativeCertificateQualified\":false,\"untrustedProcessReadQualified\":false,\"actualOriginalCredentialReadable\":true,\"nativeOriginalHandleAndIdentity\":true,\"actualExplicitUntrustedReadAce\":true,\"protectedDaclRemainedReadable\":true,\"actualProductionAclRefusal\":true,\"credentialBytesAndIdentityUnchanged\":true,\"exactOriginalDaclRestored\":true,\"productionCredentialReaderRecovered\":true,\"containedHolderDrained\":true,\"ownedTemporaryStateRemoved\":true}")
 
 
 def state_read_proof():
@@ -214,7 +251,8 @@ def http_leaf_crl_evidence():
         "appliedPublicationSha256": "5" * 64, "caRequestCounts": [10, 11, 12],
         "nativeVerdicts": ["valid", "revocation_unknown", "valid"],
         "endpointStatusCodes": [200, 503, 200], "ocspQualified": False,
-        "caOutageQualified": False, "signedCmcRenewalQualified": False, "installedAgentFaultRecoveryQualified": False,
+        "caOutageQualified": False, "signedCmcRenewalQualified": False,
+        "deferredRecovery":{"originalJobId":"10000000-0000-4000-8000-000000000005","originalClaimId":"10000000-0000-4000-8000-000000000006","continuationJobId":"10000000-0000-4000-8000-000000000002","continuationClaimId":"10000000-0000-4000-8000-000000000007","requestId":42},
         **{key: True for key in collector.http_leaf_crl_proof.FLAGS},
     }
 
@@ -301,6 +339,53 @@ def installed_iis_refusal_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_public_only_iis_refusal_actual_js_parity_and_closed_public_projection(self):
+        proof=json.loads(subprocess.check_output(["node","-e",'const h=require("./packages/agent/scripts/host/iis-public-only-fixture"),p=require("./scripts/fixtures/certops-windows-iis-public-only.cjs").fixture();h.verifyProof(p);console.log(JSON.stringify(p))'],cwd=collector.ROOT,text=True))
+        self.assertEqual(proof,iis_public_only_proof())
+        self.assertEqual(collector.iis_public_only_fields(proof),proof)
+        for key,value in proof.items():
+            missing=dict(proof);del missing[key]
+            with self.subTest(key=key),self.assertRaises(ValueError):collector.iis_public_only_fields(missing)
+            for invalid in (None,1,"true",not value if isinstance(value,bool) else "foreign"):
+                with self.assertRaises(ValueError):collector.iis_public_only_fields({**proof,key:invalid})
+        self.assertNotIn("sentinel",json.dumps(collector.iis_public_only_fields({**proof,"privateContainer":"sentinel"})))
+
+    def test_native_weak_acl_projection_matches_actual_js_and_scope(self):
+        proof=json.loads(subprocess.check_output(["node","-e",'const h=require("./packages/agent/scripts/host/credential-weak-acl-fixture"),p=require("./scripts/fixtures/certops-windows-credential-weak-acl.cjs").fixture();h.verifyProof(p);console.log(JSON.stringify(p))'],cwd=collector.ROOT,text=True))
+        self.assertEqual(proof,credential_weak_acl_proof())
+        self.assertEqual(collector.credential_weak_acl_fields(proof),proof)
+        for key,value in proof.items():
+            missing=dict(proof);del missing[key]
+            with self.subTest(key=key),self.assertRaises(ValueError):collector.credential_weak_acl_fields(missing)
+            for invalid in (None,1,"true",not value if isinstance(value,bool) else "foreign"):
+                with self.assertRaises(ValueError):collector.credential_weak_acl_fields({**proof,key:invalid})
+        self.assertNotIn("sentinel",json.dumps(collector.credential_weak_acl_fields({**proof,"rawCredential":"sentinel"})))
+
+    def test_signing_pin_refusal_projection_matches_actual_js_and_excludes_registration(self):
+        actual=json.loads(subprocess.check_output(["node","-e",'const h=require("./tests/e2e/helpers/certops-windows-signing-pin-refusal"),p=require("./scripts/fixtures/certops-windows-signing-pin-refusal.cjs").fixture();h.verifyProof(p);console.log(JSON.stringify(p))'],cwd=collector.ROOT,text=True))
+        self.assertEqual(actual,signing_pin_refusal_proof())
+        event={"scope":"real-agent-windows-acme-iis/rsa-2048","name":"real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence","type":"test:pass","nativeInstalledSigningPinRefusal":actual}
+        self.assertEqual(collector.signing_pin_refusal_fields(event),{"nativeInstalledSigningPinRefusal":actual})
+        for key in actual:
+            missing=dict(actual);del missing[key]
+            with self.subTest(key=key),self.assertRaises(ValueError):collector.signing_pin_refusal_fields({**event,"nativeInstalledSigningPinRefusal":missing})
+        for patch in ({"twoActualSystemPinFailures":False},{"startupFailureCount":True},{"missingPinQualified":True},{"inFlightMutationQualified":True},{"pins":[]}):
+            with self.assertRaises(ValueError):collector.signing_pin_refusal_fields({**event,"nativeInstalledSigningPinRefusal":{**actual,**patch}})
+        self.assertNotIn("sentinel",json.dumps(collector.signing_pin_refusal_fields({**event,"nativeInstalledSigningPinRefusal":{**actual,"rawPin":"sentinel"}})))
+
+    def test_installed_verify_rollback_closed_projection_and_real_js_parity(self):
+        fixture = subprocess.check_output(["node", "-e", 'const h=require("./tests/e2e/helpers/certops-windows-installed-verify-rollback"),p=require("./scripts/fixtures/certops-windows-installed-verify-rollback.cjs").fixture();h.verifyProof(p);console.log(JSON.stringify(p))'], cwd=collector.ROOT, text=True)
+        proof=json.loads(fixture)
+        self.assertEqual(proof,installed_verify_rollback_proof())
+        event={"scope":"real-agent-windows-acme-iis/rsa-2048","name":"real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence","type":"test:pass","nativeInstalledVerifyRollback":proof}
+        self.assertEqual(collector.installed_verify_rollback_fields(event),{"nativeInstalledVerifyRollback":proof})
+        for key in proof:
+            missing=dict(proof);del missing[key]
+            with self.subTest(key=key),self.assertRaises(ValueError):collector.installed_verify_rollback_fields({**event,"nativeInstalledVerifyRollback":missing})
+        for patch in ({"rolledBack":False},{"actualCaLeafAndProtectedCngAccepted":False},{"transientNewBindingObservationQualified":True},{"appIdPreservationQualified":True},{"jobIds":[proof["jobIds"][0]]*2},{"fingerprints":["a"*64]*3},{"claimIds":[True,False]}):
+            with self.assertRaises(ValueError):collector.installed_verify_rollback_fields({**event,"nativeInstalledVerifyRollback":{**proof,**patch}})
+        self.assertNotIn("sentinel",json.dumps(collector.installed_verify_rollback_fields({**event,"nativeInstalledVerifyRollback":{**proof,"privateCngReceipt":"sentinel"}})))
+
     def test_windows_multi_target_public_refusal_strips_private_and_refuses_missing_or_promoted_facts(self):
         proof=multi_target_admission_proof()
         event={"scope":"real-agent-windows-acme-iis/rsa-2048","name":"real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence","type":"test:pass","nativeWindowsMultiTargetAdmission":{**proof,"privateNative":"sentinel"}}
@@ -697,6 +782,12 @@ class CollectorTests(unittest.TestCase):
             proof = {"scope": "real-linux-manual-and-default-scheduler-csr-key-reuse", "client": client, **dict.fromkeys(fields, True), "fingerprints": [letter * 64 for letter in "abc"], "serials": ["A1", "B2", "C3"], "spkiFingerprint": "d" * 64, "jobIds": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"], "sourceProfileId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "sourceProfileFingerprint": "e" * 64}
             baseline_source = "const reuse=" + json.dumps(proof) + ";process.stdout.write(JSON.stringify({nativeAcmeBackgroundRenewals:require('./scripts/test-support/acme-background-proof.cjs').proof(reuse.client,reuse),nativeAcmeStageFaults:require('./scripts/test-support/acme-stage-proof.cjs').proof(reuse.client)}))"
             baseline = json.loads(subprocess.check_output(["node","-e",baseline_source],cwd=collector.ROOT))
+            if scope == "real-agent-acme-filesystem":
+                baseline["nativeAcmeBulkRenewal"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-bulk-proof.cjs').proof(" + json.dumps(proof) + ")))"], cwd=collector.ROOT))
+                baseline["nativeAcmeRenewalSetup"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-native-adoption-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeBulkRenewal"]) + ")))"], cwd=collector.ROOT))
+                baseline["nativeAcmeCertificateOutbox"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-certificate-outbox-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeBulkRenewal"]) + ")))"], cwd=collector.ROOT))
+                baseline["nativeAcmeDisabledProfile"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-disabled-profile-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeBulkRenewal"]) + ")))"], cwd=collector.ROOT))
+                baseline["qualificationEnvironment"] = {"measurement":"native","osFamily":"linux","distributionId":"ubuntu","distributionVersion":"24.04","executionSurface":"host"}
             def project(value):
                 return collector.sanitized_report([{**baseline, "scope": scope, "name": main, "type": "test:pass", "nativeAcmeKeyReuse": value}], set(), {scope})
             result = project({**proof, "rawKey": "private-sentinel", "windowsQualified": True, "workerLoopQualified": True})
@@ -747,9 +838,9 @@ class CollectorTests(unittest.TestCase):
         custody_fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True,
                    "cases": [{"caseId": profile + "/" + store, **dict.fromkeys(custody_fields, True), "privateExportHResult": -2146893813} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]}
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeRetentionAtomicReplace"], proof)
-        survivor_report = {"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof, "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeKeySurvivors": {**survivor_proof(), "rawInventory": "sentinel", "containerName": "sentinel"}}
+        survivor_report = {"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof, "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeKeySurvivors": {**survivor_proof(), "rawInventory": "sentinel", "containerName": "sentinel"}}
         self.assertEqual(collector.sanitized_report(survivor_report, {suite}, set())["nativeKeySurvivors"], survivor_proof())
         self.assertNotIn("sentinel", json.dumps(collector.sanitized_report(survivor_report, {suite}, set())))
         policy_private = policy_expiry_proof()
@@ -782,6 +873,15 @@ class CollectorTests(unittest.TestCase):
         projected = collector.sanitized_report(state_report, {suite}, set())["nativeStateReadRefusals"]
         self.assertEqual(projected, state_read_proof())
         self.assertNotIn("sentinel", json.dumps(projected))
+        weak_report={**state_report,"nativeCredentialWeakAcl":{**credential_weak_acl_proof(),"rawCredential":"sentinel"}}
+        extracted=collector.extract_reports(self.archive("windows-host.json",weak_report),{suite},set())[0][1]
+        self.assertEqual(extracted["nativeCredentialWeakAcl"],credential_weak_acl_proof())
+        self.assertNotIn("sentinel",json.dumps(extracted))
+        for patch in (None,{"actualProductionAclRefusal":False},{"installedServiceStartupQualified":True},{"untrustedProcessReadQualified":True}):
+            bad=dict(weak_report)
+            if patch is None:del bad["nativeCredentialWeakAcl"]
+            else:bad["nativeCredentialWeakAcl"]={**credential_weak_acl_proof(),**patch}
+            with self.assertRaises(ValueError):collector.extract_reports(self.archive("windows-host.json",bad),{suite},set())
         for field, value in state_read_proof().items():
             for invalid in (None, 1, "true", not value if isinstance(value, bool) else "foreign-scope"):
                 bad = {**state_report, "nativeStateReadRefusals": {**state_read_proof(), field: invalid}}
@@ -797,7 +897,7 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(ValueError): collector.sanitized_report(survivor_report, {suite}, set())
 
         elapsed = elapsed_proof()
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof,
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof,
             "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": {**elapsed, "rawLedger": "sentinel", "nativeKeyPath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeElapsedRetention"], elapsed)
         self.assertNotIn("sentinel", json.dumps(result))
@@ -807,9 +907,9 @@ class CollectorTests(unittest.TestCase):
                        {"configuredRetentionHours": 1}, {"fullRetentionWindowQualified": True},
                        {"waitedMonotonicMs": 299999}, {"waitedMonotonicMs": 600000}, {"waitedMonotonicMs": float("nan")},
                        {"mode": "synthetic-clock"}):
-            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(),
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(),
                 "nativeRetentionAtomicReplace": proof, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": {**elapsed, **change}}, {suite}, set())
-        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof}, {suite}, set())
+        with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof}, {suite}, set())
 
         self.assertNotIn("sentinel", json.dumps(result))
         for field in fields:
@@ -899,10 +999,23 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPublicRetirement": public_retirement_proof(), "nativeInstalledRetentionConfig": retention_config_proof(), "nativeInstalledCredentialRefusal": credential_refusal_proof(), "nativeInstalledConfigEncoding": config_encoding_proof(), "nativeWindowsMultiTargetAdmission": multi_target_admission_proof(), "nativeInstalledActiveServiceControls": active_service_controls_proof(), "nativeInstalledServiceControls": service_controls_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPublicRetirement": public_retirement_proof(), "nativeInstalledRetentionConfig": retention_config_proof(), "nativeInstalledCredentialRefusal": credential_refusal_proof(), "nativeInstalledConfigEncoding": config_encoding_proof(), "nativeInstalledSigningPinRefusal":signing_pin_refusal_proof(), "nativeInstalledVerifyRollback":installed_verify_rollback_proof(), "nativeWindowsMultiTargetAdmission": multi_target_admission_proof(), "nativeInstalledActiveServiceControls": active_service_controls_proof(), "nativeInstalledServiceControls": service_controls_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))
+        extracted=collector.extract_reports(self.archive("windows.json",[event]),set(),{scope})
+        self.assertEqual(extracted[0][1][0]["nativeInstalledVerifyRollback"],installed_verify_rollback_proof())
+        self.assertEqual(extracted[0][1][0]["nativeInstalledSigningPinRefusal"],signing_pin_refusal_proof())
+        for patch in (None,{"twoActualSystemPinFailures":False},{"missingPinQualified":True}):
+            invalid=dict(event)
+            if patch is None:del invalid["nativeInstalledSigningPinRefusal"]
+            else:invalid["nativeInstalledSigningPinRefusal"]={**signing_pin_refusal_proof(),**patch}
+            with self.assertRaises(ValueError):collector.extract_reports(self.archive("windows.json",[invalid]),set(),{scope})
+        for patch in (None,{"nativePredecessorBindingRestored":False},{"transientNewBindingObservationQualified":True}):
+            invalid=dict(event)
+            if patch is None:del invalid["nativeInstalledVerifyRollback"]
+            else:invalid["nativeInstalledVerifyRollback"]={**installed_verify_rollback_proof(),**patch}
+            with self.assertRaises(ValueError):collector.extract_reports(self.archive("windows.json",[invalid]),set(),{scope})
         for field in fields:
             facts[field] = False
             with self.assertRaises(ValueError):
@@ -996,10 +1109,10 @@ class CollectorTests(unittest.TestCase):
         cases = [{"caseId": profile + "/" + store, **dict.fromkeys(fields, True), "privateExportHResult": -2146893813, "rawPrivateBlob": "sentinel"} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True, "cases": cases, "signature": "sentinel"}
         sni = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My", **dict.fromkeys(("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified"), True), "privateConfig": "sentinel"}
-        result = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": sni}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": sni}, {suite}, set())
         self.assertEqual(result["nativeSamePortSni"]["siteCount"], 2)
         self.assertTrue(result["nativeSamePortSni"]["peerRollbackPrimaryUnchanged"])
-        usage_report = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof()}
+        usage_report = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof()}
         usage_report["nativeKeyUsage"]["rawKeyPath"] = "sentinel"
         usage_report["nativeKeyUsage"]["cases"][0]["privateBlob"] = "sentinel"
         projected_usage = collector.sanitized_report(usage_report, {suite}, set())
@@ -1072,16 +1185,16 @@ class CollectorTests(unittest.TestCase):
                 collector.sanitized_report(invalid, {suite}, set())
         for change in ({"siteCount": True}, {"hostnameCount": 1}, {"certificateStore": "Other"}):
             with self.assertRaises(ValueError):
-                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, **change}}, {suite}, set())
-        missing = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
+                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, **change}}, {suite}, set())
+        missing = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
         self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
         contention = {**dict.fromkeys(("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved"), True), "loserNativeCalls": 0, "loserCertreqCalls": 0, "retryCertreqCalls": 0, "winnerCertreqCalls": 1, "retryNativeCalls": 1, "privateRaw": "sentinel"}
-        projected = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": contention}, {suite}, set())
+        projected = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": contention}, {suite}, set())
         self.assertEqual(projected["nativeEnrollmentContention"]["loserNativeCalls"], 0)
         self.assertNotIn("sentinel", json.dumps(projected))
         for bad in (True, "0", -1, 33):
             with self.assertRaises(ValueError):
-                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": {**contention, "loserNativeCalls": bad}}, {suite}, set())
+                collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIisPublicOnly":iis_public_only_proof(), "nativeIpv4WildcardShadow": ipv4_wildcard_proof(), "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "supportingConfiguredRetentionTimer": configured_timer_proof(), "nativeCngJournalAcl": cng_journal_acl_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeLedgerReadRefusals": ledger_read_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeCredentialWeakAcl":credential_weak_acl_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": {**contention, "loserNativeCalls": bad}}, {suite}, set())
         self.assertEqual(len(result["cngCustody"]["cases"]), 10)
         self.assertNotIn("sentinel", json.dumps(result))
         for field in ("privateExportBytesWritten", "privateExportBytesReported"):
@@ -1246,6 +1359,8 @@ class CollectorTests(unittest.TestCase):
         value["nativeRequiredTemplateAttributes"] = {**required_template_attribute_proof(), "privateTrace": "sentinel"}
         value["nativeLiveEnrollAcl"] = {**live_enroll_acl_proof(), "privateDacl": "sentinel"}
         value["nativeHttpOnlyLeafCrl"] = {**http_leaf_crl_evidence(), "privatePublication": "sentinel"}
+        value["nativeOcspResponder"] = ocsp_evidence()
+        value["nativeAdcsResultOutbox"] = {**adcs_result_outbox_evidence(), "privateCredential": "discard"}
         value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
         value["nativeBrowserAdcs"] = browser_adcs_proof()
         value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
@@ -1332,6 +1447,29 @@ class CollectorTests(unittest.TestCase):
             with self.subTest(ambiguity_patch=patch), self.assertRaises(ValueError):
                 collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeHttpOnlyLeafCrl"], http_leaf_crl_evidence())
+        self.assertEqual(result[0][1]["nativeOcspResponder"], ocsp_evidence())
+        self.assertEqual(result[0][1]["nativeAdcsResultOutbox"], adcs_result_outbox_evidence())
+        for key in (None, *adcs_result_outbox_evidence()):
+            bad = json.loads(json.dumps(value))
+            if key is None:
+                del bad["nativeAdcsResultOutbox"]
+            else:
+                del bad["nativeAdcsResultOutbox"][key]
+            with self.subTest(adcs_outbox_missing=key), self.assertRaises(ValueError):
+                collector.sanitized_report(bad, {value["suite"]}, set())
+        for patch in ({"caRequestCounts": [10, 11, 12]}, {"retryDelayMs": 1}, {"sameLeafKeyAndCaRequestAfterRestart": False}, {"backgroundTimerQualified": True}):
+            bad = json.loads(json.dumps(value))
+            bad["nativeAdcsResultOutbox"].update(patch)
+            with self.subTest(adcs_outbox_invalid=patch), self.assertRaises(ValueError):
+                collector.sanitized_report(bad, {value["suite"]}, set())
+        for missing in (None, *collector.ocsp_proof.FIELDS):
+            bad = json.loads(json.dumps(value))
+            if missing is None:
+                del bad["nativeOcspResponder"]
+            else:
+                del bad["nativeOcspResponder"][missing]
+            with self.subTest(missing_ocsp=missing), self.assertRaises(ValueError):
+                collector.sanitized_report(bad, {value["suite"]}, set())
         for key in (None, *http_leaf_crl_evidence()):
             bad = json.loads(json.dumps(value))
             if key is None:
@@ -1340,7 +1478,7 @@ class CollectorTests(unittest.TestCase):
                 del bad["nativeHttpOnlyLeafCrl"][key]
             with self.subTest(http_leaf_missing=key), self.assertRaises(ValueError):
                 collector.sanitized_report(bad, {value["suite"]}, set())
-        for patch_value in ({"actualOwnedHttp503": False}, {"installedAgentFaultRecoveryQualified": True}, {"caRequestCounts": [10, 11, 13]}, {"restoredRequestId": 42}):
+        for patch_value in ({"actualOwnedHttp503": False}, {"installedAgentFaultRecoveryQualified": False}, {"caRequestCounts": [10, 11, 13]}, {"restoredRequestId": 42}):
             bad = json.loads(json.dumps(value))
             bad["nativeHttpOnlyLeafCrl"].update(patch_value)
             with self.subTest(http_leaf_invalid=patch_value), self.assertRaises(ValueError):

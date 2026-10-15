@@ -85,8 +85,10 @@ function verifyProof(proof) {
  * subject is only a selector; durable exact container/store/thumb ownership
  * authorizes removal. Missing receipts preserve the whole fixture. */
 function storeCleanupPlan(receipt, entries, readRecord, store, domainPattern) {
+  assert.notEqual(receipt.resultOutboxPendingVerification, true, "Preserve native ownership while signed result restart remains unresolved");
   assert.notEqual(receipt.machineAclPendingVerification, true, "Preserve native ownership while live Enroll ACL recovery remains unresolved");
   assert.notEqual(receipt.httpLeafCrlPendingVerification, true, "Preserve native ownership while HTTP leaf CRL recovery remains unresolved");
+  assert.notEqual(receipt.ocspPendingVerification, true, "Preserve native ownership while Microsoft OCSP recovery remains unresolved");
   assert.notEqual(receipt.workerPendingVerification, true, "Preserve native ownership while actual background renewal remains unresolved");
   assert.notEqual(receipt.pendingCaRenewalUnresolved, true, "Preserve native ownership while pending CA renewal remains unresolved");
   assert.notEqual(receipt.guiCancelPendingVerification, true, "Preserve native ownership while GUI Cancel remains unresolved");

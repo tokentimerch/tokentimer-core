@@ -55,6 +55,7 @@ function artifact(scope = "real-agent-acme-filesystem") {
     jobIds: [id("1"), id("2")],
   };
   main.nativeAcmeBackgroundRenewals = require("./acme-background-proof.cjs").proof(client,main.nativeAcmeKeyReuse);
+  if(scope==="real-agent-acme-filesystem"){main.nativeAcmeBulkRenewal=require("./acme-bulk-proof.cjs").proof(main.nativeAcmeKeyReuse);main.nativeAcmeRenewalSetup=require("./acme-native-adoption-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeCertificateOutbox=require("./acme-certificate-outbox-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeDisabledProfile=require("./acme-disabled-profile-proof.cjs").proof(main.nativeAcmeBulkRenewal);}
   return { kind: "stack", suite: scope, environment, events };
 }
 module.exports = { artifact, CANDIDATE };

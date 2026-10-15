@@ -87,6 +87,7 @@ const {
 const GUARD = ".installed-config-encoding-active.json";
 const POLICY_GUARD = ".installed-retention-policy-active.json";
 const CREDENTIAL_GUARD = ".installed-credential-refusal-active.json";
+const PIN_GUARD = ".installed-signing-pin-refusal-active.json";
 const active = new Set();
 const owner = (root) => path.resolve(root).toLowerCase();
 function assertCleanupSafe(root) {
@@ -94,7 +95,8 @@ function assertCleanupSafe(root) {
     !active.has(owner(root)) &&
       !fs.existsSync(path.join(root, GUARD)) &&
       !fs.existsSync(path.join(root, POLICY_GUARD)) &&
-      !fs.existsSync(path.join(root, CREDENTIAL_GUARD)),
+      !fs.existsSync(path.join(root, CREDENTIAL_GUARD)) &&
+      !fs.existsSync(path.join(root, PIN_GUARD)),
     "Preserve unresolved installed configuration encoding state",
   );
 }
@@ -208,9 +210,11 @@ function verifyProcessCount(value) {
   return value === "0";
 }
 async function qualifyStartupConfiguration(c, mode = "encoding") {
-  assert.ok(["encoding", "policy", "credential"].includes(mode));
+  assert.ok(["encoding", "policy", "credential", "pin"].includes(mode));
   const policyMode = mode === "policy",
-    credentialMode = mode === "credential";
+    credentialMode = mode === "credential",
+    pinMode = mode === "pin";
+  const pin = pinMode ? require("./certops-windows-signing-pin-refusal") : null;
   const credential = credentialMode
     ? require("./certops-windows-credential-refusal")
     : null;
@@ -225,7 +229,13 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
   assert.equal(path.resolve(configDir), path.join(receipt.root, "state"));
   const guard = path.join(
     receipt.root,
-    credentialMode ? CREDENTIAL_GUARD : policyMode ? POLICY_GUARD : GUARD,
+    pinMode
+      ? PIN_GUARD
+      : credentialMode
+        ? CREDENTIAL_GUARD
+        : policyMode
+          ? POLICY_GUARD
+          : GUARD,
   );
   const guardBytes = Buffer.from(
     JSON.stringify({ schemaVersion: 1, nonce: crypto.randomUUID() }),
@@ -263,27 +273,40 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
     "preexisting stopped fixture process drainage",
   );
   const originalService = stopped(),
-    file = path.join(configDir, credentialMode ? "credential" : "config.json"),
+    file = path.join(
+      configDir,
+      pinMode
+        ? "signing-key-pin.json"
+        : credentialMode
+          ? "credential"
+          : "config.json",
+    ),
     fileId = id(file),
     original = fs.readFileSync(file),
-    cases = credentialMode
-      ? credential.credentialCases(original)
-      : policyMode
-        ? policy.policyCases(original)
-        : encodingCases(original);
+    cases = pinMode
+      ? pin.pinCases(original)
+      : credentialMode
+        ? credential.credentialCases(original)
+        : policyMode
+          ? policy.policyCases(original)
+          : encodingCases(original);
   const log = path.join(configDir, "host.log"),
     backup = path.join(
       receipt.root,
-      credentialMode
-        ? ".original-credential-before-refusal"
-        : policyMode
-          ? ".original-config-before-retention-policy.json"
-          : ".original-config-before-encoding.json",
+      pinMode
+        ? ".original-signing-pin-before-refusal.json"
+        : credentialMode
+          ? ".original-credential-before-refusal"
+          : policyMode
+            ? ".original-config-before-retention-policy.json"
+            : ".original-config-before-encoding.json",
     );
-  const files = [
-    path.join(configDir, credentialMode ? "config.json" : "credential"),
-    path.join(configDir, "signing-key-pin.json"),
-  ];
+  const files = pinMode
+    ? [path.join(configDir, "config.json"), path.join(configDir, "credential")]
+    : [
+        path.join(configDir, credentialMode ? "config.json" : "credential"),
+        path.join(configDir, "signing-key-pin.json"),
+      ];
   const native = () => JSON.parse(ps(scm.custodyScript(c)));
   const protectedFiles = () =>
     files.map((f) => ({
@@ -357,7 +380,8 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
         ? currentFiles.every(
             (value, index) =>
               value.hash === originalFiles[index].hash &&
-              (index === 1 || value.identity === originalFiles[index].identity),
+              ((!pinMode && index === 1) ||
+                value.identity === originalFiles[index].identity),
           )
         : isDeepStrictEqual(currentFiles, originalFiles),
       "Registered private state changed during encoding refusal",
@@ -504,33 +528,44 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
     assert.ok(fs.readFileSync(guard).equals(guardBytes));
     fs.unlinkSync(guard);
     active.delete(owner(receipt.root));
-    const proof = credentialMode
+    const proof = pinMode
       ? {
-          scope: credential.SCOPE,
-          credentials: [...credential.CASES],
+          scope: pin.SCOPE,
+          pins: [...pin.CASES],
           startupFailureCount: 2,
+          missingPinQualified: false,
           inFlightMutationQualified: false,
-          ...Object.fromEntries(credential.FLAGS.map((flag) => [flag, true])),
+          ...Object.fromEntries(pin.FLAGS.map((flag) => [flag, true])),
         }
-      : policyMode
+      : credentialMode
         ? {
-            scope: policy.SCOPE,
-            policies: [...policy.CASES],
-            startupFailureCount: 3,
-            retentionTimerQualified: false,
-            ...Object.fromEntries(policy.FLAGS.map((flag) => [flag, true])),
+            scope: credential.SCOPE,
+            credentials: [...credential.CASES],
+            startupFailureCount: 2,
+            inFlightMutationQualified: false,
+            ...Object.fromEntries(credential.FLAGS.map((flag) => [flag, true])),
           }
-        : {
-            scope: SCOPE,
-            encodings: [...CASES],
-            startupFailureCount: 3,
-            ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
-          };
-    (credentialMode
-      ? credential.verifyProof
-      : policyMode
-        ? policy.verifyProof
-        : verifyProof)(proof);
+        : policyMode
+          ? {
+              scope: policy.SCOPE,
+              policies: [...policy.CASES],
+              startupFailureCount: 3,
+              retentionTimerQualified: false,
+              ...Object.fromEntries(policy.FLAGS.map((flag) => [flag, true])),
+            }
+          : {
+              scope: SCOPE,
+              encodings: [...CASES],
+              startupFailureCount: 3,
+              ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
+            };
+    (pinMode
+      ? pin.verifyProof
+      : credentialMode
+        ? credential.verifyProof
+        : policyMode
+          ? policy.verifyProof
+          : verifyProof)(proof);
     return proof;
   } catch {
     // Restore only the original file object and exactly our last written bytes.
@@ -556,7 +591,9 @@ const qualifyConfigEncoding = (c) => qualifyStartupConfiguration(c, "encoding");
 const qualifyRetentionConfig = (c) => qualifyStartupConfiguration(c, "policy");
 const qualifyCredentialRefusal = (c) =>
   qualifyStartupConfiguration(c, "credential");
+const qualifySigningPinRefusal = (c) => qualifyStartupConfiguration(c, "pin");
 module.exports = {
+  qualifySigningPinRefusal,
   qualifyCredentialRefusal,
   qualifyRetentionConfig,
   verifyProcessCount,

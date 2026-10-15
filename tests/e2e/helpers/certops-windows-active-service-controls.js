@@ -71,6 +71,27 @@ function validateRunningClaim(value, agentId) {
     "Actual active signed renewal claim required",
   );
 }
+function validatePendingContainer(container, row) {
+  const certificateId = row?.subject_id;
+  assert.ok(
+    typeof certificateId === "string" &&
+      /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(certificateId),
+    "Actual managed certificate identity required",
+  );
+  assert.equal(
+    row.payload?.certificateId,
+    certificateId,
+    "Current stored signed payload must bind managed certificate",
+  );
+  // executeWindowsIisRenewJob passes job.certificateId to native CSR keygen.
+  // The journal binds the attempt separately; the key name embeds the managed
+  // certificate identity, not the certificate_jobs row's different UUID.
+  assert.ok(
+    typeof container === "string" &&
+      new RegExp(`^tokentimer-${certificateId}-[a-f0-9]{8}$`).test(container),
+    "Pending native key must bind exact managed certificate",
+  );
+}
 function pendingKeyScript(container) {
   assert.match(container, /^tokentimer-[A-Za-z0-9_-]{1,64}-[a-f0-9]{8}$/);
   return `$k=$null;try{$k=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);if(!$k.IsMachineKey -or [int]$k.ExportPolicy -ne 0){throw 'Pending protected machine key required'};@{available=$true;name=$k.KeyName;unique=$k.UniqueName;provider=$k.Provider.Provider;machine=$k.IsMachineKey;export=[int]$k.ExportPolicy}|ConvertTo-Json -Compress}catch{@{available=$false}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()}}`;
@@ -135,7 +156,7 @@ async function qualifyActiveServiceControls(c) {
   const claim = async () => {
     const row = (
       await pool.query(
-        "SELECT j.status,j.operation,j.mode,j.source,j.claim_id,j.attempt_count,a.agent_id FROM certificate_jobs j JOIN certops_agents a ON a.id=j.claimed_by_agent_id AND a.workspace_id=j.workspace_id WHERE j.workspace_id=$1 AND j.id=$2",
+        "SELECT j.status,j.operation,j.mode,j.source,j.claim_id,j.attempt_count,j.subject_id,j.payload,a.agent_id FROM certificate_jobs j JOIN certops_agents a ON a.id=j.claimed_by_agent_id AND a.workspace_id=j.workspace_id WHERE j.workspace_id=$1 AND j.id=$2",
         [workspaceId, jobId],
       )
     ).rows;
@@ -161,10 +182,7 @@ async function qualifyActiveServiceControls(c) {
   const parsed = JSON.parse(journalBytes);
   assert.equal(parsed.jobId, jobId);
   assert.equal(parsed.claimId, beforeClaim.claim_id);
-  assert.ok(
-    journal.windowsCngContainerName.startsWith(`tokentimer-${jobId}-`),
-    "Pending native key must belong to exact job",
-  );
+  validatePendingContainer(journal.windowsCngContainerName, beforeClaim);
   assert.ok(
     isDeepStrictEqual(parsed, journal),
     "Actual parent journal differs",
@@ -315,6 +333,7 @@ module.exports = {
   verifyProof,
   assertCleanupSafe,
   validateRunningClaim,
+  validatePendingContainer,
   pendingKeyScript,
   qualifyActiveServiceControls,
   trustedBoundLeaf,

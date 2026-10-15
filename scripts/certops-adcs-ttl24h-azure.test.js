@@ -535,3 +535,17 @@ test("CA readiness waits are bounded and read-only before opening the CA databas
     false,
   );
 });
+
+test("fresh native CA RequestId resolves exact issued DER rather than an optional journal field", () => {
+ const fs=require("node:fs"),path=require("node:path");
+ const base=path.join(__dirname,"../packages/agent/reference/adcs-cmc/testdata");
+ const leaf=new crypto.X509Certificate(fs.readFileSync(path.join(base,"issued.cer")));
+ const ca=new crypto.X509Certificate(fs.readFileSync(path.join(base,"ca.cer")));
+ const rows=[{requestId:"11",certificateB64:ca.raw.toString("base64")},{requestId:"12",certificateB64:ca.raw.toString("base64")},{requestId:"13",certificateB64:leaf.raw.toString("base64")}];
+ const facts={requestIds:["11","12",null],fingerprints:["a".repeat(64),"b".repeat(64),crypto.createHash("sha256").update(leaf.raw).digest("hex")]};
+ assert.equal(adapter.resolveFreshRequestId(rows,facts),"13");
+ assert.equal(adapter.resolveFreshRequestId(rows,{...facts,requestIds:["11","12","13"]}),"13");
+ assert.throws(()=>adapter.resolveFreshRequestId(rows,{...facts,requestIds:["11","12","14"]}));
+ for(const changed of [rows.slice(0,2),[...rows.slice(0,2),{...rows[2],requestId:"11"}],[rows[2],rows[1],rows[2]],[...rows.slice(0,2),{...rows[2],requestId:"4294967296"}]])assert.throws(()=>adapter.resolveFreshRequestId(changed,facts));
+ assert.throws(()=>adapter.resolveFreshRequestId(rows,{...facts,fingerprints:[...facts.fingerprints.slice(0,2),"f".repeat(64)]}));
+});

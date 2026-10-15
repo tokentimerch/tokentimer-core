@@ -35,6 +35,12 @@ const {
 } = require("./certops-adcs-http-intermediate-crl");
 const { assertHttpOnlyLeafCdp } = require("./certops-adcs-http-leaf-crl-der");
 const {
+  continueDeferredIssuedLeaf,
+} = require("./certops-adcs-deferred-continuation");
+const {
+  inspectMachineKeySurvivors,
+} = require("../../../packages/agent/src/windows-key-survivors");
+const {
   createOwnedListener,
   verifyPublication,
   assertCleanupSafe,
@@ -45,6 +51,7 @@ const SCOPE =
 const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-http-only-leaf-crl-public-renewal",
   "adcs-real-http-only-leaf-crl-endpoint-recovers",
+  "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
 ]);
 const FLAGS = Object.freeze([
   "originalCaPublicationReceiptBound",
@@ -65,6 +72,7 @@ const FLAGS = Object.freeze([
   "ownedListenerClosed",
   "ownedGuardReleased",
   "restoredPublicationLeafInstalledBeforeListenerClose",
+  "installedAgentFaultRecoveryQualified",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
@@ -72,6 +80,9 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
   "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
   "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
+  "tests/e2e/helpers/certops-adcs-deferred-continuation.js",
+  "tests/e2e/helpers/certops-adcs-deferred-identity.js",
+  "packages/agent/src/windows-key-survivors/index.js",
   "infra/certops-adcs/http-leaf-crl-publication.ps1",
   "infra/certops-adcs/owned-ca-checkpoint.ps1",
   "infra/certops-adcs/owned-issued-request.ps1",
@@ -112,7 +123,7 @@ function verifyProof(value) {
       "ocspQualified",
       "caOutageQualified",
       "signedCmcRenewalQualified",
-      "installedAgentFaultRecoveryQualified",
+      "deferredRecovery",
       ...FLAGS,
     ].sort(),
   );
@@ -170,9 +181,40 @@ function verifyProof(value) {
     "ocspQualified",
     "caOutageQualified",
     "signedCmcRenewalQualified",
-    "installedAgentFaultRecoveryQualified",
   ])
     assert.equal(value[flag], false);
+  const recovery = value.deferredRecovery;
+  assert.ok(
+    recovery && typeof recovery === "object" && !Array.isArray(recovery),
+  );
+  assert.deepEqual(
+    Object.keys(recovery).sort(),
+    [
+      "originalJobId",
+      "originalClaimId",
+      "continuationJobId",
+      "continuationClaimId",
+      "requestId",
+    ].sort(),
+  );
+  for (const key of [
+    "originalJobId",
+    "originalClaimId",
+    "continuationJobId",
+    "continuationClaimId",
+  ])
+    assert.ok(uuid(recovery[key]));
+  assert.ok(
+    ![value.jobId, value.restoredJobId]
+      .map((id) => id.toLowerCase())
+      .includes(recovery.originalJobId.toLowerCase()),
+  );
+  assert.notEqual(
+    recovery.originalClaimId.toLowerCase(),
+    recovery.continuationClaimId.toLowerCase(),
+  );
+  assert.equal(recovery.continuationJobId, value.jobId);
+  assert.equal(recovery.requestId, value.requestId);
   return value;
 }
 
@@ -325,7 +367,8 @@ async function qualifyHttpOnlyLeafCrl(c) {
     custodyBefore,
     bindingBefore,
     cacheRestored = false,
-    cache = null;
+    cache = null,
+    deferredRecovery;
   const leafPath = path.join(workDir, `http-leaf-crl-${listener.token}.cer`);
   const caPath = path.join(workDir, `http-leaf-crl-ca-${listener.token}.cer`);
   const cachePath = path.join(
@@ -347,6 +390,18 @@ async function qualifyHttpOnlyLeafCrl(c) {
       "@now",
     ]);
   };
+  const captureCache = () => {
+    assert.equal(
+      cache,
+      null,
+      "Cache policy must be captured before its first mutation",
+    );
+    ps(
+      `$k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('${cacheKey}');try{$s=@{exists=[bool]($k -and @($k.GetValueNames()) -contains 'ChainCacheResyncFiletime')};if($s.exists){$s.kind=$k.GetValueKind('ChainCacheResyncFiletime').ToString();if($s.kind -notin @('QWord','Binary')){throw 'Unsupported cache policy'};$s.value=$k.GetValue('ChainCacheResyncFiletime')};$s|Export-Clixml -LiteralPath '${q(cachePath)}' -NoClobber -Encoding UTF8}finally{if($k){$k.Dispose()}}`,
+    );
+    applyRestrictivePermissions(cachePath, { kind: "file" });
+    cache = ownedBytes(cachePath, 8192);
+  };
   const restoreCache = () => {
     if (!cache || cacheRestored) return;
     const now = ownedBytes(cachePath, 8192);
@@ -362,8 +417,8 @@ async function qualifyHttpOnlyLeafCrl(c) {
     );
     cacheRestored = true;
   };
-  const custody = () => {
-    const thumb = leaf.fingerprint.replace(/:/g, "").toUpperCase();
+  const custodyFor = (certificate, enrollmentId) => {
+    const thumb = certificate.fingerprint.replace(/:/g, "").toUpperCase();
     const value = JSON.parse(
       ps(
         `$c=Get-Item 'Cert:\\LocalMachine\\My\\${thumb}';$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);@{container=$k.Key.KeyName;unique=$k.Key.UniqueName;policy=[int]$k.Key.ExportPolicy;machine=$k.Key.IsMachineKey;provider=$k.Key.Provider.Provider;bits=$k.KeySize;der=[Convert]::ToBase64String($c.RawData)}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
@@ -374,11 +429,11 @@ async function qualifyHttpOnlyLeafCrl(c) {
     assert.equal(value.bits, 2048);
     assert.equal(value.provider, "Microsoft Software Key Storage Provider");
     assert.ok(
-      value.container === buildEnrollmentContainerName(successful.enrollmentId),
+      value.container === buildEnrollmentContainerName(enrollmentId),
       "HTTP leaf native container ownership changed",
     );
     assert.ok(value.unique);
-    assert.ok(Buffer.from(value.der, "base64").equals(leaf.raw));
+    assert.ok(Buffer.from(value.der, "base64").equals(certificate.raw));
     const record = readIssuedContainerRecord({
       stateDir: configDir,
       containerName: value.container,
@@ -388,6 +443,7 @@ async function qualifyHttpOnlyLeafCrl(c) {
     assert.equal(record.acceptedThumbprint, thumb);
     return { value, record };
   };
+  const custody = () => custodyFor(leaf, successful.enrollmentId);
   const binding = () =>
     ps(
       `Import-Module WebAdministration;$b=@(Get-WebBinding -Name '${site}' -Protocol https|Where-Object bindingInformation -eq '*:${port}:${item.domain}');$keys=@(Get-ChildItem -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslSniBindingInfo'|Where-Object {[string]$_.GetValue('HostnamePort') -ieq '${item.domain}:${port}'});if($b.Count -ne 1 -or $keys.Count -ne 1){throw 'Exact owned SNI binding required'};$h=[BitConverter]::ToString([byte[]]$keys[0].GetValue('SslCertHash')).Replace('-','');$store=[string]$keys[0].GetValue('SslCertStoreName');if($h -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}' -or $store -ine 'My' -or [int]$b[0].sslFlags -ne 1){throw 'HTTP leaf native binding mismatch'};@{hash=$h;store=$store;coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;settings=@($keys[0].GetValueNames()|Sort-Object|ForEach-Object {@{name=$_;kind=$keys[0].GetValueKind($_).ToString();value=$keys[0].GetValue($_)}})}|ConvertTo-Json -Depth 8 -Compress`,
@@ -407,6 +463,12 @@ async function qualifyHttpOnlyLeafCrl(c) {
   const counts = [checkpoint().nativeTotalRequestCount];
   const performEnrollment = async (httpOnly) => {
     const previous = leaf || original;
+    const outgoing = httpOnly
+      ? custodyFor(previous, current.currentEnrollmentId)
+      : null;
+    if (httpOnly) leaf = previous;
+    const outgoingBinding = httpOnly ? binding() : null;
+    const unavailableBefore = listener.observations().unavailable;
     const response = await fixture.request(`${api}/enrollments`, "POST", {
       issuerId,
       certificateId,
@@ -426,6 +488,93 @@ async function qualifyHttpOnlyLeafCrl(c) {
     assert.ok(uuid(successful.enrollmentId) && uuid(successful.jobId));
     ownedEnrollmentIds.push(successful.enrollmentId);
     ownedStoreReceipt.enrollmentIds.push(successful.enrollmentId);
+    if (httpOnly) {
+      let servedBeforeContinuation;
+      deferredRecovery = await continueDeferredIssuedLeaf({
+        fixture,
+        enrollmentId: successful.enrollmentId,
+        originalJobId: successful.jobId,
+        agentRowId,
+        configDir,
+        until: c.until,
+        jobFinished,
+        observeIssued: (journal) =>
+          native("owned-issued-request.ps1", [
+            "-CommonName",
+            item.domain,
+            "-FingerprintSha256",
+            normalized(
+              new crypto.X509Certificate(journal.artifacts.leafPem)
+                .fingerprint256,
+            ),
+          ]),
+        assertUnacceptedAndOutgoing: async (journal) => {
+          assert.ok(
+            listener.observations().unavailable > unavailableBefore,
+            "Actual installed agent must encounter owned HTTP503",
+          );
+          const deferredLeaf = new crypto.X509Certificate(
+            journal.artifacts.leafPem,
+          );
+          assertHttpOnlyLeafCdp(deferredLeaf.raw, listener.httpUrl);
+          const container = buildEnrollmentContainerName(
+              successful.enrollmentId,
+            ),
+            challenge = crypto.randomBytes(32);
+          const possession = JSON.parse(
+            ps(
+              `$k=[Security.Cryptography.CngKey]::Open('${q(container)}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);$rsa=$null;try{$rsa=[Security.Cryptography.RSACng]::new($k);@{machine=$k.IsMachineKey;policy=[int]$k.ExportPolicy;provider=$k.Provider.Provider;bits=$rsa.KeySize;signature=[Convert]::ToBase64String($rsa.SignData([Convert]::FromBase64String('${challenge.toString("base64")}'),[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1))}|ConvertTo-Json -Compress}finally{if($rsa){$rsa.Dispose()};$k.Dispose()}`,
+            ),
+          );
+          assert.equal(possession.machine, true);
+          assert.equal(possession.policy, 0);
+          assert.equal(possession.bits, 2048);
+          assert.equal(
+            possession.provider,
+            "Microsoft Software Key Storage Provider",
+          );
+          assert.equal(
+            crypto.verify(
+              "sha256",
+              challenge,
+              deferredLeaf.publicKey,
+              Buffer.from(possession.signature, "base64"),
+            ),
+            true,
+            "Actual deferred CNG key must sign for its issued public leaf",
+          );
+          const survivors = await inspectMachineKeySurvivors({
+            containerName: container,
+            helperPath: program,
+          });
+          assert.equal(survivors.ok, true);
+          assert.equal(
+            survivors.shared,
+            false,
+            "Deferred HTTP leaf already backs a certificate-store entry",
+          );
+          assert.equal((await peer()).fingerprint256, previous.fingerprint256);
+          assert.ok(
+            isDeepStrictEqual(
+              custodyFor(previous, current.currentEnrollmentId),
+              outgoing,
+            ),
+            "Deferred HTTP changed outgoing native custody",
+          );
+          assert.equal(binding(), outgoingBinding);
+        },
+        removeOwnedFault: () => {
+          servedBeforeContinuation = listener.observations().served;
+          listener.setUnavailable(false);
+          clearCache();
+        },
+      });
+      assert.ok(
+        listener.observations().served > servedBeforeContinuation,
+        "Actual signed continuation must refetch the same owned CRL after HTTP503",
+      );
+      successful.jobId = deferredRecovery.continuationJobId;
+    }
     await jobFinished(successful.jobId);
     const row = (
       await fixture.pool.query(
@@ -469,9 +618,10 @@ async function qualifyHttpOnlyLeafCrl(c) {
     const journal = readEnrollmentJournal(configDir, successful.enrollmentId);
     assert.equal(journal.kind, "valid");
     assert.equal(journal.journal.jobId, successful.jobId);
-    assert.equal(
-      journal.journal.containerName,
-      buildEnrollmentContainerName(successful.enrollmentId),
+    assert.ok(
+      journal.journal.containerName ===
+        buildEnrollmentContainerName(successful.enrollmentId),
+      "HTTP leaf journal container ownership changed",
     );
     const request = native("owned-issued-request.ps1", [
       "-CommonName",
@@ -509,11 +659,14 @@ async function qualifyHttpOnlyLeafCrl(c) {
   let proof, httpIssued, repaired;
   try {
     await gate.scenario(
-      REQUIRED_SCENARIOS[0],
+      REQUIRED_SCENARIOS[2],
       async () => {
         attemptedPublication = true;
         applied = verifyPublication(publication("Apply"), expected, "Apply");
         listener.setVerifiedCrl(applied.crl, caBytes, authority.keySha256);
+        captureCache();
+        listener.setUnavailable(true);
+        clearCache();
         httpIssued = await performEnrollment(true);
         const restoredPublication = publication("Restore");
         verifyPublication(
@@ -526,7 +679,25 @@ async function qualifyHttpOnlyLeafCrl(c) {
       {
         evidenceLevel: "real-host",
         oracle:
-          "real public renewal with original CA signed HTTP-only leaf CDP, current claim/evidence and independent CA/CNG/IIS/trusted TLS",
+          "actual signed HTTP503 validation-deferred result, unaccepted CNG key/outgoing TLS preservation, then same-leaf signed continuation without another CA request",
+      },
+    );
+    await gate.scenario(
+      REQUIRED_SCENARIOS[0],
+      async () => {
+        assert.equal(
+          (await peer()).fingerprint256,
+          httpIssued.leaf.fingerprint256,
+        );
+        custody();
+        binding();
+        assert.equal(deferredRecovery.continuationJobId, httpIssued.jobId);
+        assert.equal(deferredRecovery.requestId, httpIssued.requestId);
+      },
+      {
+        evidenceLevel: "real-host",
+        oracle:
+          "actual public HTTP-only renewal installed by the current signed continuation, independently bound CA/CNG/IIS/trusted TLS",
       },
     );
     await gate.scenario(
@@ -534,11 +705,6 @@ async function qualifyHttpOnlyLeafCrl(c) {
       async () => {
         fs.writeFileSync(leafPath, leaf.raw, { flag: "wx" });
         fs.writeFileSync(caPath, caBytes, { flag: "wx" });
-        ps(
-          `$k=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('${cacheKey}');try{$s=@{exists=[bool]($k -and @($k.GetValueNames()) -contains 'ChainCacheResyncFiletime')};if($s.exists){$s.kind=$k.GetValueKind('ChainCacheResyncFiletime').ToString();if($s.kind -notin @('QWord','Binary')){throw 'Unsupported cache policy'};$s.value=$k.GetValue('ChainCacheResyncFiletime')};$s|Export-Clixml -LiteralPath '${q(cachePath)}' -NoClobber -Encoding UTF8}finally{if($k){$k.Dispose()}}`,
-        );
-        applyRestrictivePermissions(cachePath, { kind: "file" });
-        cache = ownedBytes(cachePath, 8192);
         const probe = () => {
           const actual = ownedBytes(program, 16 * 1024 * 1024);
           assert.ok(
@@ -629,7 +795,7 @@ async function qualifyHttpOnlyLeafCrl(c) {
           ocspQualified: false,
           caOutageQualified: false,
           signedCmcRenewalQualified: false,
-          installedAgentFaultRecoveryQualified: false,
+          deferredRecovery,
           ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
         });
       },

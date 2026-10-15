@@ -20,7 +20,22 @@ An immediate issued CMC response may omit RequestId from the API or journal.
 The independent native CA RequestId remains mandatory; reported IDs are compared
 when present without rewriting either persisted field.
 
-Original CA publication is restored before the availability fault. The owned
+The first public renewal is admitted while this exact endpoint returns HTTP503.
+Its actual failed authenticated result must preserve a durable
+`validation_deferred` leaf and generated, unaccepted protected CNG key. A real
+native private-key signature binds the key to the issued public leaf, while a
+complete native certificate-store reference scan, outgoing custody, binding
+and trusted TLS prove no acceptance. The listener's unavailable counter must
+advance during installed-agent execution. After HTTP200 is restored, a distinct
+signed continuation must install the identical CSR/key/leaf/native RequestId
+without another CA request, and the served counter must advance. Both result
+nonces, distinct claims and current-claim verification evidence are read back.
+Only poll eligibility uses the supported scheduler `now` input; native clocks
+and the persisted validation deadline remain actual and unchanged. This is not
+background timer qualification. The exact unique-URL cache entry is evicted and
+the resynchronization policy refreshed before each admission phase.
+
+Original CA publication is restored before the independent availability probes. The owned
 endpoint then returns the same signed CRL with HTTP 200, HTTP 503 without CRL
 bytes, and the original CRL with HTTP 200 again. Each asynchronous shipped native
 chain probe must actually contact the listener and return `valid`,
@@ -42,9 +57,10 @@ borrowed fixture custody.
 This covers HTTP endpoint availability for a real HTTP-only leaf CDP. It does
 not qualify OCSP, a CA outage, signed CMC renewal requests, or other HTTP clients.
 The outage probes independently invoke the shipped native chain helper over an
-already installed leaf. They do not qualify signed-agent `validation_deferred`
-continuation or installed-agent fault recovery during HTTP 503; the public proof
-requires `installedAgentFaultRecoveryQualified: false`.
+already installed leaf; the separate mandatory signed continuation composition
+supplies `installedAgentFaultRecoveryQualified: true` only after its actual
+failed result, native no-acceptance and same-leaf recovery checks pass. Neither
+path fabricates a chain verdict or qualifies a deployed background scheduler.
 Supporting DER, schema and source tests do not execute AD CS and do not count as
 native qualification. Actual domain-backed execution remains pending and belongs
 only to explicitly enabled manual AD CS qualification.

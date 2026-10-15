@@ -35,7 +35,7 @@ jobs:
   windows-e2e:
     if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.windows_server }}
-    timeout-minutes: 45
+    timeout-minutes: 51
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -162,13 +162,14 @@ jobs:
           $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $action = New-ScheduledTaskAction -Execute $powershellPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $env:GITHUB_WORKSPACE
           $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-          # Native test: 26min; producer: 28min. Leave three minutes for producer
+          # Native test: 32min; producer: 34min, including two additional genuine
+          # public renewal waits (180s each). Leave three minutes for producer
           # finalization before receipt timeout, then one minute before task termination.
-          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 32)
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 38)
           Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
           try {
             Start-ScheduledTask -TaskName $taskName
-            $deadline = [DateTime]::UtcNow.AddMinutes(31)
+            $deadline = [DateTime]::UtcNow.AddMinutes(37)
             while (!(Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 2 }
             if (!(Test-Path -LiteralPath $receipt)) { throw 'SYSTEM qualification exceeded its deadline' }
             if ((Get-Content -LiteralPath $receipt -Raw).Trim() -ne '0') { throw 'SYSTEM installed-agent qualification failed; inspect sanitized report' }

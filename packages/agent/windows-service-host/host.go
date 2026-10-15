@@ -86,11 +86,11 @@ func (h *agentHost) start() error {
 	cmd.Stdout = h.log.childWriter("stdout")
 	cmd.Stderr = h.log.childWriter("stderr")
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		// CREATE_NO_WINDOW gives the child its own dedicated (never
-		// visible) console rather than inheriting this host's - which,
-		// running as a Windows service, usually has none at all. Without
-		// an actual console object backing the child's process group,
-		// GenerateConsoleCtrlEvent below has nothing to deliver to.
+		// CREATE_NO_WINDOW requests a hidden console-subsystem launch;
+		// it does not itself allocate a console. Graceful delivery below
+		// depends on AttachConsole succeeding against the running child.
+		// The Windows mock-process regression checks actual SIGBREAK
+		// receipt; that is not a substitute for SCM/session-0 qualification.
 		// CREATE_NEW_PROCESS_GROUP makes the child the root of its own
 		// process group so the same event never also reaches this host.
 		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP,
@@ -198,13 +198,12 @@ func (h *agentHost) sendCtrlBreak(pid uint32) error {
 	// ERROR_INVALID_PARAMETER when not attached to anything is expected
 	// and harmless here.
 	_ = freeConsole()
-	// AttachConsole against a just-created child's auto-allocated console
+	// AttachConsole against a just-created child's console association
 	// is occasionally transiently unavailable (observed empirically as a
 	// spurious ERROR_INVALID_HANDLE/ERROR_ACCESS_DENIED immediately after
 	// a prior attach/detach cycle in the same process); a short bounded
-	// retry is the documented mitigation other implementations of this
-	// same technique use, rather than failing straight to a force-kill
-	// for what is usually a few-millisecond race.
+	// retry bounds that observed transient. Exhaustion remains a delivery
+	// failure; it never counts as a graceful signal or successful drain.
 	var attachErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attachErr = attachConsole(pid); attachErr == nil {

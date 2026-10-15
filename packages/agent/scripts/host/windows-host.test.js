@@ -63,6 +63,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
   const custodyCertificates = [];
   const keyUsageCases = [];
   try {
+    gate.report.nativeCredentialWeakAcl=await require("./credential-weak-acl-fixture").qualify({gate,workDir});
     const stateReadFixture = require("./state-read-refusal-fixture");
     gate.report.nativeStateReadRefusals = await stateReadFixture.qualifyStateReadRefusals({ gate, powershell, workDir });
     stateReadFixture.verifyProof(gate.report.nativeStateReadRefusals); gate.report.fixtureSources ||= [];
@@ -368,6 +369,8 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
     }
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
+      require("./iis-public-only-fixture").assertCleanupSafe(workDir);
+      require("./credential-weak-acl-fixture").assertCleanupSafe(workDir);
       require("./retention-ledger-read-refusal-fixture").assertCleanupSafe(workDir);
       require("./retention-interrupted-process").assertCleanupSafe(workDir);
       require("./enrollment-contention-fixture").assertCleanupSafe(workDir);
@@ -417,13 +420,14 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
       require("./orphan-journal-fixture").assertCleanupSafe(workDir);
       require("./journal-read-refusal-fixture").assertCleanupSafe(workDir);
       require("./retention-ledger-read-refusal-fixture").assertCleanupSafe(workDir);
+      require("./iis-public-only-fixture").assertCleanupSafe(workDir);
       fs.rmSync(workDir, { recursive: true, force: true });
       if (cleanupFailures.length) throw new AggregateError(cleanupFailures, "Host fixture cleanup failed");
     }, { evidenceLevel: "real-host", oracle: "certificate absence and certutil KSP enumeration" });
     // Add the actual current source pairs emitted by both new native fixtures.
     // Earlier fixtures append overlapping dependencies, so deduplicate only here
     // after all successful scenarios and owned cleanup have completed.
-    for (const definition of [require("./iis-client-settings-fixture"), require("./packaged-helper-runtime-fixture")]) {
+    for (const definition of [require("./iis-public-only-fixture"), require("./iis-client-settings-fixture"), require("./packaged-helper-runtime-fixture")]) {
       gate.report.fixtureSources ||= [];
       for (const file of definition.REQUIRED_SOURCES) {
         const sha256 = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex");
@@ -432,6 +436,6 @@ test("Windows real-host discovery and service-host qualification", { timeout: 24
         else gate.report.fixtureSources.push({ file, sha256 });
       }
     }
-    await gate.finish({ requiredScenarios: [...require("./orphan-journal-acl-fixture").SCENARIOS, "windows-retention-ledger-native-read-denied", "windows-retention-ledger-root-native-list-denied", "windows-retention-policy-168-expiry-wins", "windows-retention-policy-168-interrupted-delete", "windows-retention-policy-720-expiry-wins", "windows-retention-policy-720-interrupted-delete", "windows-adcs-v2-journal-native-read-denied","windows-adcs-journal-root-native-list-denied","windows-state-config-read-denied", "windows-state-credential-read-denied", "windows-state-signing-pin-read-denied", "windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-iis-client-revocation-policy-preservation", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-packaged-chain-runtime-protocol-refusal", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    await gate.finish({ requiredScenarios: [require("./credential-weak-acl-fixture").SCENARIO, ...require("./orphan-journal-acl-fixture").SCENARIOS, "windows-retention-ledger-native-read-denied", "windows-retention-ledger-root-native-list-denied", "windows-retention-policy-168-expiry-wins", "windows-retention-policy-168-interrupted-delete", "windows-retention-policy-720-expiry-wins", "windows-retention-policy-720-interrupted-delete", "windows-adcs-v2-journal-native-read-denied","windows-adcs-journal-root-native-list-denied","windows-state-config-read-denied", "windows-state-credential-read-denied", "windows-state-signing-pin-read-denied", "windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-public-only-association-refusal", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-iis-client-revocation-policy-preservation", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-packaged-chain-runtime-protocol-refusal", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

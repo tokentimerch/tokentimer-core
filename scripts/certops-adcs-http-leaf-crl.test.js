@@ -291,7 +291,13 @@ test("leaf CRL native proof requires every observation and refuses broader claim
     ocspQualified: false,
     caOutageQualified: false,
     signedCmcRenewalQualified: false,
-    installedAgentFaultRecoveryQualified: false,
+    deferredRecovery: {
+      originalJobId: "10000000-0000-4000-8000-000000000005",
+      originalClaimId: "10000000-0000-4000-8000-000000000006",
+      continuationJobId: "10000000-0000-4000-8000-000000000002",
+      continuationClaimId: "10000000-0000-4000-8000-000000000007",
+      requestId: 42,
+    },
     ...Object.fromEntries(runtime.FLAGS.map((flag) => [flag, true])),
   };
   assert.equal(runtime.verifyProof(proof), proof);
@@ -305,7 +311,6 @@ test("leaf CRL native proof requires every observation and refuses broader claim
     "ocspQualified",
     "caOutageQualified",
     "signedCmcRenewalQualified",
-    "installedAgentFaultRecoveryQualified",
   ])
     assert.throws(() => runtime.verifyProof({ ...proof, [flag]: true }));
   for (const value of [0, 4294967296, 1.5])
@@ -324,4 +329,17 @@ test("leaf CRL native proof requires every observation and refuses broader claim
     ["caRequestCounts", [10, 11, 13]],
   ])
     assert.throws(() => runtime.verifyProof({ ...proof, [field]: value }));
+  for (const patch of [
+    { requestId: 43 },
+    { originalJobId: proof.jobId },
+    { continuationJobId: proof.restoredJobId },
+    { originalClaimId: proof.deferredRecovery.continuationClaimId },
+    { rawContainer: "private" },
+  ])
+    assert.throws(() =>
+      runtime.verifyProof({
+        ...proof,
+        deferredRecovery: { ...proof.deferredRecovery, ...patch },
+      }),
+    );
 });

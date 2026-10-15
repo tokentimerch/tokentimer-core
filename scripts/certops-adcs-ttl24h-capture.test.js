@@ -40,3 +40,12 @@ test("capture remains a read-only observer with no fabricated execution proof", 
   assert.doesNotMatch(source, /(?:INSERT\s+INTO|UPDATE\s+certificate|DELETE\s+FROM|Set-Acl|New-SelfSignedCertificate|Start-Service|Stop-Service)/i);
   assert.ok(source.includes("configuredTimeoutSeconds: null")); assert.ok(source.includes("inspectMachineKeySurvivors")); assert.ok(source.includes("contract.verifyPreparedReceipt(result)")); assert.equal(typeof helper.verifyProof, "undefined");
 });
+
+ test("native CA RequestId is mandatory while immediate-issued reported IDs are optional", () => {
+  assert.equal(helper.verifyReportedRequestId(17, null, undefined), "17");
+  assert.equal(helper.verifyReportedRequestId("17", 17, "17"), "17");
+  for (const id of [null, undefined, 0, -1, 1.5, "", "017", "4294967296"])
+    assert.throws(() => helper.verifyReportedRequestId(id));
+  for (const id of [18, "", 0, "017"])
+    assert.throws(() => helper.verifyReportedRequestId(17, id));
+});

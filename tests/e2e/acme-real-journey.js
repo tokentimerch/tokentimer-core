@@ -39,6 +39,10 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   fs.rmSync(backgroundProofPath,{force:true});
   const stageProofPath = path.join(repoRoot,"qualification-results",`acme-stage-faults-${acmeKind === "certbot" ? "certbot" : "acmesh"}.json`);
   fs.rmSync(stageProofPath,{force:true});
+  const bulkReport=require("../../scripts/certops-acme-bulk-report");
+  const adoptionReport=require("../../scripts/certops-acme-native-adoption-report");
+  if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE)fs.rmSync(path.join(repoRoot,adoptionReport.SIDECAR),{force:true});
+  if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE)fs.rmSync(path.join(repoRoot,bulkReport.SIDECAR),{force:true});
   const commandRef = acmeKind === "certbot" ? "qualification-certbot" : "qualification-acmesh";
   let commandArgv = acmeKind === "certbot" ? ["certbot", "--no-verify-ssl", "--agree-tos", "--register-unsafely-without-email"] : ["bash", process.env.CERTOPS_LINUX_ACMESH, "--insecure", "--accountemail", "certops@example.test"];
   if (acmeKind === "acme.sh") assert.ok(path.isAbsolute(process.env.CERTOPS_LINUX_ACMESH || "") && fs.existsSync(process.env.CERTOPS_LINUX_ACMESH), "Pinned acme.sh executable required");
@@ -62,17 +66,20 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   const configDir = path.join(workDir, "agent");
   const discoveryDir=path.join(workDir,"discovery");
   let agent, certificateId, jobId, tlsServer, primaryError, publicSession, gateway, barrierDirectory;
+  let agentClosed=false;
   const ownedTlsSockets=new Set();
-  let stageCases, nativeConsole, nativeLifecycle, nativeDiscovery;
-  const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[];
+  let stageCases, nativeConsole, nativeLifecycle, nativeDiscovery, bulkProof, resultGateway;
+  const closedAgents=new WeakSet();
+  const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[], ownedBulkResources=[], ownedAdoptionResources=[], ownedRestartResources=[], ownedProfileResources=[], ownedLeaseResources=[];
   try {
   fs.mkdirSync(configDir, { mode: 0o700 });
   barrierDirectory=path.join(workDir,"command-barrier");fs.mkdirSync(barrierDirectory,{mode:0o700});
   commandArgv=[process.execPath,path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"),barrierDirectory,...commandArgv];
   const credentialsFile = path.join(configDir, "dns.json");
   fs.writeFileSync(credentialsFile, JSON.stringify({ baseUrl: dnsEndpoint, allowInsecureLocalHttp: true }), { mode: 0o600 });
+  if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE)resultGateway=await require("./helpers/certops-acme-result-outage").startResultOutageGateway({upstreamUrl:baseUrl});
   const config = {
-    serverUrl: baseUrl, agentId, allowInsecureLocalHttp: true,
+    serverUrl: resultGateway?.agentUrl || baseUrl, agentId, allowInsecureLocalHttp: true,
     pollIntervalMs: 500, heartbeatIntervalMs: 1000,
     declaredTargetSelectors: [domain], declaredCommandProfileNames: [commandRef],
     execution: { enabled: true, dryRun: false },
@@ -122,9 +129,16 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       nativeDiscovery=require("./helpers/certops-native-file-discovery").createRefusalFixture({workDir,discoveryDir,publicCertificate:fs.readFileSync(proxyCert)});
       nativeDiscovery.prepare();
     }
-    agent = spawn(process.execPath, [path.join(repoRoot, "packages/agent/bin/tokentimer-agent.js")], {
-      cwd: repoRoot, stdio: "ignore", env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}), TOKENTIMER_AGENT_CONFIG_DIR: configDir, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: plaintextToken, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID: String(token.id) },
+    const agentEntry=path.join(repoRoot,"packages/agent/bin/tokentimer-agent.js");
+    const startAgent=(bootstrap=false)=>{
+    agentClosed=false;
+    const started = spawn(process.execPath, [agentEntry], {
+      cwd: repoRoot, stdio: "ignore", env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}), TOKENTIMER_AGENT_CONFIG_DIR: configDir, ...(bootstrap?{TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: plaintextToken, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID: String(token.id)}:{}) },
     });
+    started.once("close",()=>{closedAgents.add(started);if(agent===started)agentClosed=true;});
+    agent=started;return started;
+    };
+    startAgent(true);
     if(nativeDiscovery)nativeDiscovery.observeAgent(agent);
     await waitUntil(async () => {
       assert.equal(agent.exitCode, null, "real agent process exited during registration");
@@ -374,7 +388,37 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind });
       fs.mkdirSync(path.dirname(reuseProofPath), { recursive: true }); fs.writeFileSync(reuseProofPath, JSON.stringify(proof), { mode: 0o600 });
     });
-    await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,waitUntil,verifyDnsCleanup,servedFingerprint});
+    if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
+      const bulk=require('./helpers/certops-acme-bulk-renewal');
+      await runScenario(bulk.SCENARIO,async()=>{
+        const proof=bulkProof=await bulk.qualifyBulk({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,configDir,workDir,requestedNames,domain,commandRef,caEndpoint,acmeKind,eabRef,ownedJobIds,ownedCertificateIds,ownedBulkResources,ownedWorkers,waitUntil,verifyNames,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions});
+        fs.writeFileSync(path.join(repoRoot,bulkReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+      });
+    }
+    if(process.env.CERTOPS_REPORT_SCOPE===adoptionReport.SCOPE){
+      const adoption=require('./helpers/certops-acme-native-adoption');
+      await runScenario(adoption.SCENARIO,async()=>{
+        const proof=await adoption.qualifyNativeAdoption({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedJobIds,ownedBulkResources,ownedAdoptionResources,ownedWorkers,waitUntil,verifyDnsCleanup,servedFingerprint,primaryTlsOptions:lifecycleTlsOptions});
+        fs.writeFileSync(path.join(repoRoot,adoptionReport.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+      });
+    }
+    if(resultGateway){
+      const outbox=require('./helpers/certops-acme-certificate-outbox');
+      fs.rmSync(path.join(repoRoot,outbox.SIDECAR),{force:true});
+      await runScenario(outbox.SCENARIO,async()=>{
+        const proof=await outbox.qualify({pool,workspaceId,agent,agentEntry,restartAgent:()=>startAgent(false),isAgentClosed:original=>closedAgents.has(original),configDir,workDir,certificateId,certPath,keyPath,domain,barrierDirectory,ownedJobIds,ownedRestartResources,waitUntil,publicSession,acmeKind,resultGateway,caGateway:gateway,servedFingerprint,verifyDnsCleanup});
+        fs.writeFileSync(path.join(repoRoot,outbox.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+      });
+    }
+    if(resultGateway){
+      const disabled=require('./helpers/certops-acme-disabled-profile');
+      fs.rmSync(path.join(repoRoot,disabled.SIDECAR),{force:true});
+      await runScenario(disabled.SCENARIO,async()=>{
+        const proof=await disabled.qualify({pool,workspaceId,agentId,publicSession,certificateId,certPath,keyPath,configDir,workDir,domain,acmeKind,bulkProof,ownedWorkers,ownedBulkResources,ownedProfileResources,ownedJobIds,waitUntil,servedFingerprint,verifyDnsCleanup,primaryTlsOptions:lifecycleTlsOptions});
+        fs.writeFileSync(path.join(repoRoot,disabled.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+      });
+    }
+    await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint});
     if (eabSecret) {
       const stored = await pool.query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1", [workspaceId]);
       const jobs = await pool.query("SELECT payload,result_metadata FROM certificate_jobs WHERE workspace_id=$1", [workspaceId]);
@@ -387,6 +431,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     // Every deletion remains behind the combined ownership barrier below.
     const cleanupErrors = [];
     const cleanup = async (action) => { try { await action(); } catch (error) { cleanupErrors.push(error); } };
+    for(const resource of ownedRestartResources)await cleanup(()=>resource.stopAndDrain());
+    for(const resource of ownedLeaseResources)await cleanup(()=>resource.stopAndDrain());
+    for(const resource of ownedProfileResources)await cleanup(()=>resource.close());
+    for(const resource of ownedAdoptionResources)await cleanup(()=>resource.close());
+    for(const resource of ownedBulkResources)await cleanup(()=>resource.close());
     for(const worker of ownedWorkers)await cleanup(()=>worker.stopAndDrain());
     for (const browser of ownedBrowserResources) await cleanup(() => browser.close());
     await cleanup(async () => { if (tlsServer) {for(const socket of ownedTlsSockets)socket.destroy();let closed=false;tlsServer.close(()=>{closed=true;});await waitUntil(()=>closed&&ownedTlsSockets.size===0,5000);} });
@@ -395,18 +444,29 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       try { await waitUntil(() => agent.exitCode !== null || agent.signalCode !== null, 5000); }
       catch { agent.kill("SIGKILL"); await waitUntil(() => agent.exitCode !== null || agent.signalCode !== null, 5000); }
     } });
+    await cleanup(async()=>{if(agent)await waitUntil(()=>agentClosed,5000);});
     await cleanup(async () => { if (gateway) await gateway.close(); });
+    await cleanup(async()=>{if(resultGateway)await resultGateway.close();});
     await cleanup(async()=>{if(nativeDiscovery){
       const proof=await nativeDiscovery.finishAfterAgentDrain();
       nativeDiscovery.resource.assertCleanupSafe();
       if(proof){const sidecar=path.join(repoRoot,"qualification-results/native-file-discovery-proof.json");fs.writeFileSync(sidecar,JSON.stringify(proof),{flag:"wx",mode:0o600});}
     }});
+    await cleanup(()=>{if(resultGateway)require("./helpers/certops-acme-certificate-outbox").assertCleanupSafe(workDir);});
+    await cleanup(()=>{if(ownedProfileResources.length)require("./helpers/certops-acme-disabled-profile").assertCleanupSafe(workDir);});
+    for(const resource of ownedProfileResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false);assert.equal(resource.hasOwnershipReceipt(),false,"Preserve unknown disabled-profile state");});
+    for(const resource of ownedRestartResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false);assert.equal(resource.hasOwnershipReceipt(),false,"Preserve unconfirmed original agent restart");});
     await cleanup(()=>require("./helpers/certops-acme-background-runner").assertCleanupSafe(workDir));
     for (const browser of ownedBrowserResources) await cleanup(() => {
       assert.equal(browser.hasLiveChild(), false, "Native console browser remains alive");
       assert.equal(browser.hasOwnershipReceipt(), false, "Preserve unresolved native console state");
       browser.assertCleanupSafe();
     });
+    for(const resource of ownedAdoptionResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false,'Owned adoption TLS remains live');assert.equal(resource.hasOwnershipReceipt(),false,'Preserve unresolved native adoption state');});
+    await cleanup(()=>{if(ownedAdoptionResources.length)require("./helpers/certops-acme-native-adoption").assertCleanupSafe(workDir);});
+    for(const resource of ownedBulkResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false,'Owned bulk TLS resource remains live');assert.equal(resource.hasOwnershipReceipt(),false,'Preserve unresolved native bulk state');});
+    for(const resource of ownedLeaseResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false,'Owned lease observer remains live');assert.equal(resource.hasOwnershipReceipt(),false,'Preserve unresolved lease command ownership');});
+    await cleanup(()=>{if(barrierDirectory)require("./helpers/certops-acme-lease-loss").assertCleanupSafe(barrierDirectory);});
     await cleanup(()=>{if(barrierDirectory){for(const entry of fs.readdirSync("/proc")){if(!/^\d+$/.test(entry))continue;let argv;try{argv=fs.readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0");}catch(error){if(["ENOENT","ESRCH","EACCES"].includes(error.code))continue;throw error;}assert.ok(!(argv.includes(path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"))&&argv.includes(barrierDirectory)),"Preserve records while an owned ACME command remains alive");}}});
     // Preserve native private material AND public ownership records if any
     // retained consumer/transport has not positively drained.

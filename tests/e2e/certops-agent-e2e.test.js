@@ -358,6 +358,7 @@ function claimEnvelope(agentId, maxJobs = 1) {
 
 async function cleanupSeededRows() {
   if (!pool || !seeded.workspaceId) return;
+  if(process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") require("./windows-real-journey").assertAllCleanupSafe();
   const ws = seeded.workspaceId;
   await pool.query(
     `DELETE FROM certificate_evidence WHERE workspace_id = $1`,
@@ -424,7 +425,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   if (process.env.CERTOPS_REAL_ACME_REQUIRED === "1") {
-    it("real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence", { timeout: 1200000 }, async (context) => {
+    it("real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence", { timeout: process.env.CERTOPS_REPORT_SCOPE === "real-agent-acme-filesystem" ? 1800000 : 1200000 }, async (context) => {
       assert.equal(dbAvailable, true, "real ACME requires migrated PostgreSQL");
       const runScenario = async (name, action) => { let failure; await context.test(name, async () => { try { await action(); } catch (error) { failure = error; throw error; } }); if (failure) throw failure; };
       await require("./acme-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, runScenario });
@@ -444,7 +445,7 @@ describe("CertOps agent surface E2E", () => {
     });
   }
   if (process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") {
-    it("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", { timeout: 1560000 }, async (t) => {
+    it("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", { timeout: process.env.CERTOPS_WINDOWS_FAILED_ROLLBACK_REQUIRED === "1" ? 1200000 : process.env.CERTOPS_WINDOWS_ALIVE_GRACE_REQUIRED === "1" ? 6000000 : process.env.CERTOPS_WINDOWS_STOP_OFFLINE_REQUIRED === "1" ? 2400000 : 1920000 }, async (t) => {
       assert.equal(dbAvailable, true, "Windows journey requires migrated PostgreSQL");
       await require("./windows-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, runNamedScenario: async (name, work) => { let proof; await t.test(name, async () => { proof = await work(); }); return proof; } });
     });

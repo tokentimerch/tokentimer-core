@@ -23,7 +23,8 @@ def fixture():
         "appliedPublicationSha256": "5" * 64, "caRequestCounts": [10, 11, 12],
         "nativeVerdicts": ["valid", "revocation_unknown", "valid"],
         "endpointStatusCodes": [200, 503, 200], "ocspQualified": False,
-        "caOutageQualified": False, "signedCmcRenewalQualified": False, "installedAgentFaultRecoveryQualified": False,
+        "caOutageQualified": False, "signedCmcRenewalQualified": False,
+        "deferredRecovery":{"originalJobId":"10000000-0000-4000-8000-000000000005","originalClaimId":"10000000-0000-4000-8000-000000000006","continuationJobId":"10000000-0000-4000-8000-000000000002","continuationClaimId":"10000000-0000-4000-8000-000000000007","requestId":42},
         **{key: True for key in PROOF.FLAGS},
     }
 
@@ -44,7 +45,7 @@ class HttpLeafCrlProjection(unittest.TestCase):
             for invalid in (False, 1):
                 with self.subTest(flag=key, invalid=invalid), self.assertRaises(ValueError):
                     PROOF.fields({**fixture(), key: invalid})
-        for key in ("ocspQualified", "caOutageQualified", "signedCmcRenewalQualified", "installedAgentFaultRecoveryQualified"):
+        for key in ("ocspQualified", "caOutageQualified", "signedCmcRenewalQualified"):
             with self.subTest(promotion=key), self.assertRaises(ValueError):
                 PROOF.fields({**fixture(), key: True})
 
@@ -57,6 +58,13 @@ class HttpLeafCrlProjection(unittest.TestCase):
             value = copy.deepcopy(fixture())
             value[key] = invalid
             with self.subTest(field=key, invalid=invalid), self.assertRaises(ValueError):
+                PROOF.fields(value)
+
+    def test_same_leaf_distinct_claim_continuation_is_required(self):
+        for patch in ({"requestId":43},{"requestId":True},{"originalJobId":fixture()["jobId"]},{"continuationJobId":fixture()["restoredJobId"]},{"originalClaimId":fixture()["deferredRecovery"]["continuationClaimId"]},{"rawContainer":"private"}):
+            value=copy.deepcopy(fixture())
+            value["deferredRecovery"].update(patch)
+            with self.subTest(patch=patch),self.assertRaises(ValueError):
                 PROOF.fields(value)
 
 

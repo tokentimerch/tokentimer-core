@@ -18,7 +18,7 @@ async function main() {
   fs.mkdirSync("qualification-results", { recursive: true });
   await withPebble(async (fixtureEnv) => {
     const report = `qualification-results/windows-real-${keyProfile}.jsonl`;
-    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 1680000, env: { ...process.env, ...fixtureEnv, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_WINDOWS_REQUIRED: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REPORT_SCOPE: scope } });
+    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 2040000, env: { ...process.env, ...fixtureEnv, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_WINDOWS_REQUIRED: "1", CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REPORT_SCOPE: scope } });
     assert.equal(result.status, 0, "Windows installed-agent journey failed");
     const adoption = JSON.parse(fs.readFileSync(`qualification-results/windows-adoption-${keyProfile}.json`, "utf8"));
     assert.equal(adoption.suite, "windows-adoption-retention-real");
@@ -54,9 +54,10 @@ async function main() {
       assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);
       require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(upgrade);
     }
-    verify(fs.readFileSync(report, "utf8"), [...required, require("../tests/e2e/helpers/certops-windows-multi-target-admission-refusal").SCENARIO, require("../tests/e2e/helpers/certops-windows-active-service-controls").SCENARIO, require("../tests/e2e/helpers/certops-windows-credential-refusal").SCENARIO, require("../tests/e2e/helpers/certops-windows-retention-config").SCENARIO, require("../tests/e2e/helpers/certops-windows-public-retirement").SCENARIO, require("../tests/e2e/helpers/certops-windows-config-encoding").SCENARIO, require("../tests/e2e/helpers/certops-windows-service-controls").SCENARIO, journey], "certops-agent-e2e.test.js", scope);
+    verify(fs.readFileSync(report, "utf8"), [...required, require("../tests/e2e/helpers/certops-windows-signing-pin-refusal").SCENARIO, require("../tests/e2e/helpers/certops-windows-installed-verify-rollback").SCENARIO, require("../tests/e2e/helpers/certops-windows-multi-target-admission-refusal").SCENARIO, require("../tests/e2e/helpers/certops-windows-active-service-controls").SCENARIO, require("../tests/e2e/helpers/certops-windows-credential-refusal").SCENARIO, require("../tests/e2e/helpers/certops-windows-retention-config").SCENARIO, require("../tests/e2e/helpers/certops-windows-public-retirement").SCENARIO, require("../tests/e2e/helpers/certops-windows-config-encoding").SCENARIO, require("../tests/e2e/helpers/certops-windows-service-controls").SCENARIO, journey], "certops-agent-e2e.test.js", scope);
     const journeyEvent=fs.readFileSync(report,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.name===journey);
     require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(journeyEvent.windowsPublicIssuance);
+    require("../tests/e2e/helpers/certops-windows-installed-verify-rollback").verifyProof(journeyEvent.nativeInstalledVerifyRollback);
     require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(journeyEvent.nativeInstalledPaths);
     require("../tests/e2e/helpers/certops-windows-multi-target-admission-refusal").verifyProof(journeyEvent.nativeWindowsMultiTargetAdmission);
     require("../tests/e2e/helpers/certops-windows-active-service-controls").verifyProof(journeyEvent.nativeInstalledActiveServiceControls);
@@ -64,6 +65,7 @@ async function main() {
     require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(journeyEvent.nativeInstalledConfigEncoding);
     require("../tests/e2e/helpers/certops-windows-public-retirement").verifyProof(journeyEvent.nativeInstalledPublicRetirement);
     require("../tests/e2e/helpers/certops-windows-retention-config").verifyProof(journeyEvent.nativeInstalledRetentionConfig);
+    require("../tests/e2e/helpers/certops-windows-signing-pin-refusal").verifyProof(journeyEvent.nativeInstalledSigningPinRefusal);
     require("../tests/e2e/helpers/certops-windows-credential-refusal").verifyProof(journeyEvent.nativeInstalledCredentialRefusal);
     require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(journeyEvent.nativeInstalledIisRefusal);
     require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(journeyEvent.nativeWindowsKeyReuseRefusal);

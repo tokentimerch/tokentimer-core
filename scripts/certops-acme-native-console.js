@@ -14,6 +14,19 @@ const report = require("./certops-acme-native-console-report");
 const ROOT = path.resolve(__dirname, "..");
 const REQUIRED_SOURCES = Object.freeze([
   ...new Set([
+    ...require("../tests/e2e/helpers/certops-acme-lease-loss").REQUIRED_SOURCES,
+    ...require("../tests/e2e/helpers/certops-acme-certificate-outbox").REQUIRED_SOURCES,
+    ...require("../tests/e2e/helpers/certops-acme-disabled-profile").REQUIRED_SOURCES,
+    "scripts/certops-acme-disabled-profile-report.js",
+    "scripts/certops_acme_disabled_profile_proof.py",
+    "scripts/certops-acme-certificate-outbox-report.js",
+    "scripts/certops_acme_certificate_outbox_proof.py",
+    ...require("../tests/e2e/helpers/certops-acme-native-adoption").REQUIRED_SOURCES,
+    "scripts/certops-acme-native-adoption-report.js",
+    "scripts/certops_acme_native_adoption_proof.py",
+    ...require("../tests/e2e/helpers/certops-acme-bulk-renewal").REQUIRED_SOURCES,
+    "scripts/certops-acme-bulk-report.js",
+    "scripts/certops_acme_bulk_proof.py",
     ...require("../tests/e2e/helpers/certops-acme-browser-console")
       .REQUIRED_SOURCES,
     ...require("../tests/e2e/helpers/certops-acme-stage-faults")

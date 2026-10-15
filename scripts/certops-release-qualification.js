@@ -135,8 +135,16 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-arm64-cng-runtime") require("./certops-arm64-runtime-proof").verifyRuntimeReport(artifact.report);
         if (slot.suite === "windows-two-unattended-renewals") require("../tests/e2e/helpers/certops-windows-two-renewals").verifyProof(artifact.report.nativeTwoRenewals);
         if (slot.suite === "windows-certificate-dry-run") require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(artifact.report.nativeCertificateDryRun);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/iis-public-only-fixture").verifyProof(artifact.report.nativeIisPublicOnly);
         if (slot.suite === "windows-host") require("./certops-native-key-survivor-proof").verifyProof(artifact.report.nativeKeySurvivors);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/cng-key-usage-proof").verifyProof(artifact.report.nativeKeyUsage);
+        if (slot.suite === "windows-installed-alive-grace-renewal") require("../tests/e2e/helpers/certops-windows-alive-grace-proof").verifyProof(artifact.report.nativeWindowsAliveGrace);
+        if (slot.suite === "windows-installed-failed-rollback-renewal") require("../tests/e2e/helpers/certops-windows-installed-failed-rollback").verifyProof(artifact.report.nativeInstalledFailedRollback);
+        if (["windows-installed-stop-offline-renewal","windows-installed-alive-grace-renewal","windows-installed-failed-rollback-renewal"].includes(slot.suite)) {
+          if(slot.suite === "windows-installed-stop-offline-renewal") require("../tests/e2e/helpers/certops-windows-stop-offline-proof").verifyProof(artifact.report.nativeWindowsStoppedOffline);
+          const env=artifact.report.qualificationEnvironment;
+          if(artifact.report.cleanup?.status!=="passed" || artifact.report.platform!=="win32" || artifact.report.architecture!=="x64" || env.osFamily!=="windows" || !["2022","2025"].includes(env.osVersion) || ![2,3].includes(env.productType) || env.identity!=="LocalSystem" || env.nativeLanguage!=="en-US" || env.measurement!=="native" || env.architecture!=="x64") throw new Error("Actual SYSTEM Server stopped/offline native environment and cleanup required");
+        }
         if (slot.suite === "windows-webhosting-retention") { if (artifact.report.cleanup?.status !== "passed") throw new Error("WebHosting owned cleanup incomplete"); require("../packages/agent/scripts/host/retention-webhosting-fixture").verifyProof(artifact.report.nativeWebHostingRetention); }
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/iis-client-settings-fixture").verifyProof(artifact.report.nativeHttpSysClientSettings);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/packaged-helper-runtime-fixture").verifyProof(artifact.report.nativePackagedChainRuntime);
@@ -149,6 +157,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           for (const hours of helper.POLICIES) { assert.equal(policies[String(hours)].configuredRetentionHours, hours); helper.verifyProof(policies[String(hours)]); }
         }
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/credential-weak-acl-fixture").verifyProof(artifact.report.nativeCredentialWeakAcl);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/state-read-refusal-fixture").verifyProof(artifact.report.nativeStateReadRefusals);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/journal-read-refusal-fixture").verifyProof(artifact.report.nativeJournalReadRefusals);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-read-refusal-fixture").verifyProof(artifact.report.nativeLedgerReadRefusals);
@@ -191,6 +200,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-template-required-attributes").verifyProof(artifact.report.nativeRequiredTemplateAttributes);
           require("../tests/e2e/helpers/certops-adcs-live-enroll-acl").verifyProof(artifact.report.nativeLiveEnrollAcl);
           require("../tests/e2e/helpers/certops-adcs-http-leaf-crl").verifyProof(artifact.report.nativeHttpOnlyLeafCrl);
+          require("../tests/e2e/helpers/certops-adcs-ocsp-proof").verifyProof(artifact.report.nativeOcspResponder);
+          require("../tests/e2e/helpers/certops-adcs-result-outbox").verifyProof(artifact.report.nativeAdcsResultOutbox);
           require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-cancel").verifyCrossProof(artifact.report.nativeBrowserCancel, artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-job-approval").verifyCrossProof(artifact.report.nativeBrowserJobApproval, artifact.report.nativeAdcsCapacity);
@@ -292,6 +303,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-acme-key-reuse").verifyProof(native[0].nativeAcmeKeyReuse);
           require("./certops-acme-stage-report").verifyForScope(native[0].nativeAcmeStageFaults,slot.suite);
           require("./certops-acme-background-report").verifyForScope(native[0].nativeAcmeBackgroundRenewals,native[0].nativeAcmeKeyReuse,slot.suite);
+          if(slot.suite==='real-agent-acme-filesystem'){const bulk=require('./certops-acme-bulk-report');bulk.verifyForScope(native[0].nativeAcmeBulkRenewal,slot.suite,native[0].qualificationEnvironment);bulk.verifyCrossJourney(native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeKeyReuse,native[0].nativeAcmeBackgroundRenewals);require("../tests/e2e/helpers/certops-acme-native-adoption").verifyAgainstBulk(native[0].nativeAcmeRenewalSetup,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-certificate-outbox").verifyAgainstJourney(native[0].nativeAcmeCertificateOutbox,native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeRenewalSetup);require("../tests/e2e/helpers/certops-acme-disabled-profile").verifyAgainstBulk(native[0].nativeAcmeDisabledProfile,native[0].nativeAcmeBulkRenewal);}
           if (native[0].nativeAcmeKeyReuse.client !== (slot.suite.includes("acmesh") ? "acme.sh" : "certbot")) throw new Error("ACME key reuse client scope mismatch");
         }
         if (slot.suite.startsWith("real-agent-windows-acme-iis/")) {
@@ -302,6 +314,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(native[0].nativeWindowsKeyReuseRefusal);
           require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(native[0].nativeInstalledIisRefusal);
           require("../tests/e2e/helpers/certops-windows-owned-process").verifyPublicProof(native[0].nativeInstalledCrash);
+          require("../tests/e2e/helpers/certops-windows-installed-verify-rollback").verifyProof(native[0].nativeInstalledVerifyRollback);
           require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(native[0].nativeInstalledPaths);
           require("../tests/e2e/helpers/certops-windows-multi-target-admission-refusal").verifyProof(native[0].nativeWindowsMultiTargetAdmission);
           require("../tests/e2e/helpers/certops-windows-active-service-controls").verifyProof(native[0].nativeInstalledActiveServiceControls);
@@ -309,6 +322,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(native[0].nativeInstalledConfigEncoding);
           require("../tests/e2e/helpers/certops-windows-public-retirement").verifyProof(native[0].nativeInstalledPublicRetirement);
           require("../tests/e2e/helpers/certops-windows-retention-config").verifyProof(native[0].nativeInstalledRetentionConfig);
+          require("../tests/e2e/helpers/certops-windows-signing-pin-refusal").verifyProof(native[0].nativeInstalledSigningPinRefusal);
           require("../tests/e2e/helpers/certops-windows-credential-refusal").verifyProof(native[0].nativeInstalledCredentialRefusal);
         }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];

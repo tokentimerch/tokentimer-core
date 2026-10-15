@@ -23,16 +23,18 @@ async function freePort() {
 async function servedThumbprint(port, servername, ca) {
   assert.equal(typeof ca,"string");assert.ok(ca.includes("-----BEGIN CERTIFICATE-----"),"Explicit fixture certificate trust is required");
   return new Promise((resolve, reject) => {
+    let thumbprint, failure;
     const socket = tls.connect({ host: "127.0.0.1", port, servername, ca, rejectUnauthorized: true }, () => {
       try {
         assert.equal(socket.authorized,true,"Independent TLS probe requires certificate authentication");
-        const certificate = socket.getPeerCertificate();
-        resolve(certificate.fingerprint.replace(/:/g, ""));
-      } catch(error) { reject(error); }
-      finally { socket.end(); }
+        thumbprint=socket.getPeerCertificate().fingerprint.replace(/:/g, "");
+      } catch(error) { failure=error; }
+      finally { socket.destroy(); }
     });
     socket.setTimeout(10000, () => socket.destroy(new Error("Independent TLS probe timeout")));
-    socket.once("error", reject);
+    socket.once("error", error=>{failure=error;socket.destroy();});
+    // Binding/key cleanup cannot race the fixture's own live TLS connection.
+    socket.once("close",()=>{if(failure)reject(failure);else if(thumbprint)resolve(thumbprint);else reject(new Error("Independent TLS probe closed before authentication"));});
   });
 }
 async function expectServedWithTrust(port, expected, servername, ca) {
@@ -162,6 +164,13 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     assert.equal(rollback.rolledBack, true, JSON.stringify(rollback));
     await expectServed(port, certificates[1].thumbprint, servername);
     if (nativeFlags) { assert.equal(readFlags(), originalFlags, "rollback must preserve native flags"); assert.equal(readHash(), certificates[1].thumbprint); }
+    if(!sni&&!nativeFlags){
+      const association=require("./iis-public-only-fixture"),discovery=require("../../src/windows-discovery");
+      const nativeEndpoint=async probePort=>{const listing=await discovery.listHttpSysBindings({});assert.equal(listing.ok,true,"Complete native endpoint inventory required");const rows=listing.bindings.filter(row=>row.keyedBy==="ipport"&&row.ipPort===`127.0.0.1:${probePort}`);assert.equal(rows.length,1,"Exact owned native endpoint required");return{nativeThumb:rows[0].thumbprint,nativeStore:rows[0].storeName};};
+      const readPrimary=async()=>{const iis=JSON.parse(powershell(`Import-Module WebAdministration;$s=Get-Website -Name '${site}' -ErrorAction Stop;$b=@(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {[string]$_.bindingInformation-ceq'127.0.0.1:${port}:'});if(!$s-or$b.Count-ne 1){throw 'Exact owned IP site required'};@{site=[string]$s.Name;id=[long]$s.Id;path=[string]$s.physicalPath;coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;store=[string]$b[0].certificateStoreName;thumb=([BitConverter]::ToString([byte[]]$b[0].certificateHash)).Replace('-','')}|ConvertTo-Json -Compress`));return{...iis,...await nativeEndpoint(port)};};
+      let sibling;
+      await gate.scenario(association.SCENARIO,async()=>{gate.report.nativeIisPublicOnly=await association.qualify({workDir,certificate:certificates[2],containerName:fs.readFileSync(path.join(directory,"certificate-2.key-receipt"),"utf8").trim(),predecessor:certificates[1],binding,powershell,readPrimary,assertPrimaryTls:()=>expectServed(port,certificates[1].thumbprint,servername),assertSibling:async()=>{await expectServed(unrelatedPort,certificates[0].thumbprint);const actual=await nativeEndpoint(unrelatedPort);assert.equal(actual.nativeThumb,certificates[0].thumbprint);assert.equal(String(actual.nativeStore).toLowerCase(),"my");if(sibling)assert.deepEqual(actual,sibling);else sibling=actual;}});},{evidenceLevel:"real-host",oracle:"Actual public-only My certificate/key absence, production refusal and rollback, independent native predecessor/sibling binding and trusted TLS, exact public-copy removal without key deletion"});
+    }
     const raw = run("netsh.exe", ["http", "show", "sslcert", endpoint]);
     assert.ok(raw.toLowerCase().includes(certificates[1].thumbprint.toLowerCase()));
     await expectServed(unrelatedPort, certificates[0].thumbprint);
@@ -250,6 +259,7 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
     }
   } catch (error) { primaryError = error; throw error; }
   finally {
+    require("./iis-public-only-fixture").assertCleanupSafe(workDir);
     // Preserve certificate keys still borrowed by an unresolved nested fixture.
     require("./ipv6-shadow-fixture").assertCleanupSafe(workDir);
     for (let i = 0; i < 4; i += 1) {
