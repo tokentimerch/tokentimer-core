@@ -68,6 +68,9 @@ function verify(report, expectedSha) {
     nativeQualification: "not-qualified",
   };
 }
+// The generic verifier calls verifyScope back while this CLI is executing.
+// Publish exports first so a direct invocation has the same contract as import.
+module.exports = { verify, verifyScope };
 if (require.main === module) {
   try {
     console.log(
@@ -85,4 +88,3 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-module.exports = { verify, verifyScope };

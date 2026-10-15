@@ -103,6 +103,27 @@ test("removing experimental scope or claiming native execution cannot promote a 
     assert.throws(() => verify(r, "a".repeat(40)));
   }
 });
+test("direct report CLI accepts complete supporting scope without a circular import", (t) => {
+  const report = fixture(t);
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "certops-distribution-cli-"),
+  );
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "report.json");
+  fs.writeFileSync(file, JSON.stringify(report));
+  const result = require("node:child_process").spawnSync(
+    process.execPath,
+    [path.join(__dirname, "certops-distribution-report.js"), file],
+    {
+      encoding: "utf8",
+      timeout: 10000,
+      env: { ...process.env, GITHUB_SHA: report.candidateSha },
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.equal(JSON.parse(result.stdout).nativeQualification, "not-qualified");
+});
 test("database fixtures and all three certificate cohorts remain mandatory", () => {
   assert.deepEqual(require("./certops-distribution-inventory").validate(), []);
 });
