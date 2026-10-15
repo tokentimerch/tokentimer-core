@@ -193,9 +193,25 @@ test("parent guard precedes every cleanup and proof is emitted only after succes
           guard,
         ),
   );
-  const successful = source.indexOf(
-    "if (!historicalSupportingOnly && !journeyFailure && errors.length === 0)",
-  );
+  const { createRequire } = require("node:module");
+  const espree = createRequire(require.resolve("../packages/agent/node_modules/eslint/package.json"))("espree");
+  const ast = espree.parse(source, { ecmaVersion: "latest", sourceType: "script", range: true });
+  const matches = [];
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    if (node.type === "IfStatement" && source.slice(...node.consequent.range).includes("serviceControls.verifyProof(serviceControlProof)")) matches.push(node);
+    for (const child of Object.values(node)) if (Array.isArray(child)) child.forEach(visit); else if (child && typeof child === "object") visit(child);
+  }
+  visit(ast);
+  assert.equal(matches.length, 1, "Single actual normal-scope proof publication gate required");
+  const successful = matches[0].range[0];
+  const expression = source.slice(...matches[0].test.range);
+  const baseline = { failedRollbackOnly: false, aliveGraceOnly: false, stoppedOfflineOnly: false, historicalSupportingOnly: false, journeyFailure: null, errors: [] };
+  const evaluate = (values) => require("node:vm").runInNewContext(expression, values);
+  assert.equal(evaluate(baseline), true);
+  for (const key of ["failedRollbackOnly", "aliveGraceOnly", "stoppedOfflineOnly", "historicalSupportingOnly"]) assert.equal(evaluate({ ...baseline, [key]: true }), false, key);
+  assert.equal(evaluate({ ...baseline, journeyFailure: new Error("controlled journey failure") }), false);
+  assert.equal(evaluate({ ...baseline, errors: [new Error("controlled cleanup failure")] }), false);
   assert.ok(successful > guard);
   assert.ok(
     source.indexOf("serviceControls.verifyProof(serviceControlProof)") >

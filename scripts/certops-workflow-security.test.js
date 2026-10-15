@@ -6,6 +6,23 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");const {validateWorkflow}=require("./certops-workflow-security");
 const baseline=()=>({name:"CertOps / Fixture",on:{workflow_dispatch:null},permissions:{contents:"read"},jobs:{qualify:{if:"github.ref == 'refs/heads/main'","timeout-minutes":30,steps:[{uses:"actions/checkout@"+"a".repeat(40),with:{"persist-credentials":false}},{run:"docker compose -f owned.yml up -d"},{if:"always()",run:"docker compose -f owned.yml down -v"},{if:"always()",uses:"actions/upload-artifact@"+"b".repeat(40),with:{path:"qualification-results/report.json"}}]}}});
+
+// CodeQL analysis is the explicit exception to the public PR execution policy.
+test("only CodeQL permits automatic pull-request analysis",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const directory=path.resolve(__dirname,"../.github/workflows");
+ for(const name of fs.readdirSync(directory).filter(value=>/\.ya?ml$/.test(value))){
+  const workflow=yaml.load(fs.readFileSync(path.join(directory,name),"utf8"));
+  const events=typeof workflow.on==="string"?[workflow.on]:Array.isArray(workflow.on)?workflow.on:Object.keys(workflow.on||{});
+  if(name==="codeql.yml"){
+   assert.deepEqual(workflow.on.pull_request,{branches:["main"]});
+   for(const event of ["pull_request_target","pull_request_review","pull_request_review_comment"]){assert.equal(events.includes(event),false,`${name}: forbidden ${event} trigger`);}
+   continue;
+  }
+  for(const event of ["pull_request","pull_request_target","pull_request_review","pull_request_review_comment"]){assert.equal(events.includes(event),false,`${name}: forbidden ${event} trigger`);}
+ }
+});
 test("trusted read-only qualification with failure cleanup passes",()=>assert.deepEqual(validateWorkflow(baseline()),[]));
 test("untrusted PR triggers, refs and write credentials fail",()=>{for(const alter of [w=>w.on={pull_request:{}},w=>w.jobs.qualify.if="always()",w=>w.permissions.contents="write",w=>w.jobs.qualify.steps[0].with["persist-credentials"]=true]){const w=baseline();alter(w);assert.ok(validateWorkflow(w).length);}});
 test("mutable actions, input injection and broad artifact paths fail",()=>{for(const alter of [w=>w.jobs.qualify.steps[0].uses="actions/checkout@main",w=>w.jobs.qualify.steps[1].run="echo ${{ inputs.payload }}",w=>w.jobs.qualify.steps[3].with.path=".",w=>w.jobs.qualify.steps[3].with.path="qualification-results/../../secret"]){const w=baseline();alter(w);assert.ok(validateWorkflow(w).length);}});

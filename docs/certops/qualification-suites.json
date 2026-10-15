@@ -59,7 +59,9 @@
       "windows-iis-ipv4-wildcard-shadow-rollback": "real-host",
       "windows-native-cng-journal-read-denied-protected": "real-host",
       "windows-native-cng-journal-root-list-denied-protected": "real-host",
-      "windows-retention-configured-real-timer-empty-ledger": "integration"
+      "windows-retention-configured-real-timer-empty-ledger": "integration",
+      "windows-credential-native-weak-acl-refusal": "real-host",
+      "windows-iis-public-only-association-refusal": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -334,7 +336,13 @@
       "adcs-real-same-certificate-cancel-then-renew": "real-host",
       "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host",
       "adcs-real-http-only-leaf-crl-public-renewal": "real-host",
-      "adcs-real-http-only-leaf-crl-endpoint-recovers": "real-host"
+      "adcs-real-http-only-leaf-crl-endpoint-recovers": "real-host",
+      "adcs-real-native-ocsp-delegated-signer": "real-host",
+      "adcs-real-ocsp-only-leaf-native-endpoint-recovery": "real-host",
+      "adcs-real-ocsp-original-publication-renewal-and-drain": "real-host",
+      "adcs-real-ocsp-deferred-same-leaf-signed-continuation": "real-host",
+      "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
+      "adcs-real-native-success-result-outbox-scm-restart": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -686,7 +694,13 @@
       "adcs-real-same-certificate-cancel-then-renew": "real-host",
       "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host",
       "adcs-real-http-only-leaf-crl-public-renewal": "real-host",
-      "adcs-real-http-only-leaf-crl-endpoint-recovers": "real-host"
+      "adcs-real-http-only-leaf-crl-endpoint-recovers": "real-host",
+      "adcs-real-native-ocsp-delegated-signer": "real-host",
+      "adcs-real-ocsp-only-leaf-native-endpoint-recovery": "real-host",
+      "adcs-real-ocsp-original-publication-renewal-and-drain": "real-host",
+      "adcs-real-ocsp-deferred-same-leaf-signed-continuation": "real-host",
+      "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
+      "adcs-real-native-success-result-outbox-scm-restart": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1336,6 +1350,15 @@
       "distribution-browser": "e2e",
       "distribution-privacy": "e2e",
       "distribution-transfer": "e2e"
+    },
+    "windows-installed-stop-offline-renewal": {
+      "windows-installed-active-stop-default-offline-recovery": "real-host"
+    },
+    "windows-installed-alive-grace-renewal": {
+      "windows-installed-alive-default-hard-grace-orphan-classification": "real-host"
+    },
+    "windows-installed-failed-rollback-renewal": {
+      "windows-installed-public-renewal-failed-rollback": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1887,6 +1910,27 @@
       "fresh-owned-lab",
       "explicit-candidate",
       "browser-runtime"
+    ],
+    "windows-installed-stop-offline-renewal": [
+      "windows",
+      "system",
+      "iis",
+      "api",
+      "nativeAcme"
+    ],
+    "windows-installed-alive-grace-renewal": [
+      "windows",
+      "system",
+      "iis",
+      "api",
+      "nativeAcme"
+    ],
+    "windows-installed-failed-rollback-renewal": [
+      "windows",
+      "system",
+      "iis",
+      "api",
+      "nativeAcme"
     ]
   },
   "suites": {
@@ -1948,7 +1992,9 @@
       "windows-iis-ipv4-wildcard-shadow-rollback",
       "windows-native-cng-journal-read-denied-protected",
       "windows-native-cng-journal-root-list-denied-protected",
-      "windows-retention-configured-real-timer-empty-ledger"
+      "windows-retention-configured-real-timer-empty-ledger",
+      "windows-credential-native-weak-acl-refusal",
+      "windows-iis-public-only-association-refusal"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -2223,7 +2269,13 @@
       "adcs-real-same-certificate-cancel-then-renew",
       "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal",
       "adcs-real-http-only-leaf-crl-public-renewal",
-      "adcs-real-http-only-leaf-crl-endpoint-recovers"
+      "adcs-real-http-only-leaf-crl-endpoint-recovers",
+      "adcs-real-native-ocsp-delegated-signer",
+      "adcs-real-ocsp-only-leaf-native-endpoint-recovery",
+      "adcs-real-ocsp-original-publication-renewal-and-drain",
+      "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
+      "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
+      "adcs-real-native-success-result-outbox-scm-restart"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2575,7 +2627,13 @@
       "adcs-real-same-certificate-cancel-then-renew",
       "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal",
       "adcs-real-http-only-leaf-crl-public-renewal",
-      "adcs-real-http-only-leaf-crl-endpoint-recovers"
+      "adcs-real-http-only-leaf-crl-endpoint-recovers",
+      "adcs-real-native-ocsp-delegated-signer",
+      "adcs-real-ocsp-only-leaf-native-endpoint-recovery",
+      "adcs-real-ocsp-original-publication-renewal-and-drain",
+      "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
+      "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
+      "adcs-real-native-success-result-outbox-scm-restart"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -3220,6 +3278,15 @@
       "distribution-browser",
       "distribution-privacy",
       "distribution-transfer"
+    ],
+    "windows-installed-stop-offline-renewal": [
+      "windows-installed-active-stop-default-offline-recovery"
+    ],
+    "windows-installed-alive-grace-renewal": [
+      "windows-installed-alive-default-hard-grace-orphan-classification"
+    ],
+    "windows-installed-failed-rollback-renewal": [
+      "windows-installed-public-renewal-failed-rollback"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3328,6 +3395,9 @@
     "linux-native-acme-browser-lifecycle": "e2e",
     "windows-webhosting-retention": "real-host",
     "linux-installed-file-discovery": "real-host",
-    "distribution-agent-lab": "e2e"
+    "distribution-agent-lab": "e2e",
+    "windows-installed-stop-offline-renewal": "real-host",
+    "windows-installed-alive-grace-renewal": "real-host",
+    "windows-installed-failed-rollback-renewal": "real-host"
   }
 }

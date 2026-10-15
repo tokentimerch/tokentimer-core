@@ -29,7 +29,10 @@ function validate(bounds, producerMs, testMs) {
   assert.ok(bounds.job >= bounds.task + 600000, "Job must permit setup and independent cleanup");
 }
 const producerMs = Number(producer.match(/timeout: (\d+)/)[1]);
-const testMs = Number(suite.match(/it\("real Windows:[^\n]+timeout: (\d+)/)[1]);
+const nativeExpression = suite.match(/it\("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", \{ timeout: ([^}]+) \}/);
+assert.ok(nativeExpression, "Actual Windows test timeout expression required");
+const testMs = require("node:vm").runInNewContext(nativeExpression[1], { process: { env: {} } });
+assert.equal(testMs, 32 * 60000, "Normal Windows deadline must not inherit a separate manual scope");
 test("Windows SYSTEM receipt/task bounds retain real producer cleanup headroom", () => validate(deadlines(workflow), producerMs, testMs));
 test("premature task, receipt and job deadlines fail the native wiring invariant", () => {
   const valid = deadlines(workflow);

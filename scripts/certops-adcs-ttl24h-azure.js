@@ -938,7 +938,8 @@ async function handoff() {
   return value;
 }
 
-function readCaSnapshot(original, lease, freshRequestId, execute) {
+function readCaSnapshot(original, lease, freshRequestId, execute, freshFingerprint) {
+  if (freshFingerprint != null) assert.match(freshFingerprint, /^[a-f0-9]{64}$/);
   verifyOriginal(original);
   contract.verifyLease(lease);
   const nonce = crypto.randomBytes(32).toString("hex"),
@@ -968,7 +969,7 @@ function readCaSnapshot(original, lease, freshRequestId, execute) {
   try {
     receipt = execute(`${identity}# CERTOPS_CA_SNAPSHOT_CREATE
 if(Test-Path -LiteralPath '${directory}'){throw 'Snapshot directory already exists'};$ancestor=Get-Item -LiteralPath 'C:\Windows\Temp';while($ancestor){if(!$ancestor.PSIsContainer-or($ancestor.Attributes-band[IO.FileAttributes]::ReparsePoint)){throw 'Snapshot ancestor refused'};$ancestor=$ancestor.Parent};$null=New-Item -ItemType Directory -Path '${directory}';$acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtection($true,$false);$sid=[Security.Principal.SecurityIdentifier]::new('S-1-5-18');$acl.SetOwner($sid);$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'));[IO.Directory]::SetAccessControl('${directory}',$acl);
-$raw=& {${source}} -RunId '${p.run}' -InstalledRequestId ${p.predecessor.requestId} -DeferredRequestId ${p.validation.requestId} ${freshRequestId ? `-FreshRequestId ${freshRequestId}` : ""};$b=[Text.Encoding]::UTF8.GetBytes(($raw-join[Environment]::NewLine));if($b.Length-lt 1-or$b.Length-gt 65536){throw 'Public CA snapshot bound'};$stream=[IO.File]::Open('${file}',[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read);try{$stream.Write($b,0,$b.Length);$stream.Flush($true)}finally{$stream.Dispose()};$o=@{length=$b.Length;sha256=([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b))).Replace('-','').ToLowerInvariant();fileIdentity=(Get-ExactIdentity '${file}');directoryIdentity=(Get-ExactIdentity '${directory}')};${marker}`);
+$raw=& {${source}} -RunId '${p.run}' -InstalledRequestId ${p.predecessor.requestId} -DeferredRequestId ${p.validation.requestId} ${freshRequestId ? `-FreshRequestId ${freshRequestId}` : ""} ${freshFingerprint ? `-FreshFingerprintSha256 ${freshFingerprint}` : ""};$b=[Text.Encoding]::UTF8.GetBytes(($raw-join[Environment]::NewLine));if($b.Length-lt 1-or$b.Length-gt 65536){throw 'Public CA snapshot bound'};$stream=[IO.File]::Open('${file}',[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read);try{$stream.Write($b,0,$b.Length);$stream.Flush($true)}finally{$stream.Dispose()};$o=@{length=$b.Length;sha256=([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b))).Replace('-','').ToLowerInvariant();fileIdentity=(Get-ExactIdentity '${file}');directoryIdentity=(Get-ExactIdentity '${directory}')};${marker}`);
     exact(receipt, ["length", "sha256", "fileIdentity", "directoryIdentity"]);
     assert.ok(
       Number.isInteger(receipt.length) &&
@@ -993,7 +994,7 @@ if((Get-ExactIdentity '${file}')-cne '${receipt.fileIdentity}'-or(Get-ExactIdent
     }
   }
 }
-function caObservation(original, lease, freshRequestId) {
+function caObservation(original, lease, freshRequestId, freshFingerprint) {
   const target = original.infrastructureOwnership.find(
     (row) => row.name === "domain-ca",
   );
@@ -1032,9 +1033,23 @@ function caObservation(original, lease, freshRequestId) {
     const bytes = Buffer.from(matches[0][1], "base64");
     assert.ok(bytes.length > 0 && bytes.length <= 2048);
     return JSON.parse(bytes);
-  });
+  }, freshFingerprint);
 }
 
+function resolveFreshRequestId(requests, fresh) {
+  assert.ok(Array.isArray(requests) && requests.length === 3);
+  assert.match(fresh.fingerprints[2], /^[a-f0-9]{64}$/);
+  const matched = requests.filter(row => {
+    assert.ok(typeof row.certificateB64 === "string" && row.certificateB64.length <= 90000);
+    return sha(new crypto.X509Certificate(Buffer.from(row.certificateB64, "base64")).raw) === fresh.fingerprints[2];
+  });
+  assert.equal(matched.length, 1, "Exact fresh native CA leaf required");
+  const id = matched[0].requestId;
+  assert.match(id, /^[1-9][0-9]{0,9}$/); assert.ok(Number(id) <= 0xffffffff);
+  if (fresh.requestIds[2] != null) assert.equal(fresh.requestIds[2], id);
+  assert.ok(!fresh.requestIds.slice(0, 2).includes(id), "Fresh native CA ID must be distinct");
+  return id;
+}
 function verifyCaPublic(value, prepared, fresh) {
   contract.verifyPreparedReceipt(prepared);
   exact(value, [
@@ -1055,7 +1070,7 @@ function verifyCaPublic(value, prepared, fresh) {
   const ids = [
       prepared.predecessor.requestId,
       prepared.validation.requestId,
-      ...(fresh ? [fresh.requestIds[2]] : []),
+      ...(fresh ? [resolveFreshRequestId(value.requests, fresh)] : []),
     ],
     fingerprints = [
       prepared.predecessor.fingerprint,
@@ -1559,13 +1574,14 @@ function finalizeCampaign(original, handoff, references, finalizer) {
   );
   const facts = nativeResult.nativeFacts,
     postCa = verifyCaPublic(
-      caObservation(original, lease, facts.requestIds[2]),
+      caObservation(original, lease, facts.requestIds[2], facts.fingerprints[2]),
       original.publicPreparation,
       facts,
     );
   assert.equal(postCa.caKeySha256, preCa.caKeySha256);
   const proof = {
     ...facts,
+    requestIds: postCa.requestIds,
     caRequestCounts: [
       original.publicPreparation.caRequestCounts.before,
       original.publicPreparation.caRequestCounts.installed,
@@ -1772,6 +1788,7 @@ async function scan(mode) {
   if (failures) throw Error("Some owned ADCS TTL campaigns require attention");
 }
 module.exports = {
+  resolveFreshRequestId,
   scan,
   resumeControl,
   qualificationReport,

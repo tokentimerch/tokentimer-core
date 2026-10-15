@@ -31,13 +31,22 @@ import certops_daemon_coordinator_proof as daemon_coordinator_proof
 import certops_daemon_served_leaf_proof as daemon_served_leaf_proof
 import certops_acme_stage_proof as acme_stage_proof
 import certops_acme_background_proof as acme_background_proof
+import certops_acme_bulk_proof as acme_bulk_proof
+import certops_acme_native_adoption_proof as acme_native_adoption_proof
+import certops_acme_certificate_outbox_proof as acme_certificate_outbox_proof
+import certops_acme_disabled_profile_proof as acme_disabled_profile_proof
 import certops_adcs_live_enroll_acl_proof as live_enroll_acl_proof
+import certops_adcs_result_outbox_proof as adcs_result_outbox_proof
 import certops_adcs_http_crl_proof as http_crl_proof
 import certops_adcs_http_leaf_crl_proof as http_leaf_crl_proof
+import certops_adcs_ocsp_proof as ocsp_proof
 import certops_acme_native_console_proof as acme_native_console_proof
 import certops_dns_resolver_views_proof as dns_resolver_views_proof
 import certops_acme_browser_lifecycle_proof as acme_browser_lifecycle_proof
 import certops_linux_installed_discovery_proof as linux_installed_discovery_proof
+import certops_windows_stop_offline_proof as windows_stop_offline_proof
+import certops_windows_alive_grace_proof as windows_alive_grace_proof
+import certops_windows_failed_rollback_proof as windows_failed_rollback_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -47,7 +56,7 @@ WORKFLOWS = {
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
         "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml", "certops-windows-arm64-agent.yml",
-        "certops-windows-fixed-root.yml", "certops-windows-webhosting-retention.yml",
+        "certops-windows-fixed-root.yml", "certops-windows-webhosting-retention.yml", "certops-windows-stop-offline.yml", "certops-windows-alive-grace.yml",
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
         "certops-renewal-alert-qualification.yml",
@@ -656,6 +665,21 @@ def browser_abandon_fields(proof):
     return result
 
 
+def verify_alive_grace_workflow(report, workflow):
+    if isinstance(report, dict) and report.get("suite") == "windows-installed-alive-grace-renewal" and workflow != ".github/workflows/certops-windows-alive-grace.yml":
+        raise ValueError("Alive/default-grace report requires its dedicated native workflow")
+
+
+def verify_failed_rollback_workflow(report, workflow):
+    if isinstance(report, dict) and report.get("suite") == "windows-installed-failed-rollback-renewal" and workflow != ".github/workflows/certops-windows-failed-rollback.yml":
+        raise ValueError("Installed failed-rollback report requires its dedicated native workflow")
+
+
+def verify_stopped_offline_workflow(report, workflow):
+    if isinstance(report, dict) and report.get("suite") == "windows-installed-stop-offline-renewal" and workflow != ".github/workflows/certops-windows-stop-offline.yml":
+        raise ValueError("Stopped/offline report requires its dedicated native workflow")
+
+
 def verify_webhosting_retention_workflow(report, workflow):
     if isinstance(report, dict) and report.get("suite") == "windows-webhosting-retention" and workflow != ".github/workflows/certops-windows-webhosting-retention.yml":
         raise ValueError("WebHosting retention requires its dedicated hosted workflow")
@@ -853,6 +877,17 @@ def configured_retention_timer_fields(proof):
     return {**expected,"waitedMonotonicMs":proof["waitedMonotonicMs"]}
 
 
+def signing_pin_refusal_fields(event):
+    """Corrupt present-pin startup evidence never qualifies unsigned registration."""
+    if (not isinstance(event.get("scope"),str) or not event["scope"].startswith("real-agent-windows-acme-iis/") or event.get("type")!="test:pass" or event.get("name")!="real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"):
+        return {}
+    p=event.get("nativeInstalledSigningPinRefusal")
+    flags=['twoActualSystemPinFailures','freshStoppedServiceForEach','configurationAndCredentialPreserved','nativeCngAndBindingPreserved','trustedTlsPreserved','noNewAgentOrJob','exactOriginalPinRestored','actualRepairedSystemChild','freshAuthenticatedHeartbeat','ownedPinGuardCleared']
+    if (not isinstance(p,dict) or p.get("scope")!="installed-system-corrupt-signing-pin-startup-refusal" or p.get("pins")!=["malformed-pin-json","invalid-pin-shape"] or type(p.get("startupFailureCount")) is not int or p["startupFailureCount"]!=2 or p.get("missingPinQualified") is not False or p.get("inFlightMutationQualified") is not False or any(p.get(k) is not True for k in flags)):
+        raise ValueError("Missing installed corrupt signing-pin refusals")
+    return {"nativeInstalledSigningPinRefusal":{"scope":p["scope"],"pins":list(p["pins"]),"startupFailureCount":2,"missingPinQualified":False,"inFlightMutationQualified":False,**dict.fromkeys(flags,True)}}
+
+
 def credential_refusal_fields(event):
     """Actual installed credential startup refusals and exact repair; no secrets."""
     if (not isinstance(event.get("scope"),str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
@@ -879,6 +914,49 @@ def config_encoding_fields(event):
             or type(proof.get("startupFailureCount")) is not int or proof["startupFailureCount"]!=3 or proof.get("encodings")!=encodings or any(proof.get(flag) is not True for flag in flags)):
         raise ValueError("Missing actual installed configuration encoding refusals")
     return {"nativeInstalledConfigEncoding":{"scope":proof["scope"],"encodings":list(encodings),"startupFailureCount":3,**dict.fromkeys(flags,True)}}
+
+
+def installed_verify_rollback_fields(event):
+    """Only closed, bounded actual installed-job rollback facts survive collection."""
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    p=event.get("nativeInstalledVerifyRollback")
+    flags=['originalNativeSniAndTrustedTls','exactOwnedShadowAndSiblingAdmission','shadowInitiallyServedSamePredecessor','actualPublicSignedCurrentClaim','actualCaLeafAndProtectedCngAccepted','claimBoundVerifyFailureAndRollbackEvidence','nativePredecessorBindingRestored','predecessorKeyAndTrustedTlsPreserved','siblingBindingAndTrustedTlsPreserved','exactShadowRemovedBeforeRetry','freshPublicSignedRetrySucceeded','freshLeafSpkiProtectedKeyAndTrustedTls','profileAndProtectedStatePreserved','failedAcceptedLeafOwnershipRecorded','ownedEndpointCleanupCompleted']
+    fixed={"scope":"installed-public-renewal-native-shadow-verify-failure-rollback-and-retry","failedJobStatus":"failed","failureCode":"VERIFY_FAILED","rolledBack":True,"retryJobStatus":"succeeded","bindFailureQualified":False,"rollbackFailureQualified":False,"expiryCleanupQualified":False,"transientNewBindingObservationQualified":False,"appIdPreservationQualified":False}
+    if not isinstance(p,dict) or any(type(p.get(k)) is not type(v) or p[k]!=v for k,v in fixed.items()) or any(p.get(k) is not True for k in flags):
+        raise ValueError("Incomplete installed public verification rollback")
+    uid=lambda v:isinstance(v,str) and re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}",v) is not None
+    if not uid(p.get("certificateId")):
+        raise ValueError("Missing managed certificate identity")
+    for k in ("jobIds","claimIds","fingerprints","spkiFingerprints"):
+        values=p.get(k);count=2 if k in ("jobIds","claimIds") else 3
+        if not isinstance(values,list) or len(values)!=count or any(not (uid(v) if count==2 else isinstance(v,str) and re.fullmatch(r"[a-f0-9]{64}",v)) for v in values) or len(set(values))!=count:
+            raise ValueError("Invalid installed rollback measured identities")
+    return {"nativeInstalledVerifyRollback":{**fixed,"certificateId":p["certificateId"],**{k:list(p[k]) for k in ("jobIds","claimIds","fingerprints","spkiFingerprints")},**dict.fromkeys(flags,True)}}
+
+
+def iis_public_only_fields(proof):
+    expected={"scope":'native-iis-public-only-certificate-association-refusal',"installedSignedJobQualified":False}
+    flags=['actualPublicOnlyMyCertificate', 'originalNativeKeyAbsent', 'actualProductionDeploymentRefused', 'actualRollbackSucceeded', 'predecessorBindingAndTrustedTlsPreserved', 'unrelatedBindingAndTrustedTlsPreserved', 'exactOwnedPublicCopyRemoved']
+    if (not isinstance(proof,dict) or any(proof.get(k)!=v or type(proof.get(k)) is not type(v) for k,v in expected.items())
+            or any(proof.get(k) is not True for k in flags) or proof.get("refusalCode") not in ("BIND_FAILED","VERIFY_FAILED")):
+        raise ValueError("Actual public-only native association refusal and restoration required")
+    for k in ("candidateFingerprint","predecessorFingerprint"):
+        if not isinstance(proof.get(k),str) or not re.fullmatch(r"[a-f0-9]{64}",proof[k]):
+            raise ValueError("Actual native certificate fingerprints required")
+    if proof["candidateFingerprint"]==proof["predecessorFingerprint"]:
+        raise ValueError("Different public-only candidate required")
+    return {**expected,"refusalCode":proof["refusalCode"],"candidateFingerprint":proof["candidateFingerprint"],"predecessorFingerprint":proof["predecessorFingerprint"],**{k:True for k in flags}}
+
+
+def credential_weak_acl_fields(p):
+    """Supporting readable-but-untrusted ACL evidence, never an installed pass."""
+    flags=['actualOriginalCredentialReadable','nativeOriginalHandleAndIdentity','actualExplicitUntrustedReadAce','protectedDaclRemainedReadable','actualProductionAclRefusal','credentialBytesAndIdentityUnchanged','exactOriginalDaclRestored','productionCredentialReaderRecovered','containedHolderDrained','ownedTemporaryStateRemoved']
+    false_flags=("installedServiceStartupQualified","nativeCertificateQualified","untrustedProcessReadQualified")
+    if not isinstance(p,dict) or p.get("scope")!="native-public-control-credential-weak-acl-refusal" or any(p.get(k) is not True for k in flags) or any(p.get(k) is not False for k in false_flags):
+        raise ValueError("Incomplete native weak credential ACL refusal")
+    return {"scope":p["scope"],**dict.fromkeys(flags,True),**dict.fromkeys(false_flags,False)}
 
 
 def multi_target_admission_fields(event):
@@ -1277,11 +1355,18 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "windows-installed-alive-grace-renewal":
+            result["nativeWindowsAliveGrace"] = windows_alive_grace_proof.fields(value)
+        if value.get("suite") == "windows-installed-failed-rollback-renewal":
+            result["nativeInstalledFailedRollback"] = windows_failed_rollback_proof.fields(value)
+        if value.get("suite") == "windows-installed-stop-offline-renewal":
+            result["nativeWindowsStoppedOffline"] = windows_stop_offline_proof.fields(value)
         if value.get("suite") == "windows-webhosting-retention":
             if value.get("cleanup", {}).get("status") != "passed":
                 raise ValueError("WebHosting owned cleanup incomplete")
             result["nativeWebHostingRetention"] = webhosting_retention_fields(value.get("nativeWebHostingRetention"))
         if value.get("suite") == "windows-host":
+            result["nativeIisPublicOnly"] = iis_public_only_fields(value.get("nativeIisPublicOnly"))
             runtime = value.get("nativePackagedChainRuntime")
             runtime_flags = ("candidateHelperDigestMatched", "literalUnicodeSpaceBracketPath", "defaultPackagedResolverUsed", "nativeMetadataPositiveBeforeFault", "actualCandidateWrongProtocolPeUsed", "realBridgeRefusedWrongProtocol", "ownedChildClosedBeforeRestore", "exactOriginalFileIdentityRestored", "nativeMetadataPositiveAfterRestore")
             if (not isinstance(runtime, dict) or runtime.get("scope") != "extracted-candidate-native-chain-metadata-path-and-protocol-refusal"
@@ -1341,6 +1426,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Incomplete native retention reference guard evidence")
             result["nativeRetentionReferences"] = {**dict.fromkeys(reference_fields, True), "scope": reference_scope, "elapsed24HourQualified": False}
             state_fields = ("threeReadablePositiveControls", "threeActualNativeReadDenials", "productionReadersRefused", "exactFileIdentityAndBytesPreserved", "exactAclRestored", "allReadersRecovered", "ownedTemporaryStateRemoved")
+            result["nativeCredentialWeakAcl"]=credential_weak_acl_fields(value.get("nativeCredentialWeakAcl"))
             state_read = value.get("nativeStateReadRefusals")
             state_scope = "native-temporary-state-read-denials-production-readers"
             if (not isinstance(state_read, dict) or state_read.get("scope") != state_scope
@@ -1486,6 +1572,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeRequiredTemplateAttributes"] = required_template_attribute_fields(value.get("nativeRequiredTemplateAttributes"))
             result["nativeLiveEnrollAcl"] = live_enroll_acl_proof.fields(value.get("nativeLiveEnrollAcl"))
             result["nativeHttpOnlyLeafCrl"] = http_leaf_crl_proof.fields(value.get("nativeHttpOnlyLeafCrl"))
+            result["nativeOcspResponder"] = ocsp_proof.fields(value.get("nativeOcspResponder"))
+            result["nativeAdcsResultOutbox"] = adcs_result_outbox_proof.fields(value.get("nativeAdcsResultOutbox"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
             result["nativeBrowserAdminBoundary"] = browser_admin_boundary_fields(value.get("nativeBrowserAdminBoundary"))
@@ -1875,14 +1963,18 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                  **acme_key_reuse_fields(event),
                  **acme_stage_proof.fields(event),
                  **acme_background_proof.event_fields(event),
+                 **acme_bulk_proof.fields(event),
+                 **acme_native_adoption_proof.fields(event),
+                 **acme_certificate_outbox_proof.fields(event),
+                 **acme_disabled_profile_proof.fields(event),
                  **installed_handoff_fields(event),
                  **windows_key_reuse_refusal_fields(event),
                  **installed_iis_refusal_fields(event),
                  **installed_crash_fields(event),
                  **installed_paths_fields(event),
-                 **multi_target_admission_fields(event), **active_service_controls_fields(event), **service_controls_fields(event),
+                 **installed_verify_rollback_fields(event), **multi_target_admission_fields(event), **active_service_controls_fields(event), **service_controls_fields(event),
                  **config_encoding_fields(event),
-                 **credential_refusal_fields(event),
+                 **signing_pin_refusal_fields(event), **credential_refusal_fields(event),
                  **retention_config_fields(event),
                  **public_retirement_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
@@ -2157,9 +2249,13 @@ def main(arguments=()):
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
                     verify_webhosting_retention_workflow(report, run.get("path"))
+                    verify_alive_grace_workflow(report, run.get("path"))
+                    verify_failed_rollback_workflow(report, run.get("path"))
+                    verify_stopped_offline_workflow(report, run.get("path"))
                     acme_native_console_proof.verify_workflow(report, run.get("path"))
                     acme_browser_lifecycle_proof.verify_workflow(report, run.get("path"))
                     linux_installed_discovery_proof.verify_workflow(report, run.get("path"))
+                    acme_bulk_proof.verify_workflow(report, run.get("path"))
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"

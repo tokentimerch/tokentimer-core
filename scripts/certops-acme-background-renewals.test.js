@@ -214,6 +214,12 @@ test("parent drains independent consumers but preserves records on worker or bro
   assert.ok(start > 20 && end > start);
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
   const names = [
+    "ownedRestartResources",
+    "resultGateway",
+    "ownedLeaseResources",
+    "ownedBulkResources",
+    "ownedAdoptionResources",
+    "ownedProfileResources",
     "ownedWorkers",
     "ownedBrowserResources",
     "nativeDiscovery",
@@ -221,6 +227,7 @@ test("parent drains independent consumers but preserves records on worker or bro
     "tlsServer",
     "ownedTlsSockets",
     "agent",
+    "agentClosed",
     "gateway",
     "pool",
     "workspaceId",
@@ -245,9 +252,15 @@ test("parent drains independent consumers but preserves records on worker or bro
     { worker: true, browser: true, closeFails: false },
     { worker: false, browser: false, closeFails: true },
     { worker: false, browser: false, closeFails: false, discovery: true },
+    { worker:false,browser:false,closeFails:false,bulk:true },
+    { worker:false,browser:false,closeFails:false,adoption:true },
+    { worker:false,browser:false,closeFails:false,restart:true },
+    { worker:false,browser:false,closeFails:false,profile:true },
+    { worker:false,browser:false,closeFails:false,lease:true },
+    { worker:false,browser:false,closeFails:false,agentClose:false },
   ]) {
     const unresolved =
-      state.worker || state.browser || state.closeFails || state.discovery;
+      state.worker || state.browser || state.closeFails || state.discovery || state.bulk || state.adoption || state.profile || state.restart || state.lease || state.agentClose===false;
     const calls = [];
     const agent = {
       exitCode: null,
@@ -286,6 +299,12 @@ test("parent drains independent consumers but preserves records on worker or bro
       },
     };
     const values = [
+      [{async stopAndDrain(){calls.push("restart-drain");},hasLiveResource:()=>false,hasOwnershipReceipt:()=>Boolean(state.restart)}],
+      null,
+      [{async stopAndDrain(){calls.push("lease-drain");},hasLiveResource:()=>false,hasOwnershipReceipt:()=>Boolean(state.lease)}],
+      [{async close(){calls.push("bulk-close");},hasLiveResource:()=>false,hasOwnershipReceipt:()=>Boolean(state.bulk)}],
+      [{async close(){calls.push("adoption-close");},hasLiveResource:()=>false,hasOwnershipReceipt:()=>Boolean(state.adoption)}],
+      [{async close(){calls.push("profile-close");},hasLiveResource:()=>false,hasOwnershipReceipt:()=>Boolean(state.profile)}],
       [worker],
       [browser],
       state.discovery
@@ -300,6 +319,7 @@ test("parent drains independent consumers but preserves records on worker or bro
       tlsServer,
       new Set(),
       agent,
+      state.agentClose!==false,
       {
         async close() {
           calls.push("proxy");
@@ -347,6 +367,8 @@ test("parent drains independent consumers but preserves records on worker or bro
       await assert.rejects(run(...values), /preserve fixture state/);
     else await run(...values);
     for (const name of [
+      "lease-drain",
+      "bulk-close",
       "worker",
       "browser",
       "tls",

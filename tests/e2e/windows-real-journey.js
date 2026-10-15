@@ -13,6 +13,26 @@ const http = require("node:http");
 const tls = require("node:tls");
 const net = require("node:net");
 const { spawnSync } = require("node:child_process");
+// The outer API fixture must not erase database ownership after a failed
+// native cleanup. Missing/renamed root paths never release this registry.
+const unresolvedOwnedRoots = new Set();
+function registerOwnedCleanupRoot(root) {
+  const original = fs.lstatSync(root, { bigint: true });
+  assert.ok(original.isDirectory() && !original.isSymbolicLink());
+  assert.equal(fs.realpathSync.native(root), root);
+  assert.ok(!unresolvedOwnedRoots.has(root));
+  unresolvedOwnedRoots.add(root);
+  return () => {
+    const current = fs.lstatSync(root, { bigint: true });
+    assert.ok(current.isDirectory() && !current.isSymbolicLink() && current.dev === original.dev && current.ino === original.ino, "Preserve changed owned Windows root");
+    fs.rmSync(root, { recursive: true, force: false });
+    assert.equal(fs.existsSync(root), false);
+    unresolvedOwnedRoots.delete(root);
+  };
+}
+function assertAllCleanupSafe() {
+  assert.equal(unresolvedOwnedRoots.size, 0, "Preserve database ownership after unresolved Windows native cleanup");
+}
 
 function nativeCommandEnvironment(file, additions = {}) {
   const env = { ...process.env, ...additions };
@@ -40,6 +60,14 @@ async function fetchPem(endpoint) {
 }
 
 module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, userId, createBootstrap, repoRoot, runNamedScenario, historicalSupportingOnly = false }) {
+  const stoppedOfflineOnly=process.env.CERTOPS_WINDOWS_STOP_OFFLINE_REQUIRED === "1";
+  const aliveGraceOnly=process.env.CERTOPS_WINDOWS_ALIVE_GRACE_REQUIRED === "1";
+  const failedRollbackOnly=process.env.CERTOPS_WINDOWS_FAILED_ROLLBACK_REQUIRED === "1";
+  assert.ok(!failedRollbackOnly||(!aliveGraceOnly&&!stoppedOfflineOnly),"Distinct failed-rollback native scope required");
+  if(failedRollbackOnly){assert.equal(process.env.CERTOPS_REPORT_SCOPE,"real-agent-windows-failed-rollback/rsa-2048");assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048","rsa-2048");assert.equal(historicalSupportingOnly,false);assert.ok(!process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE);}
+  assert.ok(!(stoppedOfflineOnly&&aliveGraceOnly),"Distinct extended native scopes required");
+  if(aliveGraceOnly){assert.equal(process.env.CERTOPS_REPORT_SCOPE,"real-agent-windows-alive-grace/rsa-2048");assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048","rsa-2048");assert.equal(historicalSupportingOnly,false);assert.ok(!process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE);}
+  if(stoppedOfflineOnly){assert.equal(process.env.CERTOPS_REPORT_SCOPE,"real-agent-windows-stop-offline/rsa-2048");assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048","rsa-2048");assert.equal(historicalSupportingOnly,false);assert.ok(!process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE);}
   if (historicalSupportingOnly || process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE) {
     assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048", "rsa-2048", "Historical supporting upgrade is limited to RSA2048");
   }
@@ -70,10 +98,26 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const installedPaths = require("./helpers/certops-windows-installed-paths");
   const installedPathReceipt = installedPaths.createOwnedRoot(process.env.RUNNER_TEMP, historicalSupportingOnly);
   const workDir = installedPathReceipt.root;
+  const removeOwnedRootAfterNativeCleanup = registerOwnedCleanupRoot(workDir);
+  const stoppedOffline=stoppedOfflineOnly?require("./helpers/certops-windows-stop-offline"):null;
+  const ownedStopObservers=[];let stoppedOfflineResult;
+  const aliveGrace=aliveGraceOnly?require("./helpers/certops-windows-alive-grace"):null;
+  const aliveCommand=aliveGraceOnly?require("./helpers/certops-windows-alive-grace-command"):null,ownedAliveCommands=[];let commandBarrier,resultGateway,aliveGraceResult;
+  const aliveGraceFactsPath=path.join(repoRoot,"qualification-results","windows-alive-grace-native-facts.json");
+  if(aliveGraceOnly)assert.equal(fs.existsSync(aliveGraceFactsPath),false,"Refuse stale alive-grace native facts");
+  const stoppedOfflineFactsPath=path.join(repoRoot,"qualification-results","windows-stop-offline-native-facts.json");
+  if(stoppedOfflineOnly)assert.equal(fs.existsSync(stoppedOfflineFactsPath),false,"Refuse stale stopped/offline nativefacts");
   let installedPathProof;
   const serviceControls = require("./helpers/certops-windows-service-controls");
   const activeServiceControls=require("./helpers/certops-windows-active-service-controls");
   const multiTargetAdmission=require("./helpers/certops-windows-multi-target-admission-refusal");
+  const verifyRollback=require("./helpers/certops-windows-installed-verify-rollback");
+  const ownedVerifyRollback=[];let verifyRollbackProof;
+  const failedRollback=failedRollbackOnly?require("./helpers/certops-windows-installed-failed-rollback"):null;let failedRollbackResult;
+  const failedRollbackFactsPath=path.join(repoRoot,"qualification-results","windows-failed-rollback-native-facts.json");
+  if(failedRollbackOnly)assert.equal(fs.existsSync(failedRollbackFactsPath),false,"Refuse stale failed-rollback nativefacts");
+  const verifyRollbackProofPath=path.join(repoRoot,"qualification-results",`windows-installed-verify-rollback-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
+  assert.equal(fs.existsSync(verifyRollbackProofPath),false,"Refuse stale installed verification rollback proof");
   let multiTargetAdmissionProof;
   const multiTargetAdmissionProofPath=path.join(repoRoot,"qualification-results",`windows-multi-target-admission-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(multiTargetAdmissionProofPath),false,"Refuse stale public multi-target admission proof");
@@ -87,6 +131,10 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   assert.equal(fs.existsSync(publicRetirementProofPath),false,"Refuse stale public retirement proof");
   let configEncodingProof;
   const credentialRefusal=require("./helpers/certops-windows-credential-refusal");
+  const signingPinRefusal=require("./helpers/certops-windows-signing-pin-refusal");
+  let signingPinRefusalProof;
+  const signingPinRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-signing-pin-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
+  assert.equal(fs.existsSync(signingPinRefusalProofPath),false,"Refuse stale signing-pin startup proof");
   let credentialRefusalProof;
   const credentialRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-credential-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(credentialRefusalProofPath),false,"Refuse stale installed credential refusal proof");
@@ -162,8 +210,11 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const acmeSh = process.env.CERTOPS_WINDOWS_ACMESH;
     assert.ok(bash && acmeSh && fs.existsSync(bash) && fs.existsSync(acmeSh));
     // Leave headroom below the shared machine-route limiter for discovery, logs and results.
-    outputPrivacy=await require("./helpers/certops-windows-output-privacy").prepareOutputPrivacy(workDir,bash,[acmeSh,"--insecure","--accountemail","certops@example.test"],baseUrl);
-    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ serverUrl: outputPrivacy.agentUrl, agentId, allowInsecureLocalHttp: true, pollIntervalMs: 2000, heartbeatIntervalMs: 5000, windowsDiscovery: { enabled: true, intervalMs: 5000, stores: ["My"] }, declaredTargetSelectors: [domain, adoptionDomain], declaredCommandProfileNames: ["qualification-acmesh"], execution: { enabled: true, dryRun: false }, policy: { allowedPaths: [workDir], allowedCommands: { "qualification-acmesh": { argv: outputPrivacy.argv } }, allowedCaEndpoints: [caEndpoint.href], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] }, dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } }, dnsPropagation: { resolvers: [process.env.CERTOPS_PEBBLE_DNS_RESOLVER], checkAuthoritative: false, intervalMs: 500, timeoutMs: 30000 } }));
+    const nativeAcmeArgs=[acmeSh,"--insecure","--accountemail","certops@example.test"];
+    if(aliveGraceOnly)commandBarrier=aliveCommand.createCommandBarrier({root:workDir,program:bash,args:nativeAcmeArgs,ownedResources:ownedAliveCommands});
+    outputPrivacy=await require("./helpers/certops-windows-output-privacy").prepareOutputPrivacy(workDir,commandBarrier?commandBarrier.argv[0]:bash,commandBarrier?commandBarrier.argv.slice(1):nativeAcmeArgs,baseUrl);
+    if(aliveGraceOnly)resultGateway=await require("./helpers/certops-acme-result-outage").startResultOutageGateway({upstreamUrl:outputPrivacy.agentUrl});
+    fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ serverUrl: resultGateway?resultGateway.agentUrl:outputPrivacy.agentUrl, agentId, allowInsecureLocalHttp: true, ...(aliveGraceOnly?{}:{pollIntervalMs:2000}), heartbeatIntervalMs: 5000, windowsDiscovery: { enabled: !aliveGraceOnly, intervalMs: 5000, stores: ["My"] }, declaredTargetSelectors: [domain, adoptionDomain], declaredCommandProfileNames: ["qualification-acmesh"], execution: { enabled: true, dryRun: false }, policy: { allowedPaths: [workDir], allowedCommands: { "qualification-acmesh": { argv: outputPrivacy.argv } }, allowedCaEndpoints: [caEndpoint.href], allowedDnsZones: ["example.test"], allowedDnsProviders: ["pebble-challtestsrv"] }, dnsProviders: { "pebble-challtestsrv": { credentialsFile }, zoneProviderMap: { "example.test": "pebble-challtestsrv" } }, dnsPropagation: { resolvers: [process.env.CERTOPS_PEBBLE_DNS_RESOLVER], checkAuthoritative: false, intervalMs: 500, timeoutMs: 30000 } }));
     const platform = require(path.join(repoRoot, "packages/agent/src/platform"));
     platform.applyRestrictivePermissions(configDir, { kind: "directory" });
     platform.applyRestrictivePermissions(path.join(configDir, "config.json"), { kind: "file" });
@@ -288,7 +339,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       } });
     }
     if (historicalSupportingOnly) { assert.ok(historicalEvidence, "Historical subrun requires verified historical bytes"); return; }
-    await require("./windows-adoption-retention-journey")({ pool, baseUrl, workspaceId, agentId, configDir, workDir, repoRoot, domain: adoptionDomain, keyProfile, caEndpoint: caEndpoint.href, caRoots: roots.map(root => root.pem), ps, command });
+    if(!aliveGraceOnly&&!failedRollbackOnly)await require("./windows-adoption-retention-journey")({ pool, baseUrl, workspaceId, agentId, configDir, workDir, repoRoot, domain: adoptionDomain, keyProfile, caEndpoint: caEndpoint.href, caRoots: roots.map(root => root.pem), ps, command });
     publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl);
     const publicAdmission = require("./helpers/certops-windows-public-issuance");
     const input = publicIssueInput = publicAdmission.buildPublicWindowsIssue({ workspaceId, keyProfile, domain, site, port, caEndpoint: caEndpoint.href });
@@ -309,6 +360,15 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     publicIssuanceFacts.nativeJobSucceeded = true;
     publicIssuanceFacts.nativeCngIisTrustedTlsVerified = true;
     installedPathProof = await runNamedScenario(installedPaths.scenarioName, () => installedPaths.qualifyInstalledPaths({ receipt: installedPathReceipt, configDir, candidateRoot, ps, pool, workspaceId, jobId: job.id, agentId, publicIssuanceFacts }));
+    if(failedRollbackOnly){
+      failedRollbackResult=await runNamedScenario(failedRollback.SCENARIO,()=>failedRollback.qualify({receipt:installedPathReceipt,configDir,ps,run:command,pool,workspaceId,certificateId,agentId,publicSession,ownedJobs,ownedShadows:ownedVerifyRollback,waitUntil,thumbprint,domain,site,port,roots}));
+      deployedThumbprint=failedRollbackResult.latestThumbprint;return;
+    }
+    if(aliveGraceOnly){
+      const managed=(await pool.query("SELECT cp.public_metadata FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2",[workspaceId,certificateId])).rows;assert.equal(managed.length,1);const profile=managed[0].public_metadata.renewalProfile;
+      aliveGraceResult=await runNamedScenario(require("./helpers/certops-windows-alive-grace-proof").SCENARIO,()=>aliveGrace.qualifyAliveGrace({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,certificateId,agentId,profile,publicSession,ownedJobs,ownedShadows:ownedVerifyRollback,ownedObservers:ownedStopObservers,powershell:path.join(process.env.SystemRoot,"System32/WindowsPowerShell/v1.0/powershell.exe"),run:command,waitUntil,commandBarrier,resultGateway,outputPrivacy,thumbprint,domain,site,port,roots}));
+      deployedThumbprint=aliveGraceResult.latestThumbprint;return;
+    }
     const credentialFile = path.join(configDir, "credential");
     for (const protectedPath of [configDir, credentialFile]) {
       assert.equal(ps(`$a=Get-Acl -LiteralPath '${protectedPath.replace(/'/g, "''")}'; if (!$a.AreAccessRulesProtected) { throw 'Inherited service state ACL' }; foreach ($r in $a.Access) { if ($r.AccessControlType -eq 'Allow') { $sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value; if ($sid -notin @('S-1-5-18','S-1-5-32-544')) { throw 'Unexpected service state trustee' } } }; 'restricted'`),
@@ -586,6 +646,11 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     command("sc.exe",["stop","TokenTimerAgent"]);
     await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
     credentialRefusalProof = await runNamedScenario(credentialRefusal.SCENARIO, () => credentialRefusal.qualifyCredentialRefusal({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
+    if(!stoppedOfflineOnly){
+      command("sc.exe",["stop","TokenTimerAgent"]);
+      await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
+      signingPinRefusalProof=await runNamedScenario(signingPinRefusal.SCENARIO,()=>signingPinRefusal.qualifySigningPinRefusal({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
+    }
     await waitUntil(async () => { const row = (await pool.query("SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId])).rows[0]; return row && Date.parse(row.last_seen_at) > Date.parse(lastSeenBeforeRestart); });
     assert.equal(crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex") === credentialDigest, true, "service restart must reuse its persisted credential without bootstrap");
     const afterRestart = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate().fingerprint256); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Restart IIS TLS timeout"))); });
@@ -606,6 +671,15 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.ok(Date.parse(managed.not_after) <= Date.now() + (managed.renew_before_days || 30) * 86400000, "disposable Pebble leaf must naturally fall within the renewal window");
     const automation = await pool.query("SELECT 1 FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL AND automation_enabled=TRUE", [workspaceId, certificateId]);
     assert.equal(automation.rows.length, 1, "derived profile must enable the active management period");
+    if(stoppedOfflineOnly){
+      stoppedOfflineResult=await runNamedScenario(require("./helpers/certops-windows-stop-offline-proof").SCENARIO,()=>stoppedOffline.qualifyStoppedOffline({receipt:installedPathReceipt,configDir,ps,powershell:path.join(process.env.SystemRoot,"System32/WindowsPowerShell/v1.0/powershell.exe"),run:command,pool,workspaceId,certificateId,agentId,profile,publicSession,ownedJobs,ownedObservers:ownedStopObservers,waitUntil,outputPrivacy,thumbprint,domain,port,roots,
+        armDns:()=>{assert.equal(heldResponses.size,0);heldDnsObserved=false;holdDns=true;},
+        barrierObserved:()=>holdDns&&heldDnsObserved&&heldResponses.size>0&&[...heldResponses].every(response=>!response.destroyed),
+        releaseDns:async()=>{holdDns=false;const responses=[...heldResponses];for(const response of responses)response.destroy();await waitUntil(()=>responses.every(response=>response.closed===true)&&heldResponses.size===0,5000);},
+      }));
+      deployedThumbprint=stoppedOfflineResult.latestThumbprint;
+      return;
+    }
     await require("./helpers/certops-windows-certificate-dry-run").qualifyCertificateDryRun({repoRoot,pool,workspaceId,userId,agentId,certificateId,configDir,domain,port,roots,thumbprint,initialJobId:job.id,issuePayload:input.body.payload,profile,powershell:ps,run:command,waitUntil,ownedJobs,dnsRequestCount:()=>dnsProxyRequests});
     const iisRefusal = require("./helpers/certops-windows-installed-iis-refusal");
     installedIisRefusalProof = await runNamedScenario(iisRefusal.scenarioName, () => iisRefusal.qualify({publicSession,pool,workspaceId,certificateId,initialJobId:job.id,configDir,domain,site,port,roots,thumbprint,powershell:ps,run:command,waitUntil,ownedJobs,shadowRegistry:ownedIisRefusalShadows,acmeReceiptDirectory:outputPrivacy.directory,dnsRequestCount:()=>dnsProxyRequests}));
@@ -693,6 +767,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     installedCrashProof = ownedProcess.publicProof(nativeCrashProof);
     });
     command("sc.exe", ["failure", "TokenTimerAgent", "reset=", "60", "actions=", "restart/1000"]);
+    const verifiedRollback=await runNamedScenario(verifyRollback.SCENARIO,()=>verifyRollback.qualify({receipt:installedPathReceipt,configDir,ps,run:command,pool,workspaceId,certificateId,agentId,publicSession,ownedJobs,ownedShadows:ownedVerifyRollback,waitUntil,thumbprint:deployedThumbprint,domain,site,port,roots}));
+    verifyRollbackProof=verifiedRollback.proof;renewed=verifiedRollback.latestLeaf;deployedThumbprint=verifiedRollback.latestThumbprint;
     publicRetirementProof = await runNamedScenario(publicRetirement.SCENARIO, () => publicRetirement.qualifyPublicRetirement({receipt:installedPathReceipt,configDir,publicSession,pool,workspaceId,agentId,ps,baseUrl,domain,port,roots,thumbprint:deployedThumbprint}));
     await require("./helpers/certops-windows-reregistration").qualifyWindowsReregistration({
       baseUrl, workspaceId, oldAgentId: agentId, pool, createBootstrap,
@@ -718,6 +794,18 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     journeyFailure = error;
     throw error;
   } finally {
+    // Startup can fail after native holder creation but before its caller gets
+    // a return value. The original registry owns drainage; missing restoration
+    // remains a sticky barrier before any certificate, service or DB cleanup.
+    for(const row of ownedVerifyRollback)if(row.emergencyDrain)await cleanup(()=>row.emergencyDrain());
+    if(failedRollbackOnly)failedRollback.assertCleanupSafe(workDir);
+    if(commandBarrier&&!commandBarrier.hasArmed()&&commandBarrier.hasOwnershipReceipt())await cleanup(()=>commandBarrier.finish());
+    if(aliveGraceOnly)aliveCommand.assertCleanupSafe(workDir);
+    const stopObserverErrors=[];
+    for(const resource of ownedStopObservers){try{await resource.waitForClose();}catch(error){stopObserverErrors.push(error);}}
+    if(stopObserverErrors.length)throw new AggregateError(stopObserverErrors,"Read-only stop observers must close before nativecleanup");
+    verifyRollback.assertCleanupSafe(workDir);
+    if(stoppedOffline)stoppedOffline.assertCleanupSafe(workDir);
     publicRetirement.assertCleanupSafe(workDir);
     configEncoding.assertCleanupSafe(workDir);
     multiTargetAdmission.assertCleanupSafe(workDir);
@@ -737,6 +825,14 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if (serviceOwned) {
       await cleanup(async () => { ps("$s=Get-Service -Name TokenTimerAgent -ErrorAction SilentlyContinue; if ($s) { if ($s.Status -ne 'Stopped') { Stop-Service -Name TokenTimerAgent }; $s.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(20)) }"); });
       await cleanup(async () => { if (spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status === 0) { command("sc.exe", ["delete", "TokenTimerAgent"]); await waitUntil(() => spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status !== 0, 20000); } });
+    }
+    // An uncertain service stop must never authorize endpoint/key destruction.
+    // Drain independent transports, then preserve all native/DB/private state.
+    if(errors.length){
+      if(resultGateway)await cleanup(()=>resultGateway.close());
+      if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
+      await cleanup(async()=>{for(const response of heldResponses)response.destroy();dnsProxy.closeAllConnections();await new Promise(resolve=>dnsProxy.close(resolve));});
+      throw new AggregateError(journeyFailure?[journeyFailure,...errors]:errors,"Preserve native state after uncertain owned service stop");
     }
     if (werTouched) await cleanup(async () => {
       assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "Restore historical installer policy only after owned service removal");
@@ -772,22 +868,38 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       }
       if (deployedThumbprint) ps(`$p='Cert:\\LocalMachine\\My\\${deployedThumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Deployed fixture certificate remains' }`);
     });
+    // Independently drain the retained transport before refusing destructive
+    // database/private-state cleanup after a native failure.
+    if(resultGateway)await cleanup(()=>resultGateway.close());
+    if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
+    if (errors.length) throw new AggregateError(journeyFailure ? [journeyFailure, ...errors] : errors, "Preserve ownership after failed Windows native cleanup", { cause: journeyFailure });
     for (const root of roots) await cleanup(async () => ps(`$p='Cert:\\LocalMachine\\${root.store}\\${root.thumbprint}'; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p }; if (Test-Path -LiteralPath $p) { throw 'Fixture CA trust remains' }`));
+    if (errors.length) throw new AggregateError(journeyFailure ? [journeyFailure, ...errors] : errors, "Preserve ownership after failed Windows trust cleanup", { cause: journeyFailure });
     for (const jobId of ownedJobs) for (const table of ["certificate_evidence", "certops_agent_job_log", "certificate_job_log", "certificate_jobs"]) await cleanup(() => pool.query(`DELETE FROM ${table} WHERE workspace_id=$1 AND ${table === "certificate_jobs" ? "id" : "job_id"}=$2`, [workspaceId, jobId]));
     if (certificateId) await cleanup(() => pool.query("DELETE FROM managed_certificates WHERE workspace_id=$1 AND id=$2", [workspaceId, certificateId]));
     if (publicSession) await cleanup(async () => { assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM certificate_jobs WHERE requested_by_user_id=$1",[publicSession.userId])).rows[0].count,0,"Retain owned actor until all requesting jobs are removed"); await publicSession.cleanup(); if (publicIssuanceFacts) publicIssuanceFacts.ownedActorCleanup = true; });
-    if(outputPrivacy)await cleanup(()=>outputPrivacy.close());
-    await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
-    if (!historicalSupportingOnly && !journeyFailure && errors.length === 0) {
+    await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); removeOwnedRootAfterNativeCleanup(); });
+    if(stoppedOfflineOnly&&!journeyFailure&&errors.length===0){
+      stoppedOfflineResult.facts.exactOwnedCleanupCompleted=true;
+      require("./helpers/certops-windows-stop-offline-proof").verifyProof(stoppedOfflineResult.facts);
+      fs.writeFileSync(stoppedOfflineFactsPath,JSON.stringify(stoppedOfflineResult.facts),{flag:"wx"});
+    }
+    if(aliveGraceOnly&&!journeyFailure&&errors.length===0){aliveGraceResult.facts.exactOwnedCleanupCompleted=true;require("./helpers/certops-windows-alive-grace-proof").verifyProof(aliveGraceResult.facts);fs.writeFileSync(aliveGraceFactsPath,JSON.stringify(aliveGraceResult.facts),{flag:"wx"});}
+    if(failedRollbackOnly&&!journeyFailure&&errors.length===0){failedRollback.verifyProof(failedRollbackResult.proof);fs.writeFileSync(failedRollbackFactsPath,JSON.stringify(failedRollbackResult.proof),{flag:"wx"});}
+    if (!failedRollbackOnly && !aliveGraceOnly && !stoppedOfflineOnly && !historicalSupportingOnly && !journeyFailure && errors.length === 0) {
       require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
       publicRetirement.verifyProof(publicRetirementProof);
       fs.writeFileSync(publicRetirementProofPath,JSON.stringify(publicRetirementProof),{flag:"wx"});
       credentialRefusal.verifyProof(credentialRefusalProof);
+      signingPinRefusal.verifyProof(signingPinRefusalProof);
+      fs.writeFileSync(signingPinRefusalProofPath,JSON.stringify(signingPinRefusalProof),{flag:"wx"});
       fs.writeFileSync(credentialRefusalProofPath,JSON.stringify(credentialRefusalProof),{flag:"wx"});
       retentionConfig.verifyProof(retentionConfigProof);
       fs.writeFileSync(retentionConfigProofPath,JSON.stringify(retentionConfigProof),{flag:"wx"});
       configEncoding.verifyProof(configEncodingProof);
       fs.writeFileSync(configEncodingProofPath,JSON.stringify(configEncodingProof),{flag:"wx"});
+      verifyRollback.verifyProof(verifyRollbackProof);
+      fs.writeFileSync(verifyRollbackProofPath,JSON.stringify(verifyRollbackProof),{flag:"wx"});
       multiTargetAdmission.verifyProof(multiTargetAdmissionProof);
       fs.writeFileSync(multiTargetAdmissionProofPath,JSON.stringify(multiTargetAdmissionProof),{flag:"wx"});
       activeServiceControls.verifyProof(activeServiceControlProof);
@@ -805,3 +917,5 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if (errors.length) throw new AggregateError(journeyFailure ? [journeyFailure, ...errors] : errors, "Windows real journey owned cleanup failed", { cause: journeyFailure });
   }
 };
+module.exports.assertAllCleanupSafe = assertAllCleanupSafe;
+module.exports.registerOwnedCleanupRoot = registerOwnedCleanupRoot;

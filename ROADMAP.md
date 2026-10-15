@@ -1,10 +1,12 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-14 for the integrated AD CS and distribution candidate. Dropped the optional already-expired-import
-notification ask ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
-quiet historical imports stay the default without a toggle. The AD CS
-issuer and enrollment surface target **0.18.0**.
-Released agents keep new capabilities disabled until real-host qualification passes. Certificate lifecycle testing infrastructure remains in progress.
+Last reviewed: 2026-10-15 for the integrated AD CS, distribution and real-host
+qualification candidate targeting **0.18.0**. Released agent capabilities remain
+gated until independent real-host qualification passes; lifecycle testing
+infrastructure and coverage remain in progress. Dropped the optional
+already-expired-import notification ask
+([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
+quiet historical imports stay the default without a toggle.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x

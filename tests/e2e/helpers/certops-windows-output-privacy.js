@@ -14,11 +14,34 @@ async function prepareOutputPrivacy(workDir,program,args,upstreamUrl){
  const recipePath=path.join(workDir,"native-output-recipe.json");fs.writeFileSync(recipePath,JSON.stringify(recipe),{flag:"wx",mode:0o600});
  require("../../../packages/agent/src/platform").applyRestrictivePermissions(recipePath,{kind:"file"});
  const transport={inspectedUploads:0,secretsObserved:false,oversizedUpload:false};
- const pendingUpstream=new Set();
+ const pendingUpstream=new Set(),heldResults=new Set(),pendingResultBodies=new Set();let resultBarrier=null;
  const server=http.createServer((request,response)=>{
   const agentPath=/^\/api\/v1\/certops\/agent\/(?:register|heartbeat|jobs\/(?:claim|results|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/(?:lease|logs)))$/;
   if(request.method!=="POST"||!agentPath.test(request.url)){response.statusCode=404;response.end();return;}
   const headers={"content-type":"application/json"};if(typeof request.headers.authorization==="string"&&request.headers.authorization.length<=4096)headers.authorization=request.headers.authorization;
+  // The dedicated stopped/offline lane may hold only its original claim's
+  // actual result before ANY upstream request exists. No bytes are rewritten,
+  // no successful API response is manufactured and held results are discarded
+  // after captured native drainage rather than replayed into terminal history.
+  if(resultBarrier&&request.url==='/api/v1/certops/agent/jobs/results'){
+   const armed=resultBarrier;pendingResultBodies.add(response);response.once('close',()=>pendingResultBodies.delete(response));
+   const chunks=[];let size=0,oversized=false;
+   request.on('data',chunk=>{size+=chunk.length;if(size<=1048576)chunks.push(chunk);else{oversized=true;transport.oversizedUpload=true;}});
+   request.on('end',()=>{
+    if(response.destroyed)return;
+    if(oversized){response.statusCode=413;response.end();return;}
+    const bytes=Buffer.concat(chunks),body=bytes.toString('utf8');transport.inspectedUploads++;
+    for(const secret of [recipe.bearer,recipe.password,recipe.pemPayload,'-----BEGIN PRIVATE KEY-----'])if(body.includes(secret))transport.secretsObserved=true;
+    let envelope;try{envelope=JSON.parse(body);}catch{}
+    if(envelope?.messageType==='result'&&envelope.body?.jobId===armed.jobId&&envelope.body?.claimId===armed.claimId){
+     armed.actualHeldRequests++;heldResults.add(response);response.once('close',()=>heldResults.delete(response));return;
+    }
+    pendingResultBodies.delete(response);
+    const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:request.url,method:'POST',headers,agent:false},incoming=>{response.writeHead(incoming.statusCode,{'content-type':'application/json'});incoming.pipe(response);});
+    pendingUpstream.add(upstream);upstream.once('close',()=>pendingUpstream.delete(upstream));upstream.setTimeout(60000,()=>upstream.destroy());
+    upstream.on('error',()=>{if(!response.headersSent&&!response.destroyed){response.statusCode=502;response.end();}else response.destroy();});upstream.end(bytes);
+   });return;
+  }
   const upstream=http.request({hostname:"127.0.0.1",port:upstreamPort,path:request.url,method:"POST",headers,agent:false},incoming=>{response.writeHead(incoming.statusCode,{"content-type":"application/json"});incoming.pipe(response);});
   pendingUpstream.add(upstream);upstream.once("close",()=>pendingUpstream.delete(upstream));upstream.setTimeout(60000,()=>upstream.destroy());
   upstream.on("error",()=>{if(!response.headersSent&&!response.destroyed){response.statusCode=502;response.end();}else response.destroy();});
@@ -29,7 +52,11 @@ async function prepareOutputPrivacy(workDir,program,args,upstreamUrl){
   request.pipe(upstream);
  });
  await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve);});
- return {recipe,directory,transport,startedAt,agentUrl:`http://127.0.0.1:${server.address().port}`,close:()=>new Promise((resolve,reject)=>{for(const request of pendingUpstream)request.destroy();server.closeAllConnections();server.close(error=>error?reject(error):resolve());}),argv:[process.execPath,path.join(__dirname,"certops-windows-output-child.js"),recipePath,program,...args]};
+ return {recipe,directory,transport,startedAt,agentUrl:`http://127.0.0.1:${server.address().port}`,
+ armResultBarrier(jobId,claimId){assert.equal(resultBarrier,null);for(const value of [jobId,claimId])assert.match(value,/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);resultBarrier={jobId,claimId,actualHeldRequests:0};},
+ resultBarrierObservation(){return resultBarrier?{...resultBarrier,heldConnections:heldResults.size}:null;},
+ async discardHeldResults(){for(const response of new Set([...heldResults,...pendingResultBodies]))response.destroy();const deadline=performance.now()+5000;while((heldResults.size||pendingResultBodies.size)&&performance.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));assert.equal(heldResults.size+pendingResultBodies.size,0,'Owned held result responses remain');resultBarrier=null;},
+ close:()=>new Promise((resolve,reject)=>{for(const response of new Set([...heldResults,...pendingResultBodies]))response.destroy();for(const request of pendingUpstream)request.destroy();server.closeAllConnections();server.close(error=>error?reject(error):resolve());}),argv:[process.execPath,path.join(__dirname,"certops-windows-output-child.js"),recipePath,program,...args]};
 }
 async function verifyOutputPrivacy({pool,workspaceId,jobId,configDir,proof,waitUntil,ps,keyProfile}){
  assert.equal(process.platform,"win32");assert.equal(process.env.CERTOPS_WINDOWS_DISPOSABLE_HOST,"1");

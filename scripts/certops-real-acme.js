@@ -132,7 +132,7 @@ async function main() {
   await withPebble(async (fixtureEnv) => {
     fs.mkdirSync("qualification-results", { recursive: true });
     const report = "qualification-results/real-acme.jsonl";
-    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 1320000, env: { ...process.env, ...fixtureEnv, CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REAL_ACME_CLIENT: client, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_ACME_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope } });
+    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: scope === "real-agent-acme-filesystem" ? 1920000 : 1320000, env: { ...process.env, ...fixtureEnv, CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REAL_ACME_CLIENT: client, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_ACME_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope } });
     assert.equal(result.status, 0, "real agent/API/ACME suite failed");
     const events = fs.readFileSync(report, "utf8");
     const helper = require("../tests/e2e/helpers/certops-acme-key-reuse");
@@ -140,9 +140,12 @@ async function main() {
     assert.equal(native.length, 1); helper.verifyProof(native[0].nativeAcmeKeyReuse); assert.equal(native[0].nativeAcmeKeyReuse.client, client);
     require("./certops-acme-stage-report").verifyForScope(native[0].nativeAcmeStageFaults,scope);
     require("./certops-acme-background-report").verifyForScope(native[0].nativeAcmeBackgroundRenewals,native[0].nativeAcmeKeyReuse,scope);
+    if(scope==="real-agent-acme-filesystem"){
+      const bulk=require('./certops-acme-bulk-report');bulk.verifyForScope(native[0].nativeAcmeBulkRenewal,scope,native[0].qualificationEnvironment);bulk.verifyCrossJourney(native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeKeyReuse,native[0].nativeAcmeBackgroundRenewals);require("../tests/e2e/helpers/certops-acme-native-adoption").verifyAgainstBulk(native[0].nativeAcmeRenewalSetup,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-certificate-outbox").verifyAgainstJourney(native[0].nativeAcmeCertificateOutbox,native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeRenewalSetup);require("../tests/e2e/helpers/certops-acme-disabled-profile").verifyAgainstBulk(native[0].nativeAcmeDisabledProfile,native[0].nativeAcmeBulkRenewal);
+    }
     if(nativeConsole)require("./certops-acme-native-console-report").verifyActualJourney(events,require("./certops-acme-native-console-report").readProof(),process.env.GITHUB_SHA);
     if(nativeLifecycle)require("./certops-acme-browser-lifecycle-report").verifyActualJourney(events,require("./certops-acme-browser-lifecycle-report").readProof(),process.env.GITHUB_SHA);
-    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName,require("../tests/e2e/helpers/certops-acme-background-renewals").SCENARIO,...require("../tests/e2e/helpers/certops-acme-stage-faults").SCENARIOS], "certops-agent-e2e.test.js", scope)));
+    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName,require("../tests/e2e/helpers/certops-acme-background-renewals").SCENARIO,...require("../tests/e2e/helpers/certops-acme-stage-faults").SCENARIOS,...(scope==="real-agent-acme-filesystem"?[require("../tests/e2e/helpers/certops-acme-bulk-renewal").SCENARIO,require("../tests/e2e/helpers/certops-acme-native-adoption").SCENARIO,require("../tests/e2e/helpers/certops-acme-certificate-outbox").SCENARIO,require("../tests/e2e/helpers/certops-acme-disabled-profile").SCENARIO]:[])], "certops-agent-e2e.test.js", scope)));
   });
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

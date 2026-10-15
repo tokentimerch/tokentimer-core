@@ -57,17 +57,17 @@ Total skips found: 131
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-alert-e2e.test.js` | 16 | agent alert governance persists policy and rejects foreign groups and unauthorized roles | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 458 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 574 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 588 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 606 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 622 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 657 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 680 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 722 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 744 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 806 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 861 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 459 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 575 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 589 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 607 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 623 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 658 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 681 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 723 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 745 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 807 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 862 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-lease-api-e2e.test.js` | 18 | active claim force retirement fences real agent HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-boundaries-e2e.test.js` | 18 | agent log size and ownership boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-agent-log-order-e2e.test.js` | 18 | actual agent telemetry ordering, conflict and final closure | dynamic (this.skip() / t.skip()) | `no-host` |
@@ -121,7 +121,7 @@ Total skips found: 131
 | `tests/e2e/certops-retirement-approval-e2e.test.js` | 36 | operator retirement fences concurrent approvals and actual registered-agent dispatch | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-scheduler-capacity-e2e.test.js` | 13 | SQL clock scheduler shares public issuance capacity and pause fences | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-shared-sources-e2e.test.js` | 22 | shared served fingerprint keeps source history and management accounting | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-signing-rotation-native-e2e.test.js` | 15 | isolated operator signing rotation adopts native pins and fences incomplete fleet completion | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-signing-rotation-native-e2e.test.js` | 67 | isolated operator signing rotation adopts native pins and fences incomplete fleet completion | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-terminal-renewal-e2e.test.js` | 39 | public renew cannot revive retired fully profiled certificates after real rediscovery | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-token-boundaries-e2e.test.js` | 17 | scoped machine token expiry and revocation through executor HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/e2e/certops-trust-api-e2e.test.js` | 20 | trust approval and workspace pause through real API | dynamic (this.skip() / t.skip()) | `no-host` |

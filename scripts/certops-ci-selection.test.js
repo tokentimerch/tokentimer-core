@@ -4,6 +4,7 @@
  * is tracked separately in the qualification suites and their reports.
  */
 "use strict";
+// Projection changes must never provision the optional domain lab.
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs");
 const {selectFiles,manual}=require("./certops-ci-selection");const {discover}=require("./run-certops-tooling-tests");
 test("installed Linux discovery projection selects tooling without native dispatch",()=>{const file="scripts/certops_linux_installed_discovery_proof.py",value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
@@ -174,3 +175,23 @@ test("native console projection selects tooling without automatic native lanes",
 });
 
 test("served-leaf proof projection selects tooling only",()=>{const file="scripts/certops_daemon_served_leaf_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("native bulk proof projection selects tooling only",()=>{const file="scripts/certops_acme_bulk_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("stopped offline collector-only proof selects tooling without native dispatch",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ assert.ok(workflow.on.push.paths.includes("scripts/certops_windows_stop_offline_proof.py"));
+ assert.deepEqual(selectFiles(["scripts/certops_windows_stop_offline_proof.py"]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+});
+
+test("native renewal setup projection selects tooling only",()=>{const file="scripts/certops_acme_native_adoption_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("certificate outbox projection selects tooling only",()=>{const file="scripts/certops_acme_certificate_outbox_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+test("native OCSP projection selects tooling without provisioning a domain lab",()=>{const file="scripts/certops_adcs_ocsp_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("disabled-profile projection selects tooling only",()=>{const file="scripts/certops_acme_disabled_profile_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("alive default-grace projection changes select tooling only with exact push trigger",()=>{assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes("- 'scripts/certops_windows_alive_grace_proof.py'"));assert.deepEqual(selectFiles(["scripts/certops_windows_alive_grace_proof.py"]),{tooling:true,windows:false,stack:false,reason:"changed-files"});});
+test("AD CS result outbox projection selects tooling without a native domain lab",()=>{const file="scripts/certops_adcs_result_outbox_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+test("installed failed-rollback projection selects tooling without native dispatch",()=>{const file="scripts/certops_windows_failed_rollback_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});

@@ -10,6 +10,14 @@ const test = require("node:test"),
   fs = require("node:fs"),
   path = require("node:path");
 const { supplementalSources } = require("./certops-stack-reporter");
+
+test("installed verification rollback reporter requires actual bounded sidecar for all five profiles",()=>{
+ const h=require("../tests/e2e/helpers/certops-windows-installed-verify-rollback"),{fixture}=require("./fixtures/certops-windows-installed-verify-rollback.cjs"),{installedVerifyRollbackProof:read}=require("./certops-stack-reporter");
+ const root=fs.mkdtempSync(path.join(path.resolve(__dirname,"../.build"),"verify-rollback-reporter-")),name="real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence";
+ try{fs.mkdirSync(path.join(root,"qualification-results"));for(const profile of ["rsa-2048","rsa-3072","rsa-4096","ec-p256","ec-p384"]){const scope="real-agent-windows-acme-iis/"+profile,file=path.join(root,"qualification-results",`windows-installed-verify-rollback-${profile}.json`);assert.throws(()=>read(scope,name,root));fs.writeFileSync(file,JSON.stringify(fixture()));assert.deepEqual(read(scope,name,root),fixture());for(const patch of [{[h.FLAGS[0]]:false},{privateNative:"sentinel"},{transientNewBindingObservationQualified:true}]){fs.writeFileSync(file,JSON.stringify({...fixture(),...patch}));assert.throws(()=>read(scope,name,root));}fs.unlinkSync(file);}
+ assert.equal(read("real-agent-acme-filesystem",name,root),undefined);assert.throws(()=>read("real-agent-windows-acme-iis/unknown",name,root));
+ }finally{fs.rmSync(root,{recursive:true});}
+});
 test("Windows profile evidence binds public admission, recovery and output-privacy sources", () => {
   const sources = supplementalSources("real-agent-windows-acme-iis/rsa-2048");
   assert.equal(new Set(sources.map((item) => item.file)).size, sources.length);
@@ -57,7 +65,7 @@ test("Every committed Linux ACME scope binds current actual journey and Pebble p
     "real-agent-alpine-acmesh",
   ]) {
     const sources = supplementalSources(scope);
-    const declared = require("../docs/certops/release-qualification-matrix.json").slots.find(slot=>slot.suite==="real-agent-acme-filesystem").requiredSources;
+    const declared = require("../docs/certops/release-qualification-matrix.json").slots.find(slot=>slot.suite===scope).requiredSources;
     assert.deepEqual(sources.map(item=>item.file).sort(),[...declared].sort());
     for(const file of require("../tests/e2e/helpers/certops-acme-background-renewals").REQUIRED_SOURCES)assert.ok(sources.some(item=>item.file===file));
     for (const item of sources)

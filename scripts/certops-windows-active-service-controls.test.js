@@ -86,6 +86,27 @@ test("durable active-phase receipt independently blocks parent cleanup", () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+test("pending key uses production managed-certificate namespace while journal binds a distinct job", () => {
+  const store = require("../packages/agent/src/windows-cert-store");
+  const certificateId = "11111111-1111-4111-8111-111111111111";
+  const jobId = "22222222-2222-4222-8222-222222222222";
+  const row = { subject_id: certificateId, payload: { certificateId } };
+  const container = store.buildContainerName(certificateId);
+  h.validatePendingContainer(container, row);
+  assert.throws(() =>
+    h.validatePendingContainer(store.buildContainerName(jobId), row),
+  );
+  assert.throws(() =>
+    h.validatePendingContainer(container, {
+      ...row,
+      payload: { certificateId: jobId },
+    }),
+  );
+  assert.throws(() => h.validatePendingContainer(container + "foreign", row));
+  assert.throws(() =>
+    h.validatePendingContainer(container, { ...row, subject_id: null }),
+  );
+});
 
 test("active SCM TLS success and failure both await the retained socket close", async () => {
   const { EventEmitter } = require("node:events");

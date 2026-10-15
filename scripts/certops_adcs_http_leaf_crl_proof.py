@@ -13,12 +13,13 @@ FLAGS = (
     "sameNonexportableCngCustody", "sameNativeBindingAndTrustedTls", "originalCachePolicyRestored",
     "ownedListenerClosed", "ownedGuardReleased",
     "restoredPublicationLeafInstalledBeforeListenerClose",
+    "installedAgentFaultRecoveryQualified",
 )
 FIELDS = ("scope", "enrollmentId", "jobId", "requestId", "leafFingerprint", "publicCrlSha256",
           "nativeHelperSha256", "originalPublicationSha256", "appliedPublicationSha256",
           "caRequestCounts", "nativeVerdicts", "endpointStatusCodes", "ocspQualified",
           "caOutageQualified", "signedCmcRenewalQualified", "restoredEnrollmentId",
-          "restoredJobId", "restoredRequestId", "restoredLeafFingerprint", "installedAgentFaultRecoveryQualified", *FLAGS)
+          "restoredJobId", "restoredRequestId", "restoredLeafFingerprint", "deferredRecovery", *FLAGS)
 
 
 def fields(value):
@@ -45,5 +46,12 @@ def fields(value):
     require(value["nativeVerdicts"] == ["valid", "revocation_unknown", "valid"])
     require(value["endpointStatusCodes"] == [200, 503, 200] and all(type(code) is int for code in value["endpointStatusCodes"]))
     require(all(value[key] is True for key in FLAGS))
-    require(all(value[key] is False for key in ("ocspQualified", "caOutageQualified", "signedCmcRenewalQualified", "installedAgentFaultRecoveryQualified")))
+    require(all(value[key] is False for key in ("ocspQualified", "caOutageQualified", "signedCmcRenewalQualified")))
+    recovery=value["deferredRecovery"]
+    require(isinstance(recovery,dict) and set(recovery)=={"originalJobId","originalClaimId","continuationJobId","continuationClaimId","requestId"})
+    require(all(isinstance(recovery[key],str) and re.fullmatch(r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}",recovery[key]) for key in ("originalJobId","originalClaimId","continuationJobId","continuationClaimId")))
+    require(recovery["originalJobId"].lower() not in {value["jobId"].lower(),value["restoredJobId"].lower()})
+    require(recovery["originalClaimId"].lower()!=recovery["continuationClaimId"].lower())
+    require(recovery["continuationJobId"]==value["jobId"])
+    require(type(recovery["requestId"]) is int and recovery["requestId"]==value["requestId"])
     return {key: value[key] for key in FIELDS}
