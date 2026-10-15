@@ -271,8 +271,8 @@ class RetentionOwnerTests(unittest.TestCase):
             with tempfile.TemporaryDirectory(prefix="certops-retention-owner-") as directory:
                 root = Path(directory)
                 (root / "docs/certops").mkdir(parents=True)
-                (root / "docs/certops/release-qualification-matrix.json").write_text(json.dumps({"slots": [{"kind": "host", "suite": auth.SUITE}]}))
-                environment = {"CERTOPS_RELEASE_CANDIDATE": value["candidate"], "CERTOPS_RELEASE_RUN_IDS": "[200]", "GITHUB_REPOSITORY": value["repository"], "GITHUB_TOKEN": "controlled-no-network", "GITHUB_SHA": value["run"]["head_sha"]}
+                (root / "docs/certops/release-qualification-matrix.json").write_text(json.dumps({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE}]}))
+                environment = {"CERTOPS_QUALIFICATION_PROFILE": "full", "CERTOPS_RELEASE_CANDIDATE": value["candidate"], "CERTOPS_RELEASE_RUN_IDS": "[200]", "GITHUB_REPOSITORY": value["repository"], "GITHUB_TOKEN": "controlled-no-network", "GITHUB_SHA": value["run"]["head_sha"]}
                 collector_extract = collector.extract_reports
                 # The temporary output root need not duplicate repository
                 # metadata; parsing reads the real committed suite contract.

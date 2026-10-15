@@ -424,7 +424,7 @@ describe("CertOps agent surface E2E", () => {
   });
 
   if (process.env.CERTOPS_REAL_ACME_REQUIRED === "1") {
-    it("real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence", { timeout: 720000 }, async (context) => {
+    it("real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence", { timeout: 1200000 }, async (context) => {
       assert.equal(dbAvailable, true, "real ACME requires migrated PostgreSQL");
       const runScenario = async (name, action) => { let failure; await context.test(name, async () => { try { await action(); } catch (error) { failure = error; throw error; } }); if (failure) throw failure; };
       await require("./acme-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, runScenario });

@@ -2,6 +2,8 @@
 
 Start with the [qualification overview](../e2e-qualification.md). These runbooks distinguish implemented source, focused local checks and required native execution; a source mapping does not mean a scenario has qualified.
 
+For setup, follow [Azure-free first qualification](reporting/first-qualification.md). Azure lab identities are optional domain-backed AD CS prerequisites, not normal Windows or cross-platform setup.
+
 Machine-readable specifications retain their stable locations: [scenario catalog](../e2e-scenario-catalog.json), [mandatory suite inventory](../qualification-suites.json), [release environment matrix](../release-qualification-matrix.json) and [skip mappings](../skip-qualification.generated.json).
 
 - [Browser approval and rejection of native AD CS jobs](adcs/browser-job-approval.md)
@@ -70,11 +72,13 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Retention-ledger atomic replacement refusal](windows/retention-ledger-atomic-replace.md)
 - [Native retention reference protection and configuration boundaries](windows/retention-reference-guards.md)
 - [Native AD CS journal read/list ACL refusals](windows/journal-read-refusals.md)
+- [Native retention ledger read/list ACL refusals](windows/retention-ledger-access-refusal.md)
 - [Native configuration, credential and signing-pin read-access refusals](windows/state-read-refusals.md)
 - [Retention replacement lineage, cross-store key survivors and protected cleanup](windows/retention-replacement-lineage.md)
 - [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
 - [Default and maximum retention policies with actual expiry-grace cleanup](windows/native-retention-policy-expiry.md)
-- [Actual installed-service default retention timer](windows/installed-default-retention-timer.md)
+- [Optional AD CS installed-service default retention timer](windows/installed-default-retention-timer.md)
+- [Linux ACME renewals from the production worker default cron](linux/acme-background-renewals.md)
 - [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
@@ -89,6 +93,9 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native AD CS per-issuer capacity and genuine approval release](adcs/native-issuer-capacity.md)
 - [Two native AD CS renewal generations through default scheduler sweeps](adcs/two-unattended-renewals.md)
 - [Production interval worker and native AD CS renewals](adcs/background-worker-renewals.md)
+- [Live same-template machine Enroll permission denial and restoration](adcs/live-machine-enroll-acl.md)
+- [Hierarchy HTTP intermediate CRL fault and native recovery](adcs/http-intermediate-crl-fault.md)
+- [Manual hierarchy Windows and display-language environments](adcs/hierarchy-environments.md)
 - [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
 - [Experimental new IIS binding before durable completion](adcs/bound-install-recovery-experiment.md)
 - [Browser-driven issuer, profile and native AD CS enrollment](adcs/browser-native-journey.md)
@@ -119,7 +126,11 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [DNS provider error qualification](dns-acme/dns-provider-errors-qualification.md)
 - [Real DNS provider qualification](dns-acme/dns-provider-qualification.md)
 - [Real DNS-hook routing qualification](dns-acme/dns-routing-qualification.md)
+- [Two configured DNS resolver views](dns-acme/dns-resolver-views.md)
+- [Native ACME browser issue and renewal lifecycle](linux/acme-browser-job-lifecycle.md)
 - [Real agent/API/ACME filesystem qualification](dns-acme/real-acme-qualification.md)
+- [ACME stage transport refusal](dns-acme/stage-transport-refusal.md)
+- [Actual native ACME browser console](linux/acme-native-browser-console.md)
 
 ## Kubernetes and cert-manager
 
@@ -178,3 +189,19 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [Installed crash ownership](windows/installed-crash-ownership.md): exact native handles, fail-closed fixture preservation and explicit shortened-lease recovery scope; native execution pending.
 
 The [real-day interrupted deletion case](windows/resident-retention24h-interrupted-delete.md) requires actual delstore interruption, retained-key/incomplete-ledger observations and ordinary recovery within the same genuine resident campaign. Native execution remains pending.
+
+- [Native IPv4 wildcard HTTP.sys shadow and rollback](windows/ipv4-wildcard-shadow.md).
+
+- [Installed Windows SCM control contract](windows/installed-service-controls.md).
+
+- [Native prepared CNG key with unreadable enrollment journal](windows/native-cng-unreadable-journal.md): actual OS access denial, production orphan deferral and exact ACL restoration; native execution pending.
+
+- [Installed Windows configuration encoding refusals](windows/configuration-encoding-refusals.md).
+
+- [Public idle installed Windows retirement](windows/public-idle-retirement.md) — authorization, idempotent audit, clean native exit and preserved custody.
+
+- [Same-certificate renewal after cancellation and late approval](adcs/same-certificate-cancelled-late-approval.md): distinct real pending requests of one discovered managed identity, actual successor installation and guarded unused late issuance. Native execution pending.
+
+- [Installed retention configuration refusals](windows/retention-configuration-refusals.md) — real startup validation boundaries with native custody preservation.
+
+- [Installed credential startup refusals](windows/credential-startup-refusals.md) — real protected-reader failures, preserved identity/custody and exact repair.

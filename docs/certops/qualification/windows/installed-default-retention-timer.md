@@ -1,6 +1,6 @@
-# Installed default retention timer qualification
+# Optional AD CS installed default retention timer qualification
 
-This separate manual domain campaign observes the production installed Windows
+This extended, explicitly selected manual AD CS campaign observes the production installed Windows
 agent's immediate retention sweep and its first genuine default timer sweep.
 The agent configuration omits both `windows.sweepIntervalMs` and
 `windows.supersededRetentionHours`. The resolved defaults are six hours and 168
@@ -52,3 +52,12 @@ maximum, power loss, or the separate stopped-agent real-day collector campaign.
 The source and offline contract tests are supporting checks. Native execution
 and full CI qualification remain pending until the protected workflow actually
 runs and produces the authenticated report.
+
+
+## Azure-free generic Windows coverage
+
+Ordinary Windows service/CNG/IIS/HTTP.sys qualification does not require this lab or Azure credentials. The standard hosted profile must explicitly report the extended domain campaigns it omits and cannot claim full-matrix qualification. This AD CS timer source retains all immutable artifact, native ownership, fixed lease and independent cleanup safeguards; changing its optional classification does not make cleanup optional.
+
+The hosted Windows source checks the actual production loader defaults (168 hours and 21,600,000 milliseconds), runs the real production polling loop with an explicitly configured 100-millisecond interval, and observes its immediate callback plus two genuine delayed calls to the production collector against an owned empty ledger. It waits on actual timers, keeps the default jitter, drains cancellation, and explicitly reports that default six-hour elapsed time, installed-service timer operation and native deletion are not qualified by that supporting case.
+
+Separate existing hosted native fixtures retain real expiry-plus-300-second waits, actual CNG/certificate reclamation, replacement trusted TLS and 24/168/720-hour policy boundary cases. Those genuine native controls are not replaced by the empty-ledger timer case. A single hosted Actions job cannot reliably contain the unchanged default's 4.8–7.2-hour jittered delay inside its six-hour execution limit. Actual default-interval elapsed evidence therefore remains deferred unless this optional AD CS-specific campaign is deliberately selected; there is no accelerated six-hour claim or silently skipped mandatory timer test.

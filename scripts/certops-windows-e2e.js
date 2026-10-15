@@ -54,10 +54,15 @@ async function main() {
       assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);
       require("../tests/e2e/helpers/certops-windows-source-upgrade").verifySourceUpgradeReport(upgrade);
     }
-    verify(fs.readFileSync(report, "utf8"), [...required, journey], "certops-agent-e2e.test.js", scope);
+    verify(fs.readFileSync(report, "utf8"), [...required, require("../tests/e2e/helpers/certops-windows-credential-refusal").SCENARIO, require("../tests/e2e/helpers/certops-windows-retention-config").SCENARIO, require("../tests/e2e/helpers/certops-windows-public-retirement").SCENARIO, require("../tests/e2e/helpers/certops-windows-config-encoding").SCENARIO, require("../tests/e2e/helpers/certops-windows-service-controls").SCENARIO, journey], "certops-agent-e2e.test.js", scope);
     const journeyEvent=fs.readFileSync(report,"utf8").split(/\r?\n/).filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.name===journey);
     require("../tests/e2e/helpers/certops-windows-public-issuance").verifyPublicIssuanceFacts(journeyEvent.windowsPublicIssuance);
     require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(journeyEvent.nativeInstalledPaths);
+    require("../tests/e2e/helpers/certops-windows-service-controls").verifyProof(journeyEvent.nativeInstalledServiceControls);
+    require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(journeyEvent.nativeInstalledConfigEncoding);
+    require("../tests/e2e/helpers/certops-windows-public-retirement").verifyProof(journeyEvent.nativeInstalledPublicRetirement);
+    require("../tests/e2e/helpers/certops-windows-retention-config").verifyProof(journeyEvent.nativeInstalledRetentionConfig);
+    require("../tests/e2e/helpers/certops-windows-credential-refusal").verifyProof(journeyEvent.nativeInstalledCredentialRefusal);
     require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(journeyEvent.nativeInstalledIisRefusal);
     require("../tests/e2e/helpers/certops-windows-key-reuse-refusal").verifyProof(journeyEvent.nativeWindowsKeyReuseRefusal);
     console.log("Windows installed-agent qualification report verified");

@@ -117,3 +117,46 @@ test("installed timer cleanup remains unattended and serialized with the expiry 
     }
   }
 });
+test("six-hour campaign is explicitly optional AD CS while hosted generic checks retain bounded scope", () => {
+  for (const mode of ["prepare", "finalize", "janitor"]) {
+    const workflow = read(`certops-retention-cadence-${mode}.yml`);
+    assert.match(workflow.name, /^CertOps \/ Optional AD CS \//);
+  }
+  assert.deepEqual(Object.keys(read(prepareName).on), ["workflow_dispatch"]);
+  const source = fs.readFileSync(
+    path.resolve(
+      __dirname,
+      "../packages/agent/scripts/host/retention-configured-timer-fixture.js",
+    ),
+    "utf8",
+  );
+  assert.ok(!source.includes("certops-retention-cadence-azure"));
+  const proof = {
+    scope:
+      require("../packages/agent/scripts/host/retention-configured-timer-fixture")
+        .SCOPE,
+    configuredIntervalMs: 100,
+    defaultIntervalMs: 21600000,
+    defaultRetentionHours: 168,
+    actualCallbacks: 3,
+    actualDelayedCallbacks: 2,
+    waitedMonotonicMs: 200,
+    defaultSixHourElapsedQualified: false,
+    installedServiceQualified: false,
+    nativeDeletionQualified: false,
+    productionCollectorReturnedEmpty: true,
+    actualAbortDrained: true,
+    ownedEmptyStatePreserved: true,
+  };
+  assert.equal(
+    require("../packages/agent/scripts/host/retention-configured-timer-fixture").verifyProof(
+      proof,
+    ),
+    true,
+  );
+  assert.throws(() =>
+    require("../packages/agent/scripts/host/retention-configured-timer-fixture").verifyProof(
+      { ...proof, defaultSixHourElapsedQualified: true },
+    ),
+  );
+});

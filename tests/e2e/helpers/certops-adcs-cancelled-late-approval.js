@@ -24,6 +24,8 @@ const { verifyIssuedLeaf } = require("./certops-adcs-issued-revocation");
 
 const SCOPE =
   "real-cancelled-request-late-issued-after-distinct-same-endpoint-successor";
+const SAME_CERTIFICATE_SCOPE =
+  "real-cancelled-request-late-issued-after-same-certificate-renewal";
 const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-cancelled-late-approval-preserves-installed-successor",
 ]);
@@ -153,7 +155,7 @@ $nativeHash=[BitConverter]::ToString([byte[]]$native[0].GetValue('SslCertHash'))
 }finally{if($public){$public.Dispose()};if($k){$k.Dispose()};$hash.Dispose();$c.Dispose()}`;
 }
 
-async function qualifyCancelledLateApproval(context) {
+async function qualifyLateApproval(context, sameCertificateRenewal = false) {
   const {
     gate,
     fixture,
@@ -191,7 +193,9 @@ async function qualifyCancelledLateApproval(context) {
     } else gate.report.fixtureSources.push({ file, sha256: digest });
   }
   await gate.scenario(
-    REQUIRED_SCENARIOS[0],
+    sameCertificateRenewal
+      ? "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal"
+      : REQUIRED_SCENARIOS[0],
     async () => {
       const query = (sql, values) => fixture.pool.query(sql, values);
       const row = async (id) =>
@@ -305,7 +309,9 @@ async function qualifyCancelledLateApproval(context) {
       assert.notEqual(current.id, oldId);
       const currentRow = await row(current.id);
       assert.equal(currentRow.state, "installed");
-      assert.notEqual(currentRow.certificate_id, terminal.certificate_id);
+      if (sameCertificateRenewal)
+        assert.equal(currentRow.certificate_id, terminal.certificate_id);
+      else assert.notEqual(currentRow.certificate_id, terminal.certificate_id);
       assert.notEqual(
         String(currentRow.request_id),
         String(terminal.request_id),
@@ -546,8 +552,18 @@ async function qualifyCancelledLateApproval(context) {
         ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
       };
       verifyProof(proof);
+      if (sameCertificateRenewal) {
+        const same = {
+          ...proof,
+          scope: SAME_CERTIFICATE_SCOPE,
+          sameCertificateRenewalQualified: true,
+          backgroundTimerQualified: false,
+          certificateId: terminal.certificate_id,
+        };
+        verifySameCertificateProof(same);
+        gate.report.nativeSameCertificateLateApproval = same;
+      } else gate.report.nativeCancelledLateApproval = proof;
       guard.resolved = true;
-      gate.report.nativeCancelledLateApproval = proof;
     },
     {
       evidenceLevel: "real-host",
@@ -557,8 +573,30 @@ async function qualifyCancelledLateApproval(context) {
   );
 }
 
+// The two public qualifiers preserve distinct native lineage contracts; they
+// share only read-only custody and guarded late-issuance cleanup oracles.
+function verifySameCertificateProof(value) {
+  assert.ok(value && typeof value === "object");
+  assert.equal(value.scope, SAME_CERTIFICATE_SCOPE);
+  assert.equal(value.sameCertificateRenewalQualified, true);
+  assert.match(value.certificateId, UUID);
+  assert.equal(value.backgroundTimerQualified, false);
+  const { certificateId, backgroundTimerQualified, ...old } = value;
+  void backgroundTimerQualified;
+  void certificateId;
+  verifyProof({ ...old, scope: SCOPE, sameCertificateRenewalQualified: false });
+  return value;
+}
+const qualifyCancelledLateApproval = (context) =>
+  qualifyLateApproval(context, false);
+const qualifySameCertificateLateApproval = (context) =>
+  qualifyLateApproval(context, true);
+
 module.exports = {
   SCOPE,
+  SAME_CERTIFICATE_SCOPE,
+  verifySameCertificateProof,
+  qualifySameCertificateLateApproval,
   REQUIRED_SCENARIOS,
   REQUIRED_SOURCES,
   FLAGS,

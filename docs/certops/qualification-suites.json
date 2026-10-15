@@ -53,7 +53,13 @@
       "windows-retention-policy-168-expiry-wins": "real-host",
       "windows-retention-policy-168-interrupted-delete": "real-host",
       "windows-retention-policy-720-expiry-wins": "real-host",
-      "windows-retention-policy-720-interrupted-delete": "real-host"
+      "windows-retention-policy-720-interrupted-delete": "real-host",
+      "windows-retention-ledger-native-read-denied": "real-host",
+      "windows-retention-ledger-root-native-list-denied": "real-host",
+      "windows-iis-ipv4-wildcard-shadow-rollback": "real-host",
+      "windows-native-cng-journal-read-denied-protected": "real-host",
+      "windows-native-cng-journal-root-list-denied-protected": "real-host",
+      "windows-retention-configured-real-timer-empty-ledger": "integration"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -322,7 +328,11 @@
       "adcs-real-public-reconcile-foreign-spki-positive-recovery": "real-host",
       "adcs-real-required-template-minimum-key-zero-refused-restored": "real-host",
       "adcs-real-required-template-subject-name-flag-absent-refused-restored": "real-host",
-      "adcs-real-cancelled-late-approval-preserves-installed-successor": "real-host"
+      "adcs-real-cancelled-late-approval-preserves-installed-successor": "real-host",
+      "adcs-real-live-machine-enroll-denial": "real-host",
+      "adcs-real-live-enroll-acl-restored-same-template-issuance": "real-host",
+      "adcs-real-same-certificate-cancel-then-renew": "real-host",
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -666,7 +676,12 @@
       "adcs-real-public-reconcile-foreign-spki-positive-recovery": "real-host",
       "adcs-real-required-template-minimum-key-zero-refused-restored": "real-host",
       "adcs-real-required-template-subject-name-flag-absent-refused-restored": "real-host",
-      "adcs-real-cancelled-late-approval-preserves-installed-successor": "real-host"
+      "adcs-real-cancelled-late-approval-preserves-installed-successor": "real-host",
+      "adcs-real-live-machine-enroll-denial": "real-host",
+      "adcs-real-live-enroll-acl-restored-same-template-issuance": "real-host",
+      "adcs-hierarchy-http-intermediate-crl-fault-recovers": "real-host",
+      "adcs-real-same-certificate-cancel-then-renew": "real-host",
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -891,7 +906,8 @@
       "dns-routing-dot-boundary": "integration",
       "dns-routing-zone-policy": "integration",
       "dns-routing-propagation-outage": "integration",
-      "dns-routing-owned-cleanup": "integration"
+      "dns-routing-owned-cleanup": "integration",
+      "dns-routing-two-view-all-quorum": "integration"
     },
     "integration-certificate-sources-api": {
       "integration-source-aws-acm": "integration",
@@ -1283,6 +1299,12 @@
       "windows-retention-default-timer-real-immediate-sweep": "real-host",
       "windows-retention-default-timer-real-jittered-sweep": "real-host",
       "windows-retention-default-timer-independent-final-and-owned-cleanup": "real-host"
+    },
+    "linux-native-acme-browser-console": {
+      "real-native-acme-console-live-and-completed-claim": "e2e"
+    },
+    "linux-native-acme-browser-lifecycle": {
+      "real-native-acme-browser-issue-renew-lifecycle": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1582,7 +1604,8 @@
     ],
     "dns-routing-host": [
       "native-hook",
-      "native-dns-fixture"
+      "native-dns-fixture",
+      "native-pidfd"
     ],
     "integration-certificate-sources-api": [
       "api",
@@ -1804,6 +1827,16 @@
       "domain",
       "sameVmResidentKeeper",
       "api"
+    ],
+    "linux-native-acme-browser-console": [
+      "linux",
+      "api",
+      "browser"
+    ],
+    "linux-native-acme-browser-lifecycle": [
+      "linux",
+      "api",
+      "browser"
     ]
   },
   "suites": {
@@ -1859,7 +1892,13 @@
       "windows-retention-policy-168-expiry-wins",
       "windows-retention-policy-168-interrupted-delete",
       "windows-retention-policy-720-expiry-wins",
-      "windows-retention-policy-720-interrupted-delete"
+      "windows-retention-policy-720-interrupted-delete",
+      "windows-retention-ledger-native-read-denied",
+      "windows-retention-ledger-root-native-list-denied",
+      "windows-iis-ipv4-wildcard-shadow-rollback",
+      "windows-native-cng-journal-read-denied-protected",
+      "windows-native-cng-journal-root-list-denied-protected",
+      "windows-retention-configured-real-timer-empty-ledger"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -2128,7 +2167,11 @@
       "adcs-real-public-reconcile-foreign-spki-positive-recovery",
       "adcs-real-required-template-minimum-key-zero-refused-restored",
       "adcs-real-required-template-subject-name-flag-absent-refused-restored",
-      "adcs-real-cancelled-late-approval-preserves-installed-successor"
+      "adcs-real-cancelled-late-approval-preserves-installed-successor",
+      "adcs-real-live-machine-enroll-denial",
+      "adcs-real-live-enroll-acl-restored-same-template-issuance",
+      "adcs-real-same-certificate-cancel-then-renew",
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2472,7 +2515,12 @@
       "adcs-real-public-reconcile-foreign-spki-positive-recovery",
       "adcs-real-required-template-minimum-key-zero-refused-restored",
       "adcs-real-required-template-subject-name-flag-absent-refused-restored",
-      "adcs-real-cancelled-late-approval-preserves-installed-successor"
+      "adcs-real-cancelled-late-approval-preserves-installed-successor",
+      "adcs-real-live-machine-enroll-denial",
+      "adcs-real-live-enroll-acl-restored-same-template-issuance",
+      "adcs-hierarchy-http-intermediate-crl-fault-recovers",
+      "adcs-real-same-certificate-cancel-then-renew",
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -2697,7 +2745,8 @@
       "dns-routing-dot-boundary",
       "dns-routing-zone-policy",
       "dns-routing-propagation-outage",
-      "dns-routing-owned-cleanup"
+      "dns-routing-owned-cleanup",
+      "dns-routing-two-view-all-quorum"
     ],
     "integration-certificate-sources-api": [
       "integration-source-aws-acm",
@@ -3084,6 +3133,12 @@
       "windows-retention-default-timer-real-immediate-sweep",
       "windows-retention-default-timer-real-jittered-sweep",
       "windows-retention-default-timer-independent-final-and-owned-cleanup"
+    ],
+    "linux-native-acme-browser-console": [
+      "real-native-acme-console-live-and-completed-claim"
+    ],
+    "linux-native-acme-browser-lifecycle": [
+      "real-native-acme-browser-issue-renew-lifecycle"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3187,6 +3242,8 @@
     "windows-arm64-installed-agent": "e2e",
     "windows-domain-adcs-default-ttl24h": "real-host",
     "filesystem-linux-backup-dac-host": "real-host",
-    "windows-domain-installed-retention-default-timer": "real-host"
+    "windows-domain-installed-retention-default-timer": "real-host",
+    "linux-native-acme-browser-console": "e2e",
+    "linux-native-acme-browser-lifecycle": "e2e"
   }
 }

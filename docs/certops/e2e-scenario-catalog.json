@@ -170,14 +170,14 @@
     },
     {
       "id": "windows-install.new-service",
-      "outcome": "Install a uniquely named real service, register with the API, and prove the child agent runs under the declared service identity.",
+      "outcome": "Install the supported production Windows service on an initially absent disposable host, register with the API, and prove the real child agent runs as LocalSystem.",
       "status": "partial",
       "evidenceLevel": "e2e",
       "requiredEnvironments": [
         "windows-2022-disposable-api-postgres-pebble"
       ],
       "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Actual fixed-name LocalSystem service, registration and independent SID proof covered; unique production service naming, exact installer/package and other identities remain."
+      "remainingCoverage": "The actual fixed-name TokenTimerAgent service, original candidate installer, registration and independent SYSTEM child identity have source coverage in both Server versions and all five key profiles; initially existing production service ownership is refused. Native execution remains pending. Custom production service names and alternative service identities are not exposed by the current installer/host contract and are not implied by this source."
     },
     {
       "id": "windows-install.path-quoting",
@@ -221,8 +221,8 @@
       "requiredEnvironments": [
         "windows-local"
       ],
-      "implementation": "packages/agent/scripts/host/package-fixture.js",
-      "remainingCoverage": "Extracted candidate refuses malformed JSON, array/null, BOM and invalid retention while preserving state-marker bytes. Unique SCM fixture requires real parse failure and repaired loader recovery. Full Windows journey also requires actual registered credential and binding preservation through malformed startup, then fresh authenticated heartbeat and trusted TLS after exact configuration restoration. Exhaustive invalid fields, encoding variants and package-version upgrade recovery remain."
+      "implementation": "packages/agent/scripts/host/package-fixture.js; tests/e2e/helpers/certops-windows-config-encoding.js",
+      "remainingCoverage": "Extracted candidate refuses malformed JSON, array/null, BOM and invalid retention while preserving state-marker bytes. Unique SCM fixture requires real parse failure and repaired loader recovery. Full Windows journey also requires actual registered credential and binding preservation through malformed startup, then fresh authenticated heartbeat and trusted TLS after exact configuration restoration. A separate mandatory installed-service source now starts the same registered SYSTEM agent with UTF8BOM, UTF16LEBOM and UTF16BEBOM copies of its actual configuration. Each requires new production parse failure, stopped/drained fixture processes, unchanged registered state/CNG/HTTP.sys/trusted TLS and no new agent/job. Retained original-file descriptor writes refuse foreign replacements; exact original bytes and a repaired SYSTEM child with genuine heartbeat must precede guard release. Source is implemented; native execution remains pending. Additional invalid fields and package-version upgrade recovery remain. A separate mandatory installed-service source now exercises actual empty and malformed protected credential startup failures, preserving the same server identity, config/signing pin, CNG/native binding and trusted TLS. Retained original-file descriptor repair and a fresh authenticated SYSTEM child are required before ownership release. This source remains native-unexecuted and does not qualify lost-file re-registration or active certificate-operation recovery."
     },
     {
       "id": "windows-install.stop-start",
@@ -232,8 +232,8 @@
       "requiredEnvironments": [
         "windows-2022-disposable-api-postgres-pebble"
       ],
-      "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Real service stop/start keeps credential and served certificate, fixture smoke covers bounded SCM lifecycle; full interrogate/forced shutdown and child-leak matrix remain."
+      "implementation": "tests/e2e/windows-real-journey.js; tests/e2e/helpers/certops-windows-service-controls.js",
+      "remainingCoverage": "Real service stop/start keeps credential and served certificate, fixture smoke covers bounded SCM lifecycle. A mandatory installed-agent source now sends actual SCM Interrogate and requires native1052 rejection of unsupported Pause/Continue; exact original SYSTEM host/Node identity, native protected CNG/HTTP.sys binding, credentials and trusted TLS remain unchanged, and genuine authenticated heartbeat uptime advances without changing job claims. A sticky guard preserves uncertain control outcomes. Source is implemented; native execution remains pending. Forced shutdown, controls during certificate-operation phases and additional child-leak permutations remain unqualified."
     },
     {
       "id": "windows-install.crash-recovery",
@@ -256,8 +256,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Supporting SCM fixture verifies child exit86. Full Windows installed-agent journey retires its actual API identity, observes newly logged native host exit86 and clean SCM ExitCode0, and proves no new host PID over five configured restart intervals. All source awaits native host execution; other identity/job-stage retirement variants remain."
+      "implementation": "tests/e2e/helpers/certops-windows-public-retirement.js",
+      "remainingCoverage": "Supporting SCM fixture verifies child exit86. The full installed Windows source now requires actual anonymous401/viewer403/manager200 public idle retirement, idempotent replay with one actor-bound audit, newly logged native exit86, clean SCM ExitCode0, original host/child absence and a measured five-second no-respawn window. Protected CNG custody, native binding/trusted TLS, credentials/configuration/pin and all job claims must remain unchanged. Mandatory report/source checks cover all five key profiles on both Server versions; native execution remains pending. Forced in-flight and other job-stage retirement variants remain distinct."
     },
     {
       "id": "windows-install.upgrade-rollback",
@@ -566,7 +566,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Actual provider-specific KSP listing and .NET accepted key association covered; other providers, locales and exact released package matrix remain."
+      "remainingCoverage": "Actual Microsoft Software Key Storage Provider listing and native accepted-key association have source coverage, including independent presence checks instead of certutil exit status/name echo alone. This is the provider selected by current managed CNG operations. Native OS/language/released-package execution remains pending; other-provider or hardware-backed custody is not qualified by this source."
     },
     {
       "id": "windows-cng.powerShell-modes",
@@ -601,7 +601,7 @@
         "windows-2022-disposable-api-postgres-pebble"
       ],
       "implementation": "tests/e2e/windows-real-journey.js",
-      "remainingCoverage": "Actual registered SYSTEM agent signed issue flows through ACME/CNG/My/IIS with independent trusted TLS, native binding and persisted evidence; authenticated public API/browser trigger and full host matrix remain."
+      "remainingCoverage": "Actual registered SYSTEM agent signed issuance flows through genuine public API admission, ACME/CNG/My/IIS with independent trusted TLS, native binding and claim-bound persisted evidence. Anonymous/viewer refusals, authorized manager creation, idempotent replay and preserved public requester are mandatory in all ten Server/key-profile source cells. Native execution and a Windows-specific browser issuance trigger remain pending."
     },
     {
       "id": "windows-iis.renew-cutover",
@@ -670,8 +670,8 @@
         "windows-2022",
         "windows-2025"
       ],
-      "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/ipv6-shadow-fixture.js; packages/agent/scripts/host/ipv6-wildcard-fixture.js",
-      "remainingCoverage": "Concrete IPv4 loopback shadow source remains in the SNI fixture. Mandatory supporting native source additionally owns a concrete IPv6 loopback SNI site and [::1] HTTP.sys shadow, requires real production VERIFY_FAILED plus successful rollback, independently restores the native hostname endpoint and trusted IPv6 TLS, and preserves a separate IPv4 sibling endpoint/TLS. Exact site IDs/protocol/flags/path and endpoint certificate/store/application identity gate cleanup; unresolved guards preserve borrowed keys. Native IPv6 execution remains pending. A distinct mandatory IPv6 [::] wildcard source repeats real warning, failure, rollback and trusted IPv6 recovery with both-stack target-port availability and the same owned cleanup guard. Concrete-only evidence cannot satisfy its proof. Native wildcard execution remains pending. IPv4 wildcard shadows, additional client address combinations and installed-agent/public-job IPv6 coverage remain separate gaps."
+      "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/ipv6-shadow-fixture.js; packages/agent/scripts/host/ipv6-wildcard-fixture.js; packages/agent/scripts/host/ipv4-wildcard-fixture.js",
+      "remainingCoverage": "Concrete IPv4 loopback shadow source remains in the SNI fixture. Mandatory supporting native source additionally owns a concrete IPv6 loopback SNI site and [::1] HTTP.sys shadow, requires real production VERIFY_FAILED plus successful rollback, independently restores the native hostname endpoint and trusted IPv6 TLS, and preserves a separate IPv4 sibling endpoint/TLS. Exact site IDs/protocol/flags/path and endpoint certificate/store/application identity gate cleanup; unresolved guards preserve borrowed keys. Native IPv6 execution remains pending. A distinct mandatory IPv6 [::] wildcard source repeats real warning, failure, rollback and trusted IPv6 recovery with both-stack target-port availability and the same owned cleanup guard. Concrete-only evidence cannot satisfy its proof. Native wildcard execution remains pending. A separate mandatory IPv4 wildcard source now repeats the actual 0.0.0.0 precedence warning, production verification failure/rollback, independent 127.0.0.1 trusted TLS recovery and unchanged different-port IPv4 sibling under the same exact native ownership guards. Source is implemented; native execution remains pending. Additional client address combinations and installed-agent/public-job IPv6 coverage remain separate gaps."
     },
     {
       "id": "windows-iis.flags-preserved",
@@ -764,7 +764,7 @@
         "windows-2022-domain-native-retention24h"
       ],
       "implementation": "tests/e2e/certops-adcs-retention24h-prepare.js",
-      "remainingCoverage": "Native source spans short authenticated prepare/finalize jobs around one resident SYSTEM process on the same owned domain member. Actual public AD CS A-to-B cutover creates the production 24-hour ledger; independently observed actual expiry is later. Exact stopped-agent drainage, current native CNG/IIS/trusted TLS, bounded hourly/predeadline observations, a full monotonic day, production default-clock deletion, an owned native interruption after real certificate deletion but before key/ledger completion, independent original-key/incomplete-ledger preservation and ordinary default-clock recovery, independent final native absence and owned Azure deletion are mandatory. Pure refusal checks are supporting evidence only. Native elapsed execution and bind/verify failure clock permutations remain pending; the seven-day default and background agent interval are outside this scope."
+      "remainingCoverage": "Native source spans short authenticated prepare/finalize jobs around one resident SYSTEM process on the same owned domain member. Actual public AD CS A-to-B cutover creates the production 24-hour ledger; independently observed actual expiry is later. Exact stopped-agent drainage, current native CNG/IIS/trusted TLS, bounded hourly/predeadline observations, a full monotonic day, production default-clock deletion, an owned native interruption after real certificate deletion but before key/ledger completion, independent original-key/incomplete-ledger preservation and ordinary default-clock recovery, independent final native absence and owned Azure deletion are mandatory. Pure refusal checks are supporting evidence only. Native elapsed execution and bind/verify failure clock permutations remain pending; the seven-day default and background agent interval are outside this scope. Real-day domain-backed Azure campaigns belong only to the explicitly selected extended-adcs or full evidence profiles; ordinary standard-hosted qualification omits them and reports those omissions without claiming full-matrix qualification."
     },
     {
       "id": "windows-retention.active-key",
@@ -800,7 +800,7 @@
         "windows-2025-host"
       ],
       "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js; scripts/certops-retention-boundaries.test.js; packages/agent/scripts/host/retention-policy-expiry-fixture.js",
-      "remainingCoverage": "Native short-expiry source runs separate real two-cutover collector cases at 24 hours, explicit 168 hours (the production default) and the maximum 720 hours. Each uses actual native expiry plus 300 seconds, real monotonic and wall-clock passage, predeadline preservation, interrupted native deletion recovery, both predecessor certificate/key absence and unchanged trusted replacement custody. These direct collector cases do not qualify installed-service configuration delivery, default timer cadence or full 168/720-hour passage. The separate domain AD CS resident keeper qualifies actual 24-hour passage only when native execution succeeds; native evidence remains pending. A separate mandatory domain-member source now leaves the actual installed service running with both retention timing fields omitted, observes its immediate and genuinely jittered default timer atomic ledger rewrites, and binds the same service/Node/boot/configuration, native protected custody, healthy pinned API and replacement trusted TLS across 4.8–7.2 hours plus a bounded sweep/observation margin. Immutable original artifacts and independent final native readback/owned Azure absence are required. Native timer execution remains pending; this deferral-only campaign does not qualify full 168/720-hour retention or deletion. Supporting loader/filesystem controls cover the default 168-hour policy and six-hour base interval, minimum 24 hours, maximum 720 hours, supported positive intervals and invalid/coerced values without rewriting configuration or custody state. Additional service/configuration cross-products remain."
+      "remainingCoverage": "Native short-expiry source runs separate real two-cutover collector cases at 24 hours, explicit 168 hours (the production default) and the maximum 720 hours. Each uses actual native expiry plus 300 seconds, real monotonic and wall-clock passage, predeadline preservation, interrupted native deletion recovery, both predecessor certificate/key absence and unchanged trusted replacement custody. These direct collector cases do not qualify installed-service configuration delivery, default timer cadence or full 168/720-hour passage. The separate domain AD CS resident keeper qualifies actual 24-hour passage only when native execution succeeds; native evidence remains pending. A separate mandatory domain-member source now leaves the actual installed service running with both retention timing fields omitted, observes its immediate and genuinely jittered default timer atomic ledger rewrites, and binds the same service/Node/boot/configuration, native protected custody, healthy pinned API and replacement trusted TLS across 4.8–7.2 hours plus a bounded sweep/observation margin. Immutable original artifacts and independent final native readback/owned Azure absence are required. Native timer execution remains pending; this deferral-only campaign does not qualify full 168/720-hour retention or deletion. Supporting loader/filesystem controls cover the default 168-hour policy and six-hour base interval, minimum 24 hours, maximum 720 hours, supported positive intervals and invalid/coerced values without rewriting configuration or custody state. Additional service/configuration cross-products remain. A separate mandatory installed-service source now refuses actual startup with below-minimum23h, above-maximum721h and zero-sweep policy configurations. Specific production validation errors, fresh stopped/drained service, exact original-file restoration, protected CNG/native binding/trusted TLS and repaired authenticated SYSTEM heartbeat are required. This source remains native-unexecuted and does not qualify a retention timer or deletion."
     },
     {
       "id": "windows-retention.durable-ledger",
@@ -812,7 +812,7 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js",
-      "remainingCoverage": "Separate real-process ledger persistence and mandatory native Windows atomic replacement-refusal source now cover a genuine no-delete-sharing file handle, failed production replacement with unchanged prior bytes/file identity, no leaked temporary writer file, handle release, successful normal replacement, fresh-process exact read and restrictive native ACL checks. The owned local Windows temporary-filesystem fixture passed; full hosted Windows qualification remains pending. This does not establish power-loss durability, every torn-write phase or all ledger permission variants. Certificate/key deletion interruption remains separately covered."
+      "remainingCoverage": "Separate real-process ledger persistence and mandatory native Windows atomic replacement-refusal source now cover a genuine no-delete-sharing file handle, failed production replacement with unchanged prior bytes/file identity, no leaked temporary writer file, handle release, successful normal replacement, fresh-process exact read and restrictive native ACL checks. The owned local Windows temporary-filesystem fixture passed; full hosted Windows qualification remains pending. This does not establish power-loss durability, every torn-write phase or all ledger permission variants. Certificate/key deletion interruption remains separately covered. Additional mandatory supporting native filesystem source covers actual current-token ledger ReadData and directory ListDirectory denial. Independent fresh OS access must fail before production readers throw EACCES/EPERM rather than return a missing row/empty inventory. Retained exact native ACL handles, contained child drainage, unchanged volume/file identities and bytes, exact SDDL restoration and successful production recovery are required. The source and offline proof checks are implemented; these native ACL cases remain unexecuted and do not qualify installed-service, certificate cleanup, elapsed retention or power-loss durability."
     },
     {
       "id": "windows-retention.interrupted-delete",
@@ -834,7 +834,7 @@
         "windows-2022-disposable-api-postgres-pebble"
       ],
       "implementation": "tests/e2e/windows-real-journey.js; packages/agent/scripts/host/orphan-journal-fixture.js",
-      "remainingCoverage": "Installed-agent hard-crash reconciliation remains covered by the Windows journey. Mandatory supporting native source now creates real CNG CSRs with explicit local unresolved-job and prepared/open enrollment prerequisites, proves a separate tracked unaccepted orphan is removed, preserves the open enrollment key and an untracked owned control key, rejects a malformed enrollment journal, restores exact journal bytes/file identity and permits cleanup after explicit fixture closure. These local prerequisites do not claim a CA request, installed-service startup or orphan-age policy. Native execution of the new controls remains pending; real old-orphan age and broader concurrency/interruption combinations remain."
+      "remainingCoverage": "Installed-agent hard-crash reconciliation remains covered by the Windows journey. Mandatory supporting native source now creates real CNG CSRs with explicit local unresolved-job and prepared/open enrollment prerequisites, proves a separate tracked unaccepted orphan is removed, preserves the open enrollment key and an untracked owned control key, rejects a malformed enrollment journal, restores exact journal bytes/file identity and permits cleanup after explicit fixture closure. These local prerequisites do not claim a CA request, installed-service startup or orphan-age policy. Native execution of the new controls remains pending; real old-orphan age and broader concurrency/interruption combinations remain. Separate mandatory native source composes the genuine prepared machine CNG key with independently demonstrated journal ReadData and enrollment-root ListDirectory denial. Production reconciliation must defer while preserving native private-key possession, then recover after exact retained-handle ACL restoration without changing journal bytes or file identities. This composition remains native-unexecuted and does not qualify installed-service or CA enrollment behavior."
     },
     {
       "id": "windows-retention.multiple-cutovers",
@@ -958,7 +958,7 @@
         "protected-isolated-dns-provider-zone"
       ],
       "implementation": "scripts/certops-dns-provider-host.js",
-      "remainingCoverage": "Direct genuine provider calls and independently configured recursive resolver poll bound visibility/coexistence and owned cleanup. External execution, authoritative-vs-recursive divergence, slow propagation timeout/cancellation and CA challenge acceptance remain pending."
+      "remainingCoverage": "Direct genuine provider calls and independently configured resolver polling bound visibility/coexistence and owned cleanup. The disposable Ubuntu routing source now exercises two independently owned native DNS views: reachable divergence fails all mode, a genuine second provider write restores all mode, and quorum succeeds with one positive view only after both configured endpoints answer. Byte-preserving forwarding, real provider cleanup and retained pidfd drainage are mandatory source oracles. Source/pure checks are implemented; protected native execution, public recursive-cache/authoritative divergence, external provider execution, interrupted cleanup and CA challenge acceptance remain pending. No generic job-cancellation API or early-return quorum behavior is implied."
     },
     {
       "id": "acme.provider-contracts",
@@ -1004,7 +1004,7 @@
         "disposable-alpine-real-acme"
       ],
       "implementation": "tests/e2e/acme-real-journey.js",
-      "remainingCoverage": "Mandatory native sources exercise actual client HTTPS directory503, structured ACME429 and malformed200 refusal through public issue jobs, no installed/active certificate, independent request counters and TXT cleanup, then restore forwarding for genuine issuance. Native execution is pending; order-stage CA interruption, DNS provider outages and retrying the same failed job remain separate coverage."
+      "remainingCoverage": "Mandatory native sources exercise actual client HTTPS directory503, structured429 and malformed200 refusal through public issue jobs. Separate source reaches genuine CA account/newOrder acceptance and binds every valid authorization to the exact requested identifier hash before an owned transparent HTTPS proxy refuses newOrder/finalization before upstream forwarding. Original JWS bytes/path/Host remain unchanged and upstream HTTPS is pinned. Both public jobs fail without installation/activation and independently clean TXT; later genuine CA issuance and trusted served TLS supply recovery. These are owned transport faults, not claims that the CA emitted a failure. Native execution, DNS provider outages and retrying the same failed job remain separate coverage."
     },
     {
       "id": "acme.unattended-two-cycles",
@@ -1018,7 +1018,7 @@
         "real-agent-acmesh-eab-filesystem"
       ],
       "implementation": "tests/e2e/acme-real-journey.js; tests/e2e/certops-agent-e2e.test.js; scripts/certops-real-acme.js",
-      "remainingCoverage": "Mandatory source performs public REST issuance followed by two naturally due production scheduler renewals, advancing real expiry, TLS fingerprints and key identities for certbot/acme.sh with and without required EAB. Native execution remains pending; unattended deployed worker/cron and broader issuer/retention permutations require qualification."
+      "remainingCoverage": "Mandatory source retains the explicit production scheduler controls and separately launches the unmodified production worker CLI with cron, interval and startup overrides omitted. Two real default-minute cron admissions must create automatic signed jobs, advance actual CA serials/SPKIs/expiry, match durable inventory and claim-bound evidence, preserve stored profile/management lineage and reach independently trusted TLS. The private worker is pidfd-pinned before exec, gracefully stopped and reaped before owned process-group/state cleanup. Both clients, EAB variants and the declared Alpine acme.sh surface require this source. Native execution remains pending; broader issuer/retention and host-service deployment permutations remain distinct."
     },
     {
       "id": "acme.challenge-boundary",
@@ -1212,7 +1212,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js; scripts/certops-adcs-ttl24h-finish.js",
-      "remainingCoverage": "Native new-CA-key recovery performs a fresh actual preflight and public confirmation, refusing enrollment while revalidation is required. A separate same-VM default24h source preserves original caches during a genuine monotonic day, independently refuses stale native pin/template caches, attaches a public profile, observes waiting_for_fresh_preflight and requires a naturally due default-clock sweep to create zero jobs before a fresh public preflight restores actual native renewal. Strict release evidence also requires independently authenticated prepare artifacts, CA counters, scheduler isolation and completed cloud cleanup; partial timing/native-stage receipts cannot qualify. Protected native execution and additional stale capability/cache combinations remain pending."
+      "remainingCoverage": "Native new-CA-key recovery performs a fresh actual preflight and public confirmation, refusing enrollment while revalidation is required. A separate same-VM default24h source preserves original caches during a genuine monotonic day, independently refuses stale native pin/template caches, attaches a public profile, observes waiting_for_fresh_preflight and requires a naturally due default-clock sweep to create zero jobs before a fresh public preflight restores actual native renewal. Strict release evidence also requires independently authenticated prepare artifacts, CA counters, scheduler isolation and completed cloud cleanup; partial timing/native-stage receipts cannot qualify. Protected native execution and additional stale capability/cache combinations remain pending. Real-day domain-backed Azure campaigns belong only to the explicitly selected extended-adcs or full evidence profiles; ordinary standard-hosted qualification omits them and reports those omissions without claiming full-matrix qualification."
     },
     {
       "id": "adcs.auto-issue",
@@ -1245,7 +1245,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/helpers/certops-adcs-recovery.js; tests/e2e/helpers/certops-adcs-cancelled-late-approval.js",
-      "remainingCoverage": "Native expired-request source approves an actual expired pending RequestId after exact-key cleanup, independently observes CA issuance and requires no scheduler revival, key recreation or IIS binding. Separate mandatory source now approves an actual PUBLIC-CANCELLED pending request only after a distinct real successor has installed on the same owned endpoint. Exact CA requester/template/public CSR/SPKI and issued DER authorize the action and unused-leaf revocation; default-clock and separate overdue eligibility sweeps cannot revive the cancelled enrollment, public retry is refused, its original key stays absent and the issued late leaf never enters a machine store. Successor claim-bound evidence, durable journal, CNG possession, native IIS/HTTP.sys bindings and trusted TLS remain unchanged. The successor uses a distinct certificate identity, so same-certificate superseding-renewal and remaining validity/snapshot variants remain separate gaps. Source and supporting controls are implemented; protected native execution remains pending."
+      "remainingCoverage": "Native expired-request source approves an actual expired pending RequestId after exact-key cleanup, independently observes CA issuance and requires no scheduler revival, key recreation or IIS binding. Separate mandatory source now approves an actual PUBLIC-CANCELLED pending request only after a distinct real successor has installed on the same owned endpoint. Exact CA requester/template/public CSR/SPKI and issued DER authorize the action and unused-leaf revocation; default-clock and separate overdue eligibility sweeps cannot revive the cancelled enrollment, public retry is refused, its original key stays absent and the issued late leaf never enters a machine store. Successor claim-bound evidence, durable journal, CNG possession, native IIS/HTTP.sys bindings and trusted TLS remain unchanged. That original case retains its distinct certificate identity. Separate mandatory source now discovers the actual managed identity of its installed successor and publicly cancels a pending renewal before issuing a fresh renewal of that SAME managed certificate. Only after real successor installation does the old cancelled request receive actual officer approval; native ownership, terminal-state, unused-leaf revocation and unchanged managed fingerprint/expiry/profile oracles must pass. Actual continuation eligibility is qualification-selected, not background-timer qualification. Remaining validity/snapshot variants remain separate. Source and supporting controls are implemented; protected native execution remains pending."
     },
     {
       "id": "adcs.denied-timeout-cancel",
@@ -1356,7 +1356,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native source covers CA publication/enrollment ACL denials plus agent-local missing constraints, DNS dot boundaries, algorithms, cross-product permissions, additional SANs and pending-policy tightening. Three exact pair controls separately mismatch the CA host, CA authority and template while preserving DNS/RSA permission; signed installed-agent refusal must precede CA allocation and key generation, preserve the prior DER/CNG/TLS custody, and restore original configuration/credentials after a drained restart. Host execution remains pending; further policy and target combinations are not implied."
+      "remainingCoverage": "Native source covers CA publication/enrollment ACL denials plus agent-local missing constraints, DNS dot boundaries, algorithms, cross-product permissions, additional SANs and pending-policy tightening. Three exact pair controls separately mismatch the CA host, CA authority and template while preserving DNS/RSA permission; signed installed-agent refusal must precede CA allocation and key generation, preserve the prior DER/CNG/TLS custody, and restore original configuration/credentials after a drained restart. Host execution remains pending; further policy and target combinations are not implied. A separate live same-template current-machine Enroll DACL deny/restore source journey now requires actual 0x80094012 denial, measured zero-or-one denied CA allocation, retained denied journal with absent unaccepted key, exact original DACL restoration, and fresh successful public issuance with independently bound native RequestId, nonexportable CNG, My/IIS/SNI/TLS and current-claim verification evidence. The existing static NoEnroll denial remains distinct; both native execution and cross-version qualification remain pending."
     },
     {
       "id": "adcs-safety.unsafe-templates",
@@ -1435,7 +1435,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Separate required hierarchy suite creates a genuine standalone offline root/enterprise subordinate, published public root/CRL and stopped root service; five actual leaf algorithms must have native online three-element chain and served TLS. Host execution is pending; all required distribution/language cross-products and additional chain failures remain."
+      "remainingCoverage": "Separate required hierarchy suite creates a genuine standalone offline root/enterprise subordinate, published public root/CRL and stopped root service; five actual leaf algorithms must have native online three-element chain and served TLS. Host execution is pending; all required distribution/language cross-products and additional chain failures remain. A mandatory hierarchy-only HTTP intermediate-CRL source now uses the existing offline-root HTTP publication with no LDAP alternate, exact program-scoped HTTP block, independently reachable HTTP/issuing LDAP, actual native valid-to-revocation_unknown-to-valid sequence, exact cache-policy/firewall restoration and unchanged native CNG/IIS/SNI/trusted TLS. This directly exercises the shipped chain helper; HTTP-only leaf, OCSP and signed validation-deferred continuation for this transport remain separate gaps. Source execution remains pending. Explicit manual hierarchy selection and nine independent release cells now cover Server2019/2022/2025 member versions with en-US/de-DE/fr-FR member and enterprise CA UI languages, one isolated lab per dispatch. Their native execution remains pending; enterprise CA and standalone-root appliances remain Server2022, with no additional CA/root OS combinations implied."
     },
     {
       "id": "adcs-safety.revocation-recovery",
@@ -1446,7 +1446,7 @@
         "enterprise-domain-native-adcs"
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "remainingCoverage": "Native source isolates real LDAP CRL outage, preserves outgoing trusted TLS and the owned key, removes the fault and continues the same CA request. A separate configured five-minute validation_expired source waits real monotonic time, preserves the committed deadline through a SYSTEM restart and restoration of the default policy, then requires exact unaccepted-key cleanup without CA resubmission. Separate default24h source retains the production timeout unchanged across an actual same-process day, then requires a genuine signed continuation to expire the original request, remove only its unaccepted key and preserve predecessor custody/TLS before fresh native renewal. This source and strict release contract do not establish native execution. Protected execution and OCSP/HTTP distribution fault variants remain pending."
+      "remainingCoverage": "Native source isolates real LDAP CRL outage, preserves outgoing trusted TLS and the owned key, removes the fault and continues the same CA request. A separate configured five-minute validation_expired source waits real monotonic time, preserves the committed deadline through a SYSTEM restart and restoration of the default policy, then requires exact unaccepted-key cleanup without CA resubmission. Separate default24h source retains the production timeout unchanged across an actual same-process day, then requires a genuine signed continuation to expire the original request, remove only its unaccepted key and preserve predecessor custody/TLS before fresh native renewal. This source and strict release contract do not establish native execution. Protected execution and OCSP/HTTP distribution fault variants remain pending. A mandatory hierarchy-only HTTP intermediate-CRL source now uses the existing offline-root HTTP publication with no LDAP alternate, exact program-scoped HTTP block, independently reachable HTTP/issuing LDAP, actual native valid-to-revocation_unknown-to-valid sequence, exact cache-policy/firewall restoration and unchanged native CNG/IIS/SNI/trusted TLS. This directly exercises the shipped chain helper; HTTP-only leaf, OCSP and signed validation-deferred continuation for this transport remain separate gaps. Source execution remains pending."
     },
     {
       "id": "adcs-safety.ca-key-reuse",
@@ -2106,8 +2106,8 @@
       "requiredEnvironments": [
         "core-real-dashboard-disposable-stack"
       ],
-      "implementation": "scripts/certops-browser.js",
-      "remainingCoverage": "ActualpublicCSR browser submit/import/manualattestation independentlyverified; agentissue/renew realdestinationbrowsertrigger remains."
+      "implementation": "scripts/certops-browser.js; tests/e2e/helpers/certops-acme-browser-lifecycle.js",
+      "remainingCoverage": "Actual public CSR browser submit/import/manual attestation has independent verification. A separate manual Ubuntu24 certbot/noEAB source now submits real agent ACME issue and stored-profile renew through the supported Jobs dialog, with cancel-before-submit zero-write checks, exact API admissions and native CA/key/TLS/claim evidence. Source and pure validation are implemented; protected native execution and additional client/platform browser combinations remain pending. This does not imply unsupported AD CS first-issue UI or cancellation of an executing operation."
     },
     {
       "id": "experience.browser-adcs",
@@ -2150,8 +2150,8 @@
       "requiredEnvironments": [
         "core-disposable-api-postgres"
       ],
-      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-native-agent-e2e.test.js",
-      "remainingCoverage": "Actual protocol and API incremental stream persistence/cursor paging/final closure are covered; stream closure explicitly does not fabricate terminal job success. Browser console rendering during real native execution and all interruption/terminal states still require qualified E2E. Eighteen focused native-process scenarios now pass, including actual noop console persistence/finalization/restart and four real transport fault/counter cases. Harmless noop evidence does not qualify all certificate operations or browser rendering."
+      "implementation": "tests/e2e/certops-agent-logs-api-e2e.test.js; tests/e2e/certops-agent-log-order-e2e.test.js; tests/e2e/certops-native-agent-e2e.test.js; tests/e2e/helpers/certops-acme-browser-console.js; scripts/certops-acme-native-console.js",
+      "remainingCoverage": "Protocol/API incremental persistence, cursor paging, final closure and genuine native noop stream fault/restart sources are covered. A dedicated Ubuntu24 certbot/noEAB source now renders the foreground production agent’s actual claim-bound starting line during real paused ACME execution, then the actual completed stream, with independent native CA issuance, trusted TLS, persisted verification fingerprint and zero browser CertOps writes. Source and pure checks are implemented; native browser execution and the remaining certificate-operation interruption/terminal combinations remain pending. Protocol or noop execution alone does not qualify all certificate operations."
     },
     {
       "id": "experience.log-pagination",

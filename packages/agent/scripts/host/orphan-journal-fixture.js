@@ -367,6 +367,22 @@ async function qualifyOrphanJournals({ gate, powershell, run, workDir }) {
           "Real CNG CSR and explicit prepared/unresolved local prerequisites protect one key while actual production native reconciler deletes a separate unaccepted orphan; no CA/installed-agent outcome is synthesized",
       },
     );
+    // Compose the prepared native key with real OS journal access refusal
+    // before the separate malformed-byte control changes the journal.
+    gate.report.nativeCngJournalAcl =
+      await require("./orphan-journal-acl-fixture").qualifyPreparedKeyJournalAcl(
+        {
+          gate,
+          workDir,
+          stateDir: directory,
+          enrollmentId: protectedId,
+          containerName: protectedContainer,
+          observeKey: observe,
+          sweep,
+          assertFixtureOwned: owned,
+          powershell: ps,
+        },
+      );
     await gate.scenario(
       scenarios[1],
       async () => {

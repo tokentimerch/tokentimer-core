@@ -13,7 +13,7 @@ permissions:
   id-token: write
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
     runs-on: ubuntu-24.04
     environment: certops-adcs-lab
     timeout-minutes: 180

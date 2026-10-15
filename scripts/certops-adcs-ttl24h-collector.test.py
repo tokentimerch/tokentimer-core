@@ -264,14 +264,14 @@ class AuthenticationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory(prefix="ttl-owner-main-", dir=ROOT / ".build") as directory:
                 root = Path(directory)
                 (root / "docs/certops").mkdir(parents=True)
-                (root / "docs/certops/release-qualification-matrix.json").write_bytes(encode({"slots": [{"kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
+                (root / "docs/certops/release-qualification-matrix.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
                 (root / "tests/integration").mkdir(parents=True)
                 (root / "tests/integration/certops-qualification-groups.json").write_bytes((ROOT / "tests/integration/certops-qualification-groups.json").read_bytes())
                 contract = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
                 contract["suites"][auth.SUITE] = []
                 contract["requiredCapabilities"][auth.SUITE] = []
                 (root / "docs/certops/qualification-suites.json").write_bytes(encode(contract))
-                environment = dict(CERTOPS_RELEASE_CANDIDATE=value["candidate"], CERTOPS_RELEASE_RUN_IDS="[456]", GITHUB_REPOSITORY=value["repository"], GITHUB_TOKEN="synthetic-no-network", GITHUB_SHA=value["run"]["head_sha"])
+                environment = dict(CERTOPS_QUALIFICATION_PROFILE="full", CERTOPS_RELEASE_CANDIDATE=value["candidate"], CERTOPS_RELEASE_RUN_IDS="[456]", GITHUB_REPOSITORY=value["repository"], GITHUB_TOKEN="synthetic-no-network", GITHUB_SHA=value["run"]["head_sha"])
                 # Actual archive/parser/authentication/projection run together.
                 # The final whole-matrix execution is outside this owner test.
                 with patch.object(collector, "ROOT", root), patch.dict(os.environ, environment), patch.object(collector, "download", side_effect=download), patch.object(collector, "catalog_coverage", return_value={}), patch.object(collector, "validate_matrix_summary"), patch.object(collector.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="{}")) as verifier:

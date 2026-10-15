@@ -2,6 +2,11 @@ name: "CertOps / Collect Certificate release qualification"
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: Evidence scope; standard-hosted omits domain labs but still requires every selected hosted/provider cell
+        type: choice
+        default: full
+        options: [full, standard-hosted, adcs, extended-adcs]
       candidate_sha:
         description: Exact trusted main candidate commit (40 lowercase hexadecimal characters)
         required: true
@@ -21,6 +26,7 @@ jobs:
     env:
       CERTOPS_RELEASE_CANDIDATE: ${{ inputs.candidate_sha }}
       CERTOPS_RELEASE_RUN_IDS: ${{ inputs.run_ids }}
+      CERTOPS_QUALIFICATION_PROFILE: ${{ inputs.profile }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -42,7 +48,7 @@ jobs:
         run: |
           node scripts/run-certops-collector-tests.js
           node --test scripts/certops-release-qualification.test.js scripts/certops-arm64-release.test.js
-          python3 scripts/certops-release-collector.py
+          python3 scripts/certops-release-collector.py --profile "$CERTOPS_QUALIFICATION_PROFILE"
       - name: Preserve sanitized consolidated verdict
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -2,6 +2,8 @@
 
 Browse the [topic index](qualification/README.md) for Windows/AD CS, Linux, DNS/ACME, Kubernetes, API/worker, edition and reporting runbooks. This page remains the entry point for the overall qualification model.
 
+Start with the [Azure-free hosted qualification sequence](qualification/reporting/first-qualification.md). Ordinary Windows/Linux/API/browser/local-ACME/DNS/Kubernetes runs need no Azure lab credentials. Domain-backed AD CS and its occasional elapsed campaigns are separately opted in; scoped hosted reports cannot qualify their omitted environments.
+
 The scenario specifications in `e2e-scenario-catalog.json` describe intended outcomes across certificate discovery, Windows services, CNG, IIS, ACME, AD CS, renewal, CSR, deployment, trust, controllers and edition policy. A planned scenario is not a passing test. Its environment and implementation must be assigned before qualification.
 
 Full E2E uses the actual product API or browser, worker/database, installed execution plane, issuer and destination. Verify public certificate bytes and the served TLS leaf independently of the job result. Module drivers provide host integration evidence; mocked or seeded results must retain their narrower classification.

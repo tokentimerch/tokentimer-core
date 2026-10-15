@@ -24,6 +24,8 @@ jobs:
           node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Require native Linux pidfd support
+        run: python3 -c 'import os,signal; h=os.pidfd_open(os.getpid(),0); signal.pidfd_send_signal(h,0); os.close(h)'
       - name: Build pinned real DNS fixture
         run: |
           go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0

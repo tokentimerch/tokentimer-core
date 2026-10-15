@@ -62,6 +62,7 @@ function unsupportedArmNotice(workflow,name){
 function validateWorkflow(workflow,name="workflow"){
   if(unsupportedArmNotice(workflow,name))return [];
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
+  for(const issue of require("./certops-azure-scope-policy").validate(name,workflow))fail(issue);
   if(/^certops-.*\.yml$/.test(name)&&!workflow.name?.startsWith("CertOps / "))fail("qualification workflow display name must use the CertOps / prefix");
   const events=typeof workflow.on==="string"?[workflow.on]:Object.keys(workflow.on||{});
   if(!events.length||events.some(event=>!["push","workflow_dispatch","schedule"].includes(event)))fail("qualification may run only trusted push, manual or cleanup schedule events");
@@ -78,7 +79,7 @@ function validateWorkflow(workflow,name="workflow"){
     if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
     const selectedLane={tooling:"tooling",windows:"windows","agent-stack":"stack"}[id];
     const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
-    if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition)fail(`${id} must enforce the exact trusted main reference`);
+    if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(name==="certops-qualification.yml"&&selectedLane&&!selectedCondition)fail(`${id} must narrow execution to its committed selection output`);
     if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>180)fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);

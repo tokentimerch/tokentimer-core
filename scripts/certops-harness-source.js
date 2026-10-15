@@ -63,8 +63,12 @@ async function explainNativeQueries(root = path.resolve(__dirname, "..")) {
   const { Pool } = createRequire(path.join(root, "apps/api/package.json"))("pg");
   for (const name of ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]) if (!process.env[name]) throw new Error("Explicit disposable database configuration required");
   const files = [...new Set(["tests/e2e/helpers/certops-windows-installed-paths.js", "tests/e2e/helpers/certops-windows-installed-iis-refusal.js", "tests/e2e/helpers/certops-arm64-installed-journey.js", "tests/e2e/certops-adcs-real-e2e.test.js", "tests/e2e/certops-adcs-retention24h-prepare.js", "tests/e2e/certops-adcs-retention-cadence-prepare.js", "tests/e2e/certops-adcs-ttl24h-prepare.js", "scripts/certops-adcs-ttl24h-finish.js", "tests/e2e/windows-real-journey.js", "tests/e2e/windows-adoption-retention-journey.js", ...fs.readdirSync(path.join(root, "tests/e2e/helpers")).filter(name => /^certops-(?:adcs|windows)-.*\.js$/.test(name)).map(name => "tests/e2e/helpers/" + name)])];
+  // Native Linux ACME shares the same read-only migrated-schema contract.
+  files.push("tests/e2e/helpers/certops-acme-stage-faults.js", "tests/e2e/helpers/certops-acme-background-renewals.js",
+    "tests/e2e/helpers/certops-acme-browser-console.js", "tests/e2e/helpers/certops-acme-browser-job-admission.js",
+    "tests/e2e/helpers/certops-acme-browser-lifecycle.js");
   const queries = files.flatMap(file => readOnlyQueries(fs.readFileSync(path.join(root, file), "utf8")).map(query => ({ ...query, file })));
-  if (queries.length < 20) throw new Error("Native Windows/AD CS SQL inventory unexpectedly empty or narrowed");
+  if (queries.length < 20) throw new Error("Native lifecycle SQL inventory unexpectedly empty or narrowed");
   const pool = new Pool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database: process.env.DB_NAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD, connectionTimeoutMillis: 5000 });
   const failures = [];
   let client;
@@ -109,7 +113,7 @@ function validateHarnessSources(root = path.resolve(__dirname, "..")) {
 }
 if (require.main === module) {
   if (["--explain-native", "--explain-adcs"].includes(process.argv[2])) {
-    explainNativeQueries().then(count => console.log(`${count} native Windows/AD CS read-only SQL oracles match the migrated schema`)).catch(error => { console.error(error.message); process.exitCode = 1; });
+    explainNativeQueries().then(count => console.log(`${count} native lifecycle read-only SQL oracles match the migrated schema`)).catch(error => { console.error(error.message); process.exitCode = 1; });
   } else {
     const errors = validateHarnessSources();
     if (errors.length) { console.error(errors.join("\n")); process.exitCode = 1; }

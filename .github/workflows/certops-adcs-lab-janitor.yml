@@ -11,7 +11,7 @@ permissions:
   id-token: write
 jobs:
   cleanup:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.CERTOPS_ADCS_LAB_ENABLED == 'true')
     runs-on: ubuntu-latest
     environment: certops-adcs-cleanup
     timeout-minutes: 15

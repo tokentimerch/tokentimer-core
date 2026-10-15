@@ -93,8 +93,8 @@ async function withPebble(run) {
     const exited=child=>child.exitCode !== null || child.signalCode !== null;
     const awaitExit=child=>new Promise((resolve,reject)=>{
       if(exited(child)){resolve();return;}
-      const done=()=>{clearTimeout(timer);resolve();};
       const timer=setTimeout(()=>{child.removeListener("exit",done);reject(new Error("Owned Pebble fixture process did not terminate"));},2000);
+      function done(){clearTimeout(timer);resolve();}
       child.once("exit",done);
     });
     const stopped=await Promise.allSettled(children.map(async(child)=>{
@@ -125,16 +125,24 @@ async function main() {
   assert.ok(["certbot", "acme.sh"].includes(client));
   assert.equal(spawnSync(client === "certbot" ? "certbot" : "bash", client === "certbot" ? ["--version"] : [process.env.CERTOPS_LINUX_ACMESH, "--version"]).status, 0, "Missing actual ACME client prerequisite");
   const scope = surface === "alpine-container" ? `real-agent-alpine-${client === "certbot" ? "certbot" : "acmesh"}` : `real-agent-${client === "certbot" ? "acme" : "acmesh"}${eab === "required" ? "-eab" : ""}-filesystem`;
+  const nativeConsole = process.env.CERTOPS_NATIVE_ACME_CONSOLE === "1";
+  const nativeLifecycle=process.env.CERTOPS_NATIVE_ACME_LIFECYCLE==="1";
+  if(nativeLifecycle){assert.equal(nativeConsole,false);assert.equal(client,"certbot");assert.equal(eab,"none");assert.equal(surface,"ubuntu-host");}
+  if(nativeConsole){assert.equal(client,"certbot");assert.equal(eab,"none");assert.equal(surface,"ubuntu-host");}
   await withPebble(async (fixtureEnv) => {
     fs.mkdirSync("qualification-results", { recursive: true });
     const report = "qualification-results/real-acme.jsonl";
-    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 840000, env: { ...process.env, ...fixtureEnv, CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REAL_ACME_CLIENT: client, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_ACME_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope } });
+    const result = spawnSync(process.execPath, ["--test", "--test-reporter=./scripts/certops-stack-reporter.js", `--test-reporter-destination=${report}`, "tests/e2e/certops-agent-e2e.test.js"], { stdio: "inherit", timeout: 1320000, env: { ...process.env, ...fixtureEnv, CERTOPS_CSR_DISPOSABLE_STACK: "1", CERTOPS_REAL_ACME_CLIENT: client, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_ACME_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope } });
     assert.equal(result.status, 0, "real agent/API/ACME suite failed");
     const events = fs.readFileSync(report, "utf8");
     const helper = require("../tests/e2e/helpers/certops-acme-key-reuse");
     const native = events.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)).filter(event => event.name === journey);
     assert.equal(native.length, 1); helper.verifyProof(native[0].nativeAcmeKeyReuse); assert.equal(native[0].nativeAcmeKeyReuse.client, client);
-    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName], "certops-agent-e2e.test.js", scope)));
+    require("./certops-acme-stage-report").verifyForScope(native[0].nativeAcmeStageFaults,scope);
+    require("./certops-acme-background-report").verifyForScope(native[0].nativeAcmeBackgroundRenewals,native[0].nativeAcmeKeyReuse,scope);
+    if(nativeConsole)require("./certops-acme-native-console-report").verifyActualJourney(events,require("./certops-acme-native-console-report").readProof(),process.env.GITHUB_SHA);
+    if(nativeLifecycle)require("./certops-acme-browser-lifecycle-report").verifyActualJourney(events,require("./certops-acme-browser-lifecycle-report").readProof(),process.env.GITHUB_SHA);
+    console.log(JSON.stringify(verify(events, [...required, journey, helper.scenarioName,require("../tests/e2e/helpers/certops-acme-background-renewals").SCENARIO,...require("../tests/e2e/helpers/certops-acme-stage-faults").SCENARIOS], "certops-agent-e2e.test.js", scope)));
   });
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

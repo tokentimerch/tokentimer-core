@@ -40,7 +40,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       NODE_ENV: test
       CERTOPS_ENABLED: 'true'

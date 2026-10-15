@@ -1,5 +1,5 @@
 # Independent short controller; no hosted runner waits through the installed timer.
-name: "CertOps / Finalize installed retention timer qualification"
+name: "CertOps / Optional AD CS / Finalize default retention timer"
 on:
   workflow_dispatch:
   schedule:
@@ -14,7 +14,7 @@ permissions:
   id-token: write
 jobs:
   finalize:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.CERTOPS_ADCS_LAB_ENABLED == 'true')
     runs-on: ubuntu-24.04
     environment: certops-adcs-cleanup
     timeout-minutes: 25

@@ -6,6 +6,16 @@
 "use strict";
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs");
 const {selectFiles,manual}=require("./certops-ci-selection");const {discover}=require("./run-certops-tooling-tests");
+test("qualification profiles Python changes explicitly select only tooling",()=>{const file="scripts/certops_qualification_profiles.py",value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("AD CS proof-only changes select tooling without provisioning a lab",()=>{
+ for(const file of ["scripts/certops_adcs_live_enroll_acl_proof.py","scripts/certops_adcs_http_crl_proof.py"]){
+  assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+  assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));
+ }
+});
+test("browser lifecycle projection explicitly selects tooling without native dispatch",()=>{const file="scripts/certops_acme_browser_lifecycle_proof.py",value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+test("DNS view Python projection changes trigger tooling without native dispatch",()=>{const file="scripts/certops_dns_resolver_views_proof.py",value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
 test("report docs Python and guard changes select cheap tooling without hosts or DB",()=>{for(const file of ["docs/certops/qualification/reporting/ci-selection.md","packages/agent/README.md","packages/contracts/README.md","packages/config/README.md","docs/certops/qualification-suites.json","scripts/certops-release-collector.py","scripts/certops-workflow-security.test.js","scripts/ci-guards/certops-release-matrix.cjs","scripts/generate-skip-inventory.cjs"]){const result=selectFiles([file]);assert.equal(result.tooling,true);assert.equal(result.windows,false);assert.equal(result.stack,false);}});
 test("API worker and shared server dependencies require real stack but not Windows native setup",()=>{for(const file of ["apps/api/routes/certops.js","apps/worker/jobs/certops.js","deploy/compose/docker-compose.test.yml","tests/e2e/certops-csr-lifecycle-e2e.test.js",...['config','alert-eligibility','log-scrub','email-address','node-compat','webhook-safety'].map(name=>`packages/${name}/index.js`)]){const result=selectFiles([file]);assert.equal(result.stack,true);assert.equal(result.windows,false);}});
 test("agent common contracts and dependency changes conservatively select affected hosts",()=>{for(const file of ["packages/agent/src/index.js","packages/agent/src/windows-iis/index.js","packages/contracts/package.json","pnpm-lock.yaml",".npmrc",".github/workflows/certops-qualification.yml"]){assert.equal(selectFiles([file]).windows,true);assert.equal(selectFiles([file]).stack,true);}});
@@ -144,3 +154,20 @@ test("installed timer collector path is explicitly triggered without native lane
 });
 
 test("daemon native proof projection changes select tooling and explicitly trigger CI",()=>{const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");const w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));const f="scripts/certops_daemon_coordinator_proof.py";assert.ok(w.on.push.paths.includes(f));assert.deepEqual(selectFiles([f]),{tooling:true,windows:false,stack:false,reason:"changed-files"});});
+
+test("ACME stage projection module explicitly selects tooling only",()=>{const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");const w=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));const f="scripts/certops_acme_stage_proof.py";assert.ok(w.on.push.paths.includes(f));assert.deepEqual(selectFiles([f]),{tooling:true,windows:false,stack:false,reason:"changed-files"});});
+
+// Python worker proof changes select tooling without provisioning native stacks.
+test("Linux background worker projection has an exact cheap CI trigger",()=>{
+ const file="scripts/certops_acme_background_proof.py";
+ assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+ assert.ok(fs.readFileSync(require("node:path").resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8").includes("- '"+file+"'"));
+});
+test("native console projection selects tooling without automatic native lanes",()=>{
+ const file="scripts/certops_acme_native_console_proof.py";
+ assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml"),workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-qualification.yml"),"utf8"));
+ assert.ok(workflow.on.push.paths.includes(file));
+ const native=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-acme-native-console.yml"),"utf8"));
+ assert.deepEqual(Object.keys(native.on),["workflow_dispatch"]);assert.equal(native.jobs["native-console"].if,"github.ref == 'refs/heads/main'");
+});

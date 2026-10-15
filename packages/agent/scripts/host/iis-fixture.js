@@ -203,6 +203,15 @@ async function qualifyIis({ powershell, run, workDir, sni = false, nativeFlags =
       shadowOwned = false;
       assert.equal(await checkSniPrecedenceConflict({ binding }), undefined, "removing owned shadow must clear warning");
       await expectServed(port, certificates[1].thumbprint, servername);
+      if (gate) await gate.scenario("windows-iis-ipv4-wildcard-shadow-rollback", async () => {
+        // Each variant completes exact owned cleanup before the next borrows
+        // the same certificate custody. No installed-agent claim is inferred.
+        const fixture = require("./ipv4-wildcard-fixture");
+        gate.report.nativeIpv4WildcardShadow = await fixture.qualifyIpv4Wildcard({ certificates, powershell, run, workDir });
+        fixture.verifyProof(gate.report.nativeIpv4WildcardShadow);
+        gate.report.fixtureSources ||= [];
+        for (const file of fixture.REQUIRED_SOURCES) if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../../../..",file))).digest("hex")});
+      }, { evidenceLevel: "real-host", oracle: "Actual IPv4 wildcard HTTP.sys shadow yields production verification failure and rollback; exact native hostname/trusted IPv4 TLS recover while separate IPv4 sibling stays unchanged" });
       if (gate) await gate.scenario("windows-iis-ipv6-native-shadow-rollback", async () => {
         const fixture = require("./ipv6-shadow-fixture");
         gate.report.nativeIpv6SniShadow = await fixture.qualifyIpv6Shadow({ certificates, powershell, run, workDir });

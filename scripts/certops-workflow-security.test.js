@@ -15,6 +15,7 @@ test("independent AD CS expiry cleanup cannot share approval-gated lab environme
   workflow.jobs.qualify.environment="certops-adcs-lab";
   assert.ok(validateWorkflow(workflow,"certops-adcs-lab-janitor.yml").some(error=>error.includes("dedicated unattended environment")));
   workflow.jobs.qualify.environment="certops-adcs-cleanup";
+  workflow.jobs.qualify.if=require("./certops-azure-scope-policy").LIFECYCLE_IF;
   assert.deepEqual(validateWorkflow(workflow,"certops-adcs-lab-janitor.yml"),[]);
 });
 

@@ -20,10 +20,13 @@ function catalogCoverage(specification = catalog) {
   for (const row of specification.scenarios) counts[row.status]++;
   return { ...counts, implementationStatus: counts.implemented === counts.total ? "all-specifications-implemented" : "incomplete", executionEvidence: "reported-separately" };
 }
-function validateQualificationSummary(summary, specification = catalog) {
+function validateQualificationSummary(summary, specification = catalog, environmentMatrix = matrix) {
   const expected = catalogCoverage(specification);
   const errors = [];
-  if (summary?.qualificationScope !== "committed-mandatory-matrix" || summary?.allFeaturesQualified !== false) errors.push("Matrix evidence cannot declare all certificate features qualified");
+  if(summary?.qualificationProfile !== undefined){
+    try{require("./certops-qualification-profiles").validateProfileSummary(summary,environmentMatrix);}catch{errors.push("Declared qualification profile does not match committed selected/omitted environments");}
+  }else if(summary?.qualificationScope!=="committed-mandatory-matrix")errors.push("Unknown qualification scope");
+  if(summary?.allFeaturesQualified!==false)errors.push("Matrix evidence cannot declare all certificate features qualified");
   if (!summary?.catalogCoverage || Object.keys(summary.catalogCoverage).length !== Object.keys(expected).length || !Object.entries(expected).every(([key, value]) => summary.catalogCoverage[key] === value)) errors.push("Catalog implementation summary mismatch");
   return errors;
 }
@@ -89,6 +92,16 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (artifact.report.suite !== slot.suite) throw new Error("Suite mismatch");
         if (verifyReport(artifact.report, undefined, { expectedSha: candidateSha }).length) throw new Error("Mandatory runtime evidence incomplete");
         if (slot.suite === "dns-provider-errors") require("./certops-dns-provider-errors-report").verifyDnsErrors(artifact.report);
+        if(slot.suite==="linux-native-acme-browser-lifecycle"){
+          require("../tests/e2e/helpers/certops-acme-browser-lifecycle").verifyProof(artifact.report.nativeAcmeBrowserLifecycle);
+          const n=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||n.osFamily!=="linux"||n.distributionId!=="ubuntu"||n.distributionVersion!=="24.04"||n.executionSurface!=="host"||n.libc!=="glibc")throw new Error("Native browser issue/renew lifecycle requires exact Ubuntu host scope");
+        }
+        if (slot.suite === "dns-routing-host") {
+          require("./certops-dns-resolver-views").verifyProof(artifact.report.nativeResolverViews);
+          const native=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || native.osFamily!=="linux" || native.distributionId!=="ubuntu" || native.distributionVersion!=="24.04" || native.executionSurface!=="host")throw new Error("Native configured DNS resolver views require the owned Ubuntu host");
+        }
         if (slot.suite === "kubernetes-host") {
           const evidence = artifact.report.nativeCompaction;
           if (!evidence || evidence.expiredStatus !== 410 || !["productionClient", "productionObserver", "controlPlaneRestarted", "ownedSingleNodeCluster"].every(key => evidence[key] === true) ||
@@ -131,9 +144,13 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/state-read-refusal-fixture").verifyProof(artifact.report.nativeStateReadRefusals);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/journal-read-refusal-fixture").verifyProof(artifact.report.nativeJournalReadRefusals);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-read-refusal-fixture").verifyProof(artifact.report.nativeLedgerReadRefusals);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/orphan-journal-fixture").verifyProof(artifact.report.nativeOrphanJournalProtection);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/orphan-journal-acl-fixture").verifyProof(artifact.report.nativeCngJournalAcl);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-configured-timer-fixture").verifyProof(artifact.report.supportingConfiguredRetentionTimer);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-shadow-fixture").verifyProof(artifact.report.nativeIpv6SniShadow);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv6-wildcard-fixture").verifyProof(artifact.report.nativeIpv6WildcardShadow);
+        if (slot.suite === "windows-host") require("../packages/agent/scripts/host/ipv4-wildcard-fixture").verifyProof(artifact.report.nativeIpv4WildcardShadow);
         if (slot.suite === "linux-systemd-published-upgrade") require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(artifact.report.nativePublishedLinuxUpgrade);
         if (slot.suite === "linux-systemd-reapply") require("../tests/e2e/helpers/linux-systemd-reapply").verifyProof(artifact.report.nativeInstallerReapply);
         if (slot.suite === "native-agent-api") {
@@ -153,9 +170,11 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         }
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal").verifyCrossProof(artifact.report.nativePendingCaRenewal,artifact.report.nativeAdcsCapacity);
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-key-change").verifyCrossProof(artifact.report.nativePendingCaKeyChange,artifact.report.nativePendingCaRenewal);
+        if (slot.suite === "enterprise-adcs-hierarchy-real") require("../tests/e2e/helpers/certops-adcs-http-intermediate-crl").verifyProof(artifact.report.nativeHttpIntermediateCrl);
         if (["enterprise-adcs-real", "enterprise-adcs-hierarchy-real"].includes(slot.suite)) {
           require("../tests/e2e/helpers/certops-adcs-issued-revocation").verifyProof(artifact.report.nativeIssuedRevocation);
           require("../tests/e2e/helpers/certops-adcs-cancelled-late-approval").verifyProof(artifact.report.nativeCancelledLateApproval);
+          require("../tests/e2e/helpers/certops-adcs-cancelled-late-approval").verifySameCertificateProof(artifact.report.nativeSameCertificateLateApproval);
           require("../tests/e2e/helpers/certops-adcs-issued-san-boundary").verifyProof(artifact.report.nativeIssuedSanBoundary);
           require("../tests/e2e/helpers/certops-adcs-browser-abandon").verifyProof(artifact.report.nativeBrowserAbandon);
           require("../tests/e2e/helpers/certops-adcs-browser-admin-boundary").verifyProof(artifact.report.nativeBrowserAdminBoundary);
@@ -163,6 +182,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-browser-reconcile").verifyCrossProof(artifact.report.nativeBrowserReconcile, artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-public-foreign-spki").verifyCrossProof(artifact.report.nativePublicForeignSpki, artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-template-required-attributes").verifyProof(artifact.report.nativeRequiredTemplateAttributes);
+          require("../tests/e2e/helpers/certops-adcs-live-enroll-acl").verifyProof(artifact.report.nativeLiveEnrollAcl);
           require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-cancel").verifyCrossProof(artifact.report.nativeBrowserCancel, artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-job-approval").verifyCrossProof(artifact.report.nativeBrowserJobApproval, artifact.report.nativeAdcsCapacity);
@@ -228,6 +248,11 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const native = artifact.report.qualificationEnvironment;
           if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || native.distributionId !== "ubuntu" || !["22.04", "24.04"].includes(native.distributionVersion) || native.executionSurface !== "disposable-vm") throw new Error("Native Ubuntu nonroot backup-DAC evidence required");
         }
+        if (slot.suite === "linux-native-acme-browser-console") {
+          require("../tests/e2e/helpers/certops-acme-browser-console").verifyProof(artifact.report.nativeAcmeBrowserConsole);
+          const native = artifact.report.qualificationEnvironment;
+          if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || native.osFamily !== "linux" || native.distributionId !== "ubuntu" || native.distributionVersion !== "24.04" || native.executionSurface !== "host" || native.libc !== "glibc") throw new Error("Native Ubuntu24 certbot browser console evidence required");
+        }
         if (slot.suite === "linux-systemd-writepath") {
           const evidence = artifact.report.nativeWritePath;
           if (evidence?.freshExecStartPreEvidence !== true || evidence.hostDacWriteVerified !== true ||
@@ -256,6 +281,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const native = entries.filter(entry => entry.name === "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence");
           if (native.length !== 1 || native[0].type !== "test:pass") throw new Error("Actual Linux ACME journey evidence missing");
           require("../tests/e2e/helpers/certops-acme-key-reuse").verifyProof(native[0].nativeAcmeKeyReuse);
+          require("./certops-acme-stage-report").verifyForScope(native[0].nativeAcmeStageFaults,slot.suite);
+          require("./certops-acme-background-report").verifyForScope(native[0].nativeAcmeBackgroundRenewals,native[0].nativeAcmeKeyReuse,slot.suite);
           if (native[0].nativeAcmeKeyReuse.client !== (slot.suite.includes("acmesh") ? "acme.sh" : "certbot")) throw new Error("ACME key reuse client scope mismatch");
         }
         if (slot.suite.startsWith("real-agent-windows-acme-iis/")) {
@@ -267,6 +294,11 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(native[0].nativeInstalledIisRefusal);
           require("../tests/e2e/helpers/certops-windows-owned-process").verifyPublicProof(native[0].nativeInstalledCrash);
           require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(native[0].nativeInstalledPaths);
+          require("../tests/e2e/helpers/certops-windows-service-controls").verifyProof(native[0].nativeInstalledServiceControls);
+          require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(native[0].nativeInstalledConfigEncoding);
+          require("../tests/e2e/helpers/certops-windows-public-retirement").verifyProof(native[0].nativeInstalledPublicRetirement);
+          require("../tests/e2e/helpers/certops-windows-retention-config").verifyProof(native[0].nativeInstalledRetentionConfig);
+          require("../tests/e2e/helpers/certops-windows-credential-refusal").verifyProof(native[0].nativeInstalledCredentialRefusal);
         }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);
@@ -299,14 +331,18 @@ function readArtifact(file) {
 }
 if (require.main === module) {
   try {
-    const [candidateSha, ...files] = process.argv.slice(2);
+    const profiles=require("./certops-qualification-profiles");
+    const parsed=profiles.parseArguments(process.argv.slice(2));
+    const [candidateSha, ...files] = parsed.rest;
+    const selection=profiles.selectProfile(matrix,parsed.profile);
     if (!files.length) throw new Error("Usage: certops-release-qualification.js <candidate-sha> <reports...>");
     const matrixErrors = validateMatrix();
     if (matrixErrors.length) throw new Error(matrixErrors.join("\n"));
-    const errors = verifyMatrix(files.map(readArtifact), { candidateSha });
+    const errors = verifyMatrix(files.map(readArtifact), { candidateSha, specification:selection.specification });
     if (errors.length) throw new Error(errors.join("\n"));
-    const summary = { schemaVersion: 1, status: "passed", candidateSha, mandatoryEnvironments: matrix.slots.length, qualificationScope: "committed-mandatory-matrix", allFeaturesQualified: false, catalogCoverage: catalogCoverage() };
+    const summary = { schemaVersion: 1, status: "passed", candidateSha, mandatoryEnvironments: selection.selectedSlotIds.length, ...profiles.summaryFields(selection,true), allFeaturesQualified: false, catalogCoverage: catalogCoverage() };
     const summaryErrors = validateQualificationSummary(summary);
+    profiles.validateProfileSummary(summary,matrix);
     if (summaryErrors.length) throw new Error(summaryErrors.join("\n"));
     console.log(JSON.stringify(summary));
   } catch (error) { console.error(error.message); process.exitCode = 1; }

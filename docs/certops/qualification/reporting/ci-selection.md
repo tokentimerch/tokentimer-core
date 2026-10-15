@@ -13,7 +13,7 @@ For an iteration, use **Run workflow** and choose `tooling`, `windows` or `stack
 
 GitHub also supports rerunning a specific failed job; reruns retain the original commit and ref. See [GitHub's rerun documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs).
 
-Selection is a cost-control decision, not release qualification. A selected run does not establish that omitted suites passed. The release collector still requires the complete mandatory environment matrix, matching candidate SHA and current source hashes; partial iteration evidence cannot satisfy missing cells. Full hosted/native execution remains a separate pre-release decision.
+Selection is a cost-control decision, not release qualification. A selected run does not establish that omitted suites passed. The release collector defaults to the complete mandatory environment matrix, matching candidate SHA and current source hashes. Explicit declared profiles still require every selected cell, disclose exact omitted IDs and cannot claim full matrix qualification; partial iteration evidence cannot satisfy missing selected cells. Follow the [Azure-free first-run sequence](first-qualification.md) before opting into domain-backed or elapsed campaigns. Full hosted/native execution remains a separate pre-release decision.
 
 Each release matrix cell is a required report/environment combination. One job can produce several cells: the API stack runs multiple supporting suites, and a Windows job produces both its certificate journey and child-output privacy evidence. The cell count is not a count of provisioned machines or workflow jobs.
 

@@ -71,6 +71,26 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const installedPathReceipt = installedPaths.createOwnedRoot(process.env.RUNNER_TEMP, historicalSupportingOnly);
   const workDir = installedPathReceipt.root;
   let installedPathProof;
+  const serviceControls = require("./helpers/certops-windows-service-controls");
+  const configEncoding = require("./helpers/certops-windows-config-encoding");
+  const publicRetirement = require("./helpers/certops-windows-public-retirement");
+  let publicRetirementProof;
+  const publicRetirementProofPath=path.join(repoRoot,"qualification-results",`windows-public-retirement-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(publicRetirementProofPath),false,"Refuse stale public retirement proof");
+  let configEncodingProof;
+  const credentialRefusal=require("./helpers/certops-windows-credential-refusal");
+  let credentialRefusalProof;
+  const credentialRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-credential-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(credentialRefusalProofPath),false,"Refuse stale installed credential refusal proof");
+  const retentionConfig=require("./helpers/certops-windows-retention-config");
+  let retentionConfigProof;
+  const retentionConfigProofPath=path.join(repoRoot,"qualification-results",`windows-retention-config-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(retentionConfigProofPath),false,"Refuse stale retention policy configuration proof");
+  const configEncodingProofPath=path.join(repoRoot,"qualification-results",`windows-config-encoding-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(configEncodingProofPath),false,"Refuse stale installed encoding proof");
+  let serviceControlProof;
+  const serviceControlProofPath=path.join(repoRoot,"qualification-results",`windows-service-controls-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(serviceControlProofPath),false,"Refuse stale installed SCM control proof");
   const installedPathProofPath=path.join(repoRoot,"qualification-results",`windows-installed-paths-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(installedPathProofPath),false,"Refuse stale Unicode installed-path proof");
   const configDir = path.join(workDir, "state"); fs.mkdirSync(configDir);
@@ -287,6 +307,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
         "restricted", "independent native state/credential ACL must allow only SYSTEM and Administrators");
     }
     const credentialDigest = crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex");
+    serviceControlProof = await runNamedScenario(serviceControls.SCENARIO, () => serviceControls.qualifyServiceControls({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
     if ((process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048") === "rsa-2048") {
       // This supporting check executes only the AST-extracted production swap
       // function against owned temporary files, then the full fixture below
@@ -550,7 +571,13 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
         "refused startup must not duplicate the registered identity");
       }
     } finally { fs.writeFileSync(persistedConfigPath, persistedConfig); }
-    ps("$s=Get-Service -Name TokenTimerAgent; Start-Service -Name TokenTimerAgent; $s.WaitForStatus('Running',[TimeSpan]::FromSeconds(20))");
+    configEncodingProof = await runNamedScenario(configEncoding.SCENARIO, () => configEncoding.qualifyConfigEncoding({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
+    command("sc.exe",["stop","TokenTimerAgent"]);
+    await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
+    retentionConfigProof = await runNamedScenario(retentionConfig.SCENARIO, () => retentionConfig.qualifyRetentionConfig({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
+    command("sc.exe",["stop","TokenTimerAgent"]);
+    await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
+    credentialRefusalProof = await runNamedScenario(credentialRefusal.SCENARIO, () => credentialRefusal.qualifyCredentialRefusal({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
     await waitUntil(async () => { const row = (await pool.query("SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId])).rows[0]; return row && Date.parse(row.last_seen_at) > Date.parse(lastSeenBeforeRestart); });
     assert.equal(crypto.createHash("sha256").update(fs.readFileSync(credentialFile)).digest("hex") === credentialDigest, true, "service restart must reuse its persisted credential without bootstrap");
     const afterRestart = await new Promise((resolve, reject) => { const connection = tls.connect({ host: "127.0.0.1", port, servername: domain, ca: roots.map((root) => root.pem), rejectUnauthorized: true }, () => { resolve(connection.getPeerCertificate().fingerprint256); connection.end(); }); connection.once("error", reject); connection.setTimeout(10000, () => connection.destroy(new Error("Restart IIS TLS timeout"))); });
@@ -652,21 +679,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     installedCrashProof = ownedProcess.publicProof(nativeCrashProof);
     });
     command("sc.exe", ["failure", "TokenTimerAgent", "reset=", "60", "actions=", "restart/1000"]);
-    const retirementLogOffset = fs.statSync(serviceLog).size;
-    const registered = (await pool.query("SELECT id FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId])).rows[0];
-    assert.ok(registered?.id);
-    const retirement = await require(path.join(repoRoot, "apps/api/services/certops/agentRegistry")).retireAgent({
-      client: pool, workspaceId, agentId: registered.id, retiredBy: userId, reason: "disposable installed Windows qualification" });
-    assert.equal(retirement.retiredNow, true);
-    await waitUntil(() => /STOPPED/.test(command("sc.exe", ["query", "TokenTimerAgent"])) &&
-      /retirement code \(86\)/.test(fs.readFileSync(serviceLog).subarray(retirementLogOffset).toString("utf8")), 30000);
-    assert.equal(ps("[string](Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\").ExitCode"), "0",
-      "real authenticated retirement must reach SCM as a clean exit");
-    // Five times the explicitly configured recovery delay: retirement may
-    // not launch a new service host, despite failure recovery being enabled.
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    assert.equal(ps("[string](Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\").ProcessId"), "0");
-    assert.match(command("sc.exe", ["query", "TokenTimerAgent"]), /STOPPED/);
+    publicRetirementProof = await runNamedScenario(publicRetirement.SCENARIO, () => publicRetirement.qualifyPublicRetirement({receipt:installedPathReceipt,configDir,publicSession,pool,workspaceId,agentId,ps,baseUrl,domain,port,roots,thumbprint:deployedThumbprint}));
     await require("./helpers/certops-windows-reregistration").qualifyWindowsReregistration({
       baseUrl, workspaceId, oldAgentId: agentId, pool, createBootstrap,
       packageRoot: path.join(workDir, "app"), workDir,
@@ -691,6 +704,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     journeyFailure = error;
     throw error;
   } finally {
+    publicRetirement.assertCleanupSafe(workDir);
+    configEncoding.assertCleanupSafe(workDir);
+    serviceControls.assertCleanupSafe(workDir);
     // Missing/tampered receipts cannot release unresolved in-memory process ownership.
     require("./helpers/certops-windows-owned-process").assertCleanupSafe(workDir);
     require("./helpers/certops-windows-rename-refusal").assertCleanupSafe(workDir);
@@ -748,6 +764,16 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     await cleanup(async () => { assert.notEqual(spawnSync("sc.exe", ["query", "TokenTimerAgent"]).status, 0, "retain owned files while a service remains"); fs.rmSync(workDir, { recursive: true, force: true }); });
     if (!historicalSupportingOnly && !journeyFailure && errors.length === 0) {
       require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
+      publicRetirement.verifyProof(publicRetirementProof);
+      fs.writeFileSync(publicRetirementProofPath,JSON.stringify(publicRetirementProof),{flag:"wx"});
+      credentialRefusal.verifyProof(credentialRefusalProof);
+      fs.writeFileSync(credentialRefusalProofPath,JSON.stringify(credentialRefusalProof),{flag:"wx"});
+      retentionConfig.verifyProof(retentionConfigProof);
+      fs.writeFileSync(retentionConfigProofPath,JSON.stringify(retentionConfigProof),{flag:"wx"});
+      configEncoding.verifyProof(configEncodingProof);
+      fs.writeFileSync(configEncodingProofPath,JSON.stringify(configEncodingProof),{flag:"wx"});
+      serviceControls.verifyProof(serviceControlProof);
+      fs.writeFileSync(serviceControlProofPath,JSON.stringify(serviceControlProof),{flag:"wx"});
       installedPaths.verifyProof(installedPathProof);
       fs.writeFileSync(installedPathProofPath, JSON.stringify(installedPathProof), { flag: "wx" });
       require("./helpers/certops-windows-installed-iis-refusal").verifyProof(installedIisRefusalProof);fs.writeFileSync(installedIisRefusalProofPath,JSON.stringify(installedIisRefusalProof),{flag:"wx"});

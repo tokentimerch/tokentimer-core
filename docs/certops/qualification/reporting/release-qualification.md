@@ -2,6 +2,8 @@
 
 The committed `release-qualification-matrix.json` defines mandatory environment evidence. A passing individual workflow qualifies its selected environment; it does not qualify the entire release.
 
+Begin with [hosted qualification without an Azure lab](first-qualification.md). The collection workflow's `profile` choice defaults to `full`, preserving complete-matrix verification. Explicit `standard-hosted`, `adcs` and `extended-adcs` choices require every selected cell and report exact omitted slot IDs with `fullMatrixQualified=false`; none can claim full release qualification. `standard-hosted` excludes domain-lab campaigns but still includes live DNS-provider credentials and blocked published-package slots, so the credential-free initial smoke sequence alone cannot satisfy it.
+
 Run the aggregator from a clean checkout of the candidate after downloading every required workflow report:
 
 ```sh

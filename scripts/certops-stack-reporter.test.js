@@ -57,25 +57,9 @@ test("Every committed Linux ACME scope binds current actual journey and Pebble p
     "real-agent-alpine-acmesh",
   ]) {
     const sources = supplementalSources(scope);
-    assert.deepEqual(
-      sources.map((item) => item.file),
-      [
-        "tests/e2e/acme-real-journey.js",
-        "scripts/certops-real-acme.js",
-        "tests/e2e/helpers/certops-acme-lease-loss.js",
-        "tests/e2e/helpers/certops-acme-command-barrier.js",
-        "scripts/certops-stack-reporter.js",
-        "tests/e2e/helpers/certops-acme-key-reuse.js",
-        "packages/agent/src/index.js",
-        "packages/agent/src/keys/index.js",
-        "packages/agent/src/acme/index.js",
-        "packages/agent/src/signing/index.js",
-        "apps/api/services/certops/renewalProfileAdmin.js",
-        "apps/api/services/certops/renewalProfile.js",
-        "apps/api/services/certops/renewalScheduler.js",
-        "apps/api/services/certops/agentDispatch.js",
-      ],
-    );
+    const declared = require("../docs/certops/release-qualification-matrix.json").slots.find(slot=>slot.suite==="real-agent-acme-filesystem").requiredSources;
+    assert.deepEqual(sources.map(item=>item.file).sort(),[...declared].sort());
+    for(const file of require("../tests/e2e/helpers/certops-acme-background-renewals").REQUIRED_SOURCES)assert.ok(sources.some(item=>item.file===file));
     for (const item of sources)
       assert.equal(
         item.sha256,

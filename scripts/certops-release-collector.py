@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+import certops_qualification_profiles as qualification_profiles
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,11 +28,18 @@ import certops_linux_backup_dac_proof as linux_backup_dac_proof
 import certops_filesystem_concurrent_proof as filesystem_concurrent_proof
 import certops_linux_trust_independent_proof as linux_trust_independent_proof
 import certops_daemon_coordinator_proof as daemon_coordinator_proof
+import certops_acme_stage_proof as acme_stage_proof
+import certops_acme_background_proof as acme_background_proof
+import certops_adcs_live_enroll_acl_proof as live_enroll_acl_proof
+import certops_adcs_http_crl_proof as http_crl_proof
+import certops_acme_native_console_proof as acme_native_console_proof
+import certops_dns_resolver_views_proof as dns_resolver_views_proof
+import certops_acme_browser_lifecycle_proof as acme_browser_lifecycle_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
     ".github/workflows/" + name for name in (
-        "certops-qualification.yml", "certops-real-acme.yml",
+        "certops-qualification.yml", "certops-real-acme.yml", "certops-acme-native-console.yml", "certops-acme-browser-lifecycle.yml",
         "certops-browser-qualification.yml", "certops-kubernetes-qualification.yml",
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
@@ -97,14 +105,16 @@ def catalog_coverage():
     return {**counts, "implementationStatus": "all-specifications-implemented" if counts["implemented"] == counts["total"] else "incomplete", "executionEvidence": "reported-separately"}
 
 
-def validate_matrix_summary(value, candidate, environments, coverage):
+def validate_matrix_summary(value, candidate, environments, coverage, selection=None):
     if (not isinstance(value, dict) or value.get("schemaVersion") != 1
             or value.get("status") != "passed" or value.get("candidateSha") != candidate
             or value.get("mandatoryEnvironments") != environments
-            or value.get("qualificationScope") != "committed-mandatory-matrix"
+            or value.get("qualificationScope") != (qualification_profiles.summary_fields(selection)["qualificationScope"] if selection else "committed-mandatory-matrix")
             or value.get("allFeaturesQualified") is not False
             or value.get("catalogCoverage") != coverage):
         raise ValueError("Matrix summary cannot promote incomplete feature specifications")
+    if selection is not None and (type(value.get("fullMatrixQualified")) is not bool or any(value.get(key) != expected for key,expected in qualification_profiles.summary_fields(selection,True).items())):
+        raise ValueError("Qualification profile selected/omitted matrix mismatch")
 
 
 def validate_run(run, candidate, repository):
@@ -299,6 +309,15 @@ def browser_cancel_fields(proof):
     return result
 
 
+def same_certificate_late_approval_fields(proof):
+    if (not isinstance(proof,dict) or proof.get("scope") != "real-cancelled-request-late-issued-after-same-certificate-renewal"
+            or proof.get("sameCertificateRenewalQualified") is not True or proof.get("backgroundTimerQualified") is not False
+            or not isinstance(proof.get("certificateId"),str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}",proof["certificateId"])):
+        raise ValueError("Invalid same-certificate cancelled late-approval proof")
+    old=cancelled_late_approval_fields({**proof,"scope":"real-cancelled-request-late-issued-after-distinct-same-endpoint-successor","sameCertificateRenewalQualified":False})
+    return {**old,"scope":proof["scope"],"certificateId":proof["certificateId"],"sameCertificateRenewalQualified":True,"backgroundTimerQualified":False}
+
+
 def cancelled_late_approval_fields(proof):
     flags = ["publicCancellationAuditVerified","terminalCleanupAlreadyCompleted","distinctActualSuccessorInstalled","nativePendingCsrRequesterTemplateOwned","actualOfficerLateApproval","actualCaLeafMatchesOriginalCsr","defaultClockDoesNotRevive","overdueSchedulerDoesNotRevive","publicInstallationRetryRefused","originalJournalAndJobsUnchanged","cancelledKeyRemainsAbsent","lateLeafNeverAccepted","successorClaimEvidenceUnchanged","successorNativeCustodyBindingTlsUnchanged","noCaResubmission","ownedUnusedLateLeafRevoked"]
     scope = "real-cancelled-request-late-issued-after-distinct-same-endpoint-successor"
@@ -415,6 +434,16 @@ def browser_job_approval_fields(proof):
     return result
 
 
+def ipv4_wildcard_fields(proof):
+    """Native IPv4 wildcard only; no concrete or IPv6 scope substitution."""
+    flags = ['actualIpv4LoopbackAvailable', 'borrowedCertificatesVerified', 'actualIpv4ShadowObserved', 'productionPrecedenceWarning', 'actualProductionVerifyFailed', 'actualProductionRollback', 'nativeHostnameEndpointRestored', 'trustedIpv4ShadowObserved', 'trustedIpv4BaselineRecovered', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
+    if (not isinstance(proof, dict) or proof.get("scope") != 'native-ipv4-wildcard-sni-shadow-rollback-with-ipv4-sibling'
+            or proof.get("installedAgentQualified") is not False or proof.get("caQualified") is not False
+            or any(proof.get(key) is not True for key in flags)):
+        raise ValueError("Incomplete native IPv4 wildcard rollback evidence")
+    return {"scope": proof["scope"], "installedAgentQualified": False, "caQualified": False, **dict.fromkeys(flags, True)}
+
+
 def ipv6_wildcard_fields(proof):
     """Native IPv6 wildcard only; no concrete-only or IPv4 wildcard substitution."""
     flags = ['actualIpv6LoopbackAvailable', 'borrowedCertificatesVerified', 'actualIpv6ShadowObserved', 'productionPrecedenceWarning', 'actualProductionVerifyFailed', 'actualProductionRollback', 'nativeHostnameEndpointRestored', 'trustedIpv6ShadowObserved', 'trustedIpv6BaselineRecovered', 'ipv4SiblingUnchanged', 'ownedSitesAndEndpointsRemoved']
@@ -435,6 +464,15 @@ def ipv6_shadow_fields(proof):
     return {"scope": proof["scope"], "installedAgentQualified": False, "caQualified": False, **dict.fromkeys(flags, True)}
 
 
+def cng_journal_acl_fields(proof):
+    flags = ["actualPreparedNativeKeyPrerequisite","actualFreshOsReadAndListDenied","productionJournalNotAbsent","actualOrphanReconciliationDeferred","sameNativePrivateKeyPossession","sameJournalBytesAndFileIdentities","exactRetainedHandleAclsRestored","ownedNativeChildrenDrained","productionJournalReadersRecovered"]
+    if (not isinstance(proof, dict) or proof.get("scope") != "native-prepared-cng-preserved-through-unreadable-adcs-journal"
+            or proof.get("caEnrollmentQualified") is not False or proof.get("installedServiceQualified") is not False
+            or any(proof.get(key) is not True for key in flags)):
+        raise ValueError("Incomplete native CNG unreadable journal evidence")
+    return {"scope": proof["scope"], "caEnrollmentQualified": False, "installedServiceQualified": False, **dict.fromkeys(flags, True)}
+
+
 def orphan_journal_fields(proof):
     """Native local prerequisites only; never installed/CA/age qualification."""
     flags = ['actualPreparedCngCsr', 'actualUnresolvedJobPrerequisites', 'unprotectedNativeOrphanRemoved', 'openJournalKeyPreserved', 'corruptJournalFailsClosed', 'exactJournalBytesRestored', 'untrackedNativeKeyPreserved', 'independentPrivateKeyPossession', 'actualGlobalStoreInventory', 'terminalFixtureClosureAllowsCleanup', 'ownedNativeKeysAndStateRemoved']
@@ -453,6 +491,17 @@ def journal_acl_fields(proof):
             or any(proof.get(field) is not True for field in fields)):
         raise ValueError("Incomplete native temporary journal ACL refusal evidence")
     return {"scope": proof["scope"], "installedServiceQualified": False, "nativeCngQualified": False, **dict.fromkeys(fields, True)}
+
+
+def ledger_acl_fields(proof):
+    """Actual temporary native OS refusals do not qualify certificate cleanup."""
+    fields = ("productionLedgerCreated", "actualNativeReadDataDenied", "actualNativeListDirectoryDenied", "productionUnreadableNotAbsent", "retainedExactAclHandles", "sameOwnedFileIdentitiesAndBytes", "exactNativeAclsRestored", "productionReadersRecovered", "containedChildrenDrained", "ownedTemporaryStateRemoved")
+    unsupported = ("installedServiceQualified", "nativeCertificateCleanupQualified", "elapsedRetentionQualified")
+    if (not isinstance(proof, dict) or proof.get("scope") != "native-temporary-retention-ledger-access-refusal-not-certificate-cleanup"
+            or any(proof.get(field) is not True for field in fields)
+            or any(proof.get(field) is not False for field in unsupported)):
+        raise ValueError("Incomplete native temporary retention ledger ACL refusal evidence")
+    return {"scope": proof["scope"], **dict.fromkeys(fields, True), **dict.fromkeys(unsupported, False)}
 
 
 def required_template_attribute_fields(proof):
@@ -721,6 +770,86 @@ def windows_key_reuse_refusal_fields(event):
             or any(proof.get(flag) is not True for flag in flags)):
         raise ValueError("Missing public Windows ACME reuse-policy refusal")
     return {"nativeWindowsKeyReuseRefusal": {key: proof[key] for key in ("scope", *flags)}}
+
+
+def public_retirement_fields(event):
+    """Only genuine public idle retirement and bounded native preservation facts."""
+    if (not isinstance(event.get("scope"),str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof=event.get("nativeInstalledPublicRetirement")
+    flags=('sameOwnedSystemRuntimeBeforeRetirement', 'anonymousAndViewerRefused', 'authorizedManagerPublicRetirement', 'sameActorAppendOnlyAudit', 'idempotentWithoutDuplicateAudit', 'actualAuthenticatedRetirementExit86', 'nativeScmCleanExitZero', 'measuredNoRespawnWindow', 'capturedHostAndChildAbsent', 'nativeCustodyAndTrustedTlsPreserved', 'credentialConfigurationAndPinPreserved', 'noJobClaimMutation', 'ownedRetirementGuardCleared')
+    expected={'scope': 'public-idle-installed-windows-agent-retirement', 'inFlightRetirementQualified': False, 'anonymousStatus': 401, 'viewerStatus': 403, 'managerStatus': 200, 'replayStatus': 200, 'retirementAuditCount': 1}
+    if (not isinstance(proof,dict) or any(proof.get(key)!=value or type(proof.get(key)) is not type(value) for key,value in expected.items())
+            or type(proof.get("noRespawnObservedMs")) is not int or not 5000<=proof["noRespawnObservedMs"]<=30000
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Missing actual public idle installed retirement")
+    return {"nativeInstalledPublicRetirement":{**expected,"noRespawnObservedMs":proof["noRespawnObservedMs"],**dict.fromkeys(flags,True)}}
+
+
+def retention_config_fields(event):
+    """Installed invalid policy startup controls do not qualify timer execution."""
+    if (not isinstance(event.get("scope"),str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof=event.get("nativeInstalledRetentionConfig")
+    flags=('threeActualSystemValidationFailures', 'freshStoppedServiceForEach', 'credentialAndPinPreserved', 'nativeCngAndBindingPreserved', 'trustedTlsPreserved', 'noNewAgentOrJob', 'exactOriginalConfigurationRestored', 'actualRepairedSystemChild', 'freshAuthenticatedHeartbeat', 'ownedPolicyGuardCleared')
+    expected={'scope': 'installed-system-invalid-retention-policy-startup-refusal', 'policies': ['below-minimum-hours', 'above-maximum-hours', 'zero-sweep-interval'], 'startupFailureCount': 3, 'retentionTimerQualified': False}
+    if (not isinstance(proof,dict) or any(proof.get(key)!=value or type(proof.get(key)) is not type(value) for key,value in expected.items())
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Missing actual installed retention policy refusals")
+    return {"nativeInstalledRetentionConfig":{**expected,**dict.fromkeys(flags,True)}}
+
+
+def configured_retention_timer_fields(proof):
+    """Configured real timer/empty ledger is supporting evidence, never six hours."""
+    expected={'scope': 'production-configured-real-timer-empty-ledger-supporting', 'configuredIntervalMs': 100, 'defaultIntervalMs': 21600000, 'defaultRetentionHours': 168, 'actualCallbacks': 3, 'actualDelayedCallbacks': 2, 'defaultSixHourElapsedQualified': False, 'installedServiceQualified': False, 'nativeDeletionQualified': False, 'productionCollectorReturnedEmpty': True, 'actualAbortDrained': True, 'ownedEmptyStatePreserved': True}
+    if (not isinstance(proof,dict) or any(proof.get(key)!=value or type(proof.get(key)) is not type(value) for key,value in expected.items())
+            or type(proof.get("waitedMonotonicMs")) is not int or not 140<=proof["waitedMonotonicMs"]<=5000):
+        raise ValueError("Missing bounded configured retention timer evidence")
+    return {**expected,"waitedMonotonicMs":proof["waitedMonotonicMs"]}
+
+
+def credential_refusal_fields(event):
+    """Actual installed credential startup refusals and exact repair; no secrets."""
+    if (not isinstance(event.get("scope"),str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof=event.get("nativeInstalledCredentialRefusal")
+    flags=('twoActualSystemCredentialFailures', 'freshStoppedServiceForEach', 'configurationAndPinPreserved', 'nativeCngAndBindingPreserved', 'trustedTlsPreserved', 'noNewAgentOrJob', 'exactOriginalCredentialRestored', 'actualRepairedSystemChild', 'freshAuthenticatedHeartbeat', 'ownedCredentialGuardCleared')
+    expected={'scope': 'installed-system-invalid-credential-startup-refusal', 'credentials': ['empty-credential', 'malformed-credential'], 'startupFailureCount': 2, 'inFlightMutationQualified': False}
+    if (not isinstance(proof,dict) or any(proof.get(key)!=value or type(proof.get(key)) is not type(value) for key,value in expected.items())
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Missing actual installed credential startup refusals")
+    return {"nativeInstalledCredentialRefusal":{**expected,**dict.fromkeys(flags,True)}}
+
+
+def config_encoding_fields(event):
+    """Unsupported encodings require actual installed refusals and recovery."""
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof=event.get("nativeInstalledConfigEncoding")
+    encodings=["utf8-bom","utf16le-bom","utf16be-bom"]
+    flags=("threeActualSystemStartupParseFailures","freshStoppedServiceForEach","credentialAndPinPreserved","nativeCngAndBindingPreserved","trustedTlsPreserved","noNewAgentOrJob","exactOriginalConfigurationRestored","actualRepairedSystemChild","freshAuthenticatedHeartbeat","ownedEncodingGuardCleared")
+    if (not isinstance(proof,dict) or proof.get("scope")!="installed-system-unsupported-config-encoding-startup-refusal"
+            or type(proof.get("startupFailureCount")) is not int or proof["startupFailureCount"]!=3 or proof.get("encodings")!=encodings or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Missing actual installed configuration encoding refusals")
+    return {"nativeInstalledConfigEncoding":{"scope":proof["scope"],"encodings":list(encodings),"startupFailureCount":3,**dict.fromkeys(flags,True)}}
+
+
+def service_controls_fields(event):
+    """Only measured bounded installed SCM facts; no private native identities."""
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof = event.get("nativeInstalledServiceControls")
+    flags = ("exactOwnedInstalledService","interrogateSucceeded","pauseAndContinueRefused","sameNativeHostAndChild","unchangedCredentialAndConfiguration","unchangedNativeCngAndBinding","trustedTlsPreserved","freshAuthenticatedHeartbeat","unchangedJobClaims","ownedControlGuardCleared")
+    if (not isinstance(proof, dict) or proof.get("scope") != "installed-system-service-interrogate-and-unsupported-pause-continue"
+            or type(proof.get("controlCount")) is not int or proof["controlCount"] != 3
+            or proof.get("certificateOperationInterruptionQualified") is not False or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Incomplete actual installed SCM control evidence")
+    return {"nativeInstalledServiceControls": {"scope": proof["scope"],"controlCount":3,"certificateOperationInterruptionQualified":False,**dict.fromkeys(flags,True)}}
 
 
 def installed_paths_fields(event):
@@ -1141,9 +1270,13 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Incomplete native state read refusal evidence")
             result["nativeStateReadRefusals"] = {**dict.fromkeys(state_fields, True), "scope": state_scope, "installedServiceStartupQualified": False}
             result["nativeJournalReadRefusals"] = journal_acl_fields(value.get("nativeJournalReadRefusals"))
+            result["nativeLedgerReadRefusals"] = ledger_acl_fields(value.get("nativeLedgerReadRefusals"))
             result["nativeOrphanJournalProtection"] = orphan_journal_fields(value.get("nativeOrphanJournalProtection"))
+            result["nativeCngJournalAcl"] = cng_journal_acl_fields(value.get("nativeCngJournalAcl"))
+            result["supportingConfiguredRetentionTimer"] = configured_retention_timer_fields(value.get("supportingConfiguredRetentionTimer"))
             result["nativeIpv6SniShadow"] = ipv6_shadow_fields(value.get("nativeIpv6SniShadow"))
             result["nativeIpv6WildcardShadow"] = ipv6_wildcard_fields(value.get("nativeIpv6WildcardShadow"))
+            result["nativeIpv4WildcardShadow"] = ipv4_wildcard_fields(value.get("nativeIpv4WildcardShadow"))
             proof = value.get("nativeRetentionAtomicReplace")
             fields = ("nativeFileHandleHeld", "nativeFileIdentityMatched", "actualAtomicReplaceRefused", "priorRowBytesPreserved", "priorRowIdentityPreserved", "failedTemporaryFileRemoved", "nativeHandleReleased", "ownedChildDrained", "actualReplacementSucceeded", "freshProcessReadExactReplacement", "restrictivePermissionsVerified", "ownedTemporaryFixtureRemoved")
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
@@ -1265,10 +1398,14 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativePendingCaKeyChange"] = pending_ca_key_change_fields(value.get("nativePendingCaKeyChange"))
             if (result["nativePendingCaKeyChange"]["predecessorFingerprint"] != result["nativePendingCaRenewal"]["leafFingerprint"] or result["nativePendingCaKeyChange"]["oldCaKeySha256"] != result["nativePendingCaRenewal"]["caKeySha256"]):
                 raise ValueError("Pending new-key proof must bind actual prior pending installation")
+        if value.get("suite") == "enterprise-adcs-hierarchy-real":
+            result["nativeHttpIntermediateCrl"] = http_crl_proof.fields(value.get("nativeHttpIntermediateCrl"))
         if value.get("suite") in ("enterprise-adcs-real", "enterprise-adcs-hierarchy-real"):
             result["nativeIssuedRevocation"] = issued_revocation_fields(value.get("nativeIssuedRevocation"))
             result["nativeCancelledLateApproval"] = cancelled_late_approval_fields(value.get("nativeCancelledLateApproval"))
+            result["nativeSameCertificateLateApproval"] = same_certificate_late_approval_fields(value.get("nativeSameCertificateLateApproval"))
             result["nativeRequiredTemplateAttributes"] = required_template_attribute_fields(value.get("nativeRequiredTemplateAttributes"))
+            result["nativeLiveEnrollAcl"] = live_enroll_acl_proof.fields(value.get("nativeLiveEnrollAcl"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
             result["nativeBrowserAdminBoundary"] = browser_admin_boundary_fields(value.get("nativeBrowserAdminBoundary"))
@@ -1554,6 +1691,10 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Invalid compaction certificate identity")
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
+        if value.get("suite") == dns_resolver_views_proof.SUITE:
+            result.update(dns_resolver_views_proof.project_report(value))
+        if value.get("suite") == acme_browser_lifecycle_proof.SUITE:
+            result.update(acme_browser_lifecycle_proof.project_report(value))
         if value.get("suite") in daemon_coordinator_proof.SUITES:
             result.update(daemon_coordinator_proof.project_report(value))
         if value.get("suite") == linux_trust_independent_proof.SUITE:
@@ -1562,6 +1703,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result.update(filesystem_concurrent_proof.project_report(value))
         if value.get("suite") == linux_backup_dac_proof.SUITE:
             result.update(linux_backup_dac_proof.project_report(value))
+        if value.get("suite") == acme_native_console_proof.SUITE:
+            result.update(acme_native_console_proof.fields(value))
         if value.get("suite") == "windows-installer-cli-second-rename":
             rollback = value.get("nativeCliSecondRename")
             flags = ("sourceOplockGranted", "actualSourceOpenBrokeOplock", "stagingHeldBeforeCopyResumed", "nativeOrderedRestoration", "originalDirectoryIdentityPreserved", "installedBytesUnchanged", "explicitStagingCleanupFailure", "sourceBytesUnchanged", "nativeHandleReleased", "ownedInstallerDrained", "ownedDriverDrained", "ownedStagingRemoved", "originalInstallerCliBytes", "sameRunningLocalSystemServicePid", "configurationCredentialAndPinUnchanged", "freshAuthenticatedHeartbeat", "nonExportableMachineCngCustodyUnchanged", "nativeBindingAndTrustedTlsUnchanged", "ownedCertificateKeyAndEndpointRemoved")
@@ -1647,11 +1790,18 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 "fixtureSource", "qualificationEnvironment", "artifactQualification", "qualificationStatus", "experimental")
         return [{**{key: event[key] for key in keys if key in event},
                  **acme_key_reuse_fields(event),
+                 **acme_stage_proof.fields(event),
+                 **acme_background_proof.event_fields(event),
                  **installed_handoff_fields(event),
                  **windows_key_reuse_refusal_fields(event),
                  **installed_iis_refusal_fields(event),
                  **installed_crash_fields(event),
                  **installed_paths_fields(event),
+                 **service_controls_fields(event),
+                 **config_encoding_fields(event),
+                 **credential_refusal_fields(event),
+                 **retention_config_fields(event),
+                 **public_retirement_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
                  **({"fixtureSources": supporting_sources(event["fixtureSources"])} if "fixtureSources" in event else {}),
                  "file": event.get("fixtureSource", {}).get("file", "")}
@@ -1845,7 +1995,8 @@ def download(url, token=None, redirect=False):
     return request(url, token)
 
 
-def main():
+def main(arguments=()):
+    profile = qualification_profiles.requested_profile(arguments, os.environ)
     candidate = os.environ.get("CERTOPS_RELEASE_CANDIDATE", "")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GITHUB_TOKEN", "")
@@ -1853,18 +2004,20 @@ def main():
     if not re.fullmatch(r"[a-f0-9]{40}", candidate) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not token:
         raise ValueError("Explicit candidate, repository and read-only workflow token required")
     matrix = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())
-    limits = collection_limits(len(matrix["slots"]))
+    selection=qualification_profiles.select_profile(matrix,profile)
+    selected_matrix=selection["specification"]
+    limits = collection_limits(len(selected_matrix["slots"]))
     validate_run_ids(run_ids, limits)
-    suites = {slot["suite"] for slot in matrix["slots"] if slot["kind"] == "host"}
-    scopes = {slot["suite"] for slot in matrix["slots"] if slot["kind"] == "stack"}
-    database_scopes = {slot["suite"] for slot in matrix["slots"] if slot["kind"] == "database"}
+    suites = {slot["suite"] for slot in selected_matrix["slots"] if slot["kind"] == "host"}
+    scopes = {slot["suite"] for slot in selected_matrix["slots"] if slot["kind"] == "stack"}
+    database_scopes = {slot["suite"] for slot in selected_matrix["slots"] if slot["kind"] == "database"}
     output = ROOT / "qualification-results/release-collection"
     output.mkdir(parents=True, exist_ok=True)
     files = []
     archive_count = 0
     downloaded_bytes = 0
     coverage = catalog_coverage()
-    summary = {"schemaVersion": 1, "candidateSha": candidate, "runIds": run_ids, "status": "failed", "mandatoryEnvironments": len(matrix["slots"]), "collectedReports": 0, "qualificationScope": "committed-mandatory-matrix", "allFeaturesQualified": False, "catalogCoverage": coverage}
+    summary = {"schemaVersion": 1, "candidateSha": candidate, "runIds": run_ids, "status": "failed", "mandatoryEnvironments": len(selected_matrix["slots"]), "collectedReports": 0, **qualification_profiles.summary_fields(selection), "allFeaturesQualified": False, "catalogCoverage": coverage}
     try:
         for run_id in run_ids:
             endpoint = f"https://api.github.com/repos/{repository}/actions/runs/{run_id}"
@@ -1920,6 +2073,8 @@ def main():
                     return True
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
+                    acme_native_console_proof.verify_workflow(report, run.get("path"))
+                    acme_browser_lifecycle_proof.verify_workflow(report, run.get("path"))
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"
@@ -1929,27 +2084,42 @@ def main():
         if not files:
             raise ValueError("No mandatory qualification reports collected")
         environment = {**os.environ, "GITHUB_SHA": candidate}
-        result = subprocess.run(["node", "scripts/certops-release-qualification.js", candidate, *files], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=180)
+        result = subprocess.run(["node", "scripts/certops-release-qualification.js", "--profile", profile, candidate, *files], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=180)
         if result.returncode != 0:
             # Report identities and bounded verdicts are useful; raw artifacts
             # and subprocess diagnostics are not copied into the summary.
             raise ValueError("Mandatory release matrix qualification failed")
-        validate_matrix_summary(json.loads(result.stdout), candidate, len(matrix["slots"]), coverage)
+        validate_matrix_summary(json.loads(result.stdout), candidate, len(selected_matrix["slots"]), coverage, selection)
         summary["status"] = "passed"
+        summary.update(qualification_profiles.summary_fields(selection,True))
     finally:
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print("Committed mandatory matrix passed; full feature specifications remain separately tracked")
+    print("Committed mandatory matrix passed; full feature specifications remain separately tracked" if profile=="full" else f"Declared {profile} profile passed; omitted environments remain unqualified")
+
+
+def failed_profile_summary(arguments, environment, root=ROOT):
+    candidate=environment.get("CERTOPS_RELEASE_CANDIDATE","")
+    result={"schemaVersion":1,"candidateSha":candidate if re.fullmatch(r"[a-f0-9]{40}",candidate) else None,"status":"failed","qualificationProfile":"invalid","qualificationScope":"unverified-profile-failure","selectedSlotIds":[],"omittedSlotIds":[],"fullMatrixQualified":False,"allFeaturesQualified":False}
+    try:
+        profile=qualification_profiles.requested_profile(arguments,environment)
+        result["qualificationProfile"]=profile
+        matrix=json.loads((root / "docs/certops/release-qualification-matrix.json").read_text())
+        selected=qualification_profiles.select_profile(matrix,profile)
+        result.update(qualification_profiles.summary_fields(selected))
+        result["mandatoryEnvironments"]=len(selected["selectedSlotIds"])
+    except (ValueError,OSError,TypeError,KeyError):
+        pass
+    return result
 
 
 if __name__ == "__main__":
     try:
-        main()
+        main(sys.argv[1:])
     except Exception as error:
         # Even argument/download failures produce a sanitized failed verdict;
         # an older local summary must never look like the current result.
         output = ROOT / "qualification-results/release-collection"
         output.mkdir(parents=True, exist_ok=True)
-        candidate = os.environ.get("CERTOPS_RELEASE_CANDIDATE", "")
-        (output / "summary.json").write_text(json.dumps({"schemaVersion": 1, "candidateSha": candidate if re.fullmatch(r"[a-f0-9]{40}", candidate) else None, "status": "failed", "qualificationScope": "committed-mandatory-matrix", "allFeaturesQualified": False}, indent=2) + "\n", encoding="utf-8")
+        (output / "summary.json").write_text(json.dumps(failed_profile_summary(sys.argv[1:],os.environ),indent=2)+"\n",encoding="utf-8")
         print(str(error) if isinstance(error, ValueError) else "Qualification collection failed", file=sys.stderr)
         sys.exit(1)
