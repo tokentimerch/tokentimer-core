@@ -113,7 +113,7 @@ auto_auth {
   sink "file" {
     config = {
       path = "/run/tokentimer-vault/issuer/token"
-      mode = "0600"
+      mode = 384 # 0600: owner read/write only
     }
   }
 }
