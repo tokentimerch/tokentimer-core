@@ -77,7 +77,7 @@ function validateWorkflow(workflow,name="workflow"){
     if(dnsLane&&!dnsCondition)fail(`${id} must select only explicitly enrolled DNS providers`);
     if(dnsLane&&job.strategy?.matrix?.provider!=="${{ fromJSON(needs.enrollment.outputs.providers) }}")fail(`${id} provider matrix must come from enrollment`);
     if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
-    const selectedLane={tooling:"tooling",windows:"windows","agent-stack":"stack"}[id];
+    const selectedLane={tooling:"tooling","tooling-windows":"tooling",windows:"windows","agent-stack":"stack"}[id];
     const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
     if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(name==="certops-qualification.yml"&&selectedLane&&!selectedCondition)fail(`${id} must narrow execution to its committed selection output`);

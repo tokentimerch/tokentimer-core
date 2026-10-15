@@ -25,6 +25,19 @@ test("manual selection accepts exactly one supported lane or explicit all",()=>{
 test("unsafe changed filenames cannot influence shell or escape path ownership",()=>{for(const file of ["../outside","/etc/passwd","a\\b","a\nforged"]){assert.throws(()=>selectFiles([file]));}});
 test("framework discovery includes every current report ownership and security regression",()=>{const files=discover();for(const file of fs.readdirSync(require("node:path").join(__dirname)).filter(file=>/^certops-.*\.test\.js$/.test(file)))assert.ok(files.includes(`scripts/${file}`));assert.ok(files.includes("scripts/certops-kubernetes-compaction.test.js"));assert.ok(files.includes("scripts/certops-workflow-security.test.js"));assert.equal(new Set(files).size,files.length);});
 
+test("trusted Windows tooling executes the entire inventory with a checksum-pinned validator",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8"));
+ const job=workflow.jobs["tooling-windows"];
+ assert.equal(job.needs,"selection");assert.equal(job.if,"github.ref == 'refs/heads/main' && needs.selection.outputs.tooling == 'true'");
+ assert.equal(job["runs-on"],"windows-2025");assert.equal(job["timeout-minutes"],30);
+ const step=job.steps.find(value=>value.name==="Complete Windows tooling inventory (supporting only)");
+ assert.equal(step.run,"pnpm run test:certops:qualification");assert.equal(step.if,undefined);assert.notEqual(step["continue-on-error"],true);
+ const install=job.steps.find(value=>value.name==="Install checksum-pinned Windows Actions schema validator");
+ assert.equal(install.shell,"pwsh");assert.match(install.run,/Get-FileHash[\s\S]*6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9/);
+ assert.match(install.run,/CERTOPS_ACTIONLINT=/);assert.equal(job.environment,undefined);
+});
+
 const os=require("node:os"),path=require("node:path"),{spawnSync}=require("node:child_process");
 test("selector uses actual candidate diff and fails safely on missing history or forged ref/SHA",{timeout:30000},()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),"certops-ci-selector-"));

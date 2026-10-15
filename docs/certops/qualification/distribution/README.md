@@ -133,6 +133,9 @@ limits workers to four by default (or a validated `TEST_CONCURRENCY` from 1 to
 16), and retains a twelve-minute subprocess timeout. The measured Windows
 inventory exceeded the former five-minute limit. The CI tooling job allows
 thirty minutes for dependencies, that inventory, collectors and guards.
+The same complete tooling inventory also runs in a selected `windows-2025`
+job on trusted main, with checksum-pinned Actionlint. This supports Windows
+tooling reliability; it does not provision a native CertOps qualification host.
 Timeouts, signals, empty inventories and failed tests return failure; none
 count as qualification evidence. Subprocess regressions exercise real failure
 and timeout behavior, including isolation from a parent Node test context.

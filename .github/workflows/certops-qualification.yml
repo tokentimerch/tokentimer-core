@@ -149,6 +149,38 @@ jobs:
           set -euo pipefail
           for guard in scripts/ci-guards/certops-*.cjs; do node "$guard"; done
           pnpm run check:certops:skip-qualification
+  tooling-windows:
+    needs: selection
+    if: github.ref == 'refs/heads/main' && needs.selection.outputs.tooling == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install checksum-pinned Windows Actions schema validator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actionlintDirectory = Join-Path $env:RUNNER_TEMP 'certops-actionlint'
+          New-Item -ItemType Directory -Path $actionlintDirectory | Out-Null
+          $actionlintArchive = Join-Path $actionlintDirectory 'actionlint.zip'
+          Invoke-WebRequest -Uri 'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip' -OutFile $actionlintArchive
+          $actionlintHash = (Get-FileHash -LiteralPath $actionlintArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actionlintHash -ne '6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9') { throw 'Actionlint checksum mismatch' }
+          Expand-Archive -LiteralPath $actionlintArchive -DestinationPath $actionlintDirectory
+          $actionlintBinary = Join-Path $actionlintDirectory 'actionlint.exe'
+          "CERTOPS_ACTIONLINT=$actionlintBinary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Complete Windows tooling inventory (supporting only)
+        run: pnpm run test:certops:qualification
   windows:
     needs: selection
     if: github.ref == 'refs/heads/main' && needs.selection.outputs.windows == 'true'

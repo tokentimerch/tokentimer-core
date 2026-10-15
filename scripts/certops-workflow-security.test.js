@@ -43,6 +43,13 @@ test("selective lanes narrow only exact trusted main with their committed depend
  assert.ok(validateWorkflow(w,"certops-paid-fixture.yml").length,"Other workflows cannot borrow selector exceptions");
 });
 
+test("Windows tooling shares only the trusted tooling selection and cannot borrow native or foreign outputs",()=>{
+ const w=baseline();w.jobs={"tooling-windows":{...w.jobs.qualify,needs:"selection",if:"github.ref == 'refs/heads/main' && needs.selection.outputs.tooling == 'true'"}};
+ assert.deepEqual(validateWorkflow(w,"certops-qualification.yml"),[]);
+ for(const value of ["github.ref == 'refs/heads/main' || needs.selection.outputs.tooling == 'true'","github.ref == 'refs/heads/main' && needs.selection.outputs.windows == 'true'","github.ref == 'refs/heads/main' && needs.selection.outputs.stack == 'true'"]){const bad=structuredClone(w);bad.jobs["tooling-windows"].if=value;assert.ok(validateWorkflow(bad,"certops-qualification.yml").length);}
+ assert.ok(validateWorkflow(w,"certops-other.yml").length);
+});
+
 test("DNS cleanup uses only enrolled provider matrix and its independent unattended environment",()=>{
  const w=baseline();w.on={schedule:[{cron:"17 * * * *"}]};w.jobs={cleanup:{...w.jobs.qualify,needs:"enrollment",if:"github.ref == 'refs/heads/main' && needs.enrollment.outputs.enabled == 'true'",environment:"certops-dns-cleanup-${{ matrix.provider }}",strategy:{matrix:{provider:"${{ fromJSON(needs.enrollment.outputs.providers) }}"}}}};
  assert.deepEqual(validateWorkflow(w,"certops-dns-fixture-janitor.yml"),[]);
