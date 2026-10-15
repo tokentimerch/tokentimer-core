@@ -32,6 +32,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Certificate deployment backups keep distinct predecessor files when deployments share a clock tick or destinations share a filename. Configured backup retention preserves the current rollback backup and only prunes backups belonging to that destination. **Operator guidance:** historical timestamp-only backups remain on disk because their destination cannot be safely identified; review them before removing obsolete copies.
+
 - The Windows installer treats paths containing literal brackets as exact paths during installation, upgrade, rollback and removal, preserving similarly named sibling directories.
 
 - Workspace membership invitations can no longer downgrade an existing workspace admin or override an owner’s implicit admin access.
@@ -50,6 +52,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Windows agent on non-English hosts** ([#327](https://github.com/tokentimerch/tokentimer-core/issues/327), [#330](https://github.com/tokentimerch/tokentimer-core/issues/330)): the agent read the machine certificate store and http.sys bindings through the English labels of `certutil` and `netsh` output, so on hosts with another display language it found neither. Windows discovery came back empty, replaced certificates never became eligible for retention cleanup, and the startup cleanup after an interrupted renewal could delete the private key of the certificate it had just installed. A first IIS deploy failed with `QUERY_FAILED`, and an IIS renewal reset the binding's TLS settings (such as disabled legacy TLS or HTTP/2) to Windows defaults, with no previous certificate to roll back to. The store is now read through Windows PowerShell's certificate provider and the bindings from http.sys's own configuration, whatever the display language, and discovered validity dates are reported in UTC. **Operator action:** upgrade Windows agents running on non-English hosts, and check the TLS settings of IIS bindings renewed on those hosts (`netsh http show sslcert`), since earlier renewals reset them. Windows PowerShell 5.1 (`powershell.exe`) must be present on the host.
 
 ### Security
+
+- Certificate deployment resolves configured backup directories before applying the path allowlist. A symlink or Windows junction cannot redirect certificate or private-key backups outside the permitted deployment paths.
 
 - The Windows installer refuses linked package and staging paths and missing, malformed or wrong-architecture native helpers before activation, preserving the previous installation and preventing copies outside the selected directories. **Operator guidance:** unpack release archives into an ordinary directory rather than a junction or symbolic link.
 - The Windows installer preserves existing Windows Error Reporting policy instead of writing `DumpType=0` and claiming dump suppression. That value selects a custom dump. **Operator guidance:** review existing `LocalDumps\node.exe` settings from earlier installs; Windows crash-dump containment remains unqualified.

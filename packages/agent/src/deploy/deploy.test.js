@@ -424,9 +424,9 @@ describe("deployCertificate", () => {
 
     assert.equal(result.deployed, true);
     assert.ok(result.backupPath, "expected a backupPath in the result");
-    assert.equal(
+    assert.match(
       path.basename(result.backupPath),
-      "server.crt.2026-07-22T05-00-00.000Z.bak",
+      /^server\.crt\.2026-07-22T05-00-00\.000Z\.[a-f0-9]{32}\.[a-f0-9]{32}\.bak$/,
     );
     assert.equal(fs.readFileSync(result.backupPath, "utf8"), CERT_PEM);
     assert.equal(fs.readFileSync(target.certPath, "utf8"), OTHER_CERT_PEM);
