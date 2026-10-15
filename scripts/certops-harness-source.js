@@ -97,14 +97,14 @@ function validateHarnessSources(root = path.resolve(__dirname, "..")) {
     for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
       const file = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) visit(file);
-      else if (entry.isFile() && entry.name.endsWith(".js")) {
+      else if (entry.isFile() && /\.(?:js|cjs)$/.test(entry.name)) {
         const source = fs.readFileSync(path.join(root, file), "utf8");
         if (!source.includes("gate.scenario")) continue;
         for (const error of validateScenarioCalls(source)) errors.push(`${file}:${error.line}: ${error.message}`);
       }
     }
   }
-  for (const relative of ["tests/e2e", "packages/agent/scripts/host"]) visit(relative);
+  for (const relative of ["tests/e2e", "tests/wildcard-vault", "packages/agent/scripts/host"]) visit(relative);
   for (const file of fs.readdirSync(path.join(root, "scripts")).filter(name => name.startsWith("certops-") && name.endsWith(".js"))) {
     const source = fs.readFileSync(path.join(root, "scripts", file), "utf8");
     if (!source.includes("gate.scenario")) continue;

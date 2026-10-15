@@ -83,6 +83,10 @@ fields fails verification. The existing release collector refuses experimental
 reports, even after every functional assertion passes. This intentionally keeps
 release qualification blocked until actual candidate artifact/native evidence
 exists; source-only declarations cannot enable capabilities.
+Supplying credentials alone cannot make this experimental suite qualify a
+release: a reviewed native runner/collector contract must replace these blocked
+obligations with exact artifact evidence. Remaining native campaign source and
+execution gaps are explicitly listed in the feature matrix.
 
 ## Remaining native obligations
 

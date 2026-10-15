@@ -18,7 +18,7 @@ Sources below are rooted at `tests/wildcard-vault/` unless stated otherwise.
 | Renewal creates a distinct version/identity | recovery; `postgres.test.cjs` | E2E lab / integration | Unattended native schedule |
 | Vault authentication rejection/rotation | publish with revoked scoped token and same-job retry | E2E lab | AppRole/login/provider variants |
 | Outage and committed write response loss | recovery; material-store fault tests | E2E lab / integration | Native crash points/default time windows |
-| Private keys/Vault execution tokens absent from Core and logs | privacy; scanner; material-store tests | Read-only audit / integration | Secret DNS provider; all encodings and log sinks |
+| Private keys/Vault execution tokens absent from Core and logs | privacy; scanner; material-store tests | Read-only audit / integration | Secret DNS provider; exhaustive historical-key encodings and external log sinks |
 | Workspace group and explicitly authorized binding | publish/bindings; `pr329-review.test.cjs` | E2E lab / integration | Native cross-host policy races |
 | One certificate to nginx and HAProxy | bindings; qualification external probes | E2E lab | Separate native hosts |
 | Signed and version-pinned real agent jobs | bindings, recovery, qualification; dispatch/signing unit tests | E2E lab / unit | Exact shipped artifact |
