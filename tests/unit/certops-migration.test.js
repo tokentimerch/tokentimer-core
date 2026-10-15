@@ -34,16 +34,18 @@ describe("operational notifications migration", () => {
     assert.equal(migrations.find((entry) => entry.version === 68).name, "certops_adcs_awaiting_issuer_and_continue_enrollment");
     assert.equal(migrations.find((entry) => entry.version === 69).name, "certops_agent_job_logs");
     assert.equal(migrations.find((entry) => entry.version === 70).name, "certops_certificate_enrollments");
-    assert.equal(migrations.find((entry) => entry.version === 73).name, "certops_material_distribution");
-    assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_distribution_review");
-    assert.equal(migrations.at(-1).version, 75);
+    assert.equal(migrations.find((entry) => entry.version === 74).name, "certops_material_distribution");
+    assert.equal(migrations.find((entry) => entry.version === 75).name, "certops_distribution_review");
+    assert.equal(migrations.at(-1).version, 76);
     assert.equal(migrations.at(-1).name, "certops_distribution_transfer");
     assert.equal(migrations.find(entry => entry.version === 71).name, "certops_adcs_evidence_types");
     assert.match(migrations.find(entry => entry.version === 72).sql, /fk_certificate_profiles_issuer/);
     assert.deepEqual(
       migrations.map((entry) => entry.version),
-      Array.from({ length: 75 }, (_, index) => index + 1),
+      Array.from({ length: 76 }, (_, index) => index + 1),
     );
+    assert.equal(migrations.find(entry => entry.version === 73).name, "certops_job_alert_context");
+    assert.match(migrations.find(entry => entry.version === 72).sql, /ON DELETE SET NULL \(issuer_id\)/);
     assert.equal(
       migrations.find((entry) => entry.version === 39)?.name,
       "certops_agents_capabilities_freshness_epoch",
@@ -129,8 +131,8 @@ describe("operational notifications migration", () => {
       {version:71,name:"certops_material_distribution"},
       {version:72,name:"certops_distribution_review"},
       {version:73,name:"certops_distribution_transfer"},
-    ]) assert.throws(() => validateMigrationHistory([row]), /unexpected name/);
-    assert.throws(() => validateMigrationHistory([{version:76,name:"future_migration"}]), /not supported/);
+    ]) assert.throws(() => validateMigrationHistory([row]), /unexpected name|Unsupported Core migration history/);
+    assert.throws(() => validateMigrationHistory([{version:77,name:"future_migration"}]), /not supported|Unsupported Core migration history/);
     assert.doesNotThrow(() => validateMigrationHistory(migrations.map(({version,name}) => ({version,name}))));
   });
 });
@@ -1476,9 +1478,9 @@ describe("migration 68 AD CS awaiting_issuer and continue-enrollment", () => {
   });
 });
 
-describe("migration 73 distribution operation compatibility", () => {
+describe("migration 74 distribution operation compatibility", () => {
   it("adds deploy-from-store while retaining AD CS continuation and preflight", () => {
-    const migration = migrations.find(entry => entry.version === 73);
+    const migration = migrations.find(entry => entry.version === 74);
     const declared = migration.sql.match(/operation IN\s*\(([^)]+)\)/);
     assert.ok(declared);
     const values = declared[1].split(",").map(value => value.trim().replace(/^'|'$/g, ""));
@@ -1878,7 +1880,7 @@ describe("migration 46 alert_queue agent-health anchor", () => {
     const expected = Array.from({ length: sorted[sorted.length - 1] }, (_, index) => index + 1)
       .filter((version) => notificationCount === 4 || !notificationVersions.includes(version));
     assert.deepEqual(sorted, expected);
-    assert.equal(sorted[sorted.length - 1], 75);
+    assert.equal(sorted[sorted.length - 1], 76);
   });
 });
 

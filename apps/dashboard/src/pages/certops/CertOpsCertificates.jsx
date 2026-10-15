@@ -169,10 +169,10 @@ function RenewalSetupStatus({ renewalSetup, onRetry, retrying, canManage }) {
 
 /**
  * Counts retired (revoked/decommissioned) certificates, independent of the
- * page the "Retired" toggle currently shows.
+ * currently selected status filter, for the empty-inventory guidance.
  *
  * Sum two lightweight grouped totals, one for each retired lifecycle state.
- * Scoped to source only, matching the toggle independently of status filters.
+ * Scoped to source only, independently of status filters.
  */
 function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
   const [count, setCount] = useState(null);
@@ -210,8 +210,8 @@ function useRetiredCertificateCount({ workspaceId, enabled, source, tick }) {
         );
       })
       .catch(() => {
-        // The count is a convenience on the toggle label, not something the
-        // list depends on, so a failed fetch just leaves it unlabeled rather
+        // The count supports the empty-inventory guidance, not something the
+        // list depends on, so a failed fetch leaves the general guidance rather
         // than surfacing a second error alongside the list's own.
         if (!cancelled) setCount(null);
       });
@@ -261,9 +261,10 @@ function useUnmanagedCertificateCount({ workspaceId, enabled, source, tick }) {
 /**
  * Certificates tab: the managed certificate inventory for this workspace.
  *
- * Retired certificates (revoked/decommissioned) and unmanaged certificates
- * (no open management period) are hidden by default. Each checkbox asks the
- * server for that population, so the page total stays correct.
+ * Retired certificates are available through their specific status filters.
+ * The default view excludes them, even when still observed. Unmanaged
+ * certificates are included with Show unmanaged; filtering happens on the
+ * server so pagination totals describe the selected population.
  */
 export default function CertOpsCertificates() {
   const location = useLocation();
@@ -334,11 +335,13 @@ export default function CertOpsCertificates() {
     hasActiveFilters,
   } = useCertOpsListUrlState({ filters: CERTOPS_CERTIFICATE_FILTERS });
 
-  const showRetired = filters.showRetired === 'true';
   const showUnmanaged =
     filters.showUnmanaged === 'true' || filters.management === 'unmanaged';
-  // An explicit revoked/decommissioned status already asks for those rows.
-  const excludeRetired = !filters.status && !showRetired ? true : undefined;
+  // Retired fingerprints are available through their explicit status filters.
+  const retiredStatusSelected = ['revoked', 'decommissioned'].includes(
+    filters.status
+  );
+  const excludeRetired = retiredStatusSelected ? undefined : true;
   const [sort, setSort] = useState({ key: 'expiry', direction: 'asc' });
   const [searchResetSignal, setSearchResetSignal] = useState(0);
   const clearAllFilters = useCallback(() => {
@@ -353,18 +356,21 @@ export default function CertOpsCertificates() {
       status: filters.status || undefined,
       source: filters.source || undefined,
       excludeRetired,
+      includeObservedRetired: retiredStatusSelected,
       unmanaged: showUnmanaged ? undefined : false,
       q: filters.q || undefined,
       sort: sort.key,
       direction: sort.direction,
     });
-  // Active only also hides a revoked or decommissioned row a stale server
-  // still returned. An explicit status filter is left as the server sent it.
+  // Keep stale retired rows out of every non-retired view as well.
   const visibleCertificates = certificates.filter(item => {
-    if (!filters.status && !showRetired && isRetiredCertificate(item)) {
+    if (!retiredStatusSelected && isRetiredCertificate(item)) return false;
+    if (
+      !showUnmanaged &&
+      item.managed === false &&
+      !(isRetiredCertificate(item) && item.stillObserved)
+    )
       return false;
-    }
-    if (!showUnmanaged && item.managed === false) return false;
     return true;
   });
   const searchIconColor = useColorModeValue(
@@ -566,7 +572,7 @@ export default function CertOpsCertificates() {
       });
       showSuccess(
         status === 'revoked'
-          ? 'Certificate revoked'
+          ? 'Certificate marked revoked in CertOps'
           : 'Certificate decommissioned'
       );
       setRetireTarget(null);
@@ -585,7 +591,6 @@ export default function CertOpsCertificates() {
 
   const visibleFilterLabels = activeFilterLabels.filter(
     entry =>
-      entry.key !== 'showRetired' &&
       entry.key !== 'showUnmanaged' &&
       entry.key !== 'q' &&
       entry.key !== 'management'
@@ -675,7 +680,7 @@ export default function CertOpsCertificates() {
           onChange={event => setFilter('status', event.target.value)}
           aria-label='Filter by certificate status'
         >
-          <option value=''>All statuses</option>
+          <option value=''>All (except retired)</option>
           {MANAGED_CERTIFICATE_STATUSES.map(value => (
             <option key={value} value={value}>
               {statusLabel(value)}
@@ -696,15 +701,6 @@ export default function CertOpsCertificates() {
             </option>
           ))}
         </Select>
-        <Checkbox
-          isChecked={showRetired}
-          onChange={event =>
-            setFilter('showRetired', event.target.checked ? 'true' : '')
-          }
-          size='sm'
-        >
-          Show retired{retiredCount > 0 ? ` (${retiredCount})` : ''}
-        </Checkbox>
         <Checkbox
           isChecked={showUnmanaged}
           onChange={event =>
@@ -768,7 +764,7 @@ export default function CertOpsCertificates() {
               hasActiveFilters
                 ? 'Clear the filters above to see the rest of the inventory.'
                 : retiredCount > 0 || unmanagedCount > 0
-                  ? 'Retired and unmanaged certificates are hidden. Show them to see revoked, decommissioned, and unregistered certificates.'
+                  ? 'Select Revoked or Decommissioned in the status filter to view retired certificates. Enable Show unmanaged to include certificates without active management.'
                   : 'Certificates appear here once TokenTimer discovers, imports, or issues one for this workspace.'
             }
             py={6}

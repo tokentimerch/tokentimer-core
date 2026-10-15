@@ -34,6 +34,19 @@ describe('jobStatusLabel / jobStatusScheme', () => {
 });
 
 describe('reconciliationAdvisoryText', () => {
+  it('keeps a reported success visibly in review when retirement overlaps execution', () => {
+    const reason = 'certificate_retirement_overlapped_execution';
+    const text =
+      'Certificate retirement overlapped this operation. Verify what is installed and remove or replace retired certificates where needed.';
+    expect(reconciliationAdvisoryText(reason)).toBe(text);
+    expect(
+      jobListAdvisory({
+        status: 'succeeded',
+        needsOperatorReconciliation: true,
+        reconciliationReason: reason,
+      })
+    ).toEqual({ label: 'Needs review', detail: text, tone: 'red' });
+  });
   it('returns the base sentence when no reason is given', () => {
     expect(reconciliationAdvisoryText(null)).toBe(
       "This job's side effects could not be confirmed and need manual review."

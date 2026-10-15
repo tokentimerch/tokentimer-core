@@ -72,6 +72,22 @@ describe('ambiguous certificate inventory actions', () => {
   it('shows aggregate retirement rather than expiry health when every linked identity is retired', () => {
     show({ ...token, __managedCertificatesRetired: true });
     expect(screen.getAllByText('Retired').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Healthy')).not.toBeInTheDocument();
+    expect(screen.queryAllByText('Healthy')).toHaveLength(0);
   });
+
+  it.each(['revoked', 'decommissioned'])(
+    'uses persisted %s lifecycle when CertOps enrichment is unavailable',
+    status => {
+      show({
+        ...token,
+        __certificateLinkAmbiguous: false,
+        cert_lifecycle_status: status,
+      });
+      expect(screen.queryAllByText('Healthy')).toHaveLength(0);
+      expect(
+        screen.getAllByText(status === 'revoked' ? 'Revoked' : 'Decommissioned')
+          .length
+      ).toBeGreaterThan(0);
+    }
+  );
 });

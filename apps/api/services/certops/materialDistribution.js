@@ -234,7 +234,8 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   await lockGroup(client, workspaceId, intent.groupId);
   const row = (await client.query(`SELECT d.*, r.generation, r.material_version_id, r.state AS rollout_state,
     b.state AS binding_state,b.authorization_revision AS current_authorization_revision,
-    s.desired_generation,s.desired_material_version_id,v.fingerprint_sha256,v.valid_to
+    s.desired_generation,s.desired_material_version_id,v.fingerprint_sha256,v.valid_to,
+    v.certificate_identity_id
     FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r
       ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
     JOIN certops_consumer_bindings b ON b.workspace_id=d.workspace_id AND b.id=d.binding_id
@@ -257,7 +258,15 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   await client.query(`UPDATE certops_consumer_deployments SET stage=$4,observed_fingerprint_sha256=$5,
     observed_valid_to=$6,observed_at=$7 WHERE workspace_id=$1 AND rollout_id=$2 AND binding_id=$3`,
   [workspaceId, intent.rolloutId, intent.bindingId, stage, receipt.fingerprintSha256, receipt.validTo, receipt.observedAt]);
-  const current = row.binding_state === "active" && row.current_authorization_revision === row.authorization_revision &&
+  // Match retirement's advisory fence without waiting in the reverse lock
+  // order. Keep late evidence, but never promote a retired/busy identity.
+  const retirement = await client.query(`SELECT pg_try_advisory_xact_lock_shared(
+    hashtextextended('certops-identity-retirement:' || $1::text,0)) AS locked`, [row.certificate_identity_id]);
+  const identity = retirement.rows[0]?.locked === true
+    ? await client.query(`SELECT lifecycle_status FROM certops_certificate_identities WHERE workspace_id=$1 AND id=$2`,
+      [workspaceId,row.certificate_identity_id]) : null;
+  const identityActive = identity?.rows[0]?.lifecycle_status === "active";
+  const current = identityActive && row.binding_state === "active" && row.current_authorization_revision === row.authorization_revision &&
     Number(row.desired_generation) === receipt.generation && row.desired_material_version_id === receipt.materialVersionId &&
     ["pending","deploying"].includes(row.rollout_state) && jobStatus === "succeeded" && receipt.servedVerified && (row.verification_policy !== "trust" || receipt.trustValidated);
   if (current) await client.query(`UPDATE certops_consumer_current_state SET accepted_generation=$3,
@@ -266,7 +275,7 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
     receipt.generation, receipt.materialVersionId, receipt.fingerprintSha256, receipt.validTo,
     receipt.trustValidated ? "trust" : "served", receipt.observedAt]);
   await enqueueDistributionEvent(client, workspaceId, "distribution_rollout_requested", `${intent.rolloutId}:${job.id}:${job.claim_id}`, { groupId: intent.groupId, rolloutId: intent.rolloutId });
-  return { historicalOnly: !current, stage };
+  return { historicalOnly: !current, retirementConflict: !identityActive, stage };
 }
 
 async function consumerMatrix({ client, workspaceId, groupId }) {

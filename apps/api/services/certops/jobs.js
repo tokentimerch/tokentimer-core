@@ -2081,6 +2081,27 @@ async function createCertificateJob(options) {
     }
   }
 
+  if (subjectType === "managed_certificate" && SUBJECT_ID_UUID_PATTERN.test(subjectId || "") &&
+      ["renew", "deploy", "reload"].includes(operation)) {
+    const lifecycle = await db.query(
+      `SELECT identity.lifecycle_status, identity.fingerprint_sha256,
+              certops_is_initial_provisioning(mc.workspace_id,mc.id,$3,$4,$5) AS initial_provisioning
+         FROM managed_certificates mc
+         LEFT JOIN certops_certificate_identities identity
+           ON identity.workspace_id = mc.workspace_id
+          AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+        WHERE mc.workspace_id = $1 AND mc.id = $2::uuid`,
+      [workspaceId, subjectId, operation, executorKind, source],
+    );
+    const identity = lifecycle.rows[0];
+    if (identity?.lifecycle_status === null && identity.initial_provisioning !== true) {
+      throw serviceError("An observed certificate fingerprint is required before this operation", CERTOPS_JOB_INVALID);
+    }
+    if (["revoked", "decommissioned"].includes(identity?.lifecycle_status)) {
+      throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
+    }
+  }
+
   // Authoritative per-(workspace, CA) capacity. Scheduler pre-filters are
   // best-effort; bulk/manual paths share this transactional gate. issue and
   // renew share the bucket: both place a real ACME order.

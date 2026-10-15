@@ -207,6 +207,34 @@ function shouldSkipRetiredCertificateAlert(certLifecycleStatus) {
   return isRetiredCertLifecycleStatus(certLifecycleStatus);
 }
 
+// A source may rotate after a failed job. Resolve that job's immutable
+// identity, never the replacement's lifecycle or a contended source cache.
+async function loadRenewalAlertCertificate(client, {
+  workspaceId, jobId, certificateId = null,
+}) {
+  const result = await client.query(
+    `SELECT mc.id, cj.certificate_token_id AS token_id,
+            identity.lifecycle_status AS status,
+            identity.common_name, identity.fingerprint_sha256
+       FROM managed_certificates mc
+       JOIN certificate_jobs cj
+         ON cj.workspace_id = mc.workspace_id
+        AND cj.subject_type = 'managed_certificate'
+        AND cj.subject_id = mc.id::text AND cj.id = $3::uuid
+       JOIN certops_certificate_identities identity
+         ON identity.workspace_id = cj.workspace_id
+        AND identity.id = cj.certificate_identity_id
+       JOIN tokens token ON token.workspace_id = cj.workspace_id
+        AND token.id = cj.certificate_token_id
+      WHERE mc.workspace_id = $2
+        AND mc.token_id = cj.certificate_token_id
+        AND ($1::uuid IS NULL OR mc.id = $1::uuid)
+      LIMIT 1`,
+    [certificateId, workspaceId, jobId],
+  );
+  return result.rows[0] || null;
+}
+
 function shouldDiscardRetiredCertificateAlert({
   alertKey,
   tokenLifecycleStatus,
@@ -434,6 +462,7 @@ module.exports = {
   TOKEN_EXPIRY_ALERT_PREFIX,
   CERT_RENEWAL_FAILED_ALERT_PREFIX,
   computeDaysLeft,
+  formatCalendarDay,
   formatThresholdDate,
   findThresholdWindow,
   isStaleImportThreshold,
@@ -448,6 +477,7 @@ module.exports = {
   isRetiredCertificateSuppressedAlertKey,
   parseCertRenewalFailedJobId,
   shouldSkipRetiredCertificateAlert,
+  loadRenewalAlertCertificate,
   shouldDiscardRetiredCertificateAlert,
   resolveEffectiveThresholds,
   resolveEligibleChannels,

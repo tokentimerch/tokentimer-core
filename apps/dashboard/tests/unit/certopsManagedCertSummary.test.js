@@ -11,6 +11,32 @@ const linked = (overrides = {}) => ({
 });
 
 describe('summarizeManagedCertificates', () => {
+  it('counts one identity across sources and excludes retired observations sharing its token', () => {
+    const summary = summarizeManagedCertificates([
+      linked({
+        id: 'a-file',
+        identityId: 'identity-a',
+        fingerprintSha256: 'a'.repeat(64),
+        tokenId: null,
+      }),
+      linked({
+        id: 'a-issued',
+        identityId: 'identity-a',
+        fingerprintSha256: 'a'.repeat(64),
+      }),
+      linked({
+        id: 'b-retired',
+        identityId: 'identity-b',
+        fingerprintSha256: 'b'.repeat(64),
+        status: 'discovered',
+        lifecycleStatus: 'decommissioned',
+        stillObserved: true,
+      }),
+    ]);
+    expect(summary.linkedCount).toBe(1);
+    expect(summary.unlinkedCount).toBe(0);
+    expect(summary.highlights[0].id).toBe('a-issued');
+  });
   it('lists only certificates linked to a token', () => {
     const summary = summarizeManagedCertificates([
       linked({ id: 'a', tokenId: 1 }),
@@ -24,8 +50,18 @@ describe('summarizeManagedCertificates', () => {
   it('counts unlinked provisioning certificates separately instead of listing them', () => {
     const summary = summarizeManagedCertificates([
       linked({ id: 'a', tokenId: 1 }),
-      linked({ id: 'b', tokenId: null, status: 'provisioning', notAfter: null }),
-      linked({ id: 'c', tokenId: null, status: 'provisioning', notAfter: null }),
+      linked({
+        id: 'b',
+        tokenId: null,
+        status: 'provisioning',
+        notAfter: null,
+      }),
+      linked({
+        id: 'c',
+        tokenId: null,
+        status: 'provisioning',
+        notAfter: null,
+      }),
     ]);
 
     expect(summary.provisioningCount).toBe(2);
@@ -88,7 +124,11 @@ describe('summarizeManagedCertificates', () => {
   it('orders highlights by soonest expiry', () => {
     const summary = summarizeManagedCertificates([
       linked({ id: 'later', tokenId: 1, notAfter: '2027-01-01T00:00:00.000Z' }),
-      linked({ id: 'sooner', tokenId: 2, notAfter: '2026-08-01T00:00:00.000Z' }),
+      linked({
+        id: 'sooner',
+        tokenId: 2,
+        notAfter: '2026-08-01T00:00:00.000Z',
+      }),
     ]);
 
     expect(summary.highlights.map(cert => cert.id)).toEqual([

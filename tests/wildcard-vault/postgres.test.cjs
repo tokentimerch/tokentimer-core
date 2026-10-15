@@ -232,7 +232,34 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   const original=await operations.requestRollout(rolloutRequest);
   assert.equal(original.id,approval.id,"retry after completion/membership change returns original approval");
   assert.deepEqual(original.payload.distributionRollout,approval.payload.distributionRollout);
-  // Simulate a withdrawn identity: existing request identity remains replayable,
+  // A rollback deployment belongs to its pinned material identity, not the
+  // source's newer current fingerprint. Retirement fences pending execution
+  // and keeps a late result as history without advancing the consumer.
+  const bindingBRow=(await pool.query("SELECT * FROM certops_consumer_bindings WHERE id=$1",[bindingB])).rows[0];
+  await operations.putBinding({workspaceId,groupId,bindingId:bindingB,actorUserId:actor,binding:{agentId:consumerB,
+    deploymentProfileRef:bindingBRow.deployment_profile_ref,profileRevision:bindingBRow.profile_revision,
+    required:bindingBRow.required,wave:0,verificationPolicy:bindingBRow.verification_policy,
+    freshnessSeconds:bindingBRow.freshness_seconds,state:"active"}});
+  const retirementRollout=await operations.requestRollout({...rolloutRequest,maxParallel:2,idempotencyKey:`retirement-${workspaceId}`});
+  await approveJob({workspaceId,jobId:retirementRollout.id,approverUserId:approver});
+  const retirementSnapshot=await operations.transaction(client=>material.createRolloutSnapshot({client,workspaceId,groupId,
+    materialVersionId,maxParallel:2,approvalJobId:retirementRollout.id,approvedIntentHash:material.hashIntent(retirementRollout.payload.distributionRollout)}));
+  await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,retirementSnapshot.rolloutId));
+  const deployments=(await pool.query("SELECT * FROM certops_consumer_deployments WHERE rollout_id=$1 ORDER BY binding_id",[retirementSnapshot.rolloutId])).rows;
+  assert.equal(deployments.length,2);assert.ok(deployments.every(d=>d.job_id));
+  let inFlight=(await pool.query("UPDATE certificate_jobs SET status='running',claim_id=gen_random_uuid(),claimed_by_agent_id=$2,lease_expires_at=clock_timestamp()+interval '5 minutes' WHERE id=$1 RETURNING *",[deployments[0].job_id,deployments[0].assigned_agent_id])).rows[0];
+  assert.equal(inFlight.certificate_identity_id,oldIdentity.id,"rollback pins the immutable old version identity");
+  const stateBefore=(await pool.query("SELECT accepted_generation,observed_material_version_id FROM certops_consumer_current_state WHERE binding_id=$1",[deployments[0].binding_id])).rows[0];
+  await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='decommissioned' WHERE workspace_id=$1 AND id=$2",[workspaceId,oldIdentity.id]);
+  await assert.rejects(pool.query("UPDATE certificate_jobs SET status='claimed',claim_id=gen_random_uuid(),claimed_by_agent_id=$2 WHERE id=$1",[deployments[1].job_id,deployments[1].assigned_agent_id]),{code:"55000"});
+  const late=await operations.transaction(client=>material.acceptDeploymentReceipt({client,workspaceId,agentId:deployments[0].assigned_agent_id,
+    job:inFlight,jobStatus:"succeeded",receipt:{...deployed,bindingId:deployments[0].binding_id,generation:retirementRollout.payload.distributionRollout.generation,observedAt:new Date().toISOString()}}));
+  assert.equal(late.historicalOnly,true);assert.equal(late.retirementConflict,true);
+  assert.deepEqual((await pool.query("SELECT accepted_generation,observed_material_version_id FROM certops_consumer_current_state WHERE binding_id=$1",[deployments[0].binding_id])).rows[0],stateBefore);
+  inFlight=(await pool.query("UPDATE certificate_jobs SET status='succeeded' WHERE id=$1 RETURNING *",[inFlight.id])).rows[0];
+  assert.equal(inFlight.needs_operator_reconciliation,true);
+  assert.equal(inFlight.reconciliation_reason,"certificate_retirement_overlapped_execution");
+  // Existing request identity remains replayable,
   // but a fresh rollout must still satisfy current material validity.
   await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='decommissioned' WHERE workspace_id=$1 AND id=$2",[workspaceId,oldIdentity.id]);
   assert.equal((await operations.requestRollout(rolloutRequest)).id,approval.id);
@@ -273,7 +300,7 @@ test("terminal never-executed publications release transactionally; uncertain at
     await client.query("ALTER TABLE certificate_jobs DISABLE TRIGGER trg_certops_release_unexecuted_publication");
     await client.query("UPDATE certificate_jobs SET status='cancelled' WHERE workspace_id=$1 AND id=$2",[workspaceId,stranded.id]);
     await client.query("ALTER TABLE certificate_jobs ENABLE TRIGGER trg_certops_release_unexecuted_publication");
-    const sql=fs.readFileSync(path.resolve(__dirname,"../../apps/api/migrations/074-certops-distribution-review.sql"),"utf8");
+    const sql=fs.readFileSync(path.resolve(__dirname,"../../apps/api/migrations/075-certops-distribution-review.sql"),"utf8");
     const repair=sql.slice(sql.indexOf("-- Repair"),sql.indexOf("-- Stable"));
     await client.query(repair);await client.query(repair);
   });

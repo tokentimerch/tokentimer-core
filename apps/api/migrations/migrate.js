@@ -4788,21 +4788,31 @@ const migrations = [
     `,
   },
   {
-    version: 73,
-    name: "certops_material_distribution",
-    sql: fs.readFileSync(require("path").join(__dirname, "073-certops-material-distribution.sql"), "utf8"),
+  version: 73,
+  name: "certops_job_alert_context",
+  postCommitSql: fs.readFileSync(require("path").join(__dirname, "certops-distribution-lifecycle-guards.sql"), "utf8"),
+  sql: fs.readFileSync(require("path").join(__dirname, "073-certops-job-alert-context.sql"), "utf8"),
   },
   {
     version: 74,
-    name: "certops_distribution_review",
-    sql: fs.readFileSync(require("path").join(__dirname, "074-certops-distribution-review.sql"), "utf8"),
+    name: "certops_material_distribution",
+    sql: fs.readFileSync(require("path").join(__dirname, "074-certops-material-distribution.sql"), "utf8"),
   },
   {
     version: 75,
+    name: "certops_distribution_review",
+    sql: fs.readFileSync(require("path").join(__dirname, "075-certops-distribution-review.sql"), "utf8"),
+  },
+  {
+    version: 76,
     name: "certops_distribution_transfer",
-    sql: fs.readFileSync(require("path").join(__dirname, "075-certops-distribution-transfer.sql"), "utf8"),
+    sql: fs.readFileSync(require("path").join(__dirname, "076-certops-distribution-transfer.sql"), "utf8"),
   },
 ];
+
+
+
+const { composeMigrations } = require("./compose-migrations");
 
 // PR #72 briefly shipped this version/name sequence before PR #139 restored
 // the CertOps numbering. Those installations already have v45 in the ledger,
@@ -4818,8 +4828,9 @@ const historicalMigrationAliases = new Map([
 ]);
 
 function validateMigrationHistory(rows) {
+  const planned = resolveMigrationPlan(rows);
   for (const { version, name } of rows) {
-    const current = migrations.find(
+    const current = planned.find(
       (migration) => migration.version === version,
     );
     if (!current) {
@@ -5092,6 +5103,15 @@ migrations.push({
 // Main may already contain v60 when PR #140's v58-v59 migrations arrive.
 // Apply by version rather than declaration position so each dependency exists.
 migrations.sort((a, b) => a.version - b.version);
+const canonicalMigrations = migrations.slice();
+
+function resolveMigrationPlan(recorded) {
+  // The Enterprise adapter and upgrade tests may supply an already composed
+  // executor list. Preserve that trusted composition and validate its ledger.
+  const composed = migrations.length !== canonicalMigrations.length ||
+    migrations.some((migration,index) => migration !== canonicalMigrations[index]);
+  return composed ? migrations : composeMigrations(canonicalMigrations, recorded);
+}
 
 // The caller owns the migration transaction. v62's historic SQL attempts to
 // import retirement audit rows even after workspace erasure has nulled their
@@ -5145,6 +5165,7 @@ async function runMigrations() {
       "SELECT version, name FROM migrations ORDER BY version",
     );
     validateMigrationHistory(result.rows);
+    const plannedMigrations = resolveMigrationPlan(result.rows);
     const executedVersions = result.rows.map((row) => row.version);
     logger.info(`Found ${executedVersions.length} executed migrations`, {
       versions: executedVersions,
@@ -5210,7 +5231,7 @@ async function runMigrations() {
     }
 
     let migrationsRun = 0;
-    for (const migration of migrations) {
+    for (const migration of plannedMigrations) {
       if (!executedVersions.includes(migration.version)) {
         logger.info(
           `Running migration ${migration.version}: ${migration.name}`,

@@ -6,16 +6,15 @@ The API, workers, inventory scanners, dashboards and queues never receive the
 private key or Vault/DNS credentials. Publishing is a separate outcome from
 deploying to every consumer. The same certificate may be an ordinary, SAN, or
 wildcard certificate; sharing it is independent of its DNS names.
-Core appends distribution migrations 73–75 after AD CS vocabulary at 68, the
-agent console at 69, enrollment records at 70, AD CS evidence at 71 and the
-workspace-scoped profile issuer relation at 72. Applied mainline definitions
-remain unchanged. A Core preview ledger that uses 71–72 for distribution is
-rejected; never rename applied ledger rows to force an upgrade.
-Cloud retains its independent migration history, including enrollment migration
-91, and appends the AD CS corrections. Enterprise's composition adapter selects
-the append-only sequence for its enrollment-first or distribution-first history.
-Do not interchange these edition-specific migration histories. Back up both the
-database and ledger before upgrading; test the same history in an isolated copy.
+Core preserves AD CS migrations 68 and 70–72, agent console migration 69,
+and mainline job-alert/lifecycle migration 73. Fresh installations append
+distribution migrations 74–76. Recognized distribution-first, enrollment-first
+and previous AD-CS-first distribution preview ledgers retain every applied
+version/name and append missing lifecycle safeguards at 76. Unknown or gapped
+histories stop before SQL runs; never rename applied ledger rows. Cloud keeps
+its independent history and appends job-alert/lifecycle migration 95 after 94.
+Enterprise uses the shared append-only composition adapter. Back up the database
+and secrets, drain old writers, migrate, then deploy matching API and workers.
 
 Rejected/cancelled publications release their allocation only when the database
 proves zero execution attempts and no claim/start/lease evidence. The retained
@@ -69,7 +68,9 @@ wire `agentId` in local configuration. Examples intentionally have no tokens.
 The issuer and each consumer have separate Vault Agent auto-auth processes and
 0600 token sinks (0700 parent directories). The adapter reads its sink on every
 request, allowing Vault Agent to renew/replace the token. Static tokens are not a
-production authentication proposal. Use HTTPS with system trust or a locally
+production authentication proposal. Follow the [complete Vault Agent AppRole
+walkthrough](vault-agent-authentication.md) for role creation, login, token sinks,
+credential rotation and positive/negative access checks. Use HTTPS with system trust or a locally
 approved CA file, optional Vault namespace, bounded request timeout and a KV v2
 mount. Vault Agent auth roles, policies, CA files, DNS credentials, mount/prefix
 and reload commands are customer-owned configuration, never job fields.
@@ -264,7 +265,7 @@ create a beta tag as a validation shortcut for this PR. Keep unqualified
 capabilities absent from production manifests until their own evidence passes.
 
 Schema rollback uses a tested backup/restore or a forward correction; downgrading
-the application across migrations 73–75 is not supported. Pause execution before
+the application across the lifecycle/distribution migrations 73–76 is not supported. Pause execution before
 an upgrade or restore, retain immutable history and customer-local artifacts,
 and reconcile uncertain effects before restarting. Never drop distribution or
 AD CS tables or edit ledger names to fit an older binary.

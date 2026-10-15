@@ -351,6 +351,11 @@ function createIdentityStore() {
       if (normalized.startsWith("UPDATE tokens")) {
         return { rows: [] };
       }
+      if (normalized.startsWith("SELECT expiration::text FROM tokens")) {
+        // This bridge fixture has no persisted alert/expiry history. The real
+        // PostgreSQL identity suite covers snapshot archival on replacement.
+        return { rows: [] };
+      }
       throw new Error(`Unexpected query: ${normalized}`);
     },
   };

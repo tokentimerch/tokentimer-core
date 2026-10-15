@@ -10,9 +10,11 @@ The inventory search matches public properties across all management sources:
 certificate and identity IDs, names, SANs, issuers, serial numbers, algorithms,
 validity dates, key modes, source types and references, and token/profile IDs.
 Source filters include observed locations as well as management provenance.
-**Show retired** includes revoked and decommissioned certificates; **Show
-unmanaged** includes identities without an open management period. Both controls
-remain available while their counts load or cannot be retrieved.
+The default **All (except retired)** view excludes revoked and decommissioned certificates. Select
+**Revoked** or **Decommissioned** to view them; fresh presence evidence adds
+**Still observed** to their lifecycle label. They never count as active.
+**Show unmanaged** includes identities without an open management period and
+remains available while its count loads or cannot be retrieved.
 Key references and deployment paths are searchable only for roles allowed to
 read them. Workspace viewers cannot infer those values through search results.
 

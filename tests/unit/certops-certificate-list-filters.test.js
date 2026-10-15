@@ -47,6 +47,7 @@ function matches(where, params, row, profileStatusById) {
     : null;
 
   return where
+    .replace(/CASE\s+WHEN identity\.lifecycle_status IN \('revoked', 'decommissioned'\) THEN identity\.lifecycle_status\s+ELSE mc\.status END/g, "mc.status")
     .split("AND")
     .map((clause) => clause.trim())
     .filter(Boolean)
@@ -174,8 +175,8 @@ describe("CertOps managed certificate list pagination", () => {
     const pageQuery = client.queries.find((entry) =>
       entry.sql.startsWith("SELECT mc.*"),
     );
-    assert.ok(countQuery.sql.includes("mc.status = $2"));
-    assert.ok(pageQuery.sql.includes("mc.status = $2"));
+    assert.ok(countQuery.sql.includes("END = $2"));
+    assert.ok(pageQuery.sql.includes("END = $2"));
   });
 });
 

@@ -350,10 +350,20 @@ addendum to ADR-0007 supersedes its earlier source-row lifecycle description.
   linked token lifecycle status is updated only when no independently active
   fingerprint shares that token. Retiring also stops
   expiry and renewal-failure alerts for that certificate: pending
-  renewal-failure alerts are dropped immediately; pending expiry alerts are
-  dropped once no live sibling remains on the shared token. New ones are
+  renewal-failure alerts are discarded with their history retained; pending expiry alerts are
+  discarded once no live sibling remains on the shared token. New ones are
   not queued, and weekly digests omit a token whose lifecycle is retired.
   Endpoint-down alerts are unchanged.
+  Alert eligibility requires the job's immutable identity and database-captured
+  token association. Unknown historical attribution or later relinking cannot
+  silently route an old failure to the current certificate or token.
+  Claimed or running mutations are flagged for operator reconciliation when
+  their certificate is marked revoked, including concurrent completions. Their
+  claims, reported outcomes and evidence remain intact; decommissioning still
+  rejects an in-flight mutation. Recording revocation neither stops an executor
+  nor revokes the certificate at its CA. Payload replacement assertions do not
+  bypass retirement: an accepted replacement
+  first acquires its own active fingerprint identity, which subsequent jobs use.
 - **Decommission** - blocked by fresh confirmed TLS or service-binding use.
   Stored copies and uncertain visibility require acknowledgment; later use
   appears as **Decommissioned · Still observed**. It is an operator declaration,

@@ -38,6 +38,7 @@ import {
 import {
   parseCertRenewalFailedJobId,
   shouldDiscardRetiredCertificateAlert,
+  loadRenewalAlertCertificate,
 } from "./shared/retiredCertificateAlerts.js";
 import {
   detectWebhookProviderKind,
@@ -1665,24 +1666,19 @@ export async function deliveryWorkerJob({
 
       try {
         let jobCertificateStatus = null;
+        let renewalIdentityUnavailable = false;
         const renewalFailedJobId = parseCertRenewalFailedJobId(alert.alert_key);
         if (renewalFailedJobId) {
-          const certRes = await client.query(
-            `SELECT mc.status
-             FROM certificate_jobs cj
-             JOIN managed_certificates mc
-               ON mc.workspace_id = cj.workspace_id
-              AND cj.subject_id = mc.id::text
-            WHERE cj.id = $1
-              AND cj.subject_type = 'managed_certificate'
-            LIMIT 1`,
-            [renewalFailedJobId],
-          );
-          jobCertificateStatus = certRes.rows[0]?.status ?? null;
+          const certificate = await loadRenewalAlertCertificate(client, {
+            workspaceId: alert.workspace_id, jobId: renewalFailedJobId,
+          });
+          jobCertificateStatus = certificate?.status ?? null;
+          renewalIdentityUnavailable = !certificate || String(certificate.token_id) !== String(alert.token_id);
+          if (certificate?.common_name) alert.name = certificate.common_name;
         }
 
         if (
-          shouldDiscardRetiredCertificateAlert({
+          renewalIdentityUnavailable || shouldDiscardRetiredCertificateAlert({
             alertKey: alert.alert_key,
             tokenLifecycleStatus: alert.cert_lifecycle_status,
             jobCertificateStatus,
@@ -1691,10 +1687,12 @@ export async function deliveryWorkerJob({
           const discardRes = await client.query(
             `UPDATE alert_queue
               SET status = 'sent', last_attempt = NOW(),
-                  error_message = 'Discarded: certificate revoked or decommissioned',
+                  error_message = $3,
                   next_attempt_at = NULL, delivery_claim_id = NULL, updated_at = NOW()
             WHERE id = $1 AND delivery_claim_id = $2`,
-            [alert.id, claimId],
+            [alert.id, claimId, renewalIdentityUnavailable
+              ? 'Discarded: certificate renewal identity unavailable'
+              : 'Discarded: certificate revoked or decommissioned'],
           );
           if (discardRes.rowCount === 0) {
             logger.warn(

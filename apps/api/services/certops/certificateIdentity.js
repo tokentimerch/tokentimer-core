@@ -8,6 +8,8 @@ const {
   normalizeCertificateStatusFilter,
   normalizeCertificateSourceFilter,
   normalizeCertificateFlagFilter,
+  updateCertificateTokenFacts,
+  archiveCertificateExpiryAlerts,
 } = require("./inventory");
 
 const { resolveListSort } = require("./listSorting");
@@ -132,6 +134,7 @@ async function listCertificateIdentities({
   status,
   source,
   excludeRetired = false,
+  includeObservedRetired = false,
   unmanaged,
   identityId,
   q,
@@ -145,6 +148,7 @@ async function listCertificateIdentities({
   const normalizedStatus = normalizeCertificateStatusFilter(status);
   const normalizedSource = normalizeCertificateSourceFilter(source);
   const unmanagedOnly = normalizeCertificateFlagFilter(unmanaged, "unmanaged");
+  const includeObserved = normalizeCertificateFlagFilter(includeObservedRetired, "includeObservedRetired") === true;
   const search = normalizeCertificateSearchQuery(q);
   const params = [workspaceId];
   const conditions = ["TRUE"];
@@ -165,7 +169,9 @@ async function listCertificateIdentities({
     // Still being observed does not keep a revoked or decommissioned
     // certificate in the active inventory. The row stays available, with
     // stillObserved set, when retired certificates are included.
-    conditions.push("display_status NOT IN ('revoked', 'decommissioned')");
+    conditions.push(includeObserved
+      ? "(display_status NOT IN ('revoked', 'decommissioned') OR still_observed)"
+      : "display_status NOT IN ('revoked', 'decommissioned')");
   }
   if (normalizedSource) {
     params.push(normalizedSource);
@@ -189,7 +195,9 @@ async function listCertificateIdentities({
   }
   if (unmanagedOnly !== null)
     conditions.push(
-      unmanagedOnly ? "open_period_id IS NULL" : "open_period_id IS NOT NULL",
+      unmanagedOnly ? "open_period_id IS NULL" : includeObserved
+        ? "(open_period_id IS NOT NULL OR (still_observed AND lifecycle_status IN ('revoked','decommissioned')))"
+        : "open_period_id IS NOT NULL",
     );
   if (search) {
     params.push(search.q.toLowerCase());
@@ -610,6 +618,23 @@ async function retireCertificateIdentity({
   }
   const normalizedReason = reasonFor(reason);
   return inTransaction(client, async (tx) => {
+    if (status === "revoked") {
+      // Validate the immutable precondition before fencing completions. Acquire
+      // this fence before any identity/token row lock; completion may already
+      // own those rows and must never wait on retirement in the reverse order.
+      const proof = await tx.query(
+        "SELECT fingerprint_sha256 FROM certops_certificate_identities WHERE workspace_id=$1 AND id=$2",
+        [workspaceId, identityId],
+      );
+      if (!proof.rows[0]) fail("CERTOPS_CERTIFICATE_NOT_FOUND", "Certificate not found");
+      if (proof.rows[0].fingerprint_sha256 !== fingerprint) {
+        fail("CERTOPS_IDENTITY_PRECONDITION_FAILED", "Certificate fingerprint changed; refresh and retry");
+      }
+      await tx.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('certops-identity-retirement:' || $1::uuid::text, 0))",
+        [identityId],
+      );
+    }
     const locked = await tx.query(
       `SELECT * FROM certops_certificate_identities
         WHERE workspace_id = $1 AND id = $2 FOR NO KEY UPDATE`,
@@ -728,11 +753,9 @@ async function retireCertificateIdentity({
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('claimed', 'running')
            AND cj.operation IN ('renew', 'deploy', 'reload')
-           AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
-             AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
-             AND cj.payload->>'canRestoreOriginal' = 'false')
+
          LIMIT 1`,
-        [workspaceId, identityId, fingerprint],
+        [workspaceId, identityId],
       );
       if (running.rows.length) {
         fail(
@@ -794,17 +817,51 @@ async function retireCertificateIdentity({
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('pending_approval', 'approved', 'pending')
            AND cj.operation IN ('renew', 'deploy', 'reload')
-           AND NOT (certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') IS NOT NULL
-             AND certops_normalize_fingerprint(cj.payload->>'targetFingerprintSha256') <> $3
-             AND cj.payload->>'canRestoreOriginal' = 'false')
+
         ), locked AS MATERIALIZED (
           SELECT pending.id FROM certificate_jobs pending
             WHERE pending.id IN (SELECT id FROM eligible) FOR UPDATE SKIP LOCKED
         )
         UPDATE certificate_jobs SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW()
           WHERE id IN (SELECT id FROM locked)`,
-      [workspaceId, identityId, fingerprint],
+      [workspaceId, identityId],
     );
+    // Revocation must be recorded promptly even while an executor may still
+    // install or restore this fingerprint. Never steal its claim or lease.
+    // A result writer already holding the job is skipped here; the database
+    // result-transition guard records the conflict when that writer finishes.
+    const reconciliation = status === "revoked"
+      ? await tx.query(
+        `WITH eligible AS MATERIALIZED (
+          SELECT cj.id FROM certificate_jobs cj
+          WHERE cj.workspace_id = $1
+            AND cj.subject_type = 'managed_certificate'
+            AND cj.operation IN ('renew', 'deploy', 'reload')
+            AND cj.mode IS DISTINCT FROM 'dry_run'
+            AND cj.status IN ('claimed', 'running')
+            AND (cj.certificate_identity_id = $2 OR
+              (cj.certificate_identity_id IS NULL AND EXISTS (
+                SELECT 1 FROM certops_management_associations a
+                JOIN certops_management_periods p ON p.id = a.period_id AND p.workspace_id = a.workspace_id
+                WHERE a.workspace_id = $1 AND a.identity_id = $2
+                  AND (p.id = cj.management_period_id OR
+                    (cj.management_period_id IS NULL AND p.managed_certificate_id::text = cj.subject_id))
+              )))
+        ), locked AS MATERIALIZED (
+          SELECT j.id FROM certificate_jobs j WHERE j.id IN (SELECT id FROM eligible)
+          ORDER BY j.id FOR UPDATE SKIP LOCKED
+        )
+        UPDATE certificate_jobs SET needs_operator_reconciliation = TRUE,
+          reconciliation_reason = COALESCE(reconciliation_reason, 'certificate_retirement_overlapped_execution'),
+          updated_at = NOW() WHERE id IN (SELECT id FROM locked) RETURNING id`,
+        [workspaceId, identityId],
+      )
+      : { rowCount: 0 };
+    // Historical jobs retain their identity when a source rotates. Clean up
+    // only this identity's unsent alerts, including jobs on rotated sources.
+    await suppressPendingRetiredCertificateAlerts(tx, {
+      workspaceId, identityId, preserveHistory: true,
+    });
     const tokens = await tx.query(
       `SELECT DISTINCT token_id FROM managed_certificates
         WHERE workspace_id = $1 AND certops_normalize_fingerprint(fingerprint_sha256) = $2
@@ -813,27 +870,33 @@ async function retireCertificateIdentity({
     );
     for (const { token_id: tokenId } of tokens.rows) {
       const sibling = await tx.query(
-        `SELECT 1 FROM managed_certificates mc
-          JOIN certops_certificate_identities identity
+        `SELECT mc.* FROM managed_certificates mc
+          LEFT JOIN certops_certificate_identities identity
             ON identity.workspace_id = mc.workspace_id
            AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
          WHERE mc.workspace_id = $1 AND mc.token_id = $2
-           AND identity.id <> $3 AND identity.lifecycle_status = 'active' LIMIT 1`,
+           AND identity.id IS DISTINCT FROM $3
+           AND (identity.lifecycle_status = 'active'
+             OR (identity.id IS NULL AND mc.status NOT IN ('revoked','decommissioned')))
+         ORDER BY mc.identity_observed_at DESC NULLS LAST, mc.updated_at DESC, mc.id LIMIT 1`,
         [workspaceId, tokenId, identityId],
       );
-      const affected = await tx.query(
-        `SELECT id FROM managed_certificates
-        WHERE workspace_id = $1 AND token_id = $2
-          AND certops_normalize_fingerprint(fingerprint_sha256) = $3`,
-        [workspaceId, tokenId, fingerprint],
-      );
-      for (const mc of affected.rows) {
-        await suppressPendingRetiredCertificateAlerts(tx, {
-          workspaceId,
-          certificateId: mc.id,
-          tokenId,
-          suppressTokenExpiry: !sibling.rowCount,
-        });
+      if (sibling.rowCount) {
+        const current = sibling.rows[0];
+        await updateCertificateTokenFacts({ client: tx, workspaceId, tokenId,
+          certificate: { notAfter: current.not_after, issuer: current.issuer,
+            subject: current.subject, serialNumber: current.serial_number,
+            subjectAltNames: current.subject_alt_names, commonName: current.common_name } });
+      }
+      await suppressPendingRetiredCertificateAlerts(tx, {
+        workspaceId,
+        tokenId,
+        suppressTokenExpiry: !sibling.rowCount,
+        preserveHistory: true,
+      });
+      if (!sibling.rowCount) {
+        const token = await tx.query("SELECT expiration::text FROM tokens WHERE id=$1 AND workspace_id=$2", [tokenId, workspaceId]);
+        if (token.rows[0]) await archiveCertificateExpiryAlerts(tx, { workspaceId, tokenId, expiration: token.rows[0].expiration });
       }
     }
     await tx.query(
@@ -849,6 +912,7 @@ async function retireCertificateIdentity({
           status,
           reason: normalizedReason,
           cancelledJobs: cancelled.rowCount,
+          reconciliationMarkedJobs: reconciliation.rowCount,
         }),
         workspaceId,
       ],
