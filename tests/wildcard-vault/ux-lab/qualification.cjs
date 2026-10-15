@@ -212,7 +212,7 @@ async function extend(c) {
     "concurrent rollout requests serialize one frozen approval; self approval is refused",
   );
 
-  // Offline required canary prevents wave 1 dispatch. Control-plane approval
+  // Offline required canary prevents later-wave dispatch. Control-plane approval
   // success cannot count as consumer success. Pause and resume use real routes.
   await customer("stop", "nginx");
   await customer("stop", "haproxy");
