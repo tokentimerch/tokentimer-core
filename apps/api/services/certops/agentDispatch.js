@@ -1156,6 +1156,25 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND executor_kind = 'agent'
           AND NOT (payload ? 'distributionRollout')
+          -- Exclude contained/superseded distribution work before LIMIT.
+          -- Otherwise maxJobs=1 repeatedly selects an unclaimable older job
+          -- and starves a freshly approved rollout for the same consumer.
+          -- The locked resolveDistributionJobDefaults check below remains
+          -- authoritative for current authorization and exact pinned intent.
+          AND (
+            NOT (payload ? 'materialDeployment')
+            OR EXISTS (
+              SELECT 1 FROM certops_distribution_rollouts rollout
+              JOIN certops_distribution_groups distribution_group
+                ON distribution_group.workspace_id = rollout.workspace_id
+               AND distribution_group.id = rollout.group_id
+              WHERE rollout.workspace_id = cj.workspace_id
+                AND rollout.id::text = cj.payload->'materialDeployment'->>'rolloutId'
+                AND rollout.state IN ('pending', 'deploying')
+                AND rollout.generation = distribution_group.generation
+                AND distribution_group.state = 'active'
+            )
+          )
           AND (
             (
               status = 'pending'

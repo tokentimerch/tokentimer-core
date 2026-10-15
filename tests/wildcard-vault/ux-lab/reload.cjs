@@ -29,7 +29,7 @@ async function finish(status) {
       const socket = tls.connect({
         host: "127.0.0.1",
         port: name === "nginx" ? 8443 : 9443,
-        servername: name + ".wildcard.test",
+        servername: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
         ca: fs.readFileSync("/lab/issuer-root.pem"),
         rejectUnauthorized: true,
       });

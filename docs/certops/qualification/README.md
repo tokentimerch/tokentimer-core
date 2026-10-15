@@ -216,3 +216,10 @@ The [real-day interrupted deletion case](windows/resident-retention24h-interrupt
 - [Native daemon served-leaf mismatch and paired rollback](linux/daemon-served-leaf-mismatch.md)
 
 - [Public Windows multi-target admission refusal](windows/multi-target-admission-refusal.md) — immutable profile/edit and manual override rejection, without a signed multi-target execution claim.
+## Distribution
+
+PR #329's fixtures and enrolled-agent journey are integrated with strict reports.
+See [distribution qualification](distribution/README.md),
+[feature coverage](distribution/coverage-matrix.md) and
+[actual execution](distribution/execution.md). Source-mounted evidence remains
+experimental and cannot qualify production agent capabilities.

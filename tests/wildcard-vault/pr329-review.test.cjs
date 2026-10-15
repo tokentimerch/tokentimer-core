@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { createRequire } = require("node:module");
 // Dedicated synthetic database only; never load the workstation's .env.
 assert.equal(process.env.DB_HOST, "127.0.0.1");
-assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : process.env.DB_NAME === "pr329_review_consistency_test" ? "61532" : process.env.DB_NAME === "pr329_review_readiness_test" ? "61432" : "59470");
+assert.equal(process.env.DB_PORT, require("./qualification-database.cjs")("pr329_review", process.env.CI === "true" && process.env.DB_NAME === "pr329_review_distribution_ci_test" ? "5432" : process.env.DB_NAME === "pr329_review_consistency_test" ? "61532" : process.env.DB_NAME === "pr329_review_readiness_test" ? "61432" : "59470"));
 assert.match(process.env.DB_NAME || "", /^pr329_review/);
 process.env.NODE_ENV = "test";
 process.env.CERTOPS_ENABLED = "true";
@@ -278,6 +278,29 @@ async function deploymentFixture(f) {
     fingerprintSha256: version.fingerprint_sha256, validTo: new Date(version.valid_to).toISOString(), observedAt: new Date().toISOString() };
   return { snapshot, child, receipt };
 }
+
+test("retired pending deployment cannot starve the next approved rollout with maxJobs one", async () => {
+  const f=await fixture();
+  await pool.query("UPDATE certops_agents SET declared_target_selectors=$2::jsonb,declared_capabilities=$3::jsonb,capabilities_updated_at=clock_timestamp() WHERE id=$1",[f.consumer,JSON.stringify([f.bindingId]),JSON.stringify(["material-store-vault-kv2-v1","deploy-from-store-v1","evidence-claim-binding-v1","signed-payload-b64-v1"])]);
+  async function pending(){
+    const approval=await f.approved();
+    const snapshot=await operations.transaction(client=>material.createRolloutSnapshot({client,...f,approvalJobId:approval.id,approvedIntentHash:material.hashIntent(approval.payload.distributionRollout)}));
+    await operations.transaction(client=>operations.advanceRollout(client,f.workspaceId,f.groupId,snapshot.rolloutId));
+    const child=(await pool.query("SELECT * FROM certificate_jobs WHERE id=(SELECT job_id FROM certops_consumer_deployments WHERE rollout_id=$1)",[snapshot.rolloutId])).rows[0];
+    return {snapshot,child};
+  }
+  const old=await pending();
+  await operations.setRolloutState({...f,rolloutId:old.snapshot.rolloutId,state:"retired",actorUserId:f.actor});
+  const fresh=await pending();
+  const row=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[f.consumer])).rows[0];
+  const signing=apiRequire("./services/certops/jobSigning");const key=await signing.ensureActiveSigningKey();
+  const claimed=await apiRequire("./services/certops/agentDispatch").claimJobs({agent:{id:f.consumer,workspaceId:f.workspaceId,agentId:row.agent_id,status:"active",agentVersion:"0.17.3",protocolVersion:"1.0.0"},body:{supportedActions:["deploy-from-store"],maxJobs:1}});
+  assert.equal(claimed.jobs.length,1);
+  const verified=require("../../packages/agent/src/signing").verifyJobEnvelope({claimed:claimed.jobs[0],...key,pinnedSigningKeyId:key.signingKeyId});
+  assert.equal(verified.allowed,true);assert.equal(verified.job.jobId,fresh.child.id);
+  assert.equal(verified.job.materialDeployment.rolloutId,fresh.snapshot.rolloutId);
+  assert.equal((await pool.query("SELECT status FROM certificate_jobs WHERE id=$1",[old.child.id])).rows[0].status,"pending","Historical contained work is not rewritten by claim selection");
+});
 
 test("public material versions never expose publishing claims to administrators or managers", async () => {
   const f = await fixture();

@@ -22,6 +22,7 @@ const windowsPathFile = "packages/agent/scripts/host/windows-installed-paths-fil
 const windowsPathWorkflow = ".github/workflows/certops-windows-e2e.yml";
 const windowsContainedFile = "packages/agent/scripts/host/windows-contained-process.test.js";
 function environmentFor(site) {
+  if (site.file === "packages/agent/src/material-store/material-store.test.js" && site.name.startsWith("real ")) return "distribution-vault-adapter";
   if (site.file === windowsPathFile) return "windows-powershell-filesystem";
   if (site.file === windowsContainedFile) return "windows-native-process-containment";
   const text = `${site.file} ${site.name}`;
@@ -42,6 +43,7 @@ function environmentFor(site) {
   return "prerequisite-review";
 }
 const environments = {
+  "distribution-vault-adapter": {capabilities:["linux","disposable-vault-kv2","synthetic-credentials"],owner:"Certificate distribution qualification",workflow:".github/workflows/certops-distribution-qualification.yml",status:"candidate-environment-not-qualified"},
   "windows-native-process-containment": {capabilities:["windows","powershell","cim","native-job-object"],owner:"Owned benign process containment regression",workflow:windowsPathWorkflow,status:"candidate-environment-not-qualified"},
   "windows-powershell-filesystem": { capabilities: ["windows", "powershell", "owned-temporary-filesystem"], owner: "Windows installer path supporting controls", workflow: windowsPathWorkflow, status: "candidate-environment-not-qualified" },
   "core-exclusive-scheduler-api": { capabilities: ["postgres", "core-api", "openssl", "disposable-stack", "exclusive-scheduler-stack"], owner: "Exclusive scheduler API qualification", workflow: schedulerWorkflow, status: "candidate-environment-not-qualified" },
@@ -64,8 +66,10 @@ function generate(sites = scanner.buildInventory()) {
     const occurrence = (occurrences.get(key) || 0) + 1; occurrences.set(key, occurrence);
     const exclusive = exclusiveSchedulerFiles.has(site.file);
     const windowsPath = site.file === windowsPathFile || site.file === windowsContainedFile;
-    const workflowConfigured = windowsPath ? fs.readFileSync(path.join(__dirname,"..",windowsPathWorkflow),"utf8").includes(`node --test ${site.file}`) : exclusive ? schedulerWorkflowText.includes(`node --test ${site.file}`) : workflowText.includes(site.file) || (workflowText.includes("scripts/certops-api-qualification.js") && apiFiles.has(site.file));
-    return { id: crypto.createHash("sha256").update(`${key}\n${occurrence}`).digest("hex").slice(0, 20), ...site, environment: environmentFor(site), workflow: workflowConfigured ? (windowsPath ? windowsPathWorkflow : exclusive ? schedulerWorkflow : ".github/workflows/certops-qualification.yml") : null, workflowStatus: workflowConfigured ? "file-selected-not-qualified" : "exact-site-execution-not-configured", executionStatus: "not-qualified", classificationStatus: "candidate-needs-review" };
+    const vaultAdapter = environmentFor(site) === "distribution-vault-adapter";
+    const vaultWorkflow = ".github/workflows/certops-distribution-qualification.yml";
+    const workflowConfigured = vaultAdapter ? fs.readFileSync(path.join(__dirname,"..",vaultWorkflow),"utf8").includes("node scripts/certops-distribution-vault.js") : windowsPath ? fs.readFileSync(path.join(__dirname,"..",windowsPathWorkflow),"utf8").includes(`node --test ${site.file}`) : exclusive ? schedulerWorkflowText.includes(`node --test ${site.file}`) : workflowText.includes(site.file) || (workflowText.includes("scripts/certops-api-qualification.js") && apiFiles.has(site.file));
+    return { id: crypto.createHash("sha256").update(`${key}\n${occurrence}`).digest("hex").slice(0, 20), ...site, environment: environmentFor(site), workflow: workflowConfigured ? (vaultAdapter ? vaultWorkflow : windowsPath ? windowsPathWorkflow : exclusive ? schedulerWorkflow : ".github/workflows/certops-qualification.yml") : null, workflowStatus: workflowConfigured ? "file-selected-not-qualified" : "exact-site-execution-not-configured", executionStatus: "not-qualified", classificationStatus: "candidate-needs-review" };
   }) };
 }
 function check(committed, current = generate()) {

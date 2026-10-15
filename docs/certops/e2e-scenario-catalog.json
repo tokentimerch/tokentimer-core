@@ -2310,6 +2310,114 @@
       ],
       "implementation": "tests/e2e/linux-systemd-real-journey.js",
       "remainingCoverage": "Upgrade rollback and preservation of operator-specific existing configuration require additional qualification."
+    },
+    {
+      "id": "distribution.publication",
+      "outcome": "Ordinary, SAN and wildcard DNS-01 issuance publishes immutable Vault KV v2 versions and public receipts; renewal retains earlier versions.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/ux-lab/journey.cjs",
+      "remainingCoverage": "Customer ACME/provider, AppRole rotation and exact released artifact on independent native hosts remain unqualified."
+    },
+    {
+      "id": "distribution.custody",
+      "outcome": "Private keys, Vault and DNS execution credentials remain customer-local; scanner cannot retrieve distribution bundles.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "packages/agent/src/material-store/material-store.test.js",
+      "remainingCoverage": "Live API/database/log secret-canary scan and all customer credential providers need native execution. Generic Vault inventory scan is a separate credential-bearing API and is not a distribution credential path."
+    },
+    {
+      "id": "distribution.authorized-consumers",
+      "outcome": "Explicit workspace bindings, signed pinned jobs and real nginx/HAProxy installation require independent served-leaf verification per consumer.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/ux-lab/qualification.cjs",
+      "remainingCoverage": "Containers share a disposable host; independent physical/VM consumers and exact production artifact qualification remain required."
+    },
+    {
+      "id": "distribution.rollout-governance",
+      "outcome": "Separate approver, frozen authorization revision, idempotent concurrent requests, offline canary, waves, concurrency, pause/resume and retirement enforce rollout safety.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/ux-lab/qualification.cjs",
+      "remainingCoverage": "Required/optional failure permutations and actual overlapping native execution still require native qualification; PostgreSQL fixtures provide supporting transactional evidence."
+    },
+    {
+      "id": "distribution.renewal-rollback",
+      "outcome": "Shared renewal, approved retained-version rollback and restore, verification-only drift and recovery do not create unnecessary ACME orders.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/ux-lab/qualification.cjs",
+      "remainingCoverage": "Real-day retention/deletion policy and all native failure timing variants are unqualified. No automatic Vault deletion policy is claimed."
+    },
+    {
+      "id": "distribution.reconciliation",
+      "outcome": "Interrupted publication/reload recovers original work; stale generation, expired claims and late results never promote unverified consumers.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/postgres.test.cjs",
+      "remainingCoverage": "Lease callbacks/SQL receipts in supporting fixtures are not production-agent E2E; crash, expired lease and late outbox native timing still need exact artifact runs."
+    },
+    {
+      "id": "distribution.security-isolation",
+      "outcome": "Roles, workspace material scopes, revoked credentials, signatures, replay, retirement and pause/freeze cannot bypass lifecycle safety.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/pr329-review.test.cjs",
+      "remainingCoverage": "Real Vault ACL tests and signing tests are supporting evidence; distribution-specific modified signed jobs and revoked credentials through the enrolled native agent remain to qualify."
+    },
+    {
+      "id": "distribution.transfer",
+      "outcome": "Token/certificate transfer cancels unstarted work, preserves source history and requires reconciliation for claimed/running/uncertain work.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/transfer.test.cjs",
+      "remainingCoverage": "SQL-created historical cases remain integration evidence; broad live native transfer/retirement races remain unqualified."
+    },
+    {
+      "id": "distribution.dashboard-api",
+      "outcome": "Real distribution API and Chromium Renewals matrix show independent desired, observed, verification and failure states without invented administration UI.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
+        "protected-native-independent-consumers"
+      ],
+      "implementation": "tests/wildcard-vault/ux-lab/browser.cjs",
+      "remainingCoverage": "Dashboard currently exposes consumer stages rather than dedicated publication/degraded/reconciliation labels. Browser pending/failure/degraded permutations remain required."
     }
   ]
 }

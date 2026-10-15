@@ -21,6 +21,7 @@ on:
       - 'apps/dashboard/tests/unit/WorkspaceContext.test.jsx'
       - 'apps/dashboard/tests/unit/useCertOpsUrlState.test.jsx'
       - 'tests/e2e/**'
+      - 'tests/wildcard-vault/**'
       - 'scripts/qualification/**'
       - 'scripts/certops-*'
       - 'scripts/test-support/arm64-scm-artifact.cjs'

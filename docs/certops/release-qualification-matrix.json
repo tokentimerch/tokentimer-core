@@ -7584,6 +7584,151 @@
         "distributionVersion": "24.04",
         "executionSurface": "host"
       }
+    },
+    {
+      "id": "distribution-agent-ordinary",
+      "kind": "host",
+      "suite": "distribution-agent-lab",
+      "source": "tests/wildcard-vault/ux-lab/journey.cjs",
+      "requiredSources": [
+        "tests/wildcard-vault/ux-lab/qualification.cjs",
+        "tests/wildcard-vault/ux-lab/browser.cjs",
+        "tests/wildcard-vault/ux-lab/customer-host.cjs",
+        "tests/wildcard-vault/ux-lab/reload.cjs",
+        "tests/wildcard-vault/ux-lab/compose.yaml",
+        "tests/wildcard-vault/ux-lab/privacy-audit.cjs",
+        "scripts/certops-distribution-privacy.js",
+        "scripts/certops-distribution-report.js",
+        "apps/api/services/certops/jobSigning.js",
+        "apps/api/services/certops/agentDispatch.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "certificateMode": "ordinary"
+      }
+    },
+    {
+      "id": "distribution-agent-san",
+      "kind": "host",
+      "suite": "distribution-agent-lab",
+      "source": "tests/wildcard-vault/ux-lab/journey.cjs",
+      "requiredSources": [
+        "tests/wildcard-vault/ux-lab/qualification.cjs",
+        "tests/wildcard-vault/ux-lab/browser.cjs",
+        "tests/wildcard-vault/ux-lab/customer-host.cjs",
+        "tests/wildcard-vault/ux-lab/reload.cjs",
+        "tests/wildcard-vault/ux-lab/compose.yaml",
+        "tests/wildcard-vault/ux-lab/privacy-audit.cjs",
+        "scripts/certops-distribution-privacy.js",
+        "scripts/certops-distribution-report.js",
+        "apps/api/services/certops/jobSigning.js",
+        "apps/api/services/certops/agentDispatch.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "certificateMode": "san"
+      }
+    },
+    {
+      "id": "distribution-agent-wildcard",
+      "kind": "host",
+      "suite": "distribution-agent-lab",
+      "source": "tests/wildcard-vault/ux-lab/journey.cjs",
+      "requiredSources": [
+        "tests/wildcard-vault/ux-lab/qualification.cjs",
+        "tests/wildcard-vault/ux-lab/browser.cjs",
+        "tests/wildcard-vault/ux-lab/customer-host.cjs",
+        "tests/wildcard-vault/ux-lab/reload.cjs",
+        "tests/wildcard-vault/ux-lab/compose.yaml",
+        "tests/wildcard-vault/ux-lab/privacy-audit.cjs",
+        "scripts/certops-distribution-privacy.js",
+        "scripts/certops-distribution-report.js",
+        "apps/api/services/certops/jobSigning.js",
+        "apps/api/services/certops/agentDispatch.js"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "certificateMode": "wildcard"
+      }
+    },
+    {
+      "id": "distribution-postgres-postgres",
+      "kind": "stack",
+      "suite": "distribution-postgres-postgres",
+      "source": "tests/wildcard-vault/postgres.test.cjs",
+      "requiredTests": [
+        "real PostgreSQL publication, renewal identities, approvals, frozen waves, stale results and scope",
+        "terminal never-executed publications release transactionally; uncertain attempts remain fenced"
+      ],
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "distribution-postgres-pr329-review",
+      "kind": "stack",
+      "suite": "distribution-postgres-pr329-review",
+      "source": "tests/wildcard-vault/pr329-review.test.cjs",
+      "requiredTests": [
+        "manual renewal serializes same-key snapshot lookup with PostgreSQL transaction locks",
+        "retired pending deployment cannot starve the next approved rollout with maxJobs one",
+        "public material versions never expose publishing claims to administrators or managers",
+        "paused workspaces allow authorized rollout containment without admitting execution",
+        "optional authorization changes concurrent with successful receipts yield a degraded rollout and retain audit proof",
+        "distribution mutations require session managers through real upstream worker/workspace middleware",
+        "malformed distribution identifiers return 422 without creating jobs",
+        "a valid active rollout expires while waiting for its offline consumer",
+        "stale rollouts retire without queuing offline consumers or exhausting outbox retries",
+        "renewal health returns one current-period issuer across single, workspace and page projections",
+        "binding changes terminally invalidate approval, preserve snapshots and permit a fresh API request",
+        "expansion serializes a concurrent binding edit and preserves the approved snapshot",
+        "workspace transfer retains source history and creates no destination issuer dependency"
+      ],
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "distribution-postgres-transfer",
+      "kind": "stack",
+      "suite": "distribution-postgres-transfer",
+      "source": "tests/wildcard-vault/transfer.test.cjs",
+      "requiredTests": [
+        "ordinary certificate/token transfer remains functional",
+        "published Vault certificate transfers public inventory without source authorizations or a destination integration",
+        "historical groups, completed rollouts and their approval/evidence retain source provenance",
+        "unclaimed pending deployment is cancelled, not moved or reauthorized",
+        "claimed/running/uncertain distribution work requires reconciliation with an actionable API error",
+        "an active result/job lock yields a bounded reconciliation response rather than a deadlock",
+        "never-started initial publication is cancelled and releases only its unused allocation",
+        "transfer terminalizes every unstarted publication admission state and leaves no claimable source work",
+        "attempted pending renewal and unresolved publication require reconciliation",
+        "transfer serializes a concurrent rollout and leaves no new executable source work",
+        "destination authorization denial and quota failure roll back inventory and source authority"
+      ],
+      "environment": {
+        "osFamily": "linux"
+      }
+    },
+    {
+      "id": "distribution-vault-adapter",
+      "kind": "stack",
+      "suite": "distribution-vault-adapter",
+      "source": "packages/agent/src/material-store/material-store.test.js",
+      "requiredTests": [
+        "publication uses CAS=0, reconciles lost response, and fetch pins version",
+        "local authority rejects cross-customer, arbitrary aliases and HTTP",
+        "real isolated Vault KV v2: pinned publication and idempotent CAS",
+        "CAS conflict never adopts unrelated existing bytes or returns Vault errors",
+        "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
+        "checkpoint without validated material exposes uncertainty and never permits a new order",
+        "local binding lock excludes concurrent deployment and releases after failure",
+        "custom issuer custody survives lost responses and recovery; next CSR reuses the promoted key",
+        "bounded transport times out a stalled Vault body without exposing contents"
+      ],
+      "environment": {
+        "osFamily": "linux"
+      }
     }
   ],
   "qualificationProfiles": {

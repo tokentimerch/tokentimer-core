@@ -2,6 +2,16 @@
   "schemaVersion": 1,
   "description": "Static skip ownership and candidate execution environments. Classification is a review aid, never execution evidence. No entry claims qualified execution.",
   "environments": {
+    "distribution-vault-adapter": {
+      "capabilities": [
+        "linux",
+        "disposable-vault-kv2",
+        "synthetic-credentials"
+      ],
+      "owner": "Certificate distribution qualification",
+      "workflow": ".github/workflows/certops-distribution-qualification.yml",
+      "status": "candidate-environment-not-qualified"
+    },
     "windows-native-process-containment": {
       "capabilities": [
         "windows",
@@ -599,6 +609,32 @@
       "environment": "openssl-fixtures",
       "workflow": null,
       "workflowStatus": "exact-site-execution-not-configured",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
+      "id": "0b022e58e2d61f2eee08",
+      "file": "packages/agent/src/material-store/material-store.test.js",
+      "line": 88,
+      "name": "real isolated Vault KV v2: pinned publication and idempotent CAS",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "distribution-vault-adapter",
+      "workflow": ".github/workflows/certops-distribution-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
+      "id": "501fb9619042e3d53d38",
+      "file": "packages/agent/src/material-store/material-store.test.js",
+      "line": 106,
+      "name": "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "distribution-vault-adapter",
+      "workflow": ".github/workflows/certops-distribution-qualification.yml",
+      "workflowStatus": "file-selected-not-qualified",
       "executionStatus": "not-qualified",
       "classificationStatus": "candidate-needs-review"
     },

@@ -1321,6 +1321,21 @@
     },
     "linux-installed-file-discovery": {
       "linux-installed-systemd-public-discovery": "real-host"
+    },
+    "distribution-agent-lab": {
+      "distribution-setup": "e2e",
+      "distribution-publish": "e2e",
+      "distribution-bindings": "e2e",
+      "distribution-validation": "e2e",
+      "distribution-scanner": "e2e",
+      "distribution-rejection": "e2e",
+      "distribution-authorization": "e2e",
+      "distribution-recovery": "e2e",
+      "distribution-deployment-recovery": "e2e",
+      "distribution-qualification": "e2e",
+      "distribution-browser": "e2e",
+      "distribution-privacy": "e2e",
+      "distribution-transfer": "e2e"
     }
   },
   "requiredCapabilities": {
@@ -1867,6 +1882,11 @@
       "systemd",
       "api",
       "openssl"
+    ],
+    "distribution-agent-lab": [
+      "fresh-owned-lab",
+      "explicit-candidate",
+      "browser-runtime"
     ]
   },
   "suites": {
@@ -3185,6 +3205,21 @@
     ],
     "linux-installed-file-discovery": [
       "linux-installed-systemd-public-discovery"
+    ],
+    "distribution-agent-lab": [
+      "distribution-setup",
+      "distribution-publish",
+      "distribution-bindings",
+      "distribution-validation",
+      "distribution-scanner",
+      "distribution-rejection",
+      "distribution-authorization",
+      "distribution-recovery",
+      "distribution-deployment-recovery",
+      "distribution-qualification",
+      "distribution-browser",
+      "distribution-privacy",
+      "distribution-transfer"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3292,6 +3327,7 @@
     "linux-native-acme-browser-console": "e2e",
     "linux-native-acme-browser-lifecycle": "e2e",
     "windows-webhosting-retention": "real-host",
-    "linux-installed-file-discovery": "real-host"
+    "linux-installed-file-discovery": "real-host",
+    "distribution-agent-lab": "e2e"
   }
 }

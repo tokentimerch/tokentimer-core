@@ -19,7 +19,6 @@
     "target",
     "verification"
   ],
-  "allOf": [{"if": {"required": ["target"],"properties": {"target": {"required": ["type"],"properties": {"type": {"const": "windows-iis"}}}}},"then": {"properties": {"keyRotationPolicy": {"properties": {"rotateOnRenew": {"const": true}}}}}}],
   "properties": {
     "schemaVersion": {
       "type": "integer",
@@ -188,8 +187,30 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["type", "reference"],
-        "allOf": [{"if": {"properties": {"type": {"const": "windows-iis"}},"required": ["type"]},"then": {"required": ["store","binding"]}}],
+        "required": [
+          "type",
+          "reference"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "windows-iis"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "required": [
+                "store",
+                "binding"
+              ]
+            }
+          }
+        ],
         "properties": {
           "type": {
             "type": "string",
@@ -203,9 +224,44 @@
               "windows-iis"
             ]
           },
-          "store": {"type": "string","pattern": "^[A-Za-z0-9 _.-]{1,64}$"},
-          "binding": {"type": "object","additionalProperties": false,"required": ["site","port"],"properties": {"site": {"type": "string","pattern": "^[A-Za-z0-9 _.:-]{1,256}$"},"port": {"type": "integer","minimum": 1,"maximum": 65535},"sniHost": {"type": ["string","null"],"maxLength": 255,"pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"}}},
-          "thumbprintSha1": {"type": ["string","null"],"pattern": "^[A-Fa-f0-9]{40}$"},
+          "store": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9 _.-]{1,64}$"
+          },
+          "binding": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "site",
+              "port"
+            ],
+            "properties": {
+              "site": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9 _.:-]{1,256}$"
+              },
+              "port": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "sniHost": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 255,
+                "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+              }
+            }
+          },
+          "thumbprintSha1": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[A-Fa-f0-9]{40}$"
+          },
           "reference": {
             "type": "string",
             "minLength": 1,
@@ -307,8 +363,30 @@
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "reference"],
-      "allOf": [{"if": {"properties": {"type": {"const": "windows-iis"}},"required": ["type"]},"then": {"required": ["store","binding"]}}],
+      "required": [
+        "type",
+        "reference"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "store",
+              "binding"
+            ]
+          }
+        }
+      ],
       "properties": {
         "type": {
           "type": "string",
@@ -319,12 +397,47 @@
             "appliance",
             "load-balancer",
             "external",
-              "windows-iis"
+            "windows-iis"
           ]
         },
-        "store": {"type": "string","pattern": "^[A-Za-z0-9 _.-]{1,64}$"},
-        "binding": {"type": "object","additionalProperties": false,"required": ["site","port"],"properties": {"site": {"type": "string","pattern": "^[A-Za-z0-9 _.:-]{1,256}$"},"port": {"type": "integer","minimum": 1,"maximum": 65535},"sniHost": {"type": ["string","null"],"maxLength": 255,"pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"}}},
-        "thumbprintSha1": {"type": ["string","null"],"pattern": "^[A-Fa-f0-9]{40}$"},
+        "store": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9 _.-]{1,64}$"
+        },
+        "binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "site",
+            "port"
+          ],
+          "properties": {
+            "site": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9 _.:-]{1,256}$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "sniHost": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 255,
+              "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+            }
+          }
+        },
+        "thumbprintSha1": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Fa-f0-9]{40}$"
+        },
         "reference": {
           "type": "string",
           "minLength": 1,
@@ -701,6 +814,36 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "keyRotationPolicy": {
+            "properties": {
+              "rotateOnRenew": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "required": [

@@ -1,5 +1,10 @@
 # Isolated qualification fixtures
 
+For PR #358's strict enrolled-agent/browser qualification, dedicated CI,
+disposable PostgreSQL/Vault controllers and coverage gaps, see
+[distribution qualification](../../docs/certops/qualification/distribution/README.md).
+The original fixtures below remain supporting evidence at their declared scope.
+
 Run from the separate implementation checkout. Never point these commands at
 the concurrent manual audit, a customer database or production credentials.
 Project: `tt-wildcard-vault-20261008`. Containers have CPU/memory limits; run one
@@ -53,7 +58,7 @@ node --test tests/wildcard-vault/postgres.test.cjs
 
 For Cloud, first materialize its manifest mappings from the exact candidate Core
 SHA. Create another fresh database, run
-`../tokentimer-cloud/apps/saas/migrations/migrate.js`, set
+the edition's own migration executor, set
 `TT_WILDCARD_API_ROOT` to the absolute candidate Cloud `apps/saas` directory,
 and run the same test. Quota enforcement is explicitly enabled even under
 `NODE_ENV=test`. Additional assertions exercise the real Cloud outbox worker,

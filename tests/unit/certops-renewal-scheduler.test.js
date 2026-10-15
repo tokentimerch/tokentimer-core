@@ -399,6 +399,7 @@ describe("certops renewal scheduler", () => {
           renewalProfileOverrides: {
             deploymentTargets: [windowsTarget],
             target: windowsTarget,
+            keyRotationPolicy: { rotateOnRenew: true },
           },
         }),
       ],

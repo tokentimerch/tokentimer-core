@@ -479,8 +479,17 @@ async function getSigningKeyRotationStatus(options = {}) {
 
 // --- Dispatch signing ---
 
-function generateNonce() {
-  return crypto.randomBytes(NONCE_RANDOM_BYTES).toString("base64url");
+function generateNonce(randomBytes = crypto.randomBytes) {
+  // Results echo this nonce through the unchanged zero-custody middleware.
+  // Some random base64url prefixes decode to a compressed-container header,
+  // which that middleware deliberately rejects fail-closed. Resample those
+  // public identifiers rather than allowing a nonce to bypass secret checks.
+  const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const nonce = randomBytes(NONCE_RANDOM_BYTES).toString("base64url");
+    if (!containsPrivateKeyMaterial(nonce)) return nonce;
+  }
+  throw serviceError("Unable to generate a reportable dispatch nonce", CERTOPS_SIGNING_PAYLOAD_INVALID);
 }
 
 // ADR-0012 decision 1: the "exact-byte signed envelope". v1 (canonical-JSON

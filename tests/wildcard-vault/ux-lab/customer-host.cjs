@@ -16,6 +16,7 @@ const agents = new Map();
 const scannerRequests = [];
 const certificateSans = process.env.TT_UX_CERTIFICATE_MODE === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
+  : process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? ["nginx.wildcard.test"]
   : ["nginx.wildcard.test", "haproxy.wildcard.test"];
 const fault = {
   armed: false,
@@ -171,13 +172,13 @@ function config(name, extra = {}) {
   });
   return JSON.parse(fs.readFileSync(file));
 }
-function store(workspaceId, groupId, wireId, issuer) {
+function store(workspaceId, groupId, wireId, issuer, name) {
   return {
     customer: {
       address: "https://127.0.0.1:18200",
       caFile: "/lab/transport.crt",
       mount: "secret",
-      tokenFile: "/lab/vault-token",
+      tokenFile: "/lab/"+name+"/material-token",
       timeoutMs: 2000,
       groups: {
         [groupId]: {
@@ -200,6 +201,19 @@ function store(workspaceId, groupId, wireId, issuer) {
     },
   };
 }
+async function vaultApi(route, method, body) {
+  const response = await fetch("http://vault:8200/v1"+route,{method,headers:{"X-Vault-Token":"ux-lab-only-vault-token","Content-Type":"application/json"},body:JSON.stringify(body)});
+  assert.ok(response.ok,"Customer-local Vault control failed");
+  return response.status===204 ? {} : response.json();
+}
+async function rotateMaterialToken(name, workspaceId, groupId) {
+  const policy="qualification-"+name+"-"+crypto.randomUUID();
+  const capabilities=name.includes("issuer") ? ["create","read"] : ["read"];
+  await vaultApi("/sys/policies/acl/"+policy,"PUT",{policy:`path "secret/data/${workspaceId}/${groupId}/bundles/*" { capabilities = ${JSON.stringify(capabilities)} }`});
+  const issued=await vaultApi("/auth/token/create","POST",{policies:[policy],no_default_policy:true,ttl:"2h"});
+  fs.writeFileSync("/lab/"+name+"/material-token",issued.auth.client_token,{mode:0o600});
+  fs.chmodSync("/lab/"+name+"/material-token",0o600);
+}
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
@@ -216,6 +230,15 @@ async function control(body) {
     return { stopped: true };
   }
   if (action === "start") return startAgent(name);
+  if (action === "revoke-material-token") {
+    await vaultApi("/auth/token/revoke","POST",{token:fs.readFileSync("/lab/"+name+"/material-token","utf8")});
+    return {revoked:true};
+  }
+  if (action === "rotate-material-token") {
+    const c=config(name),groupId=Object.keys(c.materialStores.customer.groups)[0];
+    await rotateMaterialToken(name,c.materialStores.customer.groups[groupId].workspaceId,groupId);
+    return {rotated:true};
+  }
   if (["fail-reload", "repair-reload", "reconcile-binding"].includes(action)) {
     assert.ok(["nginx", "haproxy"].includes(name));
     const dir = path.join(root, name);
@@ -242,12 +265,14 @@ async function control(body) {
       wireId = old.agentId;
     assert.ok(wireId, "normal enrollment must persist wire agent ID");
     const dir = "/lab/" + name;
+    await rotateMaterialToken(name,body.workspaceId,body.groupId);
     const update = {
       materialStores: store(
         body.workspaceId,
         body.groupId,
         wireId,
         name.includes("issuer"),
+        name,
       ),
       execution: { ...old.execution, enabled: true },
     };
@@ -279,7 +304,7 @@ async function control(body) {
             {
               dialAddress: "127.0.0.1",
               port: name === "nginx" ? 8443 : 9443,
-              sni: name + ".wildcard.test",
+              sni: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
               trustCaFile: "/lab/issuer-root.pem",
             },
           ],
@@ -326,6 +351,7 @@ async function control(body) {
       wireId: c.agentId,
       running: agents.get(name)?.exitCode === null,
       fault: { ...fault },
+      publicTrustCaPem: fs.readFileSync("/lab/issuer-root.pem", "utf8"),
       orders: fs.existsSync("/lab/orders.jsonl")
         ? fs
             .readFileSync("/lab/orders.jsonl", "utf8")

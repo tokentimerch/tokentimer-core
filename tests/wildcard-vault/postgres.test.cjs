@@ -5,7 +5,7 @@ const crypto=require("node:crypto");
 const fs=require("node:fs");
 const path=require("node:path");
 // Hard fence: no default environment/database and no root .env loader.
-assert.equal(process.env.DB_HOST,"127.0.0.1");assert.equal(process.env.DB_PORT,process.env.CI === "true" && process.env.DB_NAME === "wildcard_candidate_ci_test" ? process.env.TT_TEST_DB_PORT || "5432" : "57470");
+assert.equal(process.env.DB_HOST,"127.0.0.1");assert.equal(process.env.DB_PORT, require("./qualification-database.cjs")("wildcard_candidate", process.env.CI === "true" && process.env.DB_NAME === "wildcard_candidate_ci_test" ? process.env.TT_TEST_DB_PORT || "5432" : "57470"));
 assert.match(process.env.DB_NAME||"",/^wildcard_candidate_/);
 process.env.ENFORCE_CERTOPS_LIMITS="true";
 const apiRoot=process.env.TT_WILDCARD_API_ROOT || path.resolve(__dirname,"../../apps/api");

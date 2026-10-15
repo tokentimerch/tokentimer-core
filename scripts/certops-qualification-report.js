@@ -14,6 +14,10 @@ function verifyReport(report, expectedScenarios, { expectedSha = process.env.GIT
   if (require("./certops-qualification-suites").validateSuites(metadata).length) return ["Invalid committed qualification suite contract"];
   expectedScenarios ??= require("../docs/certops/qualification-suites.json").suites[report.suite];
   const errors = [];
+  if (report.suite === "distribution-agent-lab") {
+    try { require("./certops-distribution-report").verifyScope(report); }
+    catch { errors.push("Distribution supporting evidence scope or source identity invalid"); }
+  }
   const knownScenario = id => Array.isArray(expectedScenarios) && expectedScenarios.includes(id) ? id : "[unrecognized]";
   const knownCapabilities = require("../docs/certops/qualification-suites.json").requiredCapabilities?.[report.suite] || [];
   const knownCapability = name => knownCapabilities.includes(name) ? name : "[unrecognized]";
