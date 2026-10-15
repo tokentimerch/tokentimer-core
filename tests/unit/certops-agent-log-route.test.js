@@ -41,12 +41,12 @@ function leakyReader(calls) {
   return async (options) => {
     calls.push(options);
     return {
-      items: [{ seq: 1, level: "info", message: "secret-ish output" }],
+      items: [{ claimId: "lease-secret", seq: 1, level: "info", message: "secret-ish output" }],
       nextCursor: "abc",
       // Intentionally leaky hasMore so the route must clear it for viewers.
       hasMore: true,
       logsComplete: true,
-      streams: [{ attempt: 1, status: "final" }],
+      streams: [{ claimId: "lease-secret", attempt: 1, status: "final" }],
       storageEnabled: true,
     };
   };
@@ -68,6 +68,7 @@ describe("CertOps agent job log read route", () => {
     assert.equal(res.body.linesVisible, false);
     assert.equal(res.body.logsComplete, true);
     assert.equal(res.body.streams.length, 1);
+    assert.equal(res.body.streams[0].claimId, undefined);
   });
 
   it("returns lines to a workspace manager", async () => {
@@ -81,8 +82,18 @@ describe("CertOps agent job log read route", () => {
     assert.equal(calls[0].cursor, "xyz");
     assert.equal(calls[0].limit, "50");
     assert.equal(res.body.items.length, 1);
+    assert.equal(res.body.items[0].claimId, undefined);
+    assert.equal(res.body.streams[0].claimId, undefined);
     assert.equal(res.body.nextCursor, "abc");
     assert.equal(res.body.linesVisible, true);
+  });
+
+  it("retains claim identifiers only for workspace admins", async () => {
+    const handler = createAgentJobLogReadHandler({ agentJobLogReader: leakyReader([]) });
+    const res = fakeRes();
+    await handler(request("admin"), res);
+    assert.equal(res.body.items[0].claimId, "lease-secret");
+    assert.equal(res.body.streams[0].claimId, "lease-secret");
   });
 
   it("rejects a malformed job id before reading", async () => {

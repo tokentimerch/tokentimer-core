@@ -114,10 +114,10 @@ describe("CertOps issuance claim gating (real database)", function () {
   async function createManagedCertificate(status) {
     const inserted = await TestUtils.execQuery(
       `INSERT INTO managed_certificates
-         (workspace_id, status, source, source_ref, name, common_name)
-       VALUES ($1, $2, 'agent_issuance', $3, 'gate-cert', 'gate.example.com')
+         (workspace_id, status, source, source_ref, name, common_name, fingerprint_sha256)
+       VALUES ($1, $2, 'agent_issuance', $3, 'gate-cert', 'gate.example.com', $4)
        RETURNING id`,
-      [workspaceId, status, crypto.randomUUID()],
+      [workspaceId, status, crypto.randomUUID(), status === "provisioning" ? null : crypto.randomBytes(32).toString("hex")],
     );
     return inserted.rows[0].id;
   }

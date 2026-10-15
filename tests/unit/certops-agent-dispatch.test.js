@@ -1586,81 +1586,122 @@ describe("agentDispatch.claimJobs", () => {
     assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
   });
 
-  it("claims an 'issue' job against an agent that only declares 'renew' (ADR-0008 wire translation)", async () => {
-    // Regression for a bug where the claim query compared the raw
-    // operation column ('issue') against the agent's declared wire actions
-    // (which never include 'issue', since it is a control-plane-only
-    // concept per ADR-0008), so issue jobs could never be claimed by any
-    // agent and stayed 'pending' forever.
-    const dbPool = createMockPool((sql, params) => {
-      if (sql.includes("SELECT last_sequence")) {
-        return { rows: [{ last_sequence: 0 }] };
-      }
-      if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
-      if (sql.includes("SELECT declared_target_selectors")) {
-        return {
-          rows: [
-            {
-              declared_target_selectors: [],
-              declared_command_profile_names: [],
-              supported_dns_providers: [],
-              declared_capabilities: ["evidence-claim-binding-v1"],
-              capabilities_updated_at: new Date().toISOString(),
+  it("claims initial issuance, including Vault publication, using the signed 'renew' wire action", async (t) => {
+    for (const publish of [false, true])
+      await t.test(
+        publish ? "Vault publication" : "host-local issuance",
+        async (t) => {
+          const publication = {
+            groupId: "22222222-2222-4222-8222-222222222222",
+            materialVersionId: "33333333-3333-4333-8333-333333333333",
+            materialStoreRef: "customer",
+          };
+          const payload = {
+            certificateId: "mc-issue-1",
+            ...(publish ? { publication } : {}),
+          };
+          let checkedPublication = 0;
+          t.mock.method(
+            require("../../apps/api/services/certops/materialDistribution"),
+            "resolveDistributionJobDefaults",
+            async (options) => {
+              assert.equal(options.operation, "issue");
+              assert.deepEqual(options.payload.publication, publication);
+              checkedPublication++;
+              return options;
             },
-          ],
-        };
-      }
-      if (sql.includes("FOR UPDATE SKIP LOCKED")) {
-        // The agent only ever declares wire actions, never "issue" itself;
-        // the query must translate the stored operation before comparing.
-        assert.match(sql, /CASE operation WHEN 'issue' THEN 'renew' ELSE operation END\)\s*=\s*ANY/);
-        assert.deepEqual(params[1], ["renew"]);
-        return {
-          rows: [
-            {
-              id: "job-issue-1",
-              operation: "issue",
-              subject_type: "managed_certificate",
-              subject_id: "mc-issue-1",
-              payload: { certificateId: "mc-issue-1" },
-              executor_kind: "agent",
-            },
-          ],
-        };
-      }
-      if (sql.includes("SET status = 'claimed'")) {
-        return {
-          rows: [
-            {
-              id: "job-issue-1",
-              claim_id: "claim-issue-1",
-              lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
-              attempt_count: 1,
-              operation: "issue",
-              subject_type: "managed_certificate",
-              subject_id: "mc-issue-1",
-              payload: { certificateId: "mc-issue-1" },
-            },
-          ],
-        };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
+          );
+          // Regression for a bug where the claim query compared the raw
+          // operation column ('issue') against the agent's declared wire actions
+          // (which never include 'issue', since it is a control-plane-only
+          // concept per ADR-0008), so issue jobs could never be claimed by any
+          // agent and stayed 'pending' forever.
+          const dbPool = createMockPool((sql, params) => {
+            if (sql.includes("SELECT last_sequence")) {
+              return { rows: [{ last_sequence: 0 }] };
+            }
+            if (sql.includes("SET last_seen_at = NOW()")) return { rows: [] };
+            if (sql.includes("SELECT declared_target_selectors")) {
+              return {
+                rows: [
+                  {
+                    declared_target_selectors: [],
+                    declared_command_profile_names: [],
+                    supported_dns_providers: [],
+                    declared_capabilities: [
+                      "evidence-claim-binding-v1",
+                      "signed-payload-b64-v1",
+                      "material-store-vault-kv2-v1",
+                      "certificate-publication-v1",
+                    ],
+                    capabilities_updated_at: new Date().toISOString(),
+                  },
+                ],
+              };
+            }
+            if (sql.includes("FOR UPDATE SKIP LOCKED")) {
+              // The agent only ever declares wire actions, never "issue" itself;
+              // the query must translate the stored operation before comparing.
+              assert.match(
+                sql,
+                /CASE operation WHEN 'issue' THEN 'renew' ELSE operation END\)\s*=\s*ANY/,
+              );
+              assert.deepEqual(params[1], ["renew"]);
+              return {
+                rows: [
+                  {
+                    id: "job-issue-1",
+                    operation: "issue",
+                    workspace_id: WORKSPACE_A,
+                    assigned_agent_id: "agent-row-1",
+                    subject_type: "managed_certificate",
+                    subject_id: "mc-issue-1",
+                    payload,
+                    executor_kind: "agent",
+                  },
+                ],
+              };
+            }
+            if (sql.includes("SET status = 'claimed'")) {
+              return {
+                rows: [
+                  {
+                    id: "job-issue-1",
+                    claim_id: "claim-issue-1",
+                    workspace_id: WORKSPACE_A,
+                    assigned_agent_id: "agent-row-1",
+                    lease_expires_at: new Date("2026-07-22T10:15:00.000Z"),
+                    attempt_count: 1,
+                    operation: "issue",
+                    subject_type: "managed_certificate",
+                    subject_id: "mc-issue-1",
+                    payload,
+                  },
+                ],
+              };
+            }
+            throw new Error(`unexpected query: ${sql}`);
+          });
 
-    const result = await claimJobs({
-      dbPool,
-      agent: agentFixture(),
-      body: { maxJobs: 1, supportedActions: ["renew"] },
-      env: {},
-      deps: CLAIM_DEPS_BASE,
-    });
+          const result = await claimJobs({
+            dbPool,
+            agent: agentFixture(),
+            body: { maxJobs: 1, supportedActions: ["renew"] },
+            env: {},
+            deps: CLAIM_DEPS_BASE,
+          });
 
-    assert.equal(result.jobs.length, 1);
-    assert.equal(
-      result.jobs[0].action,
-      "renew",
-      "issue jobs must dispatch to the agent as the 'renew' wire action",
-    );
+          assert.equal(result.jobs.length, 1);
+          assert.equal(
+            result.jobs[0].action,
+            "renew",
+            "issue jobs must dispatch to the agent as the 'renew' wire action",
+          );
+          assert.equal(checkedPublication, publish ? 1 : 0);
+          if (publish)
+            assert.deepEqual(result.jobs[0].publication, publication);
+        },
+      );
   });
 
   // An AD CS continuation row as the claim SELECT returns it (enrollment_id set).
@@ -2322,7 +2363,7 @@ describe("agentDispatch.renewJobLease", () => {
       if (sql.includes("SELECT last_sequence")) {
         return { rows: [{ last_sequence: 0 }] };
       }
-      if (sql.includes("SELECT id, status, claimed_by_agent_id")) {
+      if (sql.includes("SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id")) {
         return {
           rows: [
             {
@@ -2384,7 +2425,7 @@ describe("agentDispatch.renewJobLease", () => {
       if (sql.includes("SELECT last_sequence")) {
         return { rows: [{ last_sequence: 0 }] };
       }
-      if (sql.includes("SELECT id, status, claimed_by_agent_id")) {
+      if (sql.includes("SELECT id, workspace_id, operation, subject_id, payload, assigned_agent_id, status, claimed_by_agent_id")) {
         return {
           rows: [
             {
@@ -2576,6 +2617,105 @@ describe("agentDispatch.ingestResult", () => {
     assert.equal(result.errorCode, null);
     assert.equal(updateParams[2], null);
     assert.equal(updateParams[3], null);
+    assert.equal(updateParams[7], false, "generic success must retain reconciliation fences");
+  });
+
+  it("clears an uncertain publication fence only after accepting its current claim receipt", async (t) => {
+    const material = require("../../apps/api/services/certops/materialDistribution");
+    let accepted = false;
+    t.mock.method(material, "acceptPublicationReceipt", async ({ job }) => {
+      assert.equal(job.claim_id, "claim-uuid-1");
+      accepted = true;
+    });
+    let updateParams;
+    const dbPool = createMockPool((sql, params) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        payload: { publication: { materialVersionId: "version-1" } },
+        needs_operator_reconciliation: true,
+      })] };
+      if (sql.includes("UPDATE certificate_jobs")) {
+        assert.equal(accepted, true, "receipt validation must precede fence clearing");
+        updateParams = params;
+        return { rows: [{ id: 42, status: "succeeded", completed_at: new Date(),
+          needs_operator_reconciliation: false, reconciliation_reason: null }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } });
+    assert.equal(updateParams[7], true);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+  });
+
+  it("retains publication reconciliation when receipt validation fails", async (t) => {
+    const material = require("../../apps/api/services/certops/materialDistribution");
+    t.mock.method(material, "acceptPublicationReceipt", async () => {
+      throw new Error("receipt mismatch");
+    });
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        payload: { publication: { materialVersionId: "version-1" } },
+        needs_operator_reconciliation: true,
+      })] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } }), /receipt mismatch/);
+    assert.equal(dbPool.state.queries.some(q => q.text.includes("UPDATE certificate_jobs")), false);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
+  });
+
+  for (const historicalOnly of [false, true]) {
+    it(`${historicalOnly ? "retains" : "clears"} deployment reconciliation after ${historicalOnly ? "historical" : "current"} receipt validation`, async (t) => {
+      const material = require("../../apps/api/services/certops/materialDistribution");
+      let accepted = false;
+      t.mock.method(material, "acceptDeploymentReceipt", async ({ job }) => {
+        assert.equal(job.claim_id, "claim-uuid-1");
+        accepted = true;
+        return { historicalOnly, stage: "trust_validated" };
+      });
+      let updateParams;
+      const dbPool = createMockPool((sql, params) => {
+        if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+          operation: "deploy-from-store",
+          payload: { materialDeployment: { materialVersionId: "version-1" } },
+          needs_operator_reconciliation: true,
+        })] };
+        if (sql.includes("UPDATE certificate_jobs")) {
+          assert.equal(accepted, true, "receipt validation must precede fence clearing");
+          updateParams = params;
+          return { rows: [{ id: 42, status: "succeeded", completed_at: new Date() }] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      await ingestResult({ dbPool, agent: agentFixture(),
+        body: resultBody({ status: "succeeded", errorMessage: undefined, deploymentReceipt: {} }),
+        deps: { consumeNonce: async () => ({ consumed: true }) } });
+      assert.equal(updateParams[7], !historicalOnly);
+      assert.deepEqual(dbPool.state.transaction, ["BEGIN", "COMMIT"]);
+    });
+  }
+
+  it("retains deployment reconciliation when receipt validation fails", async (t) => {
+    const material = require("../../apps/api/services/certops/materialDistribution");
+    t.mock.method(material, "acceptDeploymentReceipt", async () => {
+      throw new Error("deployment receipt mismatch");
+    });
+    const dbPool = createMockPool((sql) => {
+      if (sql.includes("FOR UPDATE")) return { rows: [lockedJobRow({
+        operation: "deploy-from-store",
+        payload: { materialDeployment: { materialVersionId: "version-1" } },
+        needs_operator_reconciliation: true,
+      })] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    await assert.rejects(ingestResult({ dbPool, agent: agentFixture(),
+      body: resultBody({ status: "succeeded", errorMessage: undefined, deploymentReceipt: {} }),
+      deps: { consumeNonce: async () => ({ consumed: true }) } }), /deployment receipt mismatch/);
+    assert.equal(dbPool.state.queries.some(q => q.text.includes("UPDATE certificate_jobs")), false);
+    assert.deepEqual(dbPool.state.transaction, ["BEGIN", "ROLLBACK"]);
   });
 
   it("rejects a sequence regression after nonce consumption and rolls the whole transaction back", async () => {

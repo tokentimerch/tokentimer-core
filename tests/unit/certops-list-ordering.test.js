@@ -161,7 +161,7 @@ describe("CertOps paginated list ordering", () => {
   it("allowlists every direct certificate sort and orders before pagination", async () => {
     const cases = {
       certificate: "COALESCE(NULLIF(mc.common_name, '')",
-      status: "mc.status ASC NULLS LAST, mc.id ASC",
+      status: "CASE WHEN identity.lifecycle_status IN ('revoked', 'decommissioned') THEN identity.lifecycle_status ELSE mc.status END ASC NULLS LAST, mc.id ASC",
       expiry: "mc.not_after ASC NULLS LAST, mc.id ASC",
       keyLocality: "CASE WHEN mc.key_mode = 'external-unknown'",
       source: "CASE mc.source",

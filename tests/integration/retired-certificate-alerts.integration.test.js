@@ -271,7 +271,7 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     }
   });
 
-  it("deletes this certificate's unsent renewal-failure alerts on retire, including limit_exceeded, without dropping sibling expiry", async () => {
+  it("discards and preserves this certificate's unsent renewal-failure alerts on retire, including limit_exceeded, without dropping sibling expiry", async () => {
     const tokenId = await createExpiringToken(
       `shared-retire-${Date.now()}`,
       alertGroupId,
@@ -309,9 +309,8 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     await retireCertificate(certA, "revoked");
 
     const afterFirst = await alertRows(tokenId);
-    expect(
-      afterFirst.some((row) => row.alert_key === `cert_renewal_failed:${jobA}`),
-    ).to.equal(false);
+    const retiredFailure = afterFirst.find(row => row.alert_key === `cert_renewal_failed:${jobA}`);
+    expect(retiredFailure).to.include({ status: "sent", error_message: "Discarded: certificate revoked or decommissioned" });
     expect(
       afterFirst.some(
         (row) =>
@@ -341,12 +340,12 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     await retireCertificate(certB, "decommissioned");
 
     const afterLast = await alertRows(tokenId);
-    expect(
-      afterLast.some((row) => row.alert_key.startsWith("token_expiry:")),
-    ).to.equal(false);
-    expect(
-      afterLast.some((row) => row.alert_key.startsWith("cert_renewal_failed:")),
-    ).to.equal(false);
+    const preservedRetiredAlerts = afterLast.filter(row => row.alert_key.startsWith("token_expiry:") || row.alert_key.startsWith("cert_renewal_failed:"));
+    expect(preservedRetiredAlerts).to.have.length(3);
+    for (const row of preservedRetiredAlerts) {
+      expect(row.status).to.equal("sent");
+      expect(row.error_message).to.equal("Discarded: certificate revoked or decommissioned");
+    }
     expect(
       afterLast.some((row) => row.alert_key.startsWith("endpoint_health:")),
     ).to.equal(true);
@@ -384,9 +383,8 @@ describe("Retired certificate alerts against PostgreSQL", function () {
     expect(tokenAfter.rows[0].cert_lifecycle_status).to.equal("revoked");
 
     const afterRetire = await alertRows(tokenId);
-    expect(
-      afterRetire.some((row) => row.alert_key.startsWith("token_expiry:")),
-    ).to.equal(false);
+    const preservedExpiry = afterRetire.find(row => row.alert_key.startsWith("token_expiry:"));
+    expect(preservedExpiry).to.include({ status: "sent", error_message: "Discarded: certificate revoked or decommissioned" });
     expect(
       afterRetire.some(
         (row) =>

@@ -242,7 +242,7 @@ function checkTransactionGuarantee(source) {
     ];
   }
   // Preflight repair has its own transaction; inspect the migration loop.
-  const loopStart = fnMatch[0].indexOf("for (const migration of migrations)");
+  const loopStart = fnMatch[0].search(/for \(const migration of (?:migrations|plannedMigrations)\)/);
   if (loopStart === -1)
     return ["per-migration loop not found in runMigrations()"];
   const body = fnMatch[0].slice(loopStart);
@@ -322,4 +322,5 @@ function main() {
   );
 }
 
-main();
+module.exports = { checkTransactionGuarantee };
+if (require.main === module) main();

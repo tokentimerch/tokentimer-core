@@ -74,6 +74,9 @@ const RETIRED_STATUS_META = {
  * certs read as retired rather than "expired/healthy".
  */
 function effectiveStatusMeta(token, getStatusMeta) {
+  if (isRetiredStatus(token.cert_lifecycle_status)) {
+    return RETIRED_STATUS_META[token.cert_lifecycle_status.toLowerCase()];
+  }
   const managed = token.__managedCert;
   if (token.__managedCertificatesRetired) {
     return {

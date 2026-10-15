@@ -125,7 +125,7 @@ const {
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
   findActiveJobForSubject,
   getCertificateJobById,
-  isAgentDeployableKeyMode,
+  isAgentRenewableKeyMode,
   isTrustAnchorOperation,
   listCertificateJobLog,
   listCertificateJobs,
@@ -424,6 +424,9 @@ async function attachAgentContactGroupIds(client, workspaceId, agents) {
 }
 
 function handleCertOpsError(res, err) {
+  if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|PUBLICATION)_/.test(err.code || "")) {
+    return res.status(err.statusCode).json({ error: err.code, code: err.code });
+  }
   if (err?.detail === "CERTOPS_MANAGED_CERT_LIMIT") {
     return res.status(409).json({ error: "Managed certificate quota exceeded", code: "CERTOPS_MANAGED_CERT_LIMIT" });
   }
@@ -439,6 +442,7 @@ function handleCertOpsError(res, err) {
   }
   if (err?.code === CERTOPS_CERTIFICATE_NOT_RENEWABLE ||
       err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING" ||
+      err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
       err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE" ||
       err?.code === "CERTOPS_MANAGEMENT_ALREADY_OPEN") {
@@ -2852,7 +2856,8 @@ function createAgentJobLogReadHandler({ agentJobLogReader = readAgentJobLog } = 
       });
       return res.json({
         ...result,
-        items: includeText ? result.items : [],
+        items: includeText ? result.items.map((item) => redactClaimIdForNonAdmins(req, item)) : [],
+        streams: (result.streams || []).map((stream) => redactClaimIdForNonAdmins(req, stream)),
         nextCursor: includeText ? result.nextCursor : null,
         hasMore: includeText ? Boolean(result.hasMore) : false,
         linesVisible: includeText,
@@ -2894,7 +2899,10 @@ router.get(
         agentId,
         limit: req.query.limit,
       });
-      return res.json(result);
+      return res.json({
+        ...result,
+        items: result.items.map((item) => redactClaimIdForNonAdmins(req, item)),
+      });
     } catch (err) {
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
@@ -3205,7 +3213,13 @@ function deriveCertificateRenewalState(
     };
   }
 
-  if (!isAgentDeployableKeyMode(keyMode)) {
+  if (keyMode === "vault-managed" && !row?.profile_id) {
+    return { ...base, state: CERTOPS_RENEWAL_STATE_NOT_CONFIGURED,
+      detail: row?.key_reference
+        ? "The Vault publication renewal profile is missing. Repair it from the successful publication record."
+        : "Certificate distribution is not configured in this workspace. Configure a distribution source before enabling renewal." };
+  }
+  if (!isAgentRenewableKeyMode(row)) {
     return {
       ...base,
       state: CERTOPS_RENEWAL_STATE_NOT_ELIGIBLE,
@@ -3292,6 +3306,7 @@ function renewalRowFromInventoryRecord(certificate) {
     id: certificate?.id,
     status: certificate?.status,
     key_mode: certificate?.keyMode,
+    key_reference: certificate?.keyReference,
     not_after: certificate?.notAfter,
     common_name: certificate?.commonName,
     subject_alt_names: certificate?.subjectAltNames,
@@ -3494,6 +3509,7 @@ router.get(
         limit: req.query.limit, offset: req.query.offset,
         status: req.query.status, source: req.query.source,
         excludeRetired: req.query.excludeRetired === "true",
+        includeObservedRetired: req.query.includeObservedRetired,
         unmanaged: req.query.unmanaged,
         q: req.query.q,
         canReadTopology: req.isWorkerCall || hasAtLeastRole(req.authz?.workspaceRole, "workspace_manager"),
@@ -4234,6 +4250,9 @@ function csrRoute(work) {
       if (err?.status && err?.code) {
         return res.status(err.status).json({ error: err.message, code: err.code });
       }
+      if (err?.statusCode && /^CERTOPS_(MATERIAL|DISTRIBUTION|BINDING|ROLLOUT|DEPLOYMENT|PUBLICATION|CONSUMER)_/.test(err.code || "")) {
+        return res.status(err.statusCode).json({ error:err.code,code:err.code });
+      }
       const handled = handleCertOpsError(res, err);
       if (handled) return handled;
       logger.error("CertOps CSR workflow failed", {
@@ -4301,6 +4320,51 @@ router.post(
     workspaceId: req.workspace.id, workflowId: req.params.csrId, actorUserId: req.user?.id,
   })),
 );
+
+const distribution = require("../services/certops/distributionOperations");
+const materialDistribution = require("../services/certops/materialDistribution");
+router.post("/api/v1/workspaces/:id/certops/certificates/:certId/renewal-profile/repair",
+  getApiLimiter(), rejectKeyMaterial, requireCertOpsEnabled, requireCertOpsSessionUser,
+  authorize("certops.renewal_profile.manage"), requireWorkspaceCertOpsActive,
+  csrRoute((req) => {
+    if (req.body && (typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length)) {
+      return { statusCode: 422, body: { error: "Repair accepts no execution settings", code: "CERTOPS_PUBLICATION_REPAIR_INPUT_INVALID" } };
+    }
+    if (!UUID_PATTERN.test(String(req.params.certId || ""))) {
+      return { statusCode: 404, body: { error: "Certificate not found", code: "CERTOPS_CERTIFICATE_NOT_FOUND" } };
+    }
+    return require("../services/certops/publicationRenewalRepair").repairPublicationRenewalProfile({
+      workspaceId: req.workspace.id, certificateId: req.params.certId, actorUserId: req.user.id,
+    });
+  }));
+// Distribution authorization is an attributable human decision. Internal
+// workers expand approved intents through the outbox, never these mutations.
+const distributionWriteGuards = [...csrWriteGuards, requireCertOpsSessionUser];
+router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...distributionWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuards,
+  csrRoute(async (req) => ({ groups: (await pool.query(`SELECT * FROM certops_distribution_groups WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id])).rows })));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,
+  csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
+router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,
+  csrRoute(async (req) => ({ versions: (await pool.query(`SELECT id,workspace_id,group_id,management_period_id,
+    publishing_job_id,profile_revision,state,certificate_identity_id,provider_version,
+    fingerprint_sha256,valid_to,published_at,created_at,allocation_released_at,allocation_release_reason
+    FROM certops_material_versions WHERE workspace_id=$1 AND group_id=$2 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id,materialDistribution.normalizeDistributionId(req.params.groupId)])).rows })));
+router.put("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers/:bindingId", ...distributionWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute((req) => distribution.putBinding({ workspaceId:req.workspace.id,groupId:req.params.groupId,
+    bindingId:req.params.bindingId,binding:req.body,actorUserId:req.user?.id })));
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts", ...distributionWriteGuards,
+  requireWorkspaceCertOpsActive,
+  csrRoute(async (req) => ({ statusCode:201,body:await distribution.requestRollout({ workspaceId:req.workspace.id,
+    groupId:req.params.groupId,materialVersionId:req.body?.materialVersionId,maxParallel:req.body?.maxParallel,verificationOnly:req.body?.verificationOnly,
+    actorUserId:req.user?.id,idempotencyKey:req.get("Idempotency-Key") }) })));
+router.post("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/rollouts/:rolloutId/state", ...distributionWriteGuards,
+  (req, res, next) => req.body?.state === "deploying" ? requireWorkspaceCertOpsActive(req, res, next) : next(),
+  csrRoute((req) => distribution.setRolloutState({ workspaceId:req.workspace.id,groupId:req.params.groupId,
+    rolloutId:req.params.rolloutId,state:req.body?.state,actorUserId:req.user?.id })));
 
 module.exports = router;
 module.exports._test = {

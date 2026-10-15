@@ -24,6 +24,7 @@ import {
   unionEffectiveThresholds,
 } from "./shared/contactGroups.js";
 import { shouldSkipRetiredCertificateAlert } from "./shared/retiredCertificateAlerts.js";
+import alertEligibility from "@tokentimer/alert-eligibility";
 
 const DEFAULT_THRESHOLDS = (process.env.ALERT_THRESHOLDS || "30,14,7,1,0")
   .split(",")
@@ -424,7 +425,9 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       // skip creating a new one regardless of due_date or legacy key format (ensures once per threshold window).
       if (existingRes.rows.length === 0) {
         const alreadySentRes = await client.query(
-          `SELECT id FROM alert_queue WHERE token_id = $1 AND threshold_days = $2 AND status = 'sent' LIMIT 1`,
+          `SELECT id FROM alert_queue WHERE token_id = $1 AND threshold_days = $2 AND status = 'sent'
+             AND alert_key LIKE 'token_expiry:%'
+             AND alert_key NOT LIKE '%:previous_expiration:%' LIMIT 1`,
           [t.token_id, thresholdReached],
         );
         if (alreadySentRes.rows.length > 0) {
@@ -471,8 +474,14 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
       // Resolve owner for alert context: subscription owner (workspace.created_by) -> token creator -> legacy token user
       const ownerUserId = t.owner_user_id || t.created_by || t.user_id;
       const queuedAlert = await client.query(
-        `INSERT INTO alert_queue (user_id, token_id, alert_key, threshold_days, due_date, channels, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING id`,
+        `WITH live_token AS MATERIALIZED (
+           SELECT id FROM tokens WHERE id=$2 AND expiration=$7::date
+             AND (cert_lifecycle_status IS NULL OR cert_lifecycle_status NOT IN ('revoked','decommissioned'))
+           FOR SHARE
+         )
+         INSERT INTO alert_queue (user_id, token_id, alert_key, threshold_days, due_date, channels, status)
+         SELECT $1,$2,$3,$4,$5,$6,'pending' FROM live_token
+         ON CONFLICT (alert_key) DO NOTHING RETURNING id`,
         [
           ownerUserId,
           t.token_id,
@@ -480,8 +489,14 @@ export async function queueDiscoveryJob({ closePool = true } = {}) {
           thresholdReached,
           dueDate.toISOString().slice(0, 10),
           JSON.stringify(channels),
+          alertEligibility.formatCalendarDay(t.expiration),
         ],
       );
+
+      if (!queuedAlert.rows.length) {
+        skipped++;
+        continue;
+      }
 
       queued++;
       await writeAudit(client, {

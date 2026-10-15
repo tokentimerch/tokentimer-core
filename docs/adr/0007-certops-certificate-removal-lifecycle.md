@@ -105,7 +105,17 @@ Decommission is an operator declaration made with the best available evidence:
 fresh confirmed service use blocks it; stored copies or unknown visibility
 require a reason and explicit acknowledgment. Subsequent observations leave
 lifecycle unchanged and show the conflict. Revoked/decommissioned certificates
-with fresh presence remain visible by default.
+with fresh presence remain available through the Revoked and Decommissioned
+status filters, labeled **Still observed**.
+
+Revocation can be recorded while a mutating job is claimed or running. Such jobs
+retain their claim and lease and require operator reconciliation. A completion
+that overlaps retirement retains the executor's reported outcome but cannot
+clear the warning, even when revocation could not lock the in-flight job.
+Decommissioning remains blocked by a claimed or running mutation. Recording
+revocation does not stop an executor or perform certificate authority revocation;
+the operator must verify installed material and remove or replace the retired
+certificate where necessary.
 
 Historical source provenance comes from the management period's `source` and
 `source_ref` snapshots and survives physical source deletion or workspace
@@ -114,8 +124,19 @@ source and period belong to the same workspace; otherwise they are null.
 Observation matching normalizes legacy instance fingerprints on reads with
 `certops_normalize_fingerprint`, including the decommission safety check.
 Slot and unmanaged observations enforce canonical fingerprints with database
-constraints. The same normalizer checks job targets before permitting a
-replacement operation to bypass retirement restrictions.
+constraints. Caller-supplied replacement fingerprints and rollback assertions
+do not bypass retirement restrictions. An accepted replacement first acquires
+its own active fingerprint identity; subsequent jobs bind to that identity.
+Initial agent issuance retries and server-owned cert-manager provisioning can
+precede the first fingerprint. They qualify only while the source has no
+previous fingerprint association or observation; an unknown historical job
+cannot use this path to bypass retirement.
+
+Renewal-failure alerts require a known immutable job identity and the token
+association captured by the database when the job was inserted. Unknown
+historical attribution and later token relinking suppress delivery rather than
+guessing from the source's current certificate or token. The original job,
+discarded alerts, observations and audit evidence remain available.
 
 Grouped list and detail responses return at most 20 locations, with a full
 `locationCount`. PostgreSQL computes `visibilityUnknown` over all matching

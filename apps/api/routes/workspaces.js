@@ -412,6 +412,12 @@ router.post(
       } catch (_err) {
         logger.warn("DB operation failed", { error: _err.message });
       }
+      if (e.code === "55000" && e.message === "CERTOPS_DISTRIBUTION_TRANSFER_RECONCILIATION_REQUIRED") {
+        return res.status(409).json({
+          code: "CERTOPS_DISTRIBUTION_TRANSFER_RECONCILIATION_REQUIRED",
+          error: "Reconcile active or uncertain certificate distribution jobs in the source workspace, then retry the transfer.",
+        });
+      }
       if (e instanceof TransferAssociationConflictError || e.code === "23505") {
         return res.status(409).json({
           error:

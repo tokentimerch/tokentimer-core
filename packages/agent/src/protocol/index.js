@@ -809,7 +809,7 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
    * report stays schema-minimal (the results route falls back to attemptId
    * when claimId is absent).
    */
-  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null } = {}) {
+  async function reportResult({ jobId, attemptId, status: jobStatus, rejectionReason = null, keyRotated = null, errorMessage = null, claimId = null, nonce = null, clockOffsetMs = null, trustResult = null, enrollmentResult = null, preflightResult = null, publicationReceipt = null, publicationCertificatePem = null, deploymentReceipt = null } = {}) {
     const body = {
       jobId,
       attemptId,
@@ -822,6 +822,8 @@ function createProtocolClient({ serverUrl, agentId, protocolVersion, getCredenti
       // Only the job family that produced each object sets it. Other result
       // bodies stay byte-identical: the property is omitted, not sent as null.
       ...(trustResult !== null ? { trustResult } : {}),
+      ...(publicationReceipt !== null ? { publicationReceipt, publicationCertificatePem } : {}),
+      ...(deploymentReceipt !== null ? { deploymentReceipt } : {}),
       ...(enrollmentResult !== null ? { enrollmentResult } : {}),
       ...(preflightResult !== null ? { preflightResult } : {}),
     };

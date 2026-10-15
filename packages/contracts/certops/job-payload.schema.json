@@ -67,19 +67,28 @@
         "reload",
         "revoke",
         "noop",
-        "continue-enrollment"
+        "continue-enrollment",
+        "deploy-from-store"
       ],
       "description": "Public certificate lifecycle action requested by the control plane. continue-enrollment is a follow-up step (retrieve, deferred validation, install recovery, or freeing the key after cancellation) of an enrollment an earlier job started (ADR-0014 decision 2)."
     },
     "issuerKind": {
       "type": "string",
-      "enum": ["acme", "adcs"],
+      "enum": [
+        "acme",
+        "adcs"
+      ],
       "description": "Issuer kind the job runs against (ADR-0014 decision 1). Absent means acme, so jobs that predate issuer kinds validate unchanged. Not named issuer because job payloads and results already use issuer for a certificate's issuer name. The adcs configuration (CA, template, transport) travels only inside the signed enrollment snapshot, never as separate fields that could disagree with it. Attached by the control plane at signed dispatch; a job request that supplies it is refused."
     },
     "enrollment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enrollmentId", "attempt", "snapshotB64", "snapshotSha256"],
+      "required": [
+        "enrollmentId",
+        "attempt",
+        "snapshotB64",
+        "snapshotSha256"
+      ],
       "description": "Binds the job to one durable enrollment and its frozen issuer configuration (ADR-0014 decisions 2 and 3). The agent hashes the decoded snapshotB64 bytes itself and compares the result with snapshotSha256 and with the hash it journaled for the enrollment; it never re-canonicalizes the snapshot JSON. The decoded bytes are an enrollment-snapshot.schema.json document. Attached by the control plane at signed dispatch; a job request that supplies it is refused.",
       "properties": {
         "enrollmentId": {
@@ -247,7 +256,10 @@
       "description": "Non-secret mode describing where key custody remains outside the control plane."
     },
     "keyReference": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 256,
       "description": "Opaque non-secret reference to external execution-plane key custody."
     },
@@ -599,6 +611,12 @@
       "type": "integer",
       "minimum": 0,
       "description": "Reserved for signed agent dispatch: number of claim attempts made for this job so far. Optional and not required for validation today."
+    },
+    "publication": {
+      "$ref": "#/definitions/materialDistribution_publication"
+    },
+    "materialDeployment": {
+      "$ref": "#/definitions/materialDistribution_materialDeployment"
     }
   },
   "allOf": [
@@ -632,49 +650,165 @@
     },
     {
       "if": {
-        "required": ["action"],
-        "properties": { "action": { "const": "continue-enrollment" } }
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "continue-enrollment"
+          }
+        }
       },
-      "then": { "required": ["issuerKind", "enrollment"] }
+      "then": {
+        "required": [
+          "issuerKind",
+          "enrollment"
+        ]
+      }
     },
     {
-      "if": { "required": ["enrollment"] },
+      "if": {
+        "required": [
+          "enrollment"
+        ]
+      },
       "then": {
-        "required": ["issuerKind"],
-        "properties": { "issuerKind": { "const": "adcs" } }
+        "required": [
+          "issuerKind"
+        ],
+        "properties": {
+          "issuerKind": {
+            "const": "adcs"
+          }
+        }
       }
     },
     {
       "description": "An adcs job runs only as the first step or a continuation of an enrollment, against one windows-iis target on the Windows CNG path. It carries none of the fields the snapshot supersedes (ACME, DNS-01, key and SAN selection, the ACME-shaped renewal profile, attached PEM) and no multi-target list.",
       "if": {
-        "required": ["issuerKind"],
-        "properties": { "issuerKind": { "const": "adcs" } }
+        "required": [
+          "issuerKind"
+        ],
+        "properties": {
+          "issuerKind": {
+            "const": "adcs"
+          }
+        }
       },
       "then": {
-        "required": ["enrollment"],
+        "required": [
+          "enrollment"
+        ],
         "properties": {
-          "action": { "enum": ["renew", "continue-enrollment"] },
-          "keyMode": { "const": "os-store-managed" },
-          "target": { "properties": { "type": { "const": "windows-iis" } } }
+          "action": {
+            "enum": [
+              "renew",
+              "continue-enrollment"
+            ]
+          },
+          "keyMode": {
+            "const": "os-store-managed"
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "windows-iis"
+              }
+            }
+          }
         },
         "not": {
           "anyOf": [
-            { "required": ["commandRef"] },
-            { "required": ["caEndpoint"] },
-            { "required": ["acmeKind"] },
-            { "required": ["eabRef"] },
-            { "required": ["accountRef"] },
-            { "required": ["preferredChain"] },
-            { "required": ["dnsZone"] },
-            { "required": ["dnsProvider"] },
-            { "required": ["keyRotation"] },
-            { "required": ["keyAlgorithm"] },
-            { "required": ["keySize"] },
-            { "required": ["sans"] },
-            { "required": ["certificatePem"] },
-            { "required": ["certificatePemSha256"] },
-            { "required": ["renewalProfile"] },
-            { "required": ["deploymentTargets"] }
+            {
+              "required": [
+                "commandRef"
+              ]
+            },
+            {
+              "required": [
+                "caEndpoint"
+              ]
+            },
+            {
+              "required": [
+                "acmeKind"
+              ]
+            },
+            {
+              "required": [
+                "eabRef"
+              ]
+            },
+            {
+              "required": [
+                "accountRef"
+              ]
+            },
+            {
+              "required": [
+                "preferredChain"
+              ]
+            },
+            {
+              "required": [
+                "dnsZone"
+              ]
+            },
+            {
+              "required": [
+                "dnsProvider"
+              ]
+            },
+            {
+              "required": [
+                "keyRotation"
+              ]
+            },
+            {
+              "required": [
+                "keyAlgorithm"
+              ]
+            },
+            {
+              "required": [
+                "keySize"
+              ]
+            },
+            {
+              "required": [
+                "sans"
+              ]
+            },
+            {
+              "required": [
+                "certificatePem"
+              ]
+            },
+            {
+              "required": [
+                "certificatePemSha256"
+              ]
+            },
+            {
+              "required": [
+                "renewalProfile"
+              ]
+            },
+            {
+              "required": [
+                "deploymentTargets"
+              ]
+            },
+            {
+              "required": [
+                "publication"
+              ]
+            },
+            {
+              "required": [
+                "materialDeployment"
+              ]
+            }
           ]
         }
       }
@@ -761,6 +895,319 @@
             {
               "type": "null"
             }
+          ]
+        }
+      }
+    },
+    "materialDistribution_uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "materialDistribution_alias": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "materialDistribution_revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "materialDistribution_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "materialDistribution_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "materialDistribution_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialVersionId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_materialDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "bindingId",
+        "rolloutId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "generation",
+        "deploymentProfileRef",
+        "profileRevision",
+        "authorizationRevision",
+        "verificationPolicy"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "rolloutId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "authorizationRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "verificationOnly": {
+          "type": "boolean",
+          "description": "Approved read-only verification of the pinned version; no install or reload."
+        }
+      }
+    },
+    "materialDistribution_publicationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "materialVersionId",
+        "materialStoreRef",
+        "providerVersion",
+        "fingerprintSha256",
+        "validTo"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "providerVersion": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_deploymentReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "workspaceId",
+        "groupId",
+        "bindingId",
+        "materialVersionId",
+        "generation",
+        "fetched",
+        "installed",
+        "bound",
+        "servedVerified",
+        "trustValidated",
+        "fingerprintSha256",
+        "validTo",
+        "observedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "workspaceId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "bindingId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialVersionId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "generation": {
+          "$ref": "#/definitions/materialDistribution_generation"
+        },
+        "fetched": {
+          "type": "boolean"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "bound": {
+          "type": "boolean"
+        },
+        "servedVerified": {
+          "type": "boolean"
+        },
+        "trustValidated": {
+          "type": "boolean"
+        },
+        "fingerprintSha256": {
+          "$ref": "#/definitions/materialDistribution_fingerprint"
+        },
+        "validTo": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 40
+        }
+      }
+    },
+    "materialDistribution_publicationProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "groupId",
+        "managementPeriodId",
+        "materialStoreRef",
+        "issuanceProfileRef",
+        "profileRevision"
+      ],
+      "properties": {
+        "type": {
+          "const": "vault-kv2"
+        },
+        "groupId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "managementPeriodId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "materialStoreRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "issuanceProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        }
+      }
+    },
+    "materialDistribution_consumerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "deploymentProfileRef",
+        "profileRevision",
+        "required",
+        "wave",
+        "verificationPolicy",
+        "freshnessSeconds",
+        "state"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "#/definitions/materialDistribution_uuid"
+        },
+        "deploymentProfileRef": {
+          "$ref": "#/definitions/materialDistribution_alias"
+        },
+        "profileRevision": {
+          "$ref": "#/definitions/materialDistribution_revision"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "verificationPolicy": {
+          "enum": [
+            "served",
+            "trust"
+          ]
+        },
+        "freshnessSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 604800
+        },
+        "state": {
+          "enum": [
+            "active",
+            "removed"
           ]
         }
       }

@@ -1,0 +1,51 @@
+# Use with compose.yaml and project tt-wildcard-vault-20261008 only.
+# Generate the ignored runtime.env locally; never put customer credentials here.
+services:
+  core-api:
+    image: localhost:58600/core-api:20261008
+    env_file: ["../../.scratch/wildcard/runtime.env"]
+    environment:
+      DB_NAME: wildcard_candidate_core_image
+      APP_URL: http://127.0.0.1:57501
+      API_URL: http://127.0.0.1:57500
+    ports: ["127.0.0.1:57500:4000"]
+    cpus: 0.5
+    mem_limit: 384m
+  cloud-api:
+    image: cloud-saas-runtime:wildcard-vault-20261008
+    env_file: ["../../.scratch/wildcard/runtime.env"]
+    environment:
+      DB_NAME: wildcard_candidate_cloud_image
+      APP_URL: http://127.0.0.1:57601
+      BACKEND_URL: http://127.0.0.1:57600
+    ports: ["127.0.0.1:57600:4000"]
+    cpus: 0.5
+    mem_limit: 384m
+  enterprise-api:
+    image: enterprise-api:wildcard-vault-20261008
+    env_file: ["../../.scratch/wildcard/runtime.env"]
+    environment:
+      DB_NAME: wildcard_candidate_enterprise_image
+      APP_URL: http://127.0.0.1:57701
+      API_URL: http://127.0.0.1:57700
+    ports: ["127.0.0.1:57700:4000"]
+    cpus: 0.5
+    mem_limit: 512m
+  core-dashboard:
+    image: localhost:58600/core-dashboard:20261008
+    environment: { VITE_API_URL: "http://127.0.0.1:57500" }
+    ports: ["127.0.0.1:57501:8080"]
+    cpus: 0.25
+    mem_limit: 64m
+  cloud-dashboard:
+    image: cloud-web-runtime:wildcard-vault-20261008
+    environment: { VITE_API_URL: "http://127.0.0.1:57600" }
+    ports: ["127.0.0.1:57601:8080"]
+    cpus: 0.25
+    mem_limit: 64m
+  enterprise-dashboard:
+    image: enterprise-dashboard:wildcard-vault-20261008
+    environment: { VITE_API_URL: "http://127.0.0.1:57700" }
+    ports: ["127.0.0.1:57701:8080"]
+    cpus: 0.25
+    mem_limit: 64m

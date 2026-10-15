@@ -41,17 +41,14 @@ export const CERTOPS_JOB_FILTERS = {
 };
 
 /**
- * Filters the certificate list accepts. `showRetired` and `showUnmanaged`
- * are display toggles: 'true' includes that population, and the default
- * ('', hidden) is translated into `excludeRetired=true` and `unmanaged=false`.
- * `management=unmanaged` remains readable so older links still reveal
- * unmanaged certificates.
+ * Filters the certificate list accepts. Retired certificates require an
+ * explicit revoked/decommissioned status. `showUnmanaged` includes unmanaged
+ * certificates; `management=unmanaged` remains readable for older links.
  */
 export const CERTOPS_CERTIFICATE_FILTERS = {
   q: { label: 'Search', default: '' },
   status: { label: 'Status', default: '' },
   source: { label: 'Source', default: '' },
-  showRetired: { label: 'Lifecycle', default: '' },
   showUnmanaged: { label: 'Management', default: '' },
   management: { label: 'Management', default: '' },
 };

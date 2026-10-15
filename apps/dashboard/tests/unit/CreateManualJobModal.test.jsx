@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
-import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 import CreateManualJobModal from '../../src/components/certops/CreateManualJobModal.jsx';
 

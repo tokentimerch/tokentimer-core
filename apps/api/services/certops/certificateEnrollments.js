@@ -415,6 +415,7 @@ function createEnrollment({
       source,
       requestedByUserId: actorUserId || null,
       mode,
+      requestedByUserId: actorUserId || null,
       idempotencyKey,
       env,
       subjectType: "managed_certificate",

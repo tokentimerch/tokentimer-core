@@ -1,5 +1,9 @@
 import { useMemo } from 'react';
 import {
+  isRetiredCertificate,
+  isRetiredStatus,
+} from '../components/certops/certopsFormat.js';
+import {
   classifyExpiryBucket,
   computeDaysLeftUtc,
 } from '../utils/expiryBuckets';
@@ -63,6 +67,12 @@ export function useLoadedAssetMetrics(tokens = [], options = {}) {
     let neverExpires = 0;
 
     for (const token of loadedTokens) {
+      if (
+        isRetiredStatus(token.cert_lifecycle_status) ||
+        token.__managedCertificatesRetired ||
+        isRetiredCertificate(token.__managedCert)
+      )
+        continue;
       const bucket = classifyExpiryBucket(computeDaysLeftUtc(token.expiresAt));
       switch (bucket) {
         case 'expired':

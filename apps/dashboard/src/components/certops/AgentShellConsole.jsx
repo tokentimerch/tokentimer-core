@@ -251,7 +251,9 @@ export function formatConsoleLine(entry) {
     entry?.id ||
     (entry?.claimId != null && entry?.seq != null
       ? `${entry.claimId}-${entry.seq}`
-      : `${iso}:${raw}`);
+      : entry?.attempt != null && entry?.seq != null
+        ? `attempt-${entry.attempt}-${entry.seq}`
+        : `${iso}:${raw}`);
 
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(raw)) {
     return { ts: iso, agent, status: level, msg: raw, id, sortMs: ms };

@@ -1,6 +1,6 @@
 {
   "name": "@tokentimer/agent",
-  "version": "0.17.3",
+  "version": "0.18.0",
   "private": true,
   "description": "TokenTimer Agent - outbound-only execution-plane process for CertOps",
   "license": "AGPL-3.0-or-later",
@@ -9,7 +9,8 @@
   "main": "src/index.js",
   "bin": {
     "tokentimer-agent": "bin/tokentimer-agent.js",
-    "certops-dns-hook": "bin/certops-dns-hook.js"
+    "certops-dns-hook": "bin/certops-dns-hook.js",
+    "certops-reconcile-binding": "bin/reconcile-material-binding.js"
   },
   "scripts": {
     "start": "node bin/tokentimer-agent.js",

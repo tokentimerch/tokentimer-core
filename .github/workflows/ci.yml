@@ -392,6 +392,94 @@ jobs:
           path: artifacts/*.txt
           if-no-files-found: ignore
 
+  vault_cleanup_regression:
+    name: Vault Inventory Cleanup Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pr329_cleanup
+          POSTGRES_PASSWORD: ci-synthetic-cleanup-only
+          POSTGRES_DB: pr329_cleanup_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pr329_cleanup -d pr329_cleanup_ci_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      NODE_ENV: test
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: pr329_cleanup_ci_test
+      DB_USER: pr329_cleanup
+      DB_PASSWORD: ci-synthetic-cleanup-only
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: "11.13.0"
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate dedicated empty test database
+        run: node apps/api/migrations/migrate.js
+      - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
+        run: node --test tests/postgres/vault-material-cleanup.test.js
+      - name: Upgrade main enrollment history to distribution without rewriting migrations
+        env:
+          DB_NAME: pr329_distribution_upgrade_ci_test
+        run: |
+          node - <<'NODE'
+          const { Client } = require('pg');
+          async function main() {
+            const client = new Client({
+              host: process.env.DB_HOST,
+              port: Number(process.env.DB_PORT),
+              user: process.env.DB_USER,
+              password: process.env.DB_PASSWORD,
+              database: 'postgres',
+            });
+            await client.connect();
+            try {
+              await client.query('CREATE DATABASE pr329_distribution_upgrade_ci_test');
+              await client.query('CREATE DATABASE pr329_review_distribution_ci_test');
+              await client.query('CREATE DATABASE pr329_final_distribution_ci_test');
+              await client.query('CREATE DATABASE wildcard_candidate_ci_test');
+            } finally {
+              await client.end();
+            }
+          }
+          main().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+          node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Replay all supported immutable migration histories
+        run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
+      - name: Fence pinned rollback identities and late deployment evidence
+        env:
+          DB_NAME: wildcard_candidate_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/wildcard-vault/postgres.test.cjs
+      - name: Exercise rollout authorization and concurrent receipt transitions
+        env:
+          DB_NAME: pr329_review_distribution_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/wildcard-vault/pr329-review.test.cjs
+      - name: Exercise public inventory transfer with safe and unsafe publication states
+        env:
+          DB_NAME: pr329_final_distribution_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/wildcard-vault/transfer.test.cjs
+
   helm_chart:
     name: Helm Chart Validation
     runs-on: ubuntu-latest
@@ -418,7 +506,7 @@ jobs:
   helm_smoke_test:
     name: Helm Smoke Test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
 
       - name: Checkout
@@ -444,7 +532,20 @@ jobs:
           helm install cnpg-operator cnpg/cloudnative-pg --namespace cnpg-system --create-namespace --version 0.23.0 --wait
 
       - name: Install TokenTimer
+        env:
+          TT_SMOKE_IMAGE_TAG: ci-${{ github.sha }}
         run: |
+
+         # Test this checkout, including unreleased migrations. Published tags
+         # are immutable release artifacts and cannot validate a new PR head.
+         for component in api dashboard worker; do
+           docker build -f "deploy/compose/Dockerfile.${component}" \
+             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+             -t "ghcr.io/tokentimerch/tokentimer-core-${component}:${TT_SMOKE_IMAGE_TAG}" .
+           kind load docker-image \
+             "ghcr.io/tokentimerch/tokentimer-core-${component}:${TT_SMOKE_IMAGE_TAG}" \
+             --name ephemeral-smoke-test-cluster
+         done
 
          helm lint ./deploy/helm \
           --set config.adminEmail=admin@example.com \
@@ -455,7 +556,10 @@ jobs:
            -f deploy/helm/ci/ci-values-smoke-test.yaml \
            --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
            --set api.env.NODE_ENV=development \
-           --set config.adminEmail=admin@example.com
+           --set config.adminEmail=admin@example.com \
+           --set-string api.image.tag="$TT_SMOKE_IMAGE_TAG" \
+           --set-string dashboard.image.tag="$TT_SMOKE_IMAGE_TAG" \
+           --set-string worker.image.tag="$TT_SMOKE_IMAGE_TAG"
 
       - name: Wait for workloads
         run: |
@@ -463,17 +567,22 @@ jobs:
 
       - name: Smoke Test API Service
         run: |
-          response=$(kubectl run smoke-test \
+          kubectl run smoke-test \
             --image=curlimages/curl:8.12.1 \
             --restart=Never \
             -n tokentimer \
             --labels='app.kubernetes.io/component=auto-sync,app.kubernetes.io/instance=tokentimer,app.kubernetes.io/name=tokentimer' \
-            --attach \
             --quiet \
             --command -- \
             curl -sS --connect-timeout 5 --max-time 10 \
             -w '\n%{http_code}\n' \
-            http://tokentimer-api:4000/health)
+            http://tokentimer-api:4000/health
+
+          # Read durable pod logs; --attach can miss output from a short-lived
+          # successful curl process and incorrectly report an empty response.
+          kubectl wait --for=jsonpath='{.status.phase}'=Succeeded \
+            pod/smoke-test -n tokentimer --timeout=60s
+          response=$(kubectl logs smoke-test -n tokentimer)
 
           http_code=$(printf '%s\n' "$response" | tail -n 1)
           body=$(printf '%s\n' "$response" | sed '$d')
@@ -501,6 +610,7 @@ jobs:
           kubectl describe pods -n tokentimer || true
           kubectl logs deployment/tokentimer-api \
             -n tokentimer --all-containers=true --tail=100 || true
+          kubectl logs smoke-test -n tokentimer || true
           helm status tokentimer -n tokentimer || true
           helm status kube-prom-stack -n monitoring || true
           helm status cnpg-operator -n cnpg-system || true
@@ -519,10 +629,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Validate production compose
-        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml config -q
+        run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml config -q
 
       - name: Validate production compose + images overlay
-        run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
+        run: DB_PASSWORD=ci-synthetic-only SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.images.yml config -q
 
       - name: Validate dev compose
         run: SESSION_SECRET=dummy docker compose -f deploy/compose/docker-compose.dev.yml config -q

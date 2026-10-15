@@ -286,6 +286,10 @@ async function findCertificatesDueForRenewal({
        LEFT JOIN certificate_issuers ci
          ON ci.workspace_id = cp.workspace_id AND ci.id = cp.issuer_id
       WHERE mc.not_after IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM certops_certificate_identities identity
+          WHERE identity.workspace_id = mc.workspace_id
+            AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+            AND identity.lifecycle_status IN ('revoked', 'decommissioned'))
         AND EXISTS (SELECT 1 FROM certops_management_periods period
           WHERE period.workspace_id = mc.workspace_id
             AND period.managed_certificate_id = mc.id
@@ -353,6 +357,10 @@ async function countCertificatesWithAutoRenewDisabled({
        JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
       WHERE mc.not_after IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM certops_certificate_identities identity
+          WHERE identity.workspace_id = mc.workspace_id
+            AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+            AND identity.lifecycle_status IN ('revoked', 'decommissioned'))
         AND EXISTS (SELECT 1 FROM certops_management_periods period
           WHERE period.workspace_id = mc.workspace_id
             AND period.managed_certificate_id = mc.id
@@ -625,6 +633,9 @@ async function createRenewalJobForCertificate({
         certificate.not_after,
       ),
       payload,
+      ...(payload.publication ? { assignedAgentId: (await client.query(
+        "SELECT issuer_agent_id FROM certops_distribution_groups WHERE workspace_id=$1 AND id=$2 AND state='active'",
+        [certificate.workspace_id, payload.publication.groupId])).rows[0]?.issuer_agent_id } : {}),
       env,
       workspaceRequiresApprovalAlways:
         workspace.certops_require_approval_always === true,
@@ -815,6 +826,9 @@ async function runRenewalSchedulerSweep({
           summary.replayed += 1;
         }
       } catch (error) {
+        // Retirement may commit after the due-list snapshot. Job creation
+        // rejects it; the sweep treats that operator decision as a skip.
+        if (error?.code === "CERTOPS_CERTIFICATE_RETIRED") continue;
         if (
           error?.code === CERTOPS_WORKSPACE_PAUSED ||
           error?.code === CERTOPS_DISABLED
@@ -907,6 +921,7 @@ async function loadCertificateRenewalRows({
   const profileColumns = `SELECT mc.id,
             mc.status,
             mc.key_mode,
+            mc.key_reference,
             mc.not_after,
             mc.common_name,
             mc.subject_alt_names,

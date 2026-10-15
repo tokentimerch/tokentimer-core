@@ -200,7 +200,7 @@ describe("AD CS issuer job payload", () => {
   });
 
   it("runs adcs only as renew or continue-enrollment on a windows-iis CNG target", () => {
-    for (const action of ["deploy", "reload", "revoke", "noop"]) {
+    for (const action of ["deploy", "reload", "revoke", "noop", "deploy-from-store"]) {
       assertInvalid(adcsJob({ action }), `adcs ${action}`);
     }
     assertInvalid(adcsJob({ keyMode: "agent-local" }), "adcs with agent-local key");
@@ -233,6 +233,39 @@ describe("AD CS issuer job payload", () => {
       assertValid(acmeJob({ [field]: value }), `${field} on an ACME job`);
       assertInvalid(adcsJob({ [field]: value }), `${field} on an adcs job`);
     }
+  });
+
+  it("keeps Vault publication and pinned deployment outside AD CS enrollment", () => {
+    const publication = {
+      type: "vault-kv2",
+      groupId: WORKSPACE_ID,
+      managementPeriodId: ENROLLMENT_ID,
+      materialVersionId: AGENT_ID,
+      materialStoreRef: "customer",
+      issuanceProfileRef: "wildcard",
+      profileRevision: 1,
+    };
+    const materialDeployment = {
+      groupId: WORKSPACE_ID,
+      bindingId: ENROLLMENT_ID,
+      rolloutId: AGENT_ID,
+      materialVersionId: AGENT_ID,
+      materialStoreRef: "customer",
+      providerVersion: 1,
+      fingerprintSha256: HEX64,
+      generation: 1,
+      deploymentProfileRef: "nginx",
+      profileRevision: 1,
+      authorizationRevision: 1,
+      verificationPolicy: "trust",
+    };
+    assertValid(acmeJob({ keyMode: "vault-managed", publication }), "Vault publication");
+    const deployment = assertValid(acmeJob({
+      action: "deploy-from-store", keyMode: "vault-managed", materialDeployment,
+    }), "pinned Vault deployment");
+    assert.match(deployment.schemaId, /job-payload\.schema\.json$/);
+    assertInvalid(adcsJob({ publication }), "AD CS with Vault publication");
+    assertInvalid(adcsJob({ materialDeployment }), "AD CS with Vault deployment");
   });
 
   it("validates the enrollment binding strictly", () => {
