@@ -296,6 +296,19 @@ class RetentionOwnerTests(unittest.TestCase):
                         self.assertNotIn("retention24hProvenance", collected)
                         self.assertNotIn("publicPreparation", collected["nativeRetention24h"])
 
+    def test_original_prepare_source_seal_covers_every_new_interruption_dependency(self):
+        script = "const c=require('./scripts/certops-retention24h-test-fixture.cjs')(),report=require('./scripts/certops-retention24h-proof').createQualificationReport(c);process.stdout.write(JSON.stringify({composite:c,report}));"
+        produced = subprocess.run(["node", "-e", script], cwd=Path(__file__).resolve().parent.parent, capture_output=True, text=True, timeout=30)
+        self.assertEqual(produced.returncode, 0)
+        native = json.loads(produced.stdout)
+        paths = ("tests/e2e/helpers/certops-retention24h-interrupted.js", "packages/agent/scripts/host/retention-interrupted-child.js", "packages/agent/src/platform/index.js", "tests/e2e/helpers/certops-windows-contained-process.js", "tests/e2e/helpers/certops-windows-contained-process.ps1")
+        self.assertTrue(verify(fixture(copy.deepcopy(native))))
+        for path in paths:
+            value = fixture(copy.deepcopy(native)); value["report"]["fixtureSources"] = [row for row in value["report"]["fixtureSources"] if row["file"] != path]
+            with self.subTest(missing=path), self.assertRaises(ValueError): verify(value)
+            value = fixture(copy.deepcopy(native)); next(row for row in value["report"]["fixtureSources"] if row["file"] == path)["sha256"] = "0" * 64
+            with self.subTest(stale=path), self.assertRaises(ValueError): verify(value)
+
     def test_later_trusted_main_authenticates_only_original_native_candidate(self):
         value = fixture()
         self.assertNotEqual(value["run"]["head_sha"], value["candidate"])

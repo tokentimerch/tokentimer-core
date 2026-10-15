@@ -6,7 +6,7 @@ this local oracle cannot authorize an extended Azure resource lease on its own.
 #>
 param([Parameter(Mandatory)][ValidatePattern('^C:\\ttqualification\\retention24h\\[a-f0-9]{64}\\keeper-config.json$')][string]$ConfigPath,
  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$ConfigSha256,
- [Parameter(Mandatory)][ValidateSet('kept-before-deadline','removed-after-real-day')][string]$Expected)
+ [Parameter(Mandatory)][ValidateSet('kept-before-deadline','interrupted-after-cert-delete','removed-after-real-day')][string]$Expected)
 $ErrorActionPreference='Stop'
 if($env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18'){throw 'Owned disposable SYSTEM keeper required'}
 if((Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ConfigSha256){throw 'Frozen keeper config changed'}
@@ -59,6 +59,17 @@ if($Expected -eq 'kept-before-deadline'){
  Get-ChildItem Cert:\LocalMachine -Recurse -ErrorAction Stop|ForEach-Object {if($_ -is [Security.Cryptography.X509Certificates.X509Certificate2]){if(++$count -gt 100000){throw 'Certificate inventory exceeded bound'};if($_.Thumbprint -eq $c.predecessor.thumbprint){$matches++}}}
  if($matches -ne 0){throw 'Predecessor certificate survives in a machine store'}
  $oldKeyPresent=[Security.Cryptography.CngKey]::Exists($c.predecessor.containerName,[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)
- if($oldKeyPresent){throw 'Predecessor native key still exists'};$oldPresent=$false
+ if($Expected -eq 'interrupted-after-cert-delete'){
+  if(!$oldKeyPresent){throw 'Interrupted predecessor key unexpectedly absent'}
+  $key=[Security.Cryptography.CngKey]::Open($c.predecessor.containerName,[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)
+  $private=$null;$certificate=$null;$public=$null
+  try{
+   if(!$key.IsMachineKey -or $key.KeyName -cne $c.predecessor.containerName -or $key.Provider.Provider -ne 'Microsoft Software Key Storage Provider' -or $key.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None){throw 'Interrupted key custody changed'}
+   $private=[Security.Cryptography.RSACng]::new($key);if($private.KeySize -ne 2048){throw 'Interrupted key size changed'}
+   $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($c.predecessor.certificateDerB64));$public=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+   $challenge=[Text.Encoding]::UTF8.GetBytes([guid]::NewGuid().ToString());$signature=$private.SignData($challenge,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)
+   if(!$public.VerifyData($challenge,$signature,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)){throw 'Interrupted original key possession mismatch'}
+  }finally{if($public){$public.Dispose()};if($certificate){$certificate.Dispose()};if($private){$private.Dispose()};$key.Dispose()}
+ }elseif($oldKeyPresent){throw 'Predecessor native key still exists'};$oldPresent=$false
 }
-@{expected=$Expected;principalSid='S-1-5-18';bootTime=$boot;processId=[int]$parent.ProcessId;processCreatedAt=$parent.CreationDate.ToUniversalTime().ToString('o');soleAgentStopped=$true;replacementCustodyVerified=$true;predecessorPresent=$oldPresent;predecessorKeyPresent=$oldKeyPresent}|ConvertTo-Json -Compress
+@{expected=$Expected;principalSid='S-1-5-18';bootTime=$boot;processId=[int]$parent.ProcessId;processCreatedAt=$parent.CreationDate.ToUniversalTime().ToString('o');soleAgentStopped=$true;replacementCustodyVerified=$true;predecessorKeyPossessionVerified=($Expected -eq 'interrupted-after-cert-delete');predecessorPresent=$oldPresent;predecessorKeyPresent=$oldKeyPresent}|ConvertTo-Json -Compress

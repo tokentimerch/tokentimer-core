@@ -49,7 +49,11 @@
       "windows-native-orphan-corrupt-journal-protected": "real-host",
       "windows-native-orphan-closed-journal-and-untracked-key": "real-host",
       "windows-iis-ipv6-native-shadow-rollback": "real-host",
-      "windows-iis-ipv6-wildcard-shadow-rollback": "real-host"
+      "windows-iis-ipv6-wildcard-shadow-rollback": "real-host",
+      "windows-retention-policy-168-expiry-wins": "real-host",
+      "windows-retention-policy-168-interrupted-delete": "real-host",
+      "windows-retention-policy-720-expiry-wins": "real-host",
+      "windows-retention-policy-720-interrupted-delete": "real-host"
     },
     "kubernetes-host": {
       "controller-owned-provision": "real-host",
@@ -1240,7 +1244,8 @@
     "windows-domain-adcs-retention24h": {
       "retention24h-real-adcs-production-cutover": "real-host",
       "retention24h-real-resident-production-collector": "real-host",
-      "retention24h-independent-native-final-and-owned-cleanup": "real-host"
+      "retention24h-independent-native-final-and-owned-cleanup": "real-host",
+      "retention24h-real-day-native-delete-interruption-and-default-clock-resume": "real-host"
     },
     "windows-arm64-packaged-scm": {
       "windows-arm64-packaged-servicehost-and-native-desktop": "real-host",
@@ -1260,6 +1265,10 @@
       "adcs-default24h-stale-preflight-blocks-admission": "real-host",
       "adcs-default24h-expired-validation-frees-unaccepted-key": "real-host",
       "adcs-default24h-fresh-preflight-restores-native-issuance": "real-host"
+    },
+    "filesystem-linux-backup-dac-host": {
+      "filesystem-linux-nonroot-backup-dac-refusal": "real-host",
+      "filesystem-linux-backup-dac-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1770,6 +1779,10 @@
       "domain",
       "sameVmResidentKeeper",
       "api"
+    ],
+    "filesystem-linux-backup-dac-host": [
+      "native-linux-nonroot-dac",
+      "openssl-key-oracle"
     ]
   },
   "suites": {
@@ -1821,7 +1834,11 @@
       "windows-native-orphan-corrupt-journal-protected",
       "windows-native-orphan-closed-journal-and-untracked-key",
       "windows-iis-ipv6-native-shadow-rollback",
-      "windows-iis-ipv6-wildcard-shadow-rollback"
+      "windows-iis-ipv6-wildcard-shadow-rollback",
+      "windows-retention-policy-168-expiry-wins",
+      "windows-retention-policy-168-interrupted-delete",
+      "windows-retention-policy-720-expiry-wins",
+      "windows-retention-policy-720-interrupted-delete"
     ],
     "kubernetes-host": [
       "controller-owned-provision",
@@ -3007,6 +3024,7 @@
     "windows-domain-adcs-retention24h": [
       "retention24h-real-adcs-production-cutover",
       "retention24h-real-resident-production-collector",
+      "retention24h-real-day-native-delete-interruption-and-default-clock-resume",
       "retention24h-independent-native-final-and-owned-cleanup"
     ],
     "windows-arm64-packaged-scm": [
@@ -3027,6 +3045,10 @@
       "adcs-default24h-stale-preflight-blocks-admission",
       "adcs-default24h-expired-validation-frees-unaccepted-key",
       "adcs-default24h-fresh-preflight-restores-native-issuance"
+    ],
+    "filesystem-linux-backup-dac-host": [
+      "filesystem-linux-nonroot-backup-dac-refusal",
+      "filesystem-linux-backup-dac-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3128,6 +3150,7 @@
     "windows-domain-adcs-retention24h": "real-host",
     "windows-arm64-packaged-scm": "real-host",
     "windows-arm64-installed-agent": "e2e",
-    "windows-domain-adcs-default-ttl24h": "real-host"
+    "windows-domain-adcs-default-ttl24h": "real-host",
+    "filesystem-linux-backup-dac-host": "real-host"
   }
 }

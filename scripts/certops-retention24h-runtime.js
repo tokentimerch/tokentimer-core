@@ -64,12 +64,12 @@ async function trustedPeer(config) {
 }
 async function inspectNative(configPath, configSha256, expected) {
   assert.equal(process.platform,"win32");assert.match(configSha256,/^[a-f0-9]{64}$/);assert.equal(digest(configPath),configSha256);assert.ok(fs.statSync(configPath).size<=262144);
-  const config=JSON.parse(fs.readFileSync(configPath,"utf8"));verifyConfig(config,configPath);assert.equal(digest(process.execPath),config.lease.nodeSha256);assert.equal(digest(__filename),config.lease.keeperSha256);
+  const config=JSON.parse(fs.readFileSync(configPath,"utf8"));verifyConfig(config,configPath);if(expected==="removed-after-real-day")require("../tests/e2e/helpers/certops-retention24h-interrupted").assertCleanupSafe(configPath);assert.equal(digest(process.execPath),config.lease.nodeSha256);assert.equal(digest(__filename),config.lease.keeperSha256);
   for(const item of config.requiredSources)assert.equal(digest(path.resolve(__dirname,"..",item.file)),item.sha256);
   const helper=require("../packages/agent/src/issuers/chain-helper").resolveAdcsChainHelperPath();assert.equal(helper.error,undefined);assert.equal(path.resolve(helper.path),path.resolve(__dirname,"..",config.collectorHelper.file));assert.equal(digest(helper.path),config.collectorHelper.sha256);
   process.env.CERTOPS_ADCS_DISPOSABLE_LAB="1";
   const result=spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(__dirname,"certops-retention24h-native.ps1"),"-ConfigPath",configPath,"-ConfigSha256",configSha256,"-Expected",expected],{encoding:"utf8",timeout:30000,windowsHide:true,maxBuffer:8192});assert.ifError(result.error);assert.equal(result.status,0,"Independent current native oracle failed");
-  const observed=JSON.parse(result.stdout);assert.equal(observed.soleAgentStopped,true);assert.equal(observed.replacementCustodyVerified,true);assert.equal(observed.expected,expected);assert.equal(observed.predecessorPresent,expected==="kept-before-deadline");assert.equal(observed.predecessorKeyPresent,expected==="kept-before-deadline");
+  const observed=JSON.parse(result.stdout);assert.equal(observed.soleAgentStopped,true);assert.equal(observed.replacementCustodyVerified,true);assert.equal(observed.expected,expected);assert.equal(observed.predecessorPresent,expected==="kept-before-deadline");assert.equal(observed.predecessorKeyPresent,expected!=="removed-after-real-day");
   assertOwnedLedgerInventory(config.stateDir,config.predecessor.thumbprint);
   const row=retention.readLedgerRow(path.join(config.stateDir,"windows-retention"),config.predecessor.thumbprint);assert.ok(row);for(const[key,value]of Object.entries(config.originalLedgerRow))if(!["lifecycleState","deferralReason"].includes(key))assert.deepEqual(row[key],value);
   if(expected==="removed-after-real-day")assert.equal(row.lifecycleState,"removed");else {assert.ok(["pending_retention","deferred"].includes(row.lifecycleState));if(row.lifecycleState==="deferred")assert.equal(row.deferralReason,"deadline_not_reached");}
@@ -80,18 +80,19 @@ async function main(configPath, configSha256) {
   assert.equal(process.platform, "win32"); assert.match(configSha256, /^[a-f0-9]{64}$/); assert.equal(digest(configPath),configSha256);
   assert.ok(fs.statSync(configPath).size <= 262144);
   const config=JSON.parse(fs.readFileSync(configPath,"utf8"));verifyConfig(config,configPath);assert.equal(digest(process.execPath),config.lease.nodeSha256);
+  require("../tests/e2e/helpers/certops-retention24h-interrupted").assertCleanupSafe(configPath);
   const readinessStart=performance.now();
   process.env.CERTOPS_ADCS_DISPOSABLE_LAB="1"; // Dedicated validated keeper entry point; native oracle independently verifies actual domain/IMDS.
   const root=path.resolve(__dirname,".."),directory=path.dirname(configPath);
   const checkSources=()=>{assert.equal(digest(configPath),configSha256);assert.equal(digest(__filename),config.lease.keeperSha256);const actualHelper=require("../packages/agent/src/issuers/chain-helper").resolveAdcsChainHelperPath();assert.equal(actualHelper.error,undefined);assert.equal(path.resolve(actualHelper.path),path.resolve(root,config.collectorHelper.file));assert.equal(digest(actualHelper.path),config.collectorHelper.sha256);for(const item of config.requiredSources)assert.equal(digest(path.join(root,item.file)),item.sha256);};
-  let bootTime, processCreatedAt;
+  let bootTime, processCreatedAt, interruptionOwner, interruptionProof;
   const native=expected=>{
     checkSources(); const result=spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(__dirname,"certops-retention24h-native.ps1"),"-ConfigPath",configPath,"-ConfigSha256",configSha256,"-Expected",expected],{encoding:"utf8",timeout:30000,windowsHide:true,maxBuffer:8192});
     assert.ifError(result.error);assert.equal(result.status,0,"Resident exact native custody oracle failed");const observed=JSON.parse(result.stdout);
     assert.equal(observed.processId,process.pid);if(processCreatedAt)assert.equal(observed.processCreatedAt,processCreatedAt);else processCreatedAt=observed.processCreatedAt;
     assert.equal(observed.principalSid,"S-1-5-18");assert.equal(observed.soleAgentStopped,true);assert.equal(observed.replacementCustodyVerified,true);assert.equal(observed.expected,expected);
     if(bootTime)assert.equal(observed.bootTime,bootTime,"Resident VM boot identity changed");else bootTime=observed.bootTime;
-    assert.equal(observed.predecessorPresent,expected==="kept-before-deadline");assert.equal(observed.predecessorKeyPresent,expected==="kept-before-deadline");return observed;
+    assert.equal(observed.predecessorPresent,expected==="kept-before-deadline");assert.equal(observed.predecessorKeyPresent,expected!=="removed-after-real-day");return observed;
   };
   const ledger=expected=>{
     assertOwnedLedgerInventory(config.stateDir,config.predecessor.thumbprint);
@@ -104,10 +105,15 @@ async function main(configPath, configSha256) {
   // time from a previous process. Finalizer independently checks this PID/task.
   fs.writeFileSync(path.join(directory,"resident-ready.json"),JSON.stringify({candidateSha:config.lease.candidateSha,nonce:config.lease.nonce,pid:process.pid,processCreatedAt,bootTime,configSha256,nodeSha256:digest(process.execPath),readinessMonotonicElapsedMs:Math.floor(performance.now()-readinessStart)}),{flag:"wx",mode:0o600});
   const result=await runResidentWindow({stateDir:config.stateDir,cleanupDeadline:config.cleanupDeadline,
-    verifySoleAgentStopped:()=>{native("kept-before-deadline");},
-    beforeSweep:async()=>{assertOwnedLedgerInventory(config.stateDir,config.predecessor.thumbprint);native("kept-before-deadline");ledger("kept-before-deadline");await trustedPeer(config);assertOwnedLedgerInventory(config.stateDir,config.predecessor.thumbprint);},
-    afterSweep:async(expected,summary)=>{native(expected);ledger(expected);await trustedPeer(config);assertOwnedSweepSummary(summary,config.predecessor.thumbprint,expected);}});
-  fs.writeFileSync(path.join(directory,"resident-result.json"),JSON.stringify({...result,candidateSha:config.lease.candidateSha,nonce:config.lease.nonce,pid:process.pid,processCreatedAt,bootTime,configSha256,nativeCustodyVerified:true,trustedTlsVerified:true,actualProductionLedgerVerified:true}),{flag:"wx",mode:0o600});
+    beforeDueSweep:async timing=>{
+      native('kept-before-deadline');ledger('kept-before-deadline');await trustedPeer(config);
+      interruptionOwner=await require('../tests/e2e/helpers/certops-retention24h-interrupted').interruptAfterRealDay({configPath,configSha256,timing,verifyIntermediate:async()=>{const observed=native('interrupted-after-cert-delete');ledger('interrupted-after-cert-delete');await trustedPeer(config);return {predecessorCertificateAbsent:observed.predecessorPresent===false,predecessorKeyPossessionVerified:observed.predecessorKeyPossessionVerified,replacementCustodyVerified:observed.replacementCustodyVerified,replacementTrustedTlsVerified:true};}});
+    },
+    verifySoleAgentStopped:expected=>{native(expected==='removed-after-real-day'?'interrupted-after-cert-delete':'kept-before-deadline');},
+    beforeSweep:async expected=>{assertOwnedLedgerInventory(config.stateDir,config.predecessor.thumbprint);native(expected==='removed-after-real-day'?'interrupted-after-cert-delete':'kept-before-deadline');ledger(expected==='removed-after-real-day'?'interrupted-after-cert-delete':'kept-before-deadline');await trustedPeer(config);assertOwnedLedgerInventory(config.stateDir,config.predecessor.thumbprint);},
+    afterSweep:async(expected,summary)=>{const observed=native(expected);ledger(expected);await trustedPeer(config);assertOwnedSweepSummary(summary,config.predecessor.thumbprint,expected);if(expected==='removed-after-real-day'){interruptionProof=interruptionOwner.finish({ordinarySweepSummary:summary,finalNative:{predecessorCertificateAbsent:observed.predecessorPresent===false,predecessorKeyAbsent:observed.predecessorKeyPresent===false,replacementCustodyVerified:observed.replacementCustodyVerified,replacementTrustedTlsVerified:true}});}}});
+  require("../tests/e2e/helpers/certops-retention24h-interrupted").assertCleanupSafe(configPath);
+  fs.writeFileSync(path.join(directory,"resident-result.json"),JSON.stringify({...result,interruptedDelete:interruptionProof,candidateSha:config.lease.candidateSha,nonce:config.lease.nonce,pid:process.pid,processCreatedAt,bootTime,configSha256,nativeCustodyVerified:true,trustedTlsVerified:true,actualProductionLedgerVerified:true}),{flag:"wx",mode:0o600});
 }
 module.exports={REQUIRED_SOURCES,verifyConfig,assertOwnedLedgerInventory,assertOwnedSweepSummary,inspectNative,main};
 if(require.main===module){

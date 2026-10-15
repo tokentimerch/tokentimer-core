@@ -25,6 +25,8 @@ on:
       - 'scripts/certops-*'
       - 'scripts/test-support/arm64-scm-artifact.cjs'
       - 'scripts/certops_retention24h_collection.py'
+      - 'scripts/certops_retention_policy_expiry.py'
+      - 'scripts/certops_linux_backup_dac_proof.py'
       - 'scripts/certops_adcs_ttl24h_collection.py'
       - 'scripts/certops_adcs_ttl24h_proof.py'
       - 'scripts/fixtures/certops-adcs-ttl24h.cjs'
@@ -128,7 +130,9 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Three genuine expiry/grace waits share this bounded disposable host;
+    # leave time for native builds, independent cleanup and report verification.
+    timeout-minutes: 50
     env:
       CERTOPS_HOST_TESTS: '1'
       CERTOPS_QUALIFICATION_STRICT: '1'

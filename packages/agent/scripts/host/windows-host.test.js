@@ -31,7 +31,9 @@ function powershell(script) {
 
 // Leave the workflow's remaining bounded time for independent cleanup and
 // report verification after native builds and required negative operations.
-test("Windows real-host discovery and service-host qualification", { timeout: 1200000 }, async (t) => {
+// Three genuine expiry-grace campaigns retain real waits; leave ten minutes
+// of the workflow's fifty-minute budget for setup and artifact/cleanup steps.
+test("Windows real-host discovery and service-host qualification", { timeout: 2400000 }, async (t) => {
   const enabled = process.env.CERTOPS_HOST_TESTS === "1";
   const gate = createHostGate({
     suite: "windows-host",
@@ -257,6 +259,14 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
       await require("./retention-elapsed-fixture").qualifyElapsedRetention({ gate, powershell, run, workDir,
         replacementPem: fs.readFileSync(path.join(workDir, "ec-p256-My/issued.pem"), "utf8"), replacementThumbprint: acceptedCertificates[1] });
     }, { evidenceLevel: "real-host", oracle: "actual distinct CNG A→B→C cutovers and immutable lineage; unchanged24h policy, one real max(A,B expiry)-plus300s wait, interrupted native deletion recovery and both predecessor cert/key absence with trusted bound C custody unchanged; no full24h claim" });
+    // Dedicated policy-boundary runs retain the existing 24h control above.
+    // These exercise the real expiry+grace rule, never a six-hour agent timer.
+    const policyExpiry = require("./retention-policy-expiry-fixture");
+    for (const file of policyExpiry.REQUIRED_SOURCES) {
+      if (!gate.report.fixtureSources.some(source => source.file === file)) gate.report.fixtureSources.push({ file, sha256: require("node:crypto").createHash("sha256").update(fs.readFileSync(path.resolve(__dirname, "../../../..", file))).digest("hex") });
+    }
+    await policyExpiry.qualifyPolicyExpiry({ gate, powershell, run, workDir,
+      replacementPem: fs.readFileSync(path.join(workDir, "ec-p256-My/issued.pem"), "utf8"), replacementThumbprint: acceptedCertificates[1] });
     await gate.scenario("windows-iis-deploy-rollback", async () => {
       await require("./iis-fixture").qualifyIis({ powershell, run, workDir, gate });
     }, { evidenceLevel: "real-host", oracle: "independent TLS fingerprint and netsh binding" });
@@ -347,6 +357,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
     }
   } finally {
     await gate.scenario("windows-host-cleanup", async () => {
+      require("./retention-interrupted-process").assertCleanupSafe(workDir);
       require("./enrollment-contention-fixture").assertCleanupSafe(workDir);
       require("./ipv6-shadow-fixture").assertCleanupSafe(workDir);
       require("./orphan-journal-fixture").assertCleanupSafe(workDir);
@@ -382,7 +393,7 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         const artifactDir = path.join(process.env.CERTOPS_HOST_ARTIFACTS, path.basename(workDir));
         fs.mkdirSync(artifactDir, { recursive: true });
         // Explicit evidence allowlist: never upload the full host workdir.
-        for (const name of ["discovery.log", "windows-native-chain.log", "windows-retention-elapsed.log", "windows-release-package.log", "windows-service-host-go.log", "windows-adcs-chain-go.log", "windows-adcs-cmc-go.log", "windows-verifier-go.log"]) {
+        for (const name of ["discovery.log", "windows-native-chain.log", "windows-retention-elapsed.log", "windows-retention-policy-168.log", "windows-retention-policy-720.log", "windows-release-package.log", "windows-service-host-go.log", "windows-adcs-chain-go.log", "windows-adcs-cmc-go.log", "windows-verifier-go.log"]) {
           const source = path.join(workDir, name);
           if (fs.existsSync(source)) fs.copyFileSync(source, path.join(artifactDir, name));
         }
@@ -406,6 +417,6 @@ test("Windows real-host discovery and service-host qualification", { timeout: 12
         else gate.report.fixtureSources.push({ file, sha256 });
       }
     }
-    await gate.finish({ requiredScenarios: ["windows-adcs-v2-journal-native-read-denied","windows-adcs-journal-root-native-list-denied","windows-state-config-read-denied", "windows-state-credential-read-denied", "windows-state-signing-pin-read-denied", "windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-iis-client-revocation-policy-preservation", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-packaged-chain-runtime-protocol-refusal", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
+    await gate.finish({ requiredScenarios: ["windows-retention-policy-168-expiry-wins", "windows-retention-policy-168-interrupted-delete", "windows-retention-policy-720-expiry-wins", "windows-retention-policy-720-interrupted-delete", "windows-adcs-v2-journal-native-read-denied","windows-adcs-journal-root-native-list-denied","windows-state-config-read-denied", "windows-state-credential-read-denied", "windows-state-signing-pin-read-denied", "windows-retention-two-open-references-protect", "windows-retention-one-closed-reference-still-protects", "windows-retention-all-closed-respects-real-deadline", "windows-retention-atomic-replace-refusal", "windows-enrollment-lock-cng-contention", "windows-iis-shared-port-sni-isolation", "windows-cng-private-export-refusal", "windows-discovery-http-sys-selectors", "windows-discovery-fingerprint", "windows-discovery-constrained-language", "windows-user-store-boundary", "windows-cng-csr", "windows-native-chain-verdicts", "windows-trust-anchor-lifecycle", "windows-retention-owned-cleanup", "windows-retention-native-guards", "windows-retention-real-expiry-grace", "windows-retention-native-interrupted-delete", "windows-iis-deploy-rollback", "windows-iis-unsupported-targets", "windows-iis-rollback-failure", "windows-iis-sni-flags", "windows-iis-http-sys-flags", "windows-iis-client-revocation-policy-preservation", "windows-retention-process-durability", "windows-store-lock-worker-death", "windows-store-lock-drain-timeout", "windows-store-lock-process-death", "windows-installer-build-floor", "windows-cross-store-mutex", "windows-release-package", "windows-packaged-chain-runtime-protocol-refusal", "windows-scm-lifecycle", "windows-service-host-go", "windows-adcs-chain-go", "windows-adcs-cmc-go", "windows-verifier-go", "windows-host-cleanup"] });
   }
 });

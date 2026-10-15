@@ -63,6 +63,9 @@ async function trustedLeaf(port, ca, expected) {
   throw failure;
 }
 function verifyElapsedProof(proof) {
+  require("./retention-interrupted-process").verifyProof(
+    proof.ownedInterruption,
+  );
   assert.equal(proof.mode, "real-clock-two-cutover-expiry-grace");
   for (const field of [
     "successfulCutovers",
@@ -94,7 +97,10 @@ async function qualifyElapsedRetention({
   workDir,
   replacementPem,
   replacementThumbprint,
+  retentionHours = 24,
 }) {
+  assert.ok([24, 168, 720].includes(retentionHours));
+  const policyVariant = retentionHours !== 24;
   const fixtureId = crypto.randomUUID();
   const directory = path.join(workDir, `elapsed-retention-${fixtureId}`);
   fs.mkdirSync(directory);
@@ -104,7 +110,8 @@ async function qualifyElapsedRetention({
   const predecessors = [];
   let siteOwned = false,
     endpointOwned = false,
-    primaryError;
+    primaryError,
+    ownedInterruption;
   const nativeCustody = (thumb) => {
     assert.match(thumb, /^[A-F0-9]{40}$/);
     return JSON.parse(
@@ -112,6 +119,20 @@ async function qualifyElapsedRetention({
         `$c=Get-Item 'Cert:\\LocalMachine\\My\\${thumb}';$k=$null;try{$k=if($c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1'){[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)}else{[Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)};@{name=$k.Key.KeyName;unique=$k.Key.UniqueName;exportPolicy=[string]$k.Key.ExportPolicy;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;der=[Convert]::ToBase64String($c.RawData);expiry=$c.NotAfter.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
       ),
     );
+  };
+  const nativeKeyExists = (container) => {
+    assert.match(
+      container,
+      /^tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/,
+    );
+    const value = powershell(
+      `[string][Security.Cryptography.CngKey]::Exists('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)`,
+    );
+    assert.ok(
+      value === "True" || value === "False",
+      "Exact native key existence unavailable",
+    );
+    return value === "True";
   };
   const history = (row) =>
     Object.fromEntries(
@@ -175,13 +196,7 @@ async function qualifyElapsedRetention({
         certificateOwned: false,
       };
       predecessors.push(item);
-      assert.ok(
-        !run("certutil.exe", [
-          "-csp",
-          "Microsoft Software Key Storage Provider",
-          "-key",
-        ]).includes(containerName),
-      );
+      assert.equal(nativeKeyExists(containerName), false);
       item.keyOwned = true; // exact deterministic ownership before native mutation
       const csr = await generateCsrViaCng({
         commonName: "certops-host.invalid",
@@ -311,7 +326,7 @@ async function qualifyElapsedRetention({
       old.deadline = retention.computeCleanupDeadline({
         verifiedCutoverAt: old.cutover,
         oldNotAfter: old.nativeExpiry,
-        retentionHours: 24,
+        retentionHours,
       });
       assert.equal(
         old.deadline.getTime(),
@@ -356,7 +371,7 @@ async function qualifyElapsedRetention({
     const sweep = () =>
       runWindowsRetentionSweep({
         stateDir,
-        retentionHours: 24,
+        retentionHours,
         log: { info() {}, error() {} },
       });
     const early = await sweep();
@@ -383,6 +398,8 @@ async function qualifyElapsedRetention({
     );
     // One shared real wait qualifies both expiry+300s deadlines, never two
     // serial waits. No clocks, native queries, TLS or eligibility facts injected.
+    const preDeadlineObservedAt = new Date().toISOString();
+    const waitStartedAt = new Date().toISOString();
     const waitStarted = process.hrtime.bigint();
     while (Date.now() <= deadline.getTime()) {
       assert.ok(
@@ -400,46 +417,37 @@ async function qualifyElapsedRetention({
       process.hrtime.bigint() - waitStarted >= 300000000000n,
       "The actual monotonic wait must independently cover the full expiry grace",
     );
+    const waitFinishedAt = new Date().toISOString();
+    const waitedMonotonicMs =
+      Number(process.hrtime.bigint() - waitStarted) / 1000000;
     // Interrupt the first actually enumerated row so no other predecessor can
     // have been silently removed before the delstore-before-delkey boundary.
     const first = retention.listLedgerThumbprints(ledgerDir)[0],
       target = predecessors.find((item) => item.thumbprint === first);
     assert.ok(target);
     await gate.scenario(
-      "windows-retention-native-interrupted-delete",
+      policyVariant
+        ? `windows-retention-policy-${retentionHours}-interrupted-delete`
+        : "windows-retention-native-interrupted-delete",
       async () => {
-        const child = require("node:child_process").spawnSync(
-          process.execPath,
-          [
-            path.join(__dirname, "retention-interrupted-child.js"),
-            stateDir,
-            target.thumbprint,
-            target.containerName,
-          ],
-          { encoding: "utf8", timeout: 90000, windowsHide: true },
+        const { receipt: fault, proof: interruptionDrain } =
+          await require("./retention-interrupted-process").interruptOwnedCollector(
+            {
+              workDir,
+              stateDir,
+              thumbprint: target.thumbprint,
+              containerName: target.containerName,
+              retentionHours,
+            },
+          );
+        require("./retention-interrupted-process").verifyProof(
+          interruptionDrain,
         );
-        assert.ifError(child.error);
-        assert.equal(child.signal, null);
-        assert.equal(
-          child.status,
-          86,
-          "Actual deletion must reach the owned native interruption boundary",
-        );
-        const fault = JSON.parse(
-          fs.readFileSync(
-            path.join(stateDir, "interrupted-native-delete.json"),
-            "utf8",
-          ),
-        );
-        assert.equal(fault.nativeCommandSucceeded, true);
-        assert.equal(fault.thumbprint, target.thumbprint);
-        assert.equal(fault.containerName, target.containerName);
-        assert.ok(Number.isInteger(fault.pid) && fault.pid > 0);
-        assert.equal(fault.pid, child.pid);
+        ownedInterruption = interruptionDrain;
         const lockPath = path.join(stateDir, "windows-cert-store", "My.lock"),
           marker = fs.readFileSync(lockPath, "utf8").trim().split(/\r?\n/);
         assert.equal(marker.length, 3);
-        assert.equal(marker[0], String(child.pid));
+        assert.equal(marker[0], String(fault.pid));
         assert.ok(Number.isFinite(Date.parse(marker[1])));
         assert.match(marker[2], /^[a-f0-9]{32}$/);
         assert.equal(
@@ -448,13 +456,7 @@ async function qualifyElapsedRetention({
           ),
           "False",
         );
-        assert.ok(
-          run("certutil.exe", [
-            "-csp",
-            "Microsoft Software Key Storage Provider",
-            "-key",
-          ]).includes(target.containerName),
-        );
+        assert.equal(nativeKeyExists(target.containerName), true);
         for (const item of predecessors)
           assert.notEqual(
             retention.readLedgerRow(ledgerDir, item.thumbprint).lifecycleState,
@@ -491,11 +493,6 @@ async function qualifyElapsedRetention({
           "actual first enumerated eligible A/B delstore then owned child exit before delkey, retained key/incomplete immutable lineage, real sweep resumes both through live C without another elapsed wait",
       },
     );
-    const nativeKeys = run("certutil.exe", [
-      "-csp",
-      "Microsoft Software Key Storage Provider",
-      "-key",
-    ]);
     for (const item of predecessors) {
       assert.equal(
         powershell(
@@ -503,13 +500,14 @@ async function qualifyElapsedRetention({
         ),
         "False",
       );
-      assert.ok(!nativeKeys.includes(item.containerName));
+      assert.equal(nativeKeyExists(item.containerName), false);
       const removed = retention.readLedgerRow(ledgerDir, item.thumbprint);
       assert.equal(removed.lifecycleState, "removed");
       assert.deepEqual(history(removed), history(item.row));
     }
     await preserveReplacement();
     const proof = {
+      ownedInterruption,
       mode: "real-clock-two-cutover-expiry-grace",
       successfulCutovers: 2,
       predecessorCertificatesRemoved: 2,
@@ -521,15 +519,62 @@ async function qualifyElapsedRetention({
       interruptedNativeDeleteRecovered: true,
       waitedMonotonicMs:
         Number(process.hrtime.bigint() - waitStarted) / 1000000,
-      configuredRetentionHours: 24,
+      configuredRetentionHours: retentionHours,
       fullRetentionWindowQualified: false,
     };
-    verifyElapsedProof(proof);
-    gate.report.nativeElapsedRetention = proof;
+    let reportProof = proof;
+    if (policyVariant) {
+      // Choose the genuinely newest predecessor, whose native validity was
+      // observed before this shared real wait. The same sweep independently
+      // checks/removes BOTH predecessors; no ledger timestamps are rewritten.
+      const newest = predecessors.reduce((a, b) =>
+        Date.parse(a.nativeExpiry) > Date.parse(b.nativeExpiry) ? a : b,
+      );
+      const contract = require("./retention-policy-expiry-proof");
+      reportProof = {
+        ownedInterruption,
+        scope: contract.SCOPE,
+        configuredRetentionHours: retentionHours,
+        verifiedCutoverAt: newest.cutover,
+        oldNotAfter: contract.publicNativeTimestamp(newest.nativeExpiry),
+        cleanupDeadline: newest.deadline.toISOString(),
+        preDeadlineObservedAt,
+        cleanupObservedAt: new Date().toISOString(),
+        waitStartedAt,
+        waitFinishedAt,
+        waitedMonotonicMs,
+        installedServiceTimerQualified: false,
+        fullRetentionWindowQualified: false,
+        actualProductionCollectorUsed: true,
+        preDeadlineCustodyPreserved: true,
+        oldCertificateAbsent: true,
+        oldKeyAbsent: true,
+        immutableHistoryPreserved: true,
+        replacementCustodyUnchanged: true,
+        replacementTrustedTlsVerified: true,
+        interruptedNativeDeleteRecovered: true,
+        successfulCutovers: 2,
+        predecessorCertificatesRemoved: 2,
+        predecessorKeysRemoved: 2,
+        lineageRowsFinalized: 2,
+      };
+      contract.verifyProof(reportProof);
+      gate.report.nativeRetentionPolicyExpiry ||= {};
+      gate.report.nativeRetentionPolicyExpiry[String(retentionHours)] =
+        reportProof;
+    } else {
+      verifyElapsedProof(proof);
+      gate.report.nativeElapsedRetention = proof;
+    }
     fs.writeFileSync(
-      path.join(workDir, "windows-retention-elapsed.log"),
+      path.join(
+        workDir,
+        policyVariant
+          ? `windows-retention-policy-${retentionHours}.log`
+          : "windows-retention-elapsed.log",
+      ),
       JSON.stringify({
-        ...proof,
+        ...reportProof,
         predecessors: predecessors.map((item) => ({
           oldNotAfter: item.nativeExpiry,
           verifiedCutoverAt: item.cutover,
@@ -544,6 +589,10 @@ async function qualifyElapsedRetention({
     primaryError = error;
     throw error;
   } finally {
+    // No site/store/key cleanup may race an uncertain native collector child.
+    await require("./retention-interrupted-process").drainBeforeCleanup(
+      workDir,
+    );
     const failures = [],
       clean = (action) => {
         try {
@@ -582,13 +631,7 @@ async function qualifyElapsedRetention({
             ).ok,
             true,
           );
-          assert.ok(
-            !run("certutil.exe", [
-              "-csp",
-              "Microsoft Software Key Storage Provider",
-              "-key",
-            ]).includes(item.containerName),
-          );
+          assert.equal(nativeKeyExists(item.containerName), false);
         } catch (error) {
           failures.push(error);
         }

@@ -25,11 +25,11 @@ async function waitUntilMonotonic(deadline, signal) {
   }
   signal?.throwIfAborted();
 }
-async function runResidentWindow({ stateDir, cleanupDeadline, signal, beforeSweep, afterSweep, verifySoleAgentStopped }) {
+async function runResidentWindow({ stateDir, cleanupDeadline, signal, beforeSweep, afterSweep, verifySoleAgentStopped, beforeDueSweep }) {
   assert.equal(process.platform, "win32", "Actual native Windows runtime required");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   assert.equal(typeof stateDir, "string"); assert.ok(stateDir.length > 0);
-  for (const oracle of [beforeSweep, afterSweep, verifySoleAgentStopped]) assert.equal(typeof oracle, "function");
+  for (const oracle of [beforeSweep, afterSweep, verifySoleAgentStopped, beforeDueSweep]) assert.equal(typeof oracle, "function");
   const deadline = Date.parse(cleanupDeadline), startWallMs = Date.now(), startMonoMs = performance.now();
   assert.ok(Number.isFinite(deadline) && deadline > startWallMs && deadline - startWallMs <= DAY);
   assert.ok(startWallMs - (deadline - DAY) <= 600000, "Resident handoff must follow actual cutover within ten minutes");
@@ -42,7 +42,7 @@ async function runResidentWindow({ stateDir, cleanupDeadline, signal, beforeSwee
   };
   const sweep = async expected => {
     signal?.throwIfAborted(); const elapsed=sample(); if(lastSweepElapsedMs!==undefined){const gap=elapsed-lastSweepElapsedMs;assert.ok(gap <= HOUR+300000,"Missed bounded hourly native collector observation");maximumSweepGapMs=Math.max(maximumSweepGapMs,Math.ceil(gap));}lastSweepElapsedMs=elapsed;
-    await verifySoleAgentStopped();
+    await verifySoleAgentStopped(expected);
     await beforeSweep(expected);
     // No now/execFileImpl/connectImpl or cleanup substitution is passed.
     const result = await productionSweep({ stateDir, retentionHours: 24, log: { info() {}, warn() {}, error() {}, debug() {} } });
@@ -68,6 +68,7 @@ async function runResidentWindow({ stateDir, cleanupDeadline, signal, beforeSwee
   // measures the full day. Boot/process death discards this local clock state.
   await waitUntilMonotonic(startMonoMs + DAY, signal);
   assert.ok(sample() >= DAY); assert.ok(Date.now() > deadline);
+  await beforeDueSweep({monotonicElapsedMs:sample(),observedAt:new Date().toISOString(),cleanupDeadline});
   await sweep("removed-after-real-day");
   return { startedAt:new Date(startWallMs).toISOString(),finishedAt:new Date().toISOString(), scope: "resident-timing-only-native-oracles-required", monotonicElapsedMs: Math.floor(sample()), keptSweepCount, maximumSweepGapMs, preDeadlineObservedAt, collector: "production-default-clock", retentionHours: 24 };
 }

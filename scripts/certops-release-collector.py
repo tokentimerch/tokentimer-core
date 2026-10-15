@@ -20,7 +20,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 import certops_retention24h_collection as retention24h_collection
+from certops_retention_policy_expiry import fields as retention_policy_expiry_fields, interruption_fields as retention_interruption_fields
 import certops_adcs_ttl24h_collection as adcs_ttl24h_collection
+import certops_linux_backup_dac_proof as linux_backup_dac_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -625,6 +627,28 @@ def retention24h_fields(value):
         result[key] = list(items)
     if any(int(item) > 0xffffffff for item in proof["requestIds"]) or any(proof["containerNames"][i] != "tokentimer-enr-" + proof["enrollmentIds"][i] for i in range(2)):
         raise ValueError("Native retention24h request/key ownership mismatch")
+    nested = proof.get("interruptedDelete")
+    nested_flags = ("actualDayBeforeNativeMutation", "sameOriginalProductionLedger", "ownedChildExit86", "containedNativeTreeDrained", "nativeCertificateAbsentBeforeResume", "nativeKeyPossessionRetainedBeforeResume", "incompleteLedgerUnchanged", "replacementCustodyAndTrustedTlsPreserved", "ordinaryDefaultClockResumeCompleted", "nativeCertificateAndKeyAbsentAfterResume")
+    if (not isinstance(nested, dict) or nested.get("scope") != "actual-day-native-delstore-interruption-and-default-clock-resume"
+            or any(nested.get(key) is not True for key in nested_flags)
+            or nested.get("productionSixHourCadenceQualified") is not False or nested.get("full168HourRetentionQualified") is not False
+            or nested.get("cleanupDeadline") != proof["cleanupDeadline"]
+            or type(nested.get("monotonicElapsedBeforeCrashMs")) is not int
+            or not 86400000 <= nested["monotonicElapsedBeforeCrashMs"] <= proof["monotonicElapsedMs"]):
+        raise ValueError("Incomplete actual real-day native deletion interruption")
+    nested_times = {}
+    for key in ("interruptedAt", "resumedAt"):
+        raw = nested.get(key)
+        if not isinstance(raw, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z", raw):
+            raise ValueError("Invalid actual retention interruption timestamp")
+        try:
+            nested_times[key] = round(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1000)
+        except (ValueError, OverflowError):
+            raise ValueError("Invalid actual retention interruption timestamp") from None
+    if (not deadline < nested_times["interruptedAt"] <= nested_times["resumedAt"] <= end
+            or nested_times["interruptedAt"] < start + nested["monotonicElapsedBeforeCrashMs"] - 5000):
+        raise ValueError("Retention interruption differs from original real-day boundary")
+    result["interruptedDelete"] = {key: nested[key] for key in ("scope", *nested_flags, "monotonicElapsedBeforeCrashMs", "interruptedAt", "resumedAt", "cleanupDeadline", "productionSixHourCadenceQualified", "full168HourRetentionQualified")}
     return result
 
 
@@ -1090,6 +1114,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete native retention atomic replacement evidence")
             result["nativeRetentionAtomicReplace"] = dict.fromkeys(fields, True)
+            result["nativeRetentionPolicyExpiry"] = retention_policy_expiry_fields(value.get("nativeRetentionPolicyExpiry"))
             elapsed = value.get("nativeElapsedRetention")
             counts = ("successfulCutovers", "predecessorCertificatesRemoved", "predecessorKeysRemoved", "lineageRowsFinalized")
             facts = ("immediateDeferralPreservedCustody", "immutableHistoryPreserved", "replacementTrustedBoundCustodyUnchanged", "interruptedNativeDeleteRecovered")
@@ -1101,7 +1126,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     or type(elapsed.get("waitedMonotonicMs")) not in (int, float)
                     or not 300000 <= elapsed["waitedMonotonicMs"] < 600000):
                 raise ValueError("Incomplete real-clock two-cutover retention evidence")
-            result["nativeElapsedRetention"] = {**dict.fromkeys(counts, 2), **dict.fromkeys(facts, True),
+            result["nativeElapsedRetention"] = {"ownedInterruption": retention_interruption_fields(elapsed.get("ownedInterruption")), **dict.fromkeys(counts, 2), **dict.fromkeys(facts, True),
                 "mode": "real-clock-two-cutover-expiry-grace", "configuredRetentionHours": 24,
                 "fullRetentionWindowQualified": False, "waitedMonotonicMs": elapsed["waitedMonotonicMs"]}
 
@@ -1493,6 +1518,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 raise ValueError("Invalid compaction certificate identity")
             bounded["certificateUid"] = evidence["certificateUid"]
             result["nativeCompaction"] = bounded
+        if value.get("suite") == linux_backup_dac_proof.SUITE:
+            result.update(linux_backup_dac_proof.project_report(value))
         if value.get("suite") == "windows-installer-cli-second-rename":
             rollback = value.get("nativeCliSecondRename")
             flags = ("sourceOplockGranted", "actualSourceOpenBrokeOplock", "stagingHeldBeforeCopyResumed", "nativeOrderedRestoration", "originalDirectoryIdentityPreserved", "installedBytesUnchanged", "explicitStagingCleanupFailure", "sourceBytesUnchanged", "nativeHandleReleased", "ownedInstallerDrained", "ownedDriverDrained", "ownedStagingRemoved", "originalInstallerCliBytes", "sameRunningLocalSystemServicePid", "configurationCredentialAndPinUnchanged", "freshAuthenticatedHeartbeat", "nonExportableMachineCngCustodyUnchanged", "nativeBindingAndTrustedTlsUnchanged", "ownedCertificateKeyAndEndpointRemoved")

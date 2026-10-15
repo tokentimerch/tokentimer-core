@@ -238,7 +238,11 @@
         "packages/agent/scripts/host/ipv6-shadow-fixture.js",
         "packages/agent/scripts/host/ipv6-wildcard-fixture.js",
         "tests/e2e/helpers/certops-windows-contained-process.js",
-        "tests/e2e/helpers/certops-windows-contained-process.ps1"
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "packages/agent/scripts/host/retention-policy-expiry-fixture.js",
+        "packages/agent/scripts/host/retention-policy-expiry-proof.js",
+        "scripts/certops_retention_policy_expiry.py",
+        "packages/agent/scripts/host/retention-interrupted-process.js"
       ]
     },
     {
@@ -638,7 +642,11 @@
         "packages/agent/scripts/host/ipv6-shadow-fixture.js",
         "packages/agent/scripts/host/ipv6-wildcard-fixture.js",
         "tests/e2e/helpers/certops-windows-contained-process.js",
-        "tests/e2e/helpers/certops-windows-contained-process.ps1"
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "packages/agent/scripts/host/retention-policy-expiry-fixture.js",
+        "packages/agent/scripts/host/retention-policy-expiry-proof.js",
+        "scripts/certops_retention_policy_expiry.py",
+        "packages/agent/scripts/host/retention-interrupted-process.js"
       ]
     },
     {
@@ -4890,7 +4898,12 @@
         "packages/agent/src/issuers/adcs-enrollment.js",
         "packages/agent/src/issuers/adcs-enrollment-journal.js",
         "packages/agent/src/issuers/adcs-enrollment-rules.js",
-        "packages/agent/src/issuers/adcs-validation-deadline.js"
+        "packages/agent/src/issuers/adcs-validation-deadline.js",
+        "tests/e2e/helpers/certops-retention24h-interrupted.js",
+        "packages/agent/scripts/host/retention-interrupted-child.js",
+        "packages/agent/src/platform/index.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1"
       ]
     },
     {
@@ -5073,6 +5086,50 @@
         "scripts/certops-retention24h-contract.js",
         "scripts/certops_retention24h_collection.py"
       ]
+    },
+    {
+      "id": "filesystem-linux-backup-dac-22.04",
+      "kind": "host",
+      "suite": "filesystem-linux-backup-dac-host",
+      "source": "scripts/certops-linux-filesystem-permission.js",
+      "requiredSources": [
+        "scripts/certops-linux-filesystem-permission.js",
+        "scripts/certops-linux-filesystem-permission-child.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/scripts/host-gate.js",
+        ".github/workflows/certops-filesystem-qualification.yml"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "22.04",
+        "executionSurface": "disposable-vm"
+      }
+    },
+    {
+      "id": "filesystem-linux-backup-dac-24.04",
+      "kind": "host",
+      "suite": "filesystem-linux-backup-dac-host",
+      "source": "scripts/certops-linux-filesystem-permission.js",
+      "requiredSources": [
+        "scripts/certops-linux-filesystem-permission.js",
+        "scripts/certops-linux-filesystem-permission-child.js",
+        "packages/agent/src/deploy/index.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/src/policy/index.js",
+        "packages/agent/scripts/host-gate.js",
+        ".github/workflows/certops-filesystem-qualification.yml"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "disposable-vm"
+      }
     }
   ]
 }

@@ -72,6 +72,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native configuration, credential and signing-pin read-access refusals](windows/state-read-refusals.md)
 - [Retention replacement lineage, cross-store key survivors and protected cleanup](windows/retention-replacement-lineage.md)
 - [Two-cutover retention with actual expiry grace and interruption recovery](windows/retention-two-cutover-expiry-grace.md)
+- [Default and maximum retention policies with actual expiry-grace cleanup](windows/native-retention-policy-expiry.md)
 - [ACME certificate key binding before Windows acceptance](windows/acme-csr-key-binding.md)
 - [Hosted standalone AD CS feasibility](windows/standalone-adcs-feasibility.md)
 - [Domain-backed AD CS lab, native safety matrix and cleanup](../../../infra/certops-adcs/README.md)
@@ -101,6 +102,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Installed Linux agent qualification](linux/linux-systemd-qualification.md)
 - [Same-candidate Linux installer reapplication](linux/linux-systemd-reapply-qualification.md)
 - [Published Linux package upgrade and preserved service state](linux/linux-published-upgrade-qualification.md)
+- [Native nonroot filesystem backup permission refusal](linux/filesystem-backup-dac.md)
 - [Native Linux trust-store qualification](linux/linux-trust-qualification.md)
 - [Native Linux agent fault qualification](linux/native-agent-qualification.md)
 - [Native Linux consuming-server certificate reload qualification](linux/nginx-qualification.md)
@@ -167,3 +169,5 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [Installed Unicode paths](windows/installed-unicode-paths.md): exact native SCM/Node/config paths with spaces, Unicode and literal brackets, actual public signed issuance and CNG/IIS/trusted TLS. Historical migration runs first in a separate ASCII supporting root. Native execution remains pending.
 
 - [Installed crash ownership](windows/installed-crash-ownership.md): exact native handles, fail-closed fixture preservation and explicit shortened-lease recovery scope; native execution pending.
+
+The [real-day interrupted deletion case](windows/resident-retention24h-interrupted-delete.md) requires actual delstore interruption, retained-key/incomplete-ledger observations and ordinary recovery within the same genuine resident campaign. Native execution remains pending.

@@ -124,7 +124,7 @@
     {
       "id": "4d3605ce26faa1d8bbfb",
       "file": "packages/agent/scripts/host/windows-host.test.js",
-      "line": 54,
+      "line": 56,
       "name": "Windows real-host discovery and service-host qualification",
       "kind": "dynamic (this.skip() / t.skip())",
       "reason": "no-host",

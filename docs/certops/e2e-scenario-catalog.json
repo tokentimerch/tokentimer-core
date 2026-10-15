@@ -764,7 +764,7 @@
         "windows-2022-domain-native-retention24h"
       ],
       "implementation": "tests/e2e/certops-adcs-retention24h-prepare.js",
-      "remainingCoverage": "Native source spans short authenticated prepare/finalize jobs around one resident SYSTEM process on the same owned domain member. Actual public AD CS A-to-B cutover creates the production 24-hour ledger; independently observed actual expiry is later. Exact stopped-agent drainage, current native CNG/IIS/trusted TLS, bounded hourly/predeadline observations, a full monotonic day, production default-clock deletion, independent final native absence and owned Azure deletion are mandatory. Pure refusal checks are supporting evidence only. Native elapsed execution and bind/verify failure clock permutations remain pending; the seven-day default and background agent interval are outside this scope."
+      "remainingCoverage": "Native source spans short authenticated prepare/finalize jobs around one resident SYSTEM process on the same owned domain member. Actual public AD CS A-to-B cutover creates the production 24-hour ledger; independently observed actual expiry is later. Exact stopped-agent drainage, current native CNG/IIS/trusted TLS, bounded hourly/predeadline observations, a full monotonic day, production default-clock deletion, an owned native interruption after real certificate deletion but before key/ledger completion, independent original-key/incomplete-ledger preservation and ordinary default-clock recovery, independent final native absence and owned Azure deletion are mandatory. Pure refusal checks are supporting evidence only. Native elapsed execution and bind/verify failure clock permutations remain pending; the seven-day default and background agent interval are outside this scope."
     },
     {
       "id": "windows-retention.active-key",
@@ -799,8 +799,8 @@
         "windows-2022-host",
         "windows-2025-host"
       ],
-      "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js; scripts/certops-retention-boundaries.test.js",
-      "remainingCoverage": "Native collector with a fresh supporting ledger and real clock defers24h cleanup. Separate real-clock fixture retains the supported24h policy but uses the product's earlier actual certificate-expiry-plus300s deadline, waits the actual elapsed grace and verifies cleanup. Synthetic-clock supporting sweep remains separately labeled. A separate domain AD CS resident-keeper source now requires actual full24h passage and production-deadline cleanup on the same VM. Its native execution remains pending; installed-service cadence and retention/configuration cross-products remain separate gaps. Supporting production configuration-loader tests cover default168h/6h, minimum24h and maximum720h across valid positive sweep intervals, invalid types/fractions/out-of-range values, and exact unchanged configuration/custody marker. These are loader/filesystem checks, not installed-service cadence execution."
+      "implementation": "packages/agent/scripts/host/retention-fixture.js; packages/agent/scripts/host/windows-host.test.js; scripts/certops-retention-boundaries.test.js; packages/agent/scripts/host/retention-policy-expiry-fixture.js",
+      "remainingCoverage": "Native short-expiry source runs separate real two-cutover collector cases at 24 hours, explicit 168 hours (the production default) and the maximum 720 hours. Each uses actual native expiry plus 300 seconds, real monotonic and wall-clock passage, predeadline preservation, interrupted native deletion recovery, both predecessor certificate/key absence and unchanged trusted replacement custody. These direct collector cases do not qualify installed-service configuration delivery, default timer cadence or full 168/720-hour passage. The separate domain AD CS resident keeper qualifies actual 24-hour passage only when native execution succeeds; native evidence remains pending. The installed polling loop waits a 21600000ms base interval with 20% jitter after each completed sweep (4.8–7.2 hours before scheduling delay), so its genuine cadence remains a separate implementation and execution gap. Supporting loader/filesystem controls cover the default 168-hour policy and six-hour base interval, minimum 24 hours, maximum 720 hours, supported positive intervals and invalid/coerced values without rewriting configuration or custody state. Additional service/configuration cross-products remain."
     },
     {
       "id": "windows-retention.durable-ledger",
@@ -822,8 +822,8 @@
       "requiredEnvironments": [
         "disposable-windows-server-native"
       ],
-      "implementation": "packages/agent/scripts/host/retention-elapsed-fixture.js",
-      "remainingCoverage": "Mandatory native host fixture delegates every OS command to actual native execution and exits86 only after owned certificate deletion succeeds before key deletion. Independent parent requires certificate absent/key retained/incomplete ledger/replacement trusted; normal product sweep resumes owned dead lock and key cleanup after actual elapsed expiry grace. Native source not executed; interruption across a full24h window and installed-agent/job interruption variants remain. The separate resident-keeper source covers an uninterrupted production24h deadline, not these interruption variants."
+      "implementation": "packages/agent/scripts/host/retention-elapsed-fixture.js; tests/e2e/helpers/certops-retention24h-interrupted.js",
+      "remainingCoverage": "Mandatory native host fixture delegates every OS command to actual native execution and exits86 only after owned certificate deletion succeeds before key deletion. Independent parent requires certificate absent/key retained/incomplete ledger/replacement trusted; normal product sweep resumes owned dead lock and key cleanup after actual elapsed expiry grace. Native source not executed; interruption across a full24h window and installed-agent/job interruption variants remain. The separate resident-keeper source covers an uninterrupted production24h deadline, not these interruption variants. Separate mandatory real24h domain-campaign source now waits one actual resident day and its original production deadline, interrupts a contained child after native certificate deletion, proves original key possession with unchanged incomplete ledger bytes/file identity, then completes ordinary default-clock cleanup and independently rechecks replacement CNG/IIS/trusted TLS. Missing intermediate proof cannot qualify. This composition remains native-unexecuted and does not qualify the168hdefault/720hmaximum windows, installed six-hour scheduling or power-loss durability."
     },
     {
       "id": "windows-retention.container-sweep",
@@ -1632,8 +1632,8 @@
       "requiredEnvironments": [
         "filesystem-host"
       ],
-      "implementation": "scripts/certops-filesystem-host.js",
-      "remainingCoverage": "Mandatory direct native deployment source independently verifies leaf/chain/private-key correspondence and local key permissions on Ubuntu/Windows. Host execution, signed API dispatch and all ownership/principal variants remain pending."
+      "implementation": "scripts/certops-filesystem-host.js; scripts/certops-linux-filesystem-permission.js",
+      "remainingCoverage": "Mandatory direct native deployment source independently verifies leaf/chain/private-key correspondence and local key permissions on Ubuntu/Windows. Separate Ubuntu22.04/24.04 source runs genuine initial deployment and rotation as an actual nonroot UID/GID with zero effective capabilities, independently verifies the native OpenSSL chain/DNS result, local key correspondence and file ownership/mode, then requires real backup-directory EACCES and production stage-backup refusal with exact predecessor and outside-sentinel preservation. Exact DAC restoration and genuine same-identity redeployment are mandatory. Source and pure checks are implemented; native execution, signed API/service dispatch and further ownership/principal variants remain pending."
     },
     {
       "id": "deploy.path-containment",

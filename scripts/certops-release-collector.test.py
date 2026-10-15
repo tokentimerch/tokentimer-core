@@ -40,6 +40,23 @@ def webhosting_proof():
     return {"scope":"real-adcs-webhosting-issue-and-fresh-key-manual-renewal","store":"WebHosting","expiryCleanupQualified":False,"requestIds":["17","18"],"fingerprints":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"publicIssueAndRenewInstalled":True,"twoIndependentCaRequests":True,"freshSerialSpkiAndKey":True,"webHostingProtectedCustody":True,"myCopiesAbsent":True,"exactNativeIisAndHttpSysStore":True,"trustedSniTls":True,"installedDiscoveryInventory":True,"immutableAcceptedStore":True,"predecessorRetentionStorePreserved":True,"storeQualifiedCleanupRegistered":True}
 
 
+def policy_expiry_proof():
+    from certops_retention_policy_expiry import FLAGS, COUNTS, SCOPE
+    return {str(hours): {
+        "ownedInterruption": {"scope": "owned-short-retention-native-interruption-drain", "assignedBeforeResume": True, "rootExit86": True, "nativeActiveZero": True, "nativeHandlesClosed": True, "wrapperClosed": True}, "scope": SCOPE, "configuredRetentionHours": hours,
+        "verifiedCutoverAt": "2026-10-15T10:00:00.000Z",
+        "oldNotAfter": "2026-10-15T10:02:00.000Z",
+        "cleanupDeadline": "2026-10-15T10:07:00.000Z",
+        "preDeadlineObservedAt": "2026-10-15T10:01:00.000Z",
+        "cleanupObservedAt": "2026-10-15T10:07:01.000Z",
+        "waitStartedAt": "2026-10-15T10:01:00.000Z",
+        "waitFinishedAt": "2026-10-15T10:07:01.000Z",
+        "waitedMonotonicMs": 361000,
+        "installedServiceTimerQualified": False, "fullRetentionWindowQualified": False,
+        **dict.fromkeys(FLAGS, True), **dict.fromkeys(COUNTS, 2),
+    } for hours in (168, 720)}
+
+
 def retention_reference_proof():
     fields = ("twoOpenReferencesPersistedAcrossProcess", "bothOpenNativeSweepPreservedCustody", "oneClosedStillProtected", "unknownReferenceDoesNotCloseOwnedReferences", "allClosedStillDeferredByRealDeadline", "nativeCustodyAndTrustedTlsUnchanged")
     return {**dict.fromkeys(fields, True), "scope": "native-collector-supporting-ledger-reference-lifecycle", "elapsed24HourQualified": False}
@@ -187,7 +204,7 @@ def two_adcs_renewals_proof():
 
 
 def elapsed_proof():
-    return {"mode": "real-clock-two-cutover-expiry-grace", "successfulCutovers": 2,
+    return {"ownedInterruption": {"scope": "owned-short-retention-native-interruption-drain", "assignedBeforeResume": True, "rootExit86": True, "nativeActiveZero": True, "nativeHandlesClosed": True, "wrapperClosed": True}, "mode": "real-clock-two-cutover-expiry-grace", "successfulCutovers": 2,
             "predecessorCertificatesRemoved": 2, "predecessorKeysRemoved": 2, "lineageRowsFinalized": 2,
             "immediateDeferralPreservedCustody": True, "immutableHistoryPreserved": True,
             "replacementTrustedBoundCustodyUnchanged": True, "interruptedNativeDeleteRecovered": True,
@@ -285,6 +302,30 @@ class CollectorTests(unittest.TestCase):
                 invalid = {**report, "nativeRetention24h": {**proof, **change}}
                 with self.assertRaises(ValueError):
                     collector.sanitized_report(invalid, {report["suite"]}, set())
+
+    def test_short_retention_collector_refuses_missing_process_custody(self):
+        for target in ("nativeElapsedRetention", "nativeRetentionPolicyExpiry"):
+            for field in elapsed_proof()["ownedInterruption"]:
+                suite = "windows-host"
+                value = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof()}
+                proof = value[target] if target == "nativeElapsedRetention" else value[target]["168"]
+                del proof["ownedInterruption"][field]
+                with self.subTest(target=target, field=field), self.assertRaises(ValueError): collector.sanitized_report(value, {suite}, set())
+
+    def test_real_day_native_interruption_nested_facts_are_required_and_sanitized(self):
+        source = "const f=require('./scripts/certops-retention24h-test-fixture.cjs'),h=require('./scripts/certops-retention24h-proof');process.stdout.write(JSON.stringify(h.verifyCompositeProof(f())))"
+        proof = json.loads(subprocess.check_output(["node", "-e", source], cwd=collector.ROOT, text=True, timeout=15))
+        report = {"suite": "windows-domain-adcs-retention24h", "nativeRetention24h": proof}
+        for key, expected in proof["interruptedDelete"].items():
+            bad = json.loads(json.dumps(report)); del bad["nativeRetention24h"]["interruptedDelete"][key]
+            with self.subTest(missing=key), self.assertRaises(ValueError): collector.retention24h_fields(bad)
+            bad = json.loads(json.dumps(report)); bad["nativeRetention24h"]["interruptedDelete"][key] = False if expected is True else True
+            with self.subTest(tampered=key), self.assertRaises(ValueError): collector.retention24h_fields(bad)
+        for patch in ({"cleanupDeadline": proof["oldNotAfter"]}, {"interruptedAt": proof["cleanupDeadline"]}, {"resumedAt": proof["cleanupFinishedAt"]}, {"monotonicElapsedBeforeCrashMs": proof["monotonicElapsedMs"] + 1}):
+            bad = json.loads(json.dumps(report)); bad["nativeRetention24h"]["interruptedDelete"].update(patch)
+            with self.subTest(patch=patch), self.assertRaises(ValueError): collector.retention24h_fields(bad)
+        report["nativeRetention24h"]["interruptedDelete"]["rawNativeReceipt"] = "private-sentinel"
+        self.assertNotIn("private-sentinel", json.dumps(collector.retention24h_fields(report)))
 
     def test_windows_certificate_dry_run_keeps_only_complete_bounded_observations(self):
         flags = ("priorRealIssuanceVerified", "authenticatedPlansPersisted", "nativeCertificateInventoryUnchanged", "machineKeyMetadataUnchanged", "exactCngCustodyUnchanged", "httpSysBindingUnchanged", "trustedTlsUnchanged", "configurationCredentialPinUnchanged", "dnsProxyRequestsUnchanged")
@@ -459,11 +500,26 @@ class CollectorTests(unittest.TestCase):
         custody_fields = ("exportableControlSucceeded", "controlBytesZeroed", "protectedBytesZeroed", "protectedExportDenied", "publicNonceSignatureVerified", "originalCustodyUnchanged", "controlKeyRemoved")
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True,
                    "cases": [{"caseId": profile + "/" + store, **dict.fromkeys(custody_fields, True), "privateExportHResult": -2146893813} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]}
-        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, "rawLedger": "sentinel", "nativePath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeRetentionAtomicReplace"], proof)
-        survivor_report = {"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof, "nativeElapsedRetention": elapsed_proof(), "nativeKeySurvivors": {**survivor_proof(), "rawInventory": "sentinel", "containerName": "sentinel"}}
+        survivor_report = {"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof, "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeKeySurvivors": {**survivor_proof(), "rawInventory": "sentinel", "containerName": "sentinel"}}
         self.assertEqual(collector.sanitized_report(survivor_report, {suite}, set())["nativeKeySurvivors"], survivor_proof())
         self.assertNotIn("sentinel", json.dumps(collector.sanitized_report(survivor_report, {suite}, set())))
+        policy_private = policy_expiry_proof()
+        policy_private["168"]["rawNativeInventory"] = "private-policy-sentinel"
+        projected_policy = collector.sanitized_report({**survivor_report, "nativeRetentionPolicyExpiry": policy_private}, {suite}, set())["nativeRetentionPolicyExpiry"]
+        self.assertEqual(projected_policy, policy_expiry_proof())
+        for invalid in (None, {}, {"168": policy_expiry_proof()["168"]}):
+            with self.assertRaises(ValueError): collector.sanitized_report({**survivor_report, "nativeRetentionPolicyExpiry": invalid}, {suite}, set())
+        for policy in ("168", "720"):
+            for field in policy_expiry_proof()[policy]:
+                bad_policy = policy_expiry_proof()
+                del bad_policy[policy][field]
+                with self.assertRaises(ValueError): collector.sanitized_report({**survivor_report, "nativeRetentionPolicyExpiry": bad_policy}, {suite}, set())
+            for change in ({"actualProductionCollectorUsed": False}, {"configuredRetentionHours": 24}, {"scope": "installed-service-timer"}, {"waitedMonotonicMs": 299999}, {"fullRetentionWindowQualified": True}):
+                bad_policy = policy_expiry_proof()
+                bad_policy[policy].update(change)
+                with self.assertRaises(ValueError): collector.sanitized_report({**survivor_report, "nativeRetentionPolicyExpiry": bad_policy}, {suite}, set())
         reference_report = {**survivor_report, "nativeRetentionReferences": {**retention_reference_proof(), "rawInventory": "sentinel"}}
         projected = collector.sanitized_report(reference_report, {suite}, set())["nativeRetentionReferences"]
         self.assertEqual(projected, retention_reference_proof())
@@ -495,7 +551,7 @@ class CollectorTests(unittest.TestCase):
 
         elapsed = elapsed_proof()
         result = collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof,
-            "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": {**elapsed, "rawLedger": "sentinel", "nativeKeyPath": "sentinel"}}, {suite}, set())
+            "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": {**elapsed, "rawLedger": "sentinel", "nativeKeyPath": "sentinel"}}, {suite}, set())
         self.assertEqual(result["nativeElapsedRetention"], elapsed)
         self.assertNotIn("sentinel", json.dumps(result))
         for change in ({"successfulCutovers": True}, {"predecessorCertificatesRemoved": 1}, {"predecessorKeysRemoved": 1},
@@ -505,12 +561,12 @@ class CollectorTests(unittest.TestCase):
                        {"waitedMonotonicMs": 299999}, {"waitedMonotonicMs": 600000}, {"waitedMonotonicMs": float("nan")},
                        {"mode": "synthetic-clock"}):
             with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(),
-                "nativeRetentionAtomicReplace": proof, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": {**elapsed, **change}}, {suite}, set())
+                "nativeRetentionAtomicReplace": proof, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": {**elapsed, **change}}, {suite}, set())
         with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeRetentionAtomicReplace": proof}, {suite}, set())
 
         self.assertNotIn("sentinel", json.dumps(result))
         for field in fields:
-            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, field: False}}, {suite}, set())
+            with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": {**proof, field: False}}, {suite}, set())
         with self.assertRaises(ValueError): collector.sanitized_report({"suite": suite}, {suite}, set())
     def test_browser_retirement_retains_declared_sources_without_browser_private_state(self):
         suite = "browser-retirement-visibility"
@@ -691,10 +747,10 @@ class CollectorTests(unittest.TestCase):
         cases = [{"caseId": profile + "/" + store, **dict.fromkeys(fields, True), "privateExportHResult": -2146893813, "rawPrivateBlob": "sentinel"} for store in ("My", "WebHosting") for profile in ("rsa-2048", "rsa-3072", "rsa-4096", "ec-p256", "ec-p384")]
         custody = {"privateExportBytesWritten": False, "privateExportBytesReported": False, "workDirectoryUnchanged": True, "cases": cases, "signature": "sentinel"}
         sni = {"siteCount": 2, "hostnameCount": 2, "certificateStore": "My", **dict.fromkeys(("twoSitesSamePort", "distinctHostnameSelectors", "primaryCutoverPeerUnchanged", "primaryRollbackPeerUnchanged", "peerCutoverPrimaryUnchanged", "peerRollbackPrimaryUnchanged", "sameCertificateReplayVerified", "independentAuthenticatedTls", "ownedCleanupVerified"), True), "privateConfig": "sentinel"}
-        result = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": sni}, {suite}, set())
+        result = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": sni}, {suite}, set())
         self.assertEqual(result["nativeSamePortSni"]["siteCount"], 2)
         self.assertTrue(result["nativeSamePortSni"]["peerRollbackPrimaryUnchanged"])
-        usage_report = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof()}
+        usage_report = {"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof()}
         usage_report["nativeKeyUsage"]["rawKeyPath"] = "sentinel"
         usage_report["nativeKeyUsage"]["cases"][0]["privateBlob"] = "sentinel"
         projected_usage = collector.sanitized_report(usage_report, {suite}, set())
@@ -768,10 +824,10 @@ class CollectorTests(unittest.TestCase):
         for change in ({"siteCount": True}, {"hostnameCount": 1}, {"certificateStore": "Other"}):
             with self.assertRaises(ValueError):
                 collector.sanitized_report({"suite": suite, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, **change}}, {suite}, set())
-        missing = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
+        missing = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeSamePortSni": {**sni, "ownedCleanupVerified": False}}, {suite}, set())
         self.assertFalse(missing["nativeSamePortSni"]["ownedCleanupVerified"])
         contention = {**dict.fromkeys(("winnerGeneratedRealCsr", "loserLockedBeforeNativeExecution", "retryAcquiredEnrollmentLock", "retryExistingContainerRefused", "sameCsrAndSpki", "sameNonExportableKey", "winnerSignatureVerified", "ownedChildrenStopped", "ownedKeyRemoved"), True), "loserNativeCalls": 0, "loserCertreqCalls": 0, "retryCertreqCalls": 0, "winnerCertreqCalls": 1, "retryNativeCalls": 1, "privateRaw": "sentinel"}
-        projected = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": contention}, {suite}, set())
+        projected = collector.sanitized_report({"suite": suite, "nativeKeySurvivors": survivor_proof(), "nativeRetentionPolicyExpiry": policy_expiry_proof(), "nativeElapsedRetention": elapsed_proof(), "nativeRetentionAtomicReplace": atomic, "cngCustody": custody, "nativeIpv6WildcardShadow": ipv6_wildcard_proof(), "nativeIpv6SniShadow": ipv6_shadow_proof(), "nativeOrphanJournalProtection": orphan_journal_proof(), "nativeJournalReadRefusals": journal_read_proof(), "nativeStateReadRefusals": state_read_proof(), "nativeRetentionReferences": retention_reference_proof(), "nativeKeyUsage": key_usage_proof(), "nativeHttpSysClientSettings": http_client_settings_proof(), "nativePackagedChainRuntime": packaged_chain_runtime_proof(), "nativeEnrollmentContention": contention}, {suite}, set())
         self.assertEqual(projected["nativeEnrollmentContention"]["loserNativeCalls"], 0)
         self.assertNotIn("sentinel", json.dumps(projected))
         for bad in (True, "0", -1, 33):

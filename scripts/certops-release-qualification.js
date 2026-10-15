@@ -4,6 +4,7 @@
  * Invoked by the release collector and its CLI; consumes evidence only and never runs host tests
  * or enables a feature. Supporting fixtures cannot substitute for required native evidence.
  */
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -117,6 +118,12 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/packaged-helper-runtime-fixture").verifyProof(artifact.report.nativePackagedChainRuntime);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").verifyAtomicProof(artifact.report.nativeRetentionAtomicReplace);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-elapsed-fixture").verifyElapsedProof(artifact.report.nativeElapsedRetention);
+        if (slot.suite === "windows-host") {
+          const policies = artifact.report.nativeRetentionPolicyExpiry;
+          assert.deepEqual(Object.keys(policies || {}).sort(), ["168", "720"]);
+          const helper = require("../packages/agent/scripts/host/retention-policy-expiry-proof");
+          for (const hours of helper.POLICIES) { assert.equal(policies[String(hours)].configuredRetentionHours, hours); helper.verifyProof(policies[String(hours)]); }
+        }
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-reference-fixture").verifyProof(artifact.report.nativeRetentionReferences);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/state-read-refusal-fixture").verifyProof(artifact.report.nativeStateReadRefusals);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/journal-read-refusal-fixture").verifyProof(artifact.report.nativeJournalReadRefusals);
@@ -194,6 +201,11 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
             if (rows.length !== 1 || rows[0].template !== "TTQualificationRSAShort" || !["unsafe", "unreadable"].includes(rows[0].preflightVerdict) ||
                 !["originalConfirmedIssuerReused", "actualSignedJobRefused", "noCaRequestAllocated", "noKeyGenerated", "outgoingTrustedTlsPreserved"].every(key => rows[0][key] === true)) throw new Error("Native template mutation refusal evidence invalid");
           }
+        }
+        if (slot.suite === "filesystem-linux-backup-dac-host") {
+          require("./certops-linux-filesystem-permission").verifyProof(artifact.report.nativeLinuxBackupDac);
+          const native = artifact.report.qualificationEnvironment;
+          if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || native.distributionId !== "ubuntu" || !["22.04", "24.04"].includes(native.distributionVersion) || native.executionSurface !== "disposable-vm") throw new Error("Native Ubuntu nonroot backup-DAC evidence required");
         }
         if (slot.suite === "linux-systemd-writepath") {
           const evidence = artifact.report.nativeWritePath;

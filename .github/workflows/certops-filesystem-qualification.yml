@@ -31,11 +31,23 @@ jobs:
           $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Execute native deployment and independent filesystem oracles
         run: node scripts/certops-filesystem-host.js
+      - name: Qualify native Linux nonroot backup permission refusal
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          selected_node="$(readlink -f "$(command -v node)")"
+          [[ "$selected_node" = /* && -x "$selected_node" ]] || exit 1
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,GITHUB_SHA,CERTOPS_FILESYSTEM_DISPOSABLE_HOST -- "$selected_node" scripts/certops-linux-filesystem-permission.js --report qualification-results/filesystem-linux-dac.json
+      - name: Verify mandatory Linux DAC execution
+        if: runner.os == 'Linux'
+        run: node scripts/certops-qualification-report.js qualification-results/filesystem-linux-dac.json
       - name: Independently verify all mandatory execution
         run: node scripts/certops-qualification-report.js qualification-results/filesystem.json
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: certops-filesystem-${{ matrix.os }}
-          path: qualification-results/filesystem.json
+          path: |
+            qualification-results/filesystem.json
+            qualification-results/filesystem-linux-dac.json
           if-no-files-found: error

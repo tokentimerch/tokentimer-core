@@ -24,3 +24,12 @@ test("actual later handoff phase is bounded by original four-hour lease and init
  const swapped=structuredClone(good);swapped.publicPreparation.task.processId=888;assert.throws(()=>helper.verifyCompositeProof(swapped));
  const p=helper.verifyCompositeProof(good);for(const patch of [{bootTime:p.finishedAt},{processCreatedAt:p.finishedAt},{bootTime:"2026-10-13T00:00:00.000Z"}])assert.throws(()=>helper.verifyProof({...p,...patch}));
 });
+
+test('real-day native deletion interruption is mandatory and bound to the original resident result',()=>{
+ const c=fixture(),h=require('../tests/e2e/helpers/certops-retention24h-interrupted');
+ for(const key of Object.keys(c.residentResult.interruptedDelete)){const bad=structuredClone(c);delete bad.residentResult.interruptedDelete[key];assert.throws(()=>helper.verifyCompositeProof(bad),key);}
+ const good=helper.verifyCompositeProof(c);for(const flag of h.FLAGS){const bad=structuredClone(good);bad.interruptedDelete[flag]=false;assert.throws(()=>helper.verifyProof(bad));}
+ for(const patch of [{cleanupDeadline:c.publicPreparation.oldNotAfter},{productionSixHourCadenceQualified:true},{full168HourRetentionQualified:true},{monotonicElapsedBeforeCrashMs:c.residentResult.monotonicElapsedMs+1},{interruptedAt:c.publicPreparation.cleanupDeadline},{resumedAt:c.cleanupFinishedAt}]){const bad=structuredClone(good);Object.assign(bad.interruptedDelete,patch);assert.throws(()=>helper.verifyProof(bad));}
+ const missing=structuredClone(c);delete missing.residentResult.interruptedDelete;assert.throws(()=>helper.verifyCompositeProof(missing));
+ const foreign=structuredClone(c);foreign.finalObserved.residentResult=structuredClone(c.residentResult);foreign.finalObserved.residentResult.interruptedDelete.resumedAt=c.cleanupFinishedAt;assert.throws(()=>helper.verifyCompositeProof(foreign));
+});
