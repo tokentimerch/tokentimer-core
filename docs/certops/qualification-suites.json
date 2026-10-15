@@ -1349,7 +1349,9 @@
       "distribution-qualification": "e2e",
       "distribution-browser": "e2e",
       "distribution-privacy": "e2e",
-      "distribution-transfer": "e2e"
+      "distribution-transfer": "e2e",
+      "distribution-security": "e2e",
+      "distribution-runtime-controls": "e2e"
     },
     "windows-installed-stop-offline-renewal": {
       "windows-installed-active-stop-default-offline-recovery": "real-host"
@@ -3275,6 +3277,8 @@
       "distribution-recovery",
       "distribution-deployment-recovery",
       "distribution-qualification",
+      "distribution-security",
+      "distribution-runtime-controls",
       "distribution-browser",
       "distribution-privacy",
       "distribution-transfer"

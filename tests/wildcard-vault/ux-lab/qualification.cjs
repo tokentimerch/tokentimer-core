@@ -19,6 +19,8 @@ const PHASES = [
   "recovery",
   "deployment-recovery",
   "qualification",
+  "security",
+  "runtime-controls",
   "browser",
   "privacy",
   "transfer",

@@ -93,6 +93,30 @@ test("real isolated Vault KV v2: pinned publication and idempotent CAS", { skip:
   assert.deepEqual(await client.publish(f.bundle), first);
   assert.deepEqual(await client.fetch(1), f.bundle);
   await assert.rejects(client.fetch(2), { code: "material_version_unavailable" });
+  // Customer retention controls are authoritative. Distinct material objects
+  // survive independently; deleted/destroyed historical bytes never fall back
+  // to a newer version or get silently recreated by a consumer.
+  const nextIntent = { ...f.intent, materialVersionId: crypto.randomUUID() };
+  const nextBundle = { ...f.bundle, materialVersionId: nextIntent.materialVersionId };
+  const next = createVaultStore(f.stores, nextIntent, { fixtureLoopbackHttp: true });
+  await next.publish(nextBundle);
+  const retainedPath = `${f.scope.prefix}/bundles/${f.intent.materialVersionId}`;
+  async function retention(action) {
+    const response = await fetch(`http://127.0.0.1:58200/v1/secret/${action}/${retainedPath}`, {
+      method: "POST", headers: { "X-Vault-Token": "isolated-vault-fixture-only", "Content-Type": "application/json" },
+      body: JSON.stringify({ versions: [1] }),
+    });
+    assert.equal(response.status, 204);
+  }
+  await retention("delete");
+  await assert.rejects(client.fetch(1), { code: "material_version_unavailable" });
+  assert.deepEqual(await next.fetch(1), nextBundle);
+  await retention("undelete");
+  assert.deepEqual(await client.fetch(1), f.bundle);
+  await retention("destroy");
+  await assert.rejects(client.fetch(1), { code: "material_version_unavailable" });
+  await assert.rejects(client.publish(f.bundle));
+  assert.deepEqual(await next.fetch(1), nextBundle);
 });
 
 test("CAS conflict never adopts unrelated existing bytes or returns Vault errors", async (t) => {

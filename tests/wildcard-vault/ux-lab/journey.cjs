@@ -1034,6 +1034,8 @@ async function main() {
     "deployment-recovery": deploymentRecovery,
     ...(gate ? {
       qualification: () => qualification.extend({state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root}),
+      security: () => require("./adversarial.cjs").security(module.exports.context),
+      "runtime-controls": () => require("./adversarial.cjs").runtimeControls(module.exports.context),
       browser: () => require("./browser.cjs").inspect({state,owner,base,matrix,root}),
       privacy: () => require("../../../scripts/certops-distribution-privacy").audit(process.env.TT_UX_PROJECT, path.join(root,"privacy.json")),
     } : {}),

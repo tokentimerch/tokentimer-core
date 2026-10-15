@@ -9145,7 +9145,8 @@
         "scripts/certops-distribution-privacy.js",
         "scripts/certops-distribution-report.js",
         "apps/api/services/certops/jobSigning.js",
-        "apps/api/services/certops/agentDispatch.js"
+        "apps/api/services/certops/agentDispatch.js",
+        "tests/wildcard-vault/ux-lab/adversarial.cjs"
       ],
       "environment": {
         "osFamily": "linux",
@@ -9167,7 +9168,8 @@
         "scripts/certops-distribution-privacy.js",
         "scripts/certops-distribution-report.js",
         "apps/api/services/certops/jobSigning.js",
-        "apps/api/services/certops/agentDispatch.js"
+        "apps/api/services/certops/agentDispatch.js",
+        "tests/wildcard-vault/ux-lab/adversarial.cjs"
       ],
       "environment": {
         "osFamily": "linux",
@@ -9189,7 +9191,8 @@
         "scripts/certops-distribution-privacy.js",
         "scripts/certops-distribution-report.js",
         "apps/api/services/certops/jobSigning.js",
-        "apps/api/services/certops/agentDispatch.js"
+        "apps/api/services/certops/agentDispatch.js",
+        "tests/wildcard-vault/ux-lab/adversarial.cjs"
       ],
       "environment": {
         "osFamily": "linux",
