@@ -127,6 +127,14 @@ test("direct report CLI accepts complete supporting scope without a circular imp
 test("database fixtures and all three certificate cohorts remain mandatory", () => {
   assert.deepEqual(require("./certops-distribution-inventory").validate(), []);
 });
+
+test("privacy refuses missing, duplicated or unsafe historical inventory before accessing a lab", () => {
+  const { audit } = require("./certops-distribution-privacy");
+  const id = crypto.randomUUID();
+  for (const versions of [[], [id], [id, id], [id, "../../other-customer"], [id, "-".repeat(36)]])
+    assert.throws(() => audit("tt-wildcard-ux-qual-fence-test", "unused.json", versions));
+  assert.throws(() => audit("shared-production", "unused.json", [id, crypto.randomUUID()]));
+});
 test("qualification database opt-in refuses arbitrary names and missing ports", () => {
   const saved = { ...process.env };
   try {

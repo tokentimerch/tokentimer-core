@@ -3,8 +3,11 @@ const fs = require("node:fs"),
   path = require("node:path"),
   assert = require("node:assert/strict"),
   { spawnSync } = require("node:child_process");
-function audit(project, output) {
+function audit(project, output, publishedVersions = []) {
   assert.match(project || "", /^tt-wildcard-ux-(?:ci|qual)-[a-z0-9-]+$/);
+  assert.ok(Array.isArray(publishedVersions) && publishedVersions.length >= 2 && publishedVersions.length <= 100, "Published historical version inventory is required");
+  assert.equal(new Set(publishedVersions).size, publishedVersions.length);
+  for (const id of publishedVersions) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   const run = (args, input) => {
     const r = spawnSync("docker", args, {
       input,
@@ -59,6 +62,7 @@ function audit(project, output) {
         project + "-customers-1",
         "node",
         "/repo/tests/wildcard-vault/ux-lab/privacy-audit.cjs",
+        JSON.stringify(publishedVersions),
       ],
       database + logs,
     ),
@@ -69,7 +73,7 @@ function audit(project, output) {
 }
 if (require.main === module) {
   try {
-    console.log(JSON.stringify(audit(process.argv[2], process.argv[3])));
+    console.log(JSON.stringify(audit(process.argv[2], process.argv[3], JSON.parse(process.argv[4] || "[]"))));
   } catch {
     console.error("Owned distribution zero-custody audit failed");
     process.exitCode = 1;

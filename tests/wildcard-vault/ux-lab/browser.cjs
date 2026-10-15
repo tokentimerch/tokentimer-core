@@ -34,6 +34,8 @@ async function inspect({
     await page.getByText("Certificate distribution", { exact: true }).waitFor();
     await page.getByLabel("Distribution group").selectOption(state.groupId);
     await loaded;
+    if (label === "workspace-paused")
+      await page.getByText("Certificate operations are paused for this workspace", { exact: true }).waitFor();
     const rows = await matrix();
     for (const b of state.bindings) {
       const actual = rows.find((r) => r.binding_id === b.id);
@@ -92,4 +94,22 @@ async function inspect({
     await browser.close();
   }
 }
-module.exports = { inspect };
+async function viewerRefused({ state, viewer, base }) {
+  const browser = await require("playwright").chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  try {
+    await context.addCookies([...viewer.jar].map(([name, value]) => ({ name, value, url: base, httpOnly: true, sameSite: "Lax" })));
+    const page = await context.newPage();
+    let successfulDistributionResponses = 0;
+    page.on("response", response => {
+      if (response.url().includes("/certops/distribution-groups") && response.status() === 200) successfulDistributionResponses++;
+    });
+    await page.goto(base + "/certops/renewals?workspace=" + state.workspaceId);
+    await page.waitForURL(url => url.pathname === "/dashboard");
+    assert.equal(await page.getByText("Certificate distribution", { exact: true }).count(), 0);
+    assert.equal(successfulDistributionResponses, 0);
+    state.browserObservations ||= [];
+    state.browserObservations.push({ label: "viewer-refused", distributionRendered: false, successfulDistributionResponses });
+  } finally { await context.close(); await browser.close(); }
+}
+module.exports = { inspect, viewerRefused };

@@ -16,6 +16,15 @@ async function leaf(c, name, expected) {
 async function security(c) {
   const { state, owner, customer, matrix, job, wait, rollout, approve, terminal, converge, api, group, check } = c;
   const current = (await c.versions()).find(x => x.id === state.renewedVersionId);
+  const browser = require("./browser.cjs");
+  const base = "http://127.0.0.1:" + (process.env.TT_UX_WEB_PORT || 58801);
+  await browser.inspect({ state, owner: c.approver, base, matrix, root: c.root, label: "manager" });
+  const manager = (await c.approver.request("/api/session")).user.id;
+  const member = "/api/v1/workspaces/" + state.workspaceId + "/members/" + manager;
+  await owner.request(member, "PATCH", { role: "viewer" });
+  try { await browser.viewerRefused({ state, viewer: c.approver, base }); }
+  finally { await owner.request(member, "PATCH", { role: "workspace_manager" }); }
+  check("real browser allows workspace manager distribution and denies the same session after viewer demotion; admin reads remain covered");
   // Authenticate and retrieve with the real agent using a genuinely revoked
   // read-only Vault token. A verification-only job must fail before mutation.
   await customer("stop", "nginx");
@@ -26,10 +35,11 @@ async function security(c) {
   await customer("start", "nginx");
   const failed = await wait("revoked consumer credential fails genuine fetch", async () => {
     const row = (await matrix()).find(x => x.binding_id === state.bindings[0].id);
-    if (row?.latest_deployment?.stage !== "failed") return false;
+    if (!["failed", "orphaned_unknown_effect"].includes(row?.latest_deployment?.stage)) return false;
     const result = await job(row.latest_deployment.jobId);
     return result.payload.materialDeployment.materialVersionId === current.id ? result : false;
   });
+  if (failed.status === "orphaned_unknown_effect") assert.equal(failed.needsOperatorReconciliation, true);
   assert.equal((await matrix()).find(x => x.binding_id === state.bindings[0].id).converged, false);
   const unchanged = await leaf(c, "nginx", current.fingerprint_sha256);
   assert.equal(unchanged.certificate.modifiedAt, before.certificate.modifiedAt);
@@ -39,11 +49,13 @@ async function security(c) {
   await owner.request(api() + "/distribution-jobs/" + failed.id + "/retry", "POST", {});
   await owner.request(group() + "/rollouts/" + failed.payload.materialDeployment.rolloutId + "/state", "POST", { state: "deploying" });
   await customer("start", "nginx");
-  await terminal(failed.id); await converge();
+  const recovered = await terminal(failed.id); await converge();
+  assert.equal(recovered.needsOperatorReconciliation, false, "only a validated current receipt resolves the server fence");
   check("revoked consumer Vault token blocks real retrieval without mutation; rotated credential recovers the original pinned job");
 
-  const history = await matrix();
+  const history = (await matrix()).filter(row => state.bindings.some(binding => binding.id === row.binding_id));
   const successful = await Promise.all(history.map(row => job(row.latest_deployment.jobId)));
+  assert.ok(successful.every(value => value.status === "succeeded" && value.completedAt));
   for (const mode of ["signature", "payload", "foreign-agent", "replay"]) {
     const prior = await customer("facts", "nginx");
     const metric = mode === "foreign-agent" ? "foreignAgentRejected" : mode === "replay" ? "replayRejected" : "signatureRejected";
@@ -60,7 +72,7 @@ async function security(c) {
       assert.equal(now.status, "succeeded", "attack cannot rewrite the original successful outcome");
       assert.equal(now.completedAt, original.completedAt);
     }
-    assert.ok((await matrix()).every(row => row.converged));
+    assert.ok((await matrix()).filter(row => state.bindings.some(binding => binding.id === row.binding_id)).every(row => row.converged));
   }
   check("real CLI rejects corrupted signatures, modified version pins, foreign-agent delivery and genuine signed replays without reload or history rewrite");
 }
@@ -91,6 +103,7 @@ async function runtimeControls(c) {
     assert.equal((await job(pending.id)).status, "pending");
     assert.equal((await matrix()).find(x => x.binding_id === state.bindings[0].id).converged, false);
     await leaf(c, "nginx", current.fingerprint_sha256);
+    await require("./browser.cjs").inspect({ state, owner, base: "http://127.0.0.1:" + (process.env.TT_UX_WEB_PORT || 58801), matrix, root: c.root, label: "workspace-paused" });
   } finally {
     await owner.request(api() + "/settings", "PUT", { certOpsPaused: false, reason: "Owned qualification resume" });
   }

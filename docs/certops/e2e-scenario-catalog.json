@@ -2333,8 +2333,8 @@
         "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
         "protected-native-independent-consumers"
       ],
-      "implementation": "packages/agent/src/material-store/material-store.test.js",
-      "remainingCoverage": "Live API/database/log secret-canary scan and all customer credential providers need native execution. Generic Vault inventory scan is a separate credential-bearing API and is not a distribution credential path."
+      "implementation": "tests/wildcard-vault/ux-lab/privacy-audit.cjs; packages/agent/src/material-store/material-store.test.js",
+      "remainingCoverage": "Current customer-key fragments and scoped Vault tokens were scanned against the owned Core database and API/worker/agent logs in the original three executed lab cohorts. Historical encodings, secret DNS credentials, external sinks and customer credential providers remain unqualified. Generic Vault inventory is a separate credential-bearing API."
     },
     {
       "id": "distribution.authorized-consumers",
@@ -2358,7 +2358,7 @@
         "protected-native-independent-consumers"
       ],
       "implementation": "tests/wildcard-vault/ux-lab/qualification.cjs",
-      "remainingCoverage": "Required/optional failure permutations and actual overlapping native execution still require native qualification; PostgreSQL fixtures provide supporting transactional evidence."
+      "remainingCoverage": "Mandatory runtime-controls source tests actual service-hook overlap with maxParallel=2 and serialization with maxParallel=1 on the owned container host. Independent native execution and all required/optional failure permutations remain unqualified."
     },
     {
       "id": "distribution.renewal-rollback",
@@ -2370,7 +2370,7 @@
         "protected-native-independent-consumers"
       ],
       "implementation": "tests/wildcard-vault/ux-lab/qualification.cjs",
-      "remainingCoverage": "Real-day retention/deletion policy and all native failure timing variants are unqualified. No automatic Vault deletion policy is claimed."
+      "remainingCoverage": "Mandatory runtime-controls source replaces actual local material with an older retained version, verifies current-version drift refusal and approved repair without a new ACME order. Vault adapter tests cover customer delete/undelete/destroy controls. Real-day retention windows, native unavailable-version rollback and failure timing remain unqualified."
     },
     {
       "id": "distribution.reconciliation",
@@ -2393,8 +2393,8 @@
         "disposable-core-postgres-vault-pebble-nginx-haproxy-chromium",
         "protected-native-independent-consumers"
       ],
-      "implementation": "tests/wildcard-vault/pr329-review.test.cjs",
-      "remainingCoverage": "Real Vault ACL tests and signing tests are supporting evidence; distribution-specific modified signed jobs and revoked credentials through the enrolled native agent remain to qualify."
+      "implementation": "tests/wildcard-vault/ux-lab/adversarial.cjs; tests/wildcard-vault/pr329-review.test.cjs",
+      "remainingCoverage": "Runnable enrolled-agent transport tests reuse genuine signed distribution dispatches for signature corruption, version-pin modification, foreign-agent delivery and replay. Revoked consumer Vault credentials and Core workspace pause are mandatory lab phases. Exact production artifacts, default expiry timing and independent native host races remain unqualified; Core exposes no billing/license freeze API."
     },
     {
       "id": "distribution.transfer",
@@ -2418,7 +2418,7 @@
         "protected-native-independent-consumers"
       ],
       "implementation": "tests/wildcard-vault/ux-lab/browser.cjs",
-      "remainingCoverage": "Dashboard currently exposes consumer stages rather than dedicated publication/degraded/reconciliation labels. Browser pending/failure/degraded permutations remain required."
+      "remainingCoverage": "Original real Chromium cohorts executed pending canary, reload uncertainty, optional failure, verification drift and convergence states. Dashboard exposes consumer stages rather than dedicated aggregate publication/degraded/reconciliation labels. Full browser role matrix and native exact-artifact qualification remain."
     }
   ]
 }

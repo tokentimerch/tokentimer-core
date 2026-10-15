@@ -69,6 +69,11 @@ The final read-only privacy auditor streams the owned Core database dump and
 API/worker logs to the customer container. Customer private-key fragments and
 execution credentials stay there; only scan counts and verdicts return. No
 database rows or agent receipts are injected by the direct journey/auditor.
+The extended auditor also reads every published historical version through the
+customer's scoped Vault adapter and scans retained rotated/revoked credentials
+and protected local backups. Only public version IDs cross the controller
+boundary. Missing/duplicated version inventories fail before any lab access;
+private needles and historical credential files never become CI artifacts.
 Pebble has no secret DNS-provider credential, so the privacy report explicitly
 sets `dnsCredentialQualification: false`.
 
@@ -103,6 +108,34 @@ hosts, exact candidate archives and hashes, a customer-controlled Vault KV v2,
 an authorized ACME/DNS zone, real nginx/HAProxy, independent external probes,
 and cleanup/reconciliation evidence. These prerequisites were not available in
 this task. No workflow provisions or spends on such infrastructure implicitly.
+
+The additional mandatory `security` and `runtime-controls` phases exercise
+revoked consumer credentials, genuinely signed dispatch replay/misdelivery and
+tampering, workspace pause, actual service-hook serialization/overlap, and
+customer filesystem replacement followed by verification-only refusal and
+approved repair. They do not manufacture receipts or modify the Core database.
+Execution is recorded separately; adding runnable source is not qualification.
+
+| Native blocker | Exact missing evidence or prerequisite |
+|---|---|
+| Artifact provenance | All distribution cohorts still enable capabilities in a volume-local source copy. No immutable packaged candidate with recorded archive/binary digests has executed these distribution phases. |
+| Independent host deployment | The issuer and both consumers use separate agent processes on one owned container host. No owned independent issuer/NGINX/HAProxy hosts, installation receipts, reboot/cleanup campaign or external host probe records were supplied. |
+| Native runner/collector contract | The lab producer is intentionally experimental and rejected by the release collector. A reviewed artifact-bound native distribution producer and corresponding collector obligations are still missing; credentials alone cannot satisfy this. |
+| Customer trust and credentials | Pebble and dev Vault are real isolated services but do not validate customer CA trust, AppRole login/rotation, a secret DNS provider, customer ACL configuration or external logging sinks. No production secrets are used. |
+| Default crash and freshness windows | No exact-artifact host-death, lease-expiry, late-outbox and default freshness-expiry campaign has run. SQL and bounded fault fixtures remain supporting evidence. |
+| Retention | Live Vault deletion/undelete/destroy controls have runnable adapter checks. Elapsed customer retention windows, policy exhaustion and native rollback denial for an unavailable object remain separate obligations. |
+| Freeze variants | Core exposes its workspace pause incident control. Billing/license freeze behavior belongs to variants and is not exposed as a Core API; no invented freeze endpoint is tested. |
+
+## Tooling execution budget
+
+`pnpm run test:certops:qualification` discovers the entire tooling inventory,
+limits workers to four by default (or a validated `TEST_CONCURRENCY` from 1 to
+16), and retains a twelve-minute subprocess timeout. The measured Windows
+inventory exceeded the former five-minute limit. The CI tooling job allows
+thirty minutes for dependencies, that inventory, collectors and guards.
+Timeouts, signals, empty inventories and failed tests return failure; none
+count as qualification evidence. Subprocess regressions exercise real failure
+and timeout behavior, including isolation from a parent Node test context.
 
 ## Defect reproduced by the real journey
 

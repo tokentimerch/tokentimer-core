@@ -262,6 +262,9 @@ async function rotateMaterialToken(name, workspaceId, groupId) {
   const capabilities=name.includes("issuer") ? ["create","read"] : ["read"];
   await vaultApi("/sys/policies/acl/"+policy,"PUT",{policy:`path "secret/data/${workspaceId}/${groupId}/bundles/*" { capabilities = ${JSON.stringify(capabilities)} }`});
   const issued=await vaultApi("/auth/token/create","POST",{policies:[policy],no_default_policy:true,ttl:"2h"});
+  const history = "/lab/" + name + "/credential-history";
+  fs.mkdirSync(history, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(history + "/" + crypto.randomUUID() + ".vault-token", issued.auth.client_token, { mode: 0o600 });
   fs.writeFileSync("/lab/"+name+"/material-token",issued.auth.client_token,{mode:0o600});
   fs.chmodSync("/lab/"+name+"/material-token",0o600);
 }
