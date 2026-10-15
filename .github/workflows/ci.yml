@@ -448,6 +448,7 @@ jobs:
               await client.query('CREATE DATABASE pr329_distribution_upgrade_ci_test');
               await client.query('CREATE DATABASE pr329_review_distribution_ci_test');
               await client.query('CREATE DATABASE pr329_final_distribution_ci_test');
+              await client.query('CREATE DATABASE wildcard_candidate_ci_test');
             } finally {
               await client.end();
             }
@@ -455,6 +456,15 @@ jobs:
           main().catch(error => { console.error(error.message); process.exitCode = 1; });
           NODE
           node --test --test-force-exit tests/postgres/distribution-migration-upgrade.test.js
+      - name: Replay all supported immutable migration histories
+        run: pnpm exec mocha --no-config tests/integration/certops-distribution-upgrade.test.js --timeout 120000 --exit
+      - name: Fence pinned rollback identities and late deployment evidence
+        env:
+          DB_NAME: wildcard_candidate_ci_test
+          CERTOPS_ENABLED: "true"
+        run: |
+          node apps/api/migrations/migrate.js
+          node --test --test-force-exit tests/wildcard-vault/postgres.test.cjs
       - name: Exercise rollout authorization and concurrent receipt transitions
         env:
           DB_NAME: pr329_review_distribution_ci_test

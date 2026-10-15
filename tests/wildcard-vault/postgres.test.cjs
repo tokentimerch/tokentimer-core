@@ -5,10 +5,11 @@ const crypto=require("node:crypto");
 const fs=require("node:fs");
 const path=require("node:path");
 // Hard fence: no default environment/database and no root .env loader.
-assert.equal(process.env.DB_HOST,"127.0.0.1");assert.equal(process.env.DB_PORT,"57470");
+assert.equal(process.env.DB_HOST,"127.0.0.1");assert.equal(process.env.DB_PORT,process.env.CI === "true" && process.env.DB_NAME === "wildcard_candidate_ci_test" ? process.env.TT_TEST_DB_PORT || "5432" : "57470");
 assert.match(process.env.DB_NAME||"",/^wildcard_candidate_/);
 process.env.ENFORCE_CERTOPS_LIMITS="true";
 const apiRoot=process.env.TT_WILDCARD_API_ROOT || path.resolve(__dirname,"../../apps/api");
+const isCloud = fs.existsSync(path.join(apiRoot,"services/certops/renewalSchedulerSweep.js"));
 const {pool}=require(path.join(apiRoot,"db/database"));
 const material=require(path.join(apiRoot,"services/certops/materialDistribution"));
 const operations=require(path.join(apiRoot,"services/certops/distributionOperations"));
@@ -27,14 +28,14 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   const workspaceId=crypto.randomUUID();
   const actor=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Distribution fixture','fixture-only','local') RETURNING id`,[`${workspaceId}@example.test`])).rows[0].id;
   const approver=(await pool.query(`INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Approver fixture','fixture-only','local') RETURNING id`,[`approver-${workspaceId}@example.test`])).rows[0].id;
-  await pool.query(`INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Isolated distribution',$2,$3)`,[workspaceId,actor,process.env.TT_WILDCARD_API_ROOT?"pro":"oss"]);
+  await pool.query(`INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Isolated distribution',$2,$3)`,[workspaceId,actor,isCloud?"pro":"oss"]);
   // The Cloud candidate advances its Core baseline. Exercise its real upgraded
   // inventory name constraint as well as the material tables below.
   const nameInsert="INSERT INTO tokens(user_id,workspace_id,created_by,name,expiration,type,category) VALUES($1,$2,$1,$3,'2027-01-01','other','general') RETURNING name";
   for(const name of ["x","x".repeat(255)]) assert.equal((await pool.query(nameInsert,[actor,workspaceId,name])).rows[0].name,name);
   await assert.rejects(pool.query(nameInsert,[actor,workspaceId," \t\n "]),{code:"23514"});
   await assert.rejects(pool.query(nameInsert,[actor,workspaceId,"x".repeat(256)]),{code:"22001"});
-  if(process.env.TT_WILDCARD_API_ROOT) {
+  if(isCloud) {
     const {migrations,applyMigrationSql,applyPostCommitSql}=require(path.join(apiRoot,"migrations/migrate.js"));
     const nameMigration=migrations.find(row=>row.version===85),upgrade=await pool.connect();
     assert.equal(nameMigration.name,"inventory_name_length");
@@ -58,11 +59,11 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   async function agent(){return (await pool.query(`INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash)
     VALUES($1,$2,'0.1.0','1.0.0',$3,$4) RETURNING id`,[workspaceId,crypto.randomUUID(),`ttagent_${crypto.randomBytes(8).toString("hex")}`,crypto.randomBytes(32).toString("hex")])).rows[0].id;}
   const issuer=await agent(),consumerA=await agent(),consumerB=await agent();
-  const request={workspaceId,...(process.env.TT_WILDCARD_API_ROOT?{workspacePlan:"pro"}:{}),requestedByUserId:actor,assignedAgentId:issuer,idempotencyKey:`issue-${workspaceId}`,
+  const request={workspaceId,...(isCloud?{workspacePlan:"pro"}:{}),requestedByUserId:actor,assignedAgentId:issuer,idempotencyKey:`issue-${workspaceId}`,
     payload:{target:{type:"domain",reference:cert.commonName},sans:cert.subjectAltNames,
       caEndpoint:"https://pebble:14000/dir",commandRef:"certbot",dnsProvider:"pebble-challtestsrv",dnsZone:"example.com",keyAlgorithm:"rsa",keySize:2048,keyRotation:true,
       publicationDestination:{materialStoreRef:"customer",issuanceProfileRef:"wildcard",profileRevision:1}}};
-  if(process.env.TT_WILDCARD_API_ROOT) {
+  if(isCloud) {
     await assert.rejects(operations.transaction(client=>createCertificateIssuanceJob({...request,workspacePlan:"free",client})),{code:"CERTOPS_MANAGED_CERT_LIMIT"});
     assert.equal((await pool.query("SELECT COUNT(*)::int n FROM managed_certificates WHERE workspace_id=$1",[workspaceId])).rows[0].n,0);
   }
@@ -109,7 +110,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   await assert.rejects(pool.query("UPDATE certificate_jobs SET distribution_request_hash=repeat('0',64) WHERE workspace_id=$1 AND id=$2",[workspaceId,approval.id]),/immutable/);
   assert.equal((await operations.transaction(client=>material.createRolloutSnapshot({client,workspaceId,groupId,materialVersionId,approvalJobId:approval.id,approvedIntentHash:material.hashIntent(approvalIntent)}))).rolloutId,snapshot.rolloutId);
   await assert.rejects(pool.query(`UPDATE certops_consumer_deployments SET assigned_agent_id=$2 WHERE rollout_id=$1`,[snapshot.rolloutId,issuer]),/immutable/);
-  if(process.env.TT_WILDCARD_API_ROOT) {
+  if(isCloud) {
     const {pathToFileURL}=require("node:url");
     const worker=await import(pathToFileURL(path.resolve(apiRoot,"../worker/src/certops-scheduler-placeholder.js")));
     await worker.drainMaterialDistributionOutbox({maxRows:20});
@@ -154,7 +155,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal(retryIntent.jobId,child.id);assert.notEqual(retryIntent.claimId,child.claim_id);
   resultBody={...resultBody,claimId:retryIntent.claimId,nonce:retryIntent.nonce,
     deploymentReceipt:{...deployed,observedAt:new Date().toISOString()}};
-  if(process.env.TT_WILDCARD_API_ROOT) {
+  if(isCloud) {
     await pool.query("UPDATE workspaces SET is_frozen=true,plan='free' WHERE id=$1",[workspaceId]);
     await assert.rejects(operations.requestRollout({workspaceId,groupId,materialVersionId,actorUserId:actor,idempotencyKey:"frozen-check"}),{code:"WORKSPACE_FROZEN"});
   }
@@ -163,7 +164,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   const reconciled=(await pool.query("SELECT needs_operator_reconciliation,reconciliation_reason FROM certificate_jobs WHERE id=$1",[child.id])).rows[0];
   assert.equal(reconciled.needs_operator_reconciliation,false,"fresh current deployment proof resolves the retried uncertain effect");
   assert.equal(reconciled.reconciliation_reason,null);
-  if(process.env.TT_WILDCARD_API_ROOT)await pool.query("UPDATE workspaces SET is_frozen=false,plan='pro' WHERE id=$1",[workspaceId]);
+  if(isCloud)await pool.query("UPDATE workspaces SET is_frozen=false,plan='pro' WHERE id=$1",[workspaceId]);
   await operations.transaction(client=>operations.advanceRollout(client,workspaceId,groupId,snapshot.rolloutId));
   const matrix=await material.consumerMatrix({client:pool,workspaceId,groupId});assert.equal(matrix.find(r=>r.binding_id===bindingA).converged,true);assert.equal(matrix.find(r=>r.binding_id===bindingB).observed_material_version_id,null);
   assert.equal((await operations.putBinding({workspaceId,groupId,bindingId:bindingA,actorUserId:actor,binding:sameBinding})).authorization_revision,1);
@@ -187,7 +188,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   // Exercise the production scheduler against the profile persisted by the
   // publication receipt. Renewal has the same source/issuer/store scope but
   // allocates a distinct immutable material object; consumers add no sources.
-  const scheduler=require(path.join(apiRoot,process.env.TT_WILDCARD_API_ROOT?"services/certops/renewalSchedulerSweep":"services/certops/renewalScheduler"));
+  const scheduler=require(path.join(apiRoot,isCloud?"services/certops/renewalSchedulerSweep":"services/certops/renewalScheduler"));
   const swept=await scheduler.runRenewalSchedulerSweep({dbPool:pool,env:{...process.env,CERTOPS_RENEWAL_THRESHOLD_DAYS:"3650"}});
   assert.deepEqual(swept.errors,[]);assert.equal(swept.created,1);
   const renewed=(await pool.query("SELECT * FROM certificate_jobs WHERE workspace_id=$1 AND operation='renew' AND subject_id=$2",[workspaceId,job.subject_id])).rows[0];
@@ -265,7 +266,7 @@ test("real PostgreSQL publication, renewal identities, approvals, frozen waves, 
   assert.equal((await operations.requestRollout(rolloutRequest)).id,approval.id);
   await assert.rejects(operations.requestRollout({...rolloutRequest,idempotencyKey:`invalid-now-${workspaceId}`}),{code:"CERTOPS_ROLLOUT_VERSION_INVALID"});
   const otherWorkspace=crypto.randomUUID();
-  await pool.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Other isolated tenant',$2,$3)",[otherWorkspace,actor,process.env.TT_WILDCARD_API_ROOT?"pro":"oss"]);
+  await pool.query("INSERT INTO workspaces(id,name,created_by,plan) VALUES($1,'Other isolated tenant',$2,$3)",[otherWorkspace,actor,isCloud?"pro":"oss"]);
   await assert.rejects(operations.requestRollout({...rolloutRequest,workspaceId:otherWorkspace}),{code:"CERTOPS_DISTRIBUTION_NOT_FOUND"});
   await assert.rejects(operations.putBinding({workspaceId:otherWorkspace,groupId,bindingId:bindingA,actorUserId:actor,binding:sameBinding}),{code:"CERTOPS_DISTRIBUTION_NOT_FOUND"});
   await operations.transaction(async client=>{await client.query(`UPDATE certops_management_periods SET ended_at=clock_timestamp(),ended_reason='retired' WHERE workspace_id=$1 AND id=$2`,[workspaceId,intent.managementPeriodId]);});
@@ -277,9 +278,9 @@ test("terminal never-executed publications release transactionally; uncertain at
   const {rejectJob}=require(path.join(apiRoot,"services/certops/jobApprovals"));
   const workspaceId=crypto.randomUUID();
   const actor=(await pool.query("INSERT INTO users(email,display_name,password_hash,auth_method) VALUES($1,'Release fixture','fixture-only','local') RETURNING id",[`${workspaceId}@example.test`])).rows[0].id;
-  await pool.query("INSERT INTO workspaces(id,name,created_by,plan,certops_require_approval_always) VALUES($1,'Isolated releases',$2,$3,true)",[workspaceId,actor,process.env.TT_WILDCARD_API_ROOT?"pro":"oss"]);
+  await pool.query("INSERT INTO workspaces(id,name,created_by,plan,certops_require_approval_always) VALUES($1,'Isolated releases',$2,$3,true)",[workspaceId,actor,isCloud?"pro":"oss"]);
   const issuer=(await pool.query("INSERT INTO certops_agents(workspace_id,agent_id,agent_version,protocol_version,credential_prefix,credential_hash) VALUES($1,$2,'0.17.3','1.0.0',$3,$4) RETURNING id",[workspaceId,crypto.randomUUID(),`ttagent_${crypto.randomBytes(8).toString("hex")}`,crypto.randomBytes(32).toString("hex")])).rows[0].id;
-  const first=await operations.transaction(client=>createCertificateIssuanceJob({client,workspaceId,idempotencyKey:`release-${workspaceId}`,...(process.env.TT_WILDCARD_API_ROOT?{workspacePlan:"pro"}:{}),requestedByUserId:actor,assignedAgentId:issuer,
+  const first=await operations.transaction(client=>createCertificateIssuanceJob({client,workspaceId,idempotencyKey:`release-${workspaceId}`,...(isCloud?{workspacePlan:"pro"}:{}),requestedByUserId:actor,assignedAgentId:issuer,
     payload:{target:{type:"domain",reference:cert.commonName},sans:cert.subjectAltNames,caEndpoint:"https://pebble:14000/dir",commandRef:"certbot",dnsProvider:"pebble-challtestsrv",dnsZone:"example.com",keyAlgorithm:"rsa",keySize:2048,
       publicationDestination:{materialStoreRef:"customer",issuanceProfileRef:"wildcard",profileRevision:1}}}));
   const original=first.job,groupId=original.payload.publication.groupId;

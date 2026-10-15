@@ -54,9 +54,10 @@ test("an installation at main's AD CS migration 72 upgrades to distribution with
       { version: 70, name: "certops_certificate_enrollments" },
       { version: 71, name: "certops_adcs_evidence_types" },
       { version: 72, name: "certops_profile_issuer" },
-      { version: 73, name: "certops_material_distribution" },
-      { version: 74, name: "certops_distribution_review" },
-      { version: 75, name: "certops_distribution_transfer" },
+      { version: 73, name: "certops_job_alert_context" },
+      { version: 74, name: "certops_material_distribution" },
+      { version: 75, name: "certops_distribution_review" },
+      { version: 76, name: "certops_distribution_transfer" },
     ]);
     const constraints =
       await pool.query(`SELECT conname, pg_get_constraintdef(oid) AS definition
