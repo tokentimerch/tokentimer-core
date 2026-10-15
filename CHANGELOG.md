@@ -32,6 +32,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Windows agent service stop now handles the SCM shutdown signal through the agent's normal shutdown path, allowing pending console output to drain instead of terminating Node immediately.
+
 - Certificate deployment backups keep distinct predecessor files when deployments share a clock tick or destinations share a filename. Configured backup retention preserves the current rollback backup and only prunes backups belonging to that destination. **Operator guidance:** historical timestamp-only backups remain on disk because their destination cannot be safely identified; review them before removing obsolete copies.
 
 - The Windows installer treats paths containing literal brackets as exact paths during installation, upgrade, rollback and removal, preserving similarly named sibling directories.

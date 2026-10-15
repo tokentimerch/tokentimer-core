@@ -5,6 +5,11 @@ GitHub-hosted Ubuntu 22.04 and 24.04 runners. It provisions a disposable
 migrated PostgreSQL/API stack, then runs the real protocol suite and a named
 installer/systemd journey. No permanent runner or Windows/Azure lab is needed.
 
+The same workflows also require [installed-service file discovery](installed-file-discovery.md),
+with actual public observation/inventory checks and exact configuration restoration.
+If that restoration or later native service drainage is unknown, cleanup fails
+and preserves owned host/database state instead of deleting recovery evidence.
+
 The journey invokes the product `install-agent.sh` against the local candidate
 package with a real single-use API bootstrap token. It independently checks
 registration, removal of `bootstrap.env`, persisted configuration and credential

@@ -34,6 +34,10 @@ function cleanup() {
   assert.equal(receipt.fixtureSha256, crypto.createHash("sha256").update(fs.readFileSync(
     path.resolve(__dirname, "../tests/e2e/linux-systemd-real-journey.js"))).digest("hex"));
   const writeFixture=require("./certops-linux-systemd-ownership").validateWriteFixture(receipt.writeFixture);
+  // The immutable original plan requires positive restoration, even if a later
+  // active marker disappears. Missing completion is never permission to erase
+  // a private config backup or unknown installed-service state.
+  require("../tests/e2e/helpers/certops-linux-installed-discovery").assertCompletion(receipt,process.env.RUNNER_TEMP);
   assert.equal(writeFixture.probeSha256,crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../tests/e2e/helpers/linux-systemd-write-probe.js"))).digest("hex"));
   require("./certops-linux-systemd-ownership").assertNoSymlinkTargets([receipt.root,`/etc/systemd/system/${receipt.unit}`,`/etc/systemd/system/${receipt.unit}.d`,"/etc/polkit-1/rules.d/50-tokentimer-agent.rules",writeFixture.root]);
   const uninstall = spawnSync("sh", [receipt.installer, "--uninstall"], { stdio: "ignore", timeout: 60000 });
@@ -44,6 +48,8 @@ function cleanup() {
     assert.equal(load.stdout.trim(), "not-found");
   }
   assert.equal(Number(pid.stdout.trim()), 0, "never remove state under a running service");
+  const cgroupMembers=`/sys/fs/cgroup/system.slice/${receipt.unit}/cgroup.procs`;
+  if(fs.existsSync(cgroupMembers))assert.equal(fs.readFileSync(cgroupMembers,"utf8").trim(),"","Preserve state while the owned systemd cgroup still has processes");
   for (const target of [receipt.root, `/etc/systemd/system/${receipt.unit}.d`,writeFixture.root]) {
     assert.equal(fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink() || false, false);
     fs.rmSync(target, { recursive: true, force: true });

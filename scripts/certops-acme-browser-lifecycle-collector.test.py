@@ -23,6 +23,7 @@ class LifecycleProjection(unittest.TestCase):
         value["localPrivateState"] = "must-not-survive"
         result = collector.sanitized_report(value, {proof.SUITE}, set())
         self.assertEqual(result[proof.FIELD], value[proof.FIELD])
+        self.assertEqual(result["nativeFileDiscoveryRefusals"], value["nativeFileDiscoveryRefusals"])
         self.assertNotIn("must-not-survive", json.dumps(result))
         proof.verify_workflow(value, ".github/workflows/certops-acme-browser-lifecycle.yml")
         for wrong in (None, ".github/workflows/certops-real-acme.yml", ".github/workflows/certops-acme-native-console.yml"):
@@ -42,6 +43,24 @@ class LifecycleProjection(unittest.TestCase):
             value[proof.FIELD].update(change)
             with self.assertRaises(ValueError):
                 proof.project_report(value)
+
+    def test_native_discovery_is_closed_nonroot_and_requires_all_actual_observations(self):
+        original = report()
+        for flag in proof.DISCOVERY_FLAGS:
+            for wrong in (False, 1, None):
+                value = copy.deepcopy(original)
+                value["nativeFileDiscoveryRefusals"][flag] = wrong
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(value, {proof.SUITE}, set())
+        for change in ({"uid": 0}, {"gid": True}, {"positiveScanCount": 1}, {"positiveScanCount": 2.5}, {"positiveFingerprint": "f" * 64}, {"privatePath": "secret"}):
+            value = copy.deepcopy(original)
+            value["nativeFileDiscoveryRefusals"].update(change)
+            with self.assertRaises(ValueError):
+                proof.project_report(value)
+        value = copy.deepcopy(original)
+        del value["nativeFileDiscoveryRefusals"]
+        with self.assertRaises(ValueError):
+            proof.project_report(value)
 
 
 if __name__ == "__main__":

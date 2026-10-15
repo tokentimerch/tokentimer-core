@@ -95,6 +95,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Production interval worker and native AD CS renewals](adcs/background-worker-renewals.md)
 - [Live same-template machine Enroll permission denial and restoration](adcs/live-machine-enroll-acl.md)
 - [Hierarchy HTTP intermediate CRL fault and native recovery](adcs/http-intermediate-crl-fault.md)
+- [HTTP-only leaf CRL endpoint availability and restored-publication renewal](adcs/http-only-leaf-crl.md): real installed renewals and independent native chain probes; signed-agent fault continuation and OCSP remain separate.
 - [Manual hierarchy Windows and display-language environments](adcs/hierarchy-environments.md)
 - [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
 - [Experimental new IIS binding before durable completion](adcs/bound-install-recovery-experiment.md)
@@ -114,6 +115,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Real Linux ACME qualification](linux/linux-acme-qualification.md)
 - [Manual and scheduled Linux ACME key reuse](linux/acme-key-reuse.md)
 - [Installed Linux agent qualification](linux/linux-systemd-qualification.md)
+- [Installed Linux file discovery and guarded restoration](linux/installed-file-discovery.md)
 - [Same-candidate Linux installer reapplication](linux/linux-systemd-reapply-qualification.md)
 - [Published Linux package upgrade and preserved service state](linux/linux-published-upgrade-qualification.md)
 - [Native nonroot filesystem backup permission refusal](linux/filesystem-backup-dac.md)
@@ -128,6 +130,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Real DNS-hook routing qualification](dns-acme/dns-routing-qualification.md)
 - [Two configured DNS resolver views](dns-acme/dns-resolver-views.md)
 - [Native ACME browser issue and renewal lifecycle](linux/acme-browser-job-lifecycle.md)
+- [Unprivileged native file discovery refusals](linux/native-file-discovery-refusals.md)
 - [Real agent/API/ACME filesystem qualification](dns-acme/real-acme-qualification.md)
 - [ACME stage transport refusal](dns-acme/stage-transport-refusal.md)
 - [Actual native ACME browser console](linux/acme-native-browser-console.md)
@@ -205,3 +208,7 @@ The [real-day interrupted deletion case](windows/resident-retention24h-interrupt
 - [Installed retention configuration refusals](windows/retention-configuration-refusals.md) — real startup validation boundaries with native custody preservation.
 
 - [Installed credential startup refusals](windows/credential-startup-refusals.md) — real protected-reader failures, preserved identity/custody and exact repair.
+
+- [WebHosting expiry-based certificate and key reclamation](windows/webhosting-expiry-reclamation.md) — separate manual hosted Windows lane, without Azure or a full-window timer claim.
+
+- [Installed service controls during an actual certificate phase](windows/active-certificate-service-controls.md) — held real DNS operation, unchanged claim/journal/CNG and trusted serving leaf; no interruption or default-grace claim.

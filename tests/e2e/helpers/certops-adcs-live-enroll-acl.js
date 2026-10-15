@@ -33,6 +33,7 @@ const REQUIRED_SOURCES = Object.freeze([
   "infra/certops-adcs/template-enroll-acl.ps1",
   "infra/certops-adcs/templates.ps1",
   "packages/agent/src/platform/index.js",
+  "packages/agent/src/issuers/adcs.js",
   "scripts/certops_adcs_live_enroll_acl_proof.py",
   "infra/certops-adcs/owned-ca-checkpoint.ps1",
   "infra/certops-adcs/owned-request-observation.ps1",
@@ -76,6 +77,26 @@ function verifyInstalledEvidence(job, evidence, leaf) {
     ),
     "Actual current claim must verify the independently observed installed leaf",
   );
+}
+function verifyNativeRequestId(independent, ...reported) {
+  assert.ok(
+    Number.isInteger(independent) &&
+      independent > 0 &&
+      independent <= 0xffffffff,
+    "Independent native CA RequestId is mandatory",
+  );
+  // Immediate issued CMC deliberately omits RequestId. Never invent one in
+  // control-plane or journal state; compare every ID that actually exists.
+  for (const value of reported)
+    if (value != null) {
+      assert.match(String(value), /^[1-9][0-9]{0,9}$/);
+      assert.equal(
+        String(value),
+        String(independent),
+        "Reported CA RequestId mismatch",
+      );
+    }
+  return independent;
 }
 function verifyProof(proof) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
@@ -444,11 +465,17 @@ async function qualifyLiveEnrollAcl(context) {
           normalized(leaf.fingerprint256),
         ]);
         assert.equal(request.disposition, 20);
-        assert.ok(
-          row.request_id != null,
-          "Installed enrollment must retain its native CA RequestId",
+        const installedJournal = readEnrollmentJournal(
+          configDir,
+          successful.enrollmentId,
         );
-        assert.equal(String(row.request_id), String(request.requestId));
+        assert.equal(installedJournal.kind, "valid");
+        assert.equal(installedJournal.journal.jobId, successful.jobId);
+        verifyNativeRequestId(
+          request.requestId,
+          row.request_id,
+          installedJournal.journal.requestId,
+        );
         counts.push(checkpoint().nativeTotalRequestCount);
         assert.equal(counts[2] - counts[1], 1);
         const job = (
@@ -542,5 +569,6 @@ module.exports = {
   REQUIRED_SOURCES,
   verifyProof,
   verifyInstalledEvidence,
+  verifyNativeRequestId,
   qualifyLiveEnrollAcl,
 };

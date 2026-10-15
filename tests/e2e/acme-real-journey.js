@@ -63,7 +63,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   const discoveryDir=path.join(workDir,"discovery");
   let agent, certificateId, jobId, tlsServer, primaryError, publicSession, gateway, barrierDirectory;
   const ownedTlsSockets=new Set();
-  let stageCases, nativeConsole, nativeLifecycle;
+  let stageCases, nativeConsole, nativeLifecycle, nativeDiscovery;
   const ownedJobIds=[], ownedCertificateIds=[], ownedWorkers=[], ownedBrowserResources=[];
   try {
   fs.mkdirSync(configDir, { mode: 0o700 });
@@ -118,9 +118,14 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     fs.writeFileSync(path.join(discoveryDir,"mixed.pem"),publicFixture+privateFixture,{mode:0o600});
     fs.writeFileSync(path.join(discoveryDir,"oversized.pem"),Buffer.alloc(1024*1024+1,65),{mode:0o600});
     const discoveryFingerprint=new crypto.X509Certificate(publicFixture).fingerprint256.replace(/:/g,"").toLowerCase();
+    if(process.env.CERTOPS_NATIVE_ACME_LIFECYCLE === "1") {
+      nativeDiscovery=require("./helpers/certops-native-file-discovery").createRefusalFixture({workDir,discoveryDir,publicCertificate:fs.readFileSync(proxyCert)});
+      nativeDiscovery.prepare();
+    }
     agent = spawn(process.execPath, [path.join(repoRoot, "packages/agent/bin/tokentimer-agent.js")], {
       cwd: repoRoot, stdio: "ignore", env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", ...(process.env.NODE_PATH ? { NODE_PATH: process.env.NODE_PATH } : {}), TOKENTIMER_AGENT_CONFIG_DIR: configDir, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN: plaintextToken, TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID: String(token.id) },
     });
+    if(nativeDiscovery)nativeDiscovery.observeAgent(agent);
     await waitUntil(async () => {
       assert.equal(agent.exitCode, null, "real agent process exited during registration");
       return (await pool.query("SELECT 1 FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2 AND retired_at IS NULL", [workspaceId, agentId])).rows.length > 0;
@@ -138,6 +143,19 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     });
     publicSession = await require("./helpers/certops-api-fixture").createApiFixture(baseUrl);
     await pool.query("INSERT INTO workspace_memberships(workspace_id,user_id,role) VALUES ($1,$2,'admin')", [workspaceId, publicSession.userId]);
+    if(nativeDiscovery)await runScenario("real-native-unprivileged-file-discovery-refusals",async()=>{
+      const preparedAt = new Date().toISOString();
+      await waitUntil(async()=>{
+        assert.equal(agent.exitCode,null);assert.equal(agent.signalCode,null);
+        nativeDiscovery.assertUnchanged();
+        const rows=(await pool.query("SELECT metadata,observed_at FROM certificate_evidence WHERE workspace_id=$1 AND metadata->>'agentId'=$2 AND metadata->>'eventType'='certificate.observed' AND observed_at >= $3::timestamptz",[workspaceId,agentId,preparedAt])).rows;
+        if(new Set(rows.filter(row=>row.metadata.fingerprintSha256===discoveryFingerprint).map(row=>new Date(row.observed_at).toISOString())).size<2)return false;
+        const inventory=await publicSession.request(`/api/v1/workspaces/${workspaceId}/certops/certificate-identities?limit=100&offset=0`,"GET");
+        assert.equal(inventory.status,200);
+        nativeDiscovery.recordScans({rows,inventory:inventory.body,positiveFingerprint:discoveryFingerprint,negativeFingerprint:nativeDiscovery.fingerprint,positivePath:certificateFile,agentId,preparedAt});
+        return true;
+      },30000);
+    });
     for (const failure of ["unavailable", "rate-limited", "malformed"]) {
     gateway.setFailure(failure);
     const requestsBefore = gateway.snapshot().perStage.directory.refused;
@@ -378,6 +396,11 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       catch { agent.kill("SIGKILL"); await waitUntil(() => agent.exitCode !== null || agent.signalCode !== null, 5000); }
     } });
     await cleanup(async () => { if (gateway) await gateway.close(); });
+    await cleanup(async()=>{if(nativeDiscovery){
+      const proof=await nativeDiscovery.finishAfterAgentDrain();
+      nativeDiscovery.resource.assertCleanupSafe();
+      if(proof){const sidecar=path.join(repoRoot,"qualification-results/native-file-discovery-proof.json");fs.writeFileSync(sidecar,JSON.stringify(proof),{flag:"wx",mode:0o600});}
+    }});
     await cleanup(()=>require("./helpers/certops-acme-background-runner").assertCleanupSafe(workDir));
     for (const browser of ownedBrowserResources) await cleanup(() => {
       assert.equal(browser.hasLiveChild(), false, "Native console browser remains alive");

@@ -8,6 +8,8 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const tls = require("node:tls");
+const { isDeepStrictEqual } = require("node:util");
+const SUPPORTED_STORES = Object.freeze(["My", "WebHosting"]);
 const { freePort } = require("./iis-fixture");
 const {
   generateCsrViaCng,
@@ -16,11 +18,14 @@ const {
   removeAbandonedKeyContainer,
 } = require("../../src/windows-cert-store");
 const { deployIisBinding } = require("../../src/windows-iis");
+const { listHttpSysBindings } = require("../../src/windows-discovery");
 const retention = require("../../src/windows-retention");
 const { runWindowsRetentionSweep } = require("../../src/index");
 async function trustedLeaf(port, ca, expected) {
   const once = () =>
     new Promise((resolve, reject) => {
+      let verified = false,
+        failure;
       const socket = tls.connect(
         {
           host: "127.0.0.1",
@@ -36,18 +41,27 @@ async function trustedLeaf(port, ca, expected) {
               socket.getPeerCertificate().fingerprint.replace(/:/g, ""),
               expected,
             );
-            resolve();
+            verified = true;
           } catch (error) {
-            reject(error);
+            failure = error;
           } finally {
             socket.destroy();
           }
         },
       );
+      socket.once("error", (error) => {
+        failure = error;
+      });
+      socket.once("close", () =>
+        verified && !failure
+          ? resolve()
+          : reject(
+              failure || new Error("Trusted retention TLS drainage unproven"),
+            ),
+      );
       socket.setTimeout(10000, () =>
         socket.destroy(new Error("Trusted retention handshake timed out")),
       );
-      socket.once("error", reject);
     });
   const deadline = Date.now() + 20000;
   let failure;
@@ -98,7 +112,16 @@ async function qualifyElapsedRetention({
   replacementPem,
   replacementThumbprint,
   retentionHours = 24,
+  store = "My",
 }) {
+  assert.ok(
+    SUPPORTED_STORES.includes(store),
+    "Unsupported native retention store",
+  );
+  assert.ok(
+    retentionHours === 24 || store === "My",
+    "Policy-boundary controls retain their existing My-store scope",
+  );
   assert.ok([24, 168, 720].includes(retentionHours));
   const policyVariant = retentionHours !== 24;
   const fixtureId = crypto.randomUUID();
@@ -111,12 +134,45 @@ async function qualifyElapsedRetention({
   let siteOwned = false,
     endpointOwned = false,
     primaryError,
-    ownedInterruption;
+    ownedInterruption,
+    elapsedResult,
+    siteReceipt,
+    endpointReceipt;
+  const endpoint = async () => {
+    const found = await listHttpSysBindings();
+    assert.equal(found.ok, true, "Exact native endpoint inventory required");
+    const entries = found.bindings.filter(
+      (entry) =>
+        entry.keyedBy === "ipport" && entry.ipPort === `127.0.0.1:${port}`,
+    );
+    assert.ok(entries.length <= 1);
+    return entries[0] || null;
+  };
+  const readSite = () =>
+    JSON.parse(
+      powershell(
+        `Import-Module WebAdministration;$w=@(Get-Website -Name '${site}');if($w.Count -ne 1){throw 'Exact owned retention site required'};$b=@(Get-WebBinding -Name '${site}');if($b.Count -ne 1){throw 'Exact sole retention binding required'};$h=$b[0].certificateHash;if($h -is [byte[]]){$h=[BitConverter]::ToString($h).Replace('-','')};@{id=[int]$w[0].id;physicalPath=[string]$w[0].physicalPath;protocol=[string]$b[0].protocol;coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;hash=([string]$h).ToUpperInvariant();store=[string]$b[0].certificateStoreName}|ConvertTo-Json -Compress`,
+      ),
+    );
+  const recordBindingOwner = async (expected) => {
+    siteReceipt = readSite();
+    assert.equal(siteReceipt.hash, expected);
+    assert.equal(siteReceipt.store, store);
+    assert.equal(siteReceipt.physicalPath, directory);
+    assert.equal(siteReceipt.coordinates, `127.0.0.1:${port}:`);
+    endpointReceipt = await endpoint();
+    assert.ok(
+      endpointReceipt &&
+        endpointReceipt.thumbprint === expected &&
+        endpointReceipt.storeName.toLowerCase() === store.toLowerCase(),
+      "Exact native retention endpoint/store required",
+    );
+  };
   const nativeCustody = (thumb) => {
     assert.match(thumb, /^[A-F0-9]{40}$/);
     return JSON.parse(
       powershell(
-        `$c=Get-Item 'Cert:\\LocalMachine\\My\\${thumb}';$k=$null;try{$k=if($c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1'){[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)}else{[Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)};@{name=$k.Key.KeyName;unique=$k.Key.UniqueName;exportPolicy=[string]$k.Key.ExportPolicy;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;der=[Convert]::ToBase64String($c.RawData);expiry=$c.NotAfter.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
+        `$c=Get-Item 'Cert:\\LocalMachine\\${store}\\${thumb}';$k=$null;try{$k=if($c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1'){[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)}else{[Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c)};@{name=$k.Key.KeyName;unique=$k.Key.UniqueName;exportPolicy=[string]$k.Key.ExportPolicy;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;der=[Convert]::ToBase64String($c.RawData);expiry=$c.NotAfter.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`,
       ),
     );
   };
@@ -231,7 +287,7 @@ async function qualifyElapsedRetention({
       item.thumbprint = item.certificate.fingerprint.replace(/:/g, "");
       assert.equal(
         powershell(
-          `[bool](Test-Path 'Cert:\\LocalMachine\\My\\${item.thumbprint}')`,
+          `[bool](Test-Path 'Cert:\\LocalMachine\\${store}\\${item.thumbprint}')`,
         ),
         "False",
       );
@@ -241,13 +297,16 @@ async function qualifyElapsedRetention({
           await acceptCertificateViaCng({
             certificatePem: item.pem,
             workDir: directory,
-            store: "My",
+            store,
           })
         ).ok,
         true,
       );
       item.custody = nativeCustody(item.thumbprint);
-      assert.equal(item.custody.name, containerName);
+      assert.ok(
+        item.custody.name === containerName,
+        "Original owned native CNG association changed",
+      );
       assert.equal(item.custody.exportPolicy, "None");
       assert.equal(item.custody.machine, true);
       item.nativeExpiry = item.custody.expiry;
@@ -274,6 +333,11 @@ async function qualifyElapsedRetention({
       ]).size,
       3,
     );
+    assert.equal(
+      await endpoint(),
+      null,
+      "Refuse existing native retention endpoint independently of netsh diagnostics",
+    );
     powershell(
       `& netsh.exe http show sslcert ipport=127.0.0.1:${port} | Out-Null;if($LASTEXITCODE -eq 0){throw 'Refuse preexisting elapsed-retention endpoint'};Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${site}'){throw 'Refuse preexisting fixture site'}`,
     );
@@ -285,10 +349,12 @@ async function qualifyElapsedRetention({
     powershell(
       `Import-Module WebAdministration;New-Website -Name '${site}' -PhysicalPath '${quote(directory)}' -IPAddress '127.0.0.1' -Port ${port} -Ssl | Out-Null`,
     );
+    siteReceipt = readSite();
     endpointOwned = true;
     powershell(
-      `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','My')`,
+      `Import-Module WebAdministration;(Get-WebBinding -Name '${site}' -Protocol https|Where-Object {$_.bindingInformation -eq '127.0.0.1:${port}:'}).AddSslCertificate('${a.thumbprint}','${store}')`,
     );
+    await recordBindingOwner(a.thumbprint);
     await trustedLeaf(port, ca, a.thumbprint);
     const stateDir = path.join(directory, "state"),
       ledgerDir = path.join(stateDir, "windows-retention");
@@ -303,13 +369,14 @@ async function qualifyElapsedRetention({
       assert.equal(
         (
           await deployIisBinding({
-            binding: { site, address: "127.0.0.1", port, store: "My" },
+            binding: { site, address: "127.0.0.1", port, store },
             certificatePem: replacement.pem,
             verifyTimeoutMs: 15000,
           })
         ).ok,
         true,
       );
+      await recordBindingOwner(replacement.thumbprint);
       await trustedLeaf(port, ca, replacement.thumbprint);
       old.cutover = new Date().toISOString();
       old.replacement = replacement.thumbprint;
@@ -321,7 +388,7 @@ async function qualifyElapsedRetention({
         verifiedCutoverAt: old.cutover,
         oldNotAfter: old.nativeExpiry,
         ownershipProvenance: "tokentimer_installed",
-        store: "My",
+        store,
       });
       old.deadline = retention.computeCleanupDeadline({
         verifiedCutoverAt: old.cutover,
@@ -342,12 +409,15 @@ async function qualifyElapsedRetention({
       );
     const finalBinding = binding();
     assert.equal(finalBinding.hash, replacementThumbprint);
-    assert.equal(finalBinding.store, "My");
+    assert.equal(finalBinding.store, store);
     const preserveReplacement = async () => {
       assert.deepEqual(binding(), finalBinding);
-      assert.deepEqual(
-        nativeCustody(replacementThumbprint),
-        replacementCustody,
+      assert.ok(
+        isDeepStrictEqual(
+          nativeCustody(replacementThumbprint),
+          replacementCustody,
+        ),
+        "Replacement native custody changed",
       );
       assert.ok(
         run("netsh.exe", [
@@ -438,13 +508,18 @@ async function qualifyElapsedRetention({
               thumbprint: target.thumbprint,
               containerName: target.containerName,
               retentionHours,
+              store,
             },
           );
         require("./retention-interrupted-process").verifyProof(
           interruptionDrain,
         );
         ownedInterruption = interruptionDrain;
-        const lockPath = path.join(stateDir, "windows-cert-store", "My.lock"),
+        const lockPath = path.join(
+            stateDir,
+            "windows-cert-store",
+            `${store}.lock`,
+          ),
           marker = fs.readFileSync(lockPath, "utf8").trim().split(/\r?\n/);
         assert.equal(marker.length, 3);
         assert.equal(marker[0], String(fault.pid));
@@ -452,7 +527,7 @@ async function qualifyElapsedRetention({
         assert.match(marker[2], /^[a-f0-9]{32}$/);
         assert.equal(
           powershell(
-            `[bool](Test-Path 'Cert:\\LocalMachine\\My\\${target.thumbprint}')`,
+            `[bool](Test-Path 'Cert:\\LocalMachine\\${store}\\${target.thumbprint}')`,
           ),
           "False",
         );
@@ -496,7 +571,7 @@ async function qualifyElapsedRetention({
     for (const item of predecessors) {
       assert.equal(
         powershell(
-          `[bool](Test-Path 'Cert:\\LocalMachine\\My\\${item.thumbprint}')`,
+          `[bool](Test-Path 'Cert:\\LocalMachine\\${store}\\${item.thumbprint}')`,
         ),
         "False",
       );
@@ -565,6 +640,7 @@ async function qualifyElapsedRetention({
     } else {
       verifyElapsedProof(proof);
       gate.report.nativeElapsedRetention = proof;
+      elapsedResult = proof;
     }
     fs.writeFileSync(
       path.join(
@@ -593,6 +669,42 @@ async function qualifyElapsedRetention({
     await require("./retention-interrupted-process").drainBeforeCleanup(
       workDir,
     );
+    // Refuse ALL native cleanup before deleting a site, endpoint or certificate
+    // if a supposedly owned coordinate now belongs to another object.
+    if (siteOwned) {
+      assert.ok(
+        siteReceipt,
+        "Partial site creation requires preserved ownership state",
+      );
+      assert.ok(
+        isDeepStrictEqual(readSite(), siteReceipt),
+        "Owned retention site was replaced or changed",
+      );
+    }
+    if (endpointOwned) {
+      assert.ok(
+        endpointReceipt,
+        "Unknown partial endpoint mutation must be preserved",
+      );
+      assert.ok(
+        isDeepStrictEqual(await endpoint(), endpointReceipt),
+        "Owned native retention endpoint was replaced or changed",
+      );
+    }
+    for (const item of predecessors)
+      if (item.certificateOwned) {
+        const exists = powershell(
+          `[string](Test-Path -LiteralPath 'Cert:\\LocalMachine\\${store}\\${item.thumbprint}')`,
+        );
+        assert.ok(exists === "True" || exists === "False");
+        if (exists === "True") {
+          assert.ok(
+            item.custody &&
+              isDeepStrictEqual(nativeCustody(item.thumbprint), item.custody),
+            "Owned predecessor native custody changed before cleanup",
+          );
+        }
+      }
     const failures = [],
       clean = (action) => {
         try {
@@ -617,7 +729,7 @@ async function qualifyElapsedRetention({
       if (item.certificateOwned)
         clean(() =>
           powershell(
-            `$p='Cert:\\LocalMachine\\My\\${item.thumbprint}';if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p};if(Test-Path -LiteralPath $p){throw 'Owned elapsed-retention certificate remains'}`,
+            `$p='Cert:\\LocalMachine\\${store}\\${item.thumbprint}';if(Test-Path -LiteralPath $p){Remove-Item -LiteralPath $p};if(Test-Path -LiteralPath $p){throw 'Owned elapsed-retention certificate remains'}`,
           ),
         );
       if (item.keyOwned)
@@ -643,5 +755,42 @@ async function qualifyElapsedRetention({
         { cause: primaryError },
       );
   }
+  if (elapsedResult)
+    return {
+      store,
+      storeReceipt: {
+        store,
+        nativeWebHostingCustodyObserved: store === "WebHosting",
+        nativeIisWebHostingStoreObserved: store === "WebHosting",
+        exactOwnedEngineCleanupVerified: true,
+      },
+      elapsed: elapsedResult,
+    };
 }
-module.exports = { qualifyElapsedRetention, verifyElapsedProof };
+function verifyElapsedStoreResult(value) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value));
+  assert.deepEqual(
+    Object.keys(value).sort(),
+    ["store", "storeReceipt", "elapsed"].sort(),
+  );
+  assert.ok(SUPPORTED_STORES.includes(value.store));
+  assert.equal(value.storeReceipt.store, value.store);
+  assert.equal(value.storeReceipt.exactOwnedEngineCleanupVerified, true);
+  assert.equal(
+    value.storeReceipt.nativeWebHostingCustodyObserved,
+    value.store === "WebHosting",
+  );
+  assert.equal(
+    value.storeReceipt.nativeIisWebHostingStoreObserved,
+    value.store === "WebHosting",
+  );
+  verifyElapsedProof(value.elapsed);
+  return true;
+}
+module.exports = {
+  qualifyElapsedRetention,
+  verifyElapsedProof,
+  SUPPORTED_STORES,
+  verifyElapsedStoreResult,
+  trustedLeaf,
+};

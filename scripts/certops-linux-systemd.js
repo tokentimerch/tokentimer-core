@@ -28,6 +28,7 @@ async function main() {
     env: { ...process.env, CERTOPS_E2E_REQUIRED: "1", CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED: "1", CERTOPS_REPORT_SCOPE: scope },
   });
   assert.equal(result.status, 0, "real Linux installer/systemd suite failed");
+  const discovery=JSON.parse(fs.readFileSync("qualification-results/linux-installed-file-discovery.json","utf8"));assert.equal(discovery.suite,"linux-installed-file-discovery");assert.deepEqual(require("./certops-qualification-report").verifyReport(discovery,["linux-installed-systemd-public-discovery"]),[]);require("../tests/e2e/helpers/certops-linux-installed-discovery").verifyProof(discovery.nativeInstalledFileDiscovery);
   const writeReport=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-writepath.json","utf8"));assert.equal(writeReport.suite,"linux-systemd-writepath");assert.deepEqual(require("./certops-qualification-report").verifyReport(writeReport,["linux-systemd-native-writepath-allowed-peer-erofs","linux-systemd-native-writepath-owned-cleanup"]),[]);
   if(process.env.CERTOPS_LINUX_PUBLISHED_INPUTS){const upgrade=JSON.parse(fs.readFileSync("qualification-results/linux-systemd-published-upgrade.json","utf8"));assert.equal(upgrade.suite,"linux-systemd-published-upgrade");assert.deepEqual(require("./certops-qualification-report").verifyReport(upgrade),[]);require("../tests/e2e/helpers/linux-systemd-published-upgrade").verifyProof(upgrade.nativePublishedLinuxUpgrade);}
   else {

@@ -26,6 +26,9 @@ original DACL, verifies it, refreshes the CA again, and requires a new successfu
 public enrollment with a distinct actual leaf, serial, SPKI and nonexportable
 machine key. The accepted store, native IIS/SNI binding, trusted replacement TLS,
 CA-issued request and job evidence are independently checked.
+The real CA RequestId is mandatory in the independent native observation.
+Immediate issued CMC responses may omit it from the API and journal; those
+fields are compared when present and are never populated by the fixture.
 
 The parent must register both returned enrollment IDs immediately and retain a
 My-store cleanup receipt before admission. Its cleanup must refuse while

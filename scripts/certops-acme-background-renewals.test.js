@@ -216,6 +216,7 @@ test("parent drains independent consumers but preserves records on worker or bro
   const names = [
     "ownedWorkers",
     "ownedBrowserResources",
+    "nativeDiscovery",
     "primaryError",
     "tlsServer",
     "ownedTlsSockets",
@@ -243,8 +244,10 @@ test("parent drains independent consumers but preserves records on worker or bro
     { worker: false, browser: true, closeFails: false },
     { worker: true, browser: true, closeFails: false },
     { worker: false, browser: false, closeFails: true },
+    { worker: false, browser: false, closeFails: false, discovery: true },
   ]) {
-    const unresolved = state.worker || state.browser || state.closeFails;
+    const unresolved =
+      state.worker || state.browser || state.closeFails || state.discovery;
     const calls = [];
     const agent = {
       exitCode: null,
@@ -285,6 +288,14 @@ test("parent drains independent consumers but preserves records on worker or bro
     const values = [
       [worker],
       [browser],
+      state.discovery
+        ? {
+            finishAfterAgentDrain() {
+              calls.push("discovery-drain");
+              throw Error("controlled unknown discovery owner");
+            },
+          }
+        : null,
       null,
       tlsServer,
       new Set(),

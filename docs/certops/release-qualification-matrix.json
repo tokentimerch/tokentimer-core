@@ -272,6 +272,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -331,7 +332,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -354,6 +356,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -413,7 +416,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -436,6 +440,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -495,7 +500,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -518,6 +524,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -577,7 +584,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -600,6 +608,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -659,7 +668,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -758,6 +768,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -817,7 +828,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -840,6 +852,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -899,7 +912,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -922,6 +936,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -981,7 +996,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -1004,6 +1020,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -1063,7 +1080,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -1086,6 +1104,7 @@
         "windows-installed-public-iis-deploy-refusal",
         "windows-acme-public-key-reuse-refusal",
         "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+        "windows-installed-scm-controls-active-certificate-phase",
         "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
       ],
       "requiredSources": [
@@ -1145,7 +1164,8 @@
         "apps/api/middleware/auth.js",
         "apps/api/middleware/workspace-access-policy.js",
         "tests/e2e/helpers/certops-windows-retention-config.js",
-        "tests/e2e/helpers/certops-windows-credential-refusal.js"
+        "tests/e2e/helpers/certops-windows-credential-refusal.js",
+        "tests/e2e/helpers/certops-windows-active-service-controls.js"
       ]
     },
     {
@@ -1293,7 +1313,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -1441,7 +1468,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -1589,7 +1623,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -1737,7 +1778,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -1885,7 +1933,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -2033,7 +2088,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -2181,7 +2243,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -2329,7 +2398,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -2477,7 +2553,14 @@
         "infra/certops-adcs/template-enroll-acl.ps1",
         "scripts/certops_adcs_live_enroll_acl_proof.py",
         "packages/agent/src/issuers/adcs-disposition.js",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "tests/e2e/helpers/certops-adcs-http-intermediate-crl.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -3359,7 +3442,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6081,7 +6169,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6233,7 +6326,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6385,7 +6483,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6537,7 +6640,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6689,7 +6797,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6841,7 +6954,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -6993,7 +7111,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -7145,7 +7268,12 @@
         "scripts/certops_adcs_http_crl_proof.py",
         "scripts/certops-adcs-hierarchy-profile.js",
         ".github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml",
-        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js"
+        "tests/e2e/helpers/certops-adcs-same-certificate-late-approval.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-server.js",
+        "tests/e2e/helpers/certops-adcs-http-leaf-crl-der.js",
+        "infra/certops-adcs/http-leaf-crl-publication.ps1",
+        "scripts/certops_adcs_http_leaf_crl_proof.py"
       ]
     },
     {
@@ -7224,6 +7352,11 @@
         "apps/worker/src/certops-metrics.js",
         "scripts/load-root-env.js",
         "apps/api/services/certops/jobSigning.js",
+        "tests/e2e/helpers/certops-native-file-discovery.js",
+        "packages/agent/src/discovery/index.js",
+        "apps/api/routes/certops-agent.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/certificateIdentity.js",
         "scripts/certops-acme-browser-lifecycle.js",
         "scripts/certops-acme-browser-lifecycle-report.js",
         "scripts/certops_acme_browser_lifecycle_proof.py",
@@ -7246,6 +7379,184 @@
         "distributionVersion": "24.04",
         "executionSurface": "host",
         "libc": "glibc"
+      }
+    },
+    {
+      "id": "windows-webhosting-retention-2022",
+      "kind": "host",
+      "suite": "windows-webhosting-retention",
+      "source": "scripts/certops-windows-webhosting-retention.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2022"
+      },
+      "requiredSources": [
+        "scripts/certops-windows-webhosting-retention.js",
+        "packages/agent/scripts/host/retention-webhosting-fixture.js",
+        "packages/agent/scripts/host/retention-webhosting-replacement.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/windows-discovery/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/scripts/host/retention-elapsed-fixture.js",
+        "packages/agent/scripts/host/retention-interrupted-child.js",
+        "packages/agent/scripts/host/retention-interrupted-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js",
+        "packages/agent/src/windows-iis/index.js",
+        "packages/agent/scripts/host-gate.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        ".github/workflows/certops-windows-webhosting-retention.yml",
+        "packages/agent/reference/adcs-chain/main.go",
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
+        "packages/agent/reference/adcs-chain/keyrefs/result.go",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "packages/agent/reference/adcs-chain/chaincore/result.go",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "packages/agent/reference/adcs-chain/go.mod",
+        "packages/agent/reference/adcs-chain/go.sum",
+        "packages/agent/reference/adcs-chain/build.cjs",
+        "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
+        "packages/agent/src/windows-cert-store/exclusive-lock-reclaim-gate.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
+      ]
+    },
+    {
+      "id": "windows-webhosting-retention-2025",
+      "kind": "host",
+      "suite": "windows-webhosting-retention",
+      "source": "scripts/certops-windows-webhosting-retention.js",
+      "environment": {
+        "osFamily": "windows",
+        "osVersion": "2025"
+      },
+      "requiredSources": [
+        "scripts/certops-windows-webhosting-retention.js",
+        "packages/agent/scripts/host/retention-webhosting-fixture.js",
+        "packages/agent/scripts/host/retention-webhosting-replacement.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/windows-discovery/index.js",
+        "packages/agent/src/platform/index.js",
+        "packages/agent/scripts/host/retention-elapsed-fixture.js",
+        "packages/agent/scripts/host/retention-interrupted-child.js",
+        "packages/agent/scripts/host/retention-interrupted-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.js",
+        "tests/e2e/helpers/certops-windows-contained-process.ps1",
+        "packages/agent/src/index.js",
+        "packages/agent/src/windows-retention/index.js",
+        "packages/agent/src/windows-iis/index.js",
+        "packages/agent/scripts/host-gate.js",
+        "packages/agent/scripts/build-windows-chain-helper.js",
+        ".github/workflows/certops-windows-webhosting-retention.yml",
+        "packages/agent/reference/adcs-chain/main.go",
+        "packages/agent/reference/adcs-chain/keyrefs/scan_windows.go",
+        "packages/agent/reference/adcs-chain/keyrefs/result.go",
+        "packages/agent/reference/adcs-chain/chaincore/chain_windows.go",
+        "packages/agent/reference/adcs-chain/chaincore/result.go",
+        "packages/agent/reference/adcs-chain/chaincore/trust_map.go",
+        "packages/agent/reference/adcs-chain/go.mod",
+        "packages/agent/reference/adcs-chain/go.sum",
+        "packages/agent/reference/adcs-chain/build.cjs",
+        "packages/agent/src/windows-cert-store/exclusive-lock-worker.js",
+        "packages/agent/src/windows-cert-store/exclusive-lock-reclaim-gate.js",
+        "packages/agent/src/issuers/chain-helper.js",
+        "packages/agent/src/platform/durability.js",
+        "packages/agent/src/verify/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js"
+      ]
+    },
+    {
+      "id": "linux-installed-file-discovery-22.04",
+      "kind": "host",
+      "suite": "linux-installed-file-discovery",
+      "source": "tests/e2e/helpers/certops-linux-installed-discovery.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-native-file-discovery.js",
+        "packages/agent/src/discovery/index.js",
+        "packages/agent/src/index.js",
+        "apps/api/routes/certops-agent.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/certificateIdentity.js",
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-linux-installed-discovery.js",
+        "tests/e2e/linux-systemd-real-journey.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "scripts/certops-linux-systemd.js",
+        "scripts/certops-linux-systemd-cleanup.js",
+        "scripts/certops-linux-systemd-ownership.js",
+        "scripts/certops_linux_installed_discovery_proof.py",
+        "packages/agent/scripts/install-agent.sh",
+        "packages/agent/scripts/host-gate.js",
+        "packages/agent/src/config/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/protocol/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "apps/api/services/certops/agentRegistry.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/csrWorkflow.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/parser.js",
+        "apps/api/services/certops/inventory.js",
+        "apps/api/services/certops/evidence.js",
+        "apps/api/utils/secretMaterial.js",
+        ".github/workflows/certops-linux-systemd.yml",
+        ".github/workflows/certops-linux-published-upgrade.yml"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "22.04",
+        "executionSurface": "host"
+      }
+    },
+    {
+      "id": "linux-installed-file-discovery-24.04",
+      "kind": "host",
+      "suite": "linux-installed-file-discovery",
+      "source": "tests/e2e/helpers/certops-linux-installed-discovery.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-native-file-discovery.js",
+        "packages/agent/src/discovery/index.js",
+        "packages/agent/src/index.js",
+        "apps/api/routes/certops-agent.js",
+        "apps/api/services/certops/agentObservations.js",
+        "apps/api/services/certops/certificateIdentity.js",
+        "apps/api/routes/certops.js",
+        "tests/e2e/helpers/certops-linux-installed-discovery.js",
+        "tests/e2e/linux-systemd-real-journey.js",
+        "tests/e2e/helpers/certops-api-fixture.js",
+        "scripts/certops-linux-systemd.js",
+        "scripts/certops-linux-systemd-cleanup.js",
+        "scripts/certops-linux-systemd-ownership.js",
+        "scripts/certops_linux_installed_discovery_proof.py",
+        "packages/agent/scripts/install-agent.sh",
+        "packages/agent/scripts/host-gate.js",
+        "packages/agent/src/config/index.js",
+        "packages/agent/src/evidence/index.js",
+        "packages/agent/src/protocol/index.js",
+        "packages/agent/vendor/log-scrub/secret-material.js",
+        "apps/api/services/certops/agentRegistry.js",
+        "apps/api/services/certops/agentDispatch.js",
+        "apps/api/services/certops/csrWorkflow.js",
+        "apps/api/services/certops/renewalProfile.js",
+        "apps/api/services/certops/parser.js",
+        "apps/api/services/certops/inventory.js",
+        "apps/api/services/certops/evidence.js",
+        "apps/api/utils/secretMaterial.js",
+        ".github/workflows/certops-linux-systemd.yml",
+        ".github/workflows/certops-linux-published-upgrade.yml"
+      ],
+      "environment": {
+        "osFamily": "linux",
+        "distributionId": "ubuntu",
+        "distributionVersion": "24.04",
+        "executionSurface": "host"
       }
     }
   ],

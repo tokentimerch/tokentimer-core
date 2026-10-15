@@ -52,3 +52,29 @@ test("native UI lifecycle rejects reused keys, skipped jobs, failed cleanup and 
     assert.ok(errors(a).length);
   }
 });
+
+test("native file discovery requires nonroot identity, two actual scans and exact closed refusal proof", () => {
+  const discovery = require("../tests/e2e/helpers/certops-native-file-discovery");
+  assert.deepEqual(errors(fixture.artifact()), []);
+  for (const flag of discovery.FLAGS) {
+    const a = fixture.artifact();
+    delete a.report.nativeFileDiscoveryRefusals[flag];
+    assert.ok(errors(a).length);
+  }
+  for (const change of [
+    { uid: 0 },
+    { gid: 0 },
+    { positiveScanCount: 1 },
+    { positiveScanCount: 2.5 },
+    { positiveFingerprint: "f".repeat(64) },
+    { privatePath: "must-not-survive" },
+    { actualOsEacces: 1 },
+  ]) {
+    const a = fixture.artifact();
+    Object.assign(a.report.nativeFileDiscoveryRefusals, change);
+    assert.ok(errors(a).length);
+  }
+  const missing = fixture.artifact();
+  delete missing.report.nativeFileDiscoveryRefusals;
+  assert.ok(errors(missing).length);
+});

@@ -56,6 +56,10 @@ jobs:
           exit 1
       - name: Render actual claimed and completed native agent output
         run: |
+          # Deliberately retain the hosted runner's nonroot identity; never sudo
+          # this agent. The runner independently checks all UID/GID/CapEff fields.
+          test "$(id -u)" -ne 0
+          test "$(id -g)" -ne 0
           node scripts/certops-acme-browser-lifecycle.js
           node scripts/certops-qualification-report.js qualification-results/acme-browser-lifecycle.json
       - name: Destroy owned disposable stack

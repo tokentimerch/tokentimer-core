@@ -74,10 +74,13 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
   let agentId;
   let primaryError;
   const cleanupErrors = [];
+  const installedDiscovery=require("./helpers/certops-linux-installed-discovery");
+  const discoveryResources=[];
+  const ownershipPlan={root:ROOT,unit:UNIT,user:USER,installer,fixtureSha256:digest(__filename),writeFixture,installedDiscoveryRequired:true,installedDiscoveryNonce:crypto.randomBytes(32).toString("hex"),installedDiscoveryCompletion:installedDiscovery.completionPath(process.env.RUNNER_TEMP)};
+  for(const file of [installedDiscovery.completionPath(process.env.RUNNER_TEMP),installedDiscovery.guardPath(process.env.RUNNER_TEMP)])assert.equal(fs.lstatSync(file,{throwIfNoEntry:false}),undefined,"Refuse a prior installed-discovery ownership marker");
   try {
     // Register ownership before installation can partially create files/user.
-    require("../../scripts/certops-linux-systemd-ownership").claimOwnershipReceipt(ownershipReceipt, { root: ROOT, unit: UNIT, user: USER,
-      installer, fixtureSha256: digest(__filename), writeFixture });
+    require("../../scripts/certops-linux-systemd-ownership").claimOwnershipReceipt(ownershipReceipt, ownershipPlan);
     owned = true;
     await writeGate.preflight();
     fs.mkdirSync(writeRoot,{mode:0o755});fs.mkdirSync(writeFixture.allowed,{mode:0o777});fs.mkdirSync(writeFixture.denied,{mode:0o777});fs.chmodSync(writeFixture.allowed,0o777);fs.chmodSync(writeFixture.denied,0o777);
@@ -157,6 +160,8 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     assert.equal(digest(credential), originalCredential);
     if(published) await require("./helpers/linux-systemd-published-upgrade").qualifyPublishedUpgrade({published,pool,workspaceId,userId,agentId,baseUrl,repoRoot,nodeBinary,writeFixture,command,waitFor,mainPid,identity,lastSeen,createBootstrap,uid,gid});
     else await require("./helpers/linux-systemd-reapply").qualifyReapply({pool,workspaceId,agentId,baseUrl,repoRoot,installer,nodeBinary,writeFixture,command,waitFor,mainPid,serviceProperty,identity,lastSeen,createBootstrap,uid,gid});
+    await installedDiscovery.qualifyInstalledDiscovery({pool,workspaceId,agentId,baseUrl,repoRoot,writeFixture,uid,gid,command,waitFor,mainPid,identity,serviceProperty,registerResource:resource=>discoveryResources.push(resource)});
+    installedDiscovery.assertCompletion(ownershipPlan,process.env.RUNNER_TEMP);
     const { retireAgent } = require("../../apps/api/services/certops/agentRegistry");
     await retireAgent({ client: pool, workspaceId, agentId, retiredBy: userId, reason: "disposable installer qualification" });
     await waitFor(() => mainPid() === 0, "actual API retirement stops the installed service");
@@ -167,6 +172,7 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     await new Promise((resolve) => setTimeout(resolve, 11000));
     assert.equal(mainPid(), 0);
     assert.equal(serviceProperty("NRestarts"), restarts);
+    installedDiscovery.assertCompletion(ownershipPlan,process.env.RUNNER_TEMP);
     command("sh", [installer, "--uninstall"]);
     assert.equal(fs.existsSync(UNIT_FILE), false);
     assert.equal(fs.existsSync(`${ROOT}/app`), false);
@@ -175,29 +181,38 @@ module.exports = async function qualifyLinuxSystemd({ pool, baseUrl, workspaceId
     checkPermissions(stateDir, 0o700);
   } catch (error) { primaryError = error; }
   finally {
-    if (owned) {
+    let discoverySafe=true;
+    let hostDrained=false,hostRemoved=false;
+    if(owned)try{for(const resource of discoveryResources)resource.assertCleanupSafe();installedDiscovery.assertCompletion(ownershipPlan,process.env.RUNNER_TEMP);}catch(error){cleanupErrors.push(error);discoverySafe=false;}
+    if (owned && discoverySafe) {
       const clean = (action) => { try { action(); } catch (error) { cleanupErrors.push(error); } };
       clean(() => {require("../../scripts/certops-linux-systemd-ownership").assertNoSymlinkTargets([ROOT,UNIT_FILE,DROPINS,POLKIT,writeFixture.root]);command("sh", [installer, "--uninstall"]);});
-      clean(() => {
+      if(!cleanupErrors.length)clean(() => {
         assert.equal(mainPid(), 0, "never remove state while the owned service still runs");
+        const members=`/sys/fs/cgroup/system.slice/${UNIT}/cgroup.procs`;
+        if(fs.existsSync(members))assert.equal(fs.readFileSync(members,"utf8").trim(),"","Preserve state while the owned systemd cgroup has processes");
+        hostDrained=true;
+      });
+      if(hostDrained&&!cleanupErrors.length)clean(() => {
         for (const target of [ROOT, DROPINS,writeFixture.root]) {
           assert.equal(fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink() || false, false);
           fs.rmSync(target, { recursive: true, force: true });
         }
       });
-      clean(() => command("systemctl", ["daemon-reload"]));
-      clean(() => {
+      if(hostDrained&&!cleanupErrors.length)clean(() => command("systemctl", ["daemon-reload"]));
+      if(hostDrained&&!cleanupErrors.length)clean(() => {
         if (spawnSync("getent", ["passwd", USER]).status === 0) command("userdel", [USER]);
         if (spawnSync("getent", ["group", USER]).status === 0) command("groupdel", [USER]);
       });
-      clean(() => {
+      if(hostDrained&&!cleanupErrors.length)clean(() => {
         for (const target of [ROOT, UNIT_FILE, DROPINS, POLKIT,writeFixture.root]) assert.equal(fs.existsSync(target), false);
         assert.equal(spawnSync("getent", ["passwd", USER]).status, 2);
         assert.equal(serviceProperty("LoadState"), "not-found");
       });
       if (!cleanupErrors.length) clean(() => fs.unlinkSync(ownershipReceipt));
+      hostRemoved=hostDrained&&cleanupErrors.length===0;
     }
-    if (agentId) {
+    if (agentId && discoverySafe && hostDrained && hostRemoved) {
       try { await pool.query("DELETE FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId]); }
       catch (error) { cleanupErrors.push(error); }
     }

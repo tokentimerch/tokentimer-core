@@ -32,9 +32,11 @@ import certops_acme_stage_proof as acme_stage_proof
 import certops_acme_background_proof as acme_background_proof
 import certops_adcs_live_enroll_acl_proof as live_enroll_acl_proof
 import certops_adcs_http_crl_proof as http_crl_proof
+import certops_adcs_http_leaf_crl_proof as http_leaf_crl_proof
 import certops_acme_native_console_proof as acme_native_console_proof
 import certops_dns_resolver_views_proof as dns_resolver_views_proof
 import certops_acme_browser_lifecycle_proof as acme_browser_lifecycle_proof
+import certops_linux_installed_discovery_proof as linux_installed_discovery_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -44,7 +46,7 @@ WORKFLOWS = {
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
         "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml", "certops-windows-arm64-agent.yml",
-        "certops-windows-fixed-root.yml",
+        "certops-windows-fixed-root.yml", "certops-windows-webhosting-retention.yml",
         "certops-native-agent-qualification.yml",
         "certops-scheduler-capacity-qualification.yml",
         "certops-renewal-alert-qualification.yml",
@@ -653,6 +655,46 @@ def browser_abandon_fields(proof):
     return result
 
 
+def verify_webhosting_retention_workflow(report, workflow):
+    if isinstance(report, dict) and report.get("suite") == "windows-webhosting-retention" and workflow != ".github/workflows/certops-windows-webhosting-retention.yml":
+        raise ValueError("WebHosting retention requires its dedicated hosted workflow")
+
+
+def webhosting_retention_fields(proof):
+    """Project only native non-default-store expiry facts, never full-window claims."""
+    store_flags = ("nativeWebHostingCustodyObserved", "nativeIisWebHostingStoreObserved", "exactOwnedEngineCleanupVerified")
+    borrowed_flags = ("sameOriginalMyCustodyAndInventory", "sameOriginalMyPrivateKeyPossession", "mirrorRemovedWithoutDeletingSharedKey", "originalFixtureCertificateAndKeyRemoved")
+    if (not isinstance(proof, dict) or type(proof.get("schemaVersion")) is not int or proof["schemaVersion"] != 1
+            or proof.get("scope") != "native-webhosting-expiry-grace-certificate-key-reclamation"
+            or proof.get("store") != "WebHosting" or proof.get("fullRetentionWindowQualified") is not False
+            or proof.get("installedServiceTimerQualified") is not False):
+        raise ValueError("Incomplete WebHosting retention scope")
+    receipt, borrowed, elapsed = proof.get("storeReceipt"), proof.get("borrowedReplacement"), proof.get("elapsed")
+    if (not isinstance(receipt, dict) or receipt.get("store") != "WebHosting"
+            or any(receipt.get(k) is not True for k in store_flags)
+            or not isinstance(borrowed, dict) or any(borrowed.get(k) is not True for k in borrowed_flags)):
+        raise ValueError("Incomplete independent WebHosting custody/cleanup evidence")
+    counts = ("successfulCutovers", "predecessorCertificatesRemoved", "predecessorKeysRemoved", "lineageRowsFinalized")
+    facts = ("immediateDeferralPreservedCustody", "immutableHistoryPreserved", "replacementTrustedBoundCustodyUnchanged", "interruptedNativeDeleteRecovered")
+    import math
+    if (not isinstance(elapsed, dict) or elapsed.get("mode") != "real-clock-two-cutover-expiry-grace"
+            or any(type(elapsed.get(k)) is not int or elapsed[k] != 2 for k in counts)
+            or any(elapsed.get(k) is not True for k in facts)
+            or type(elapsed.get("configuredRetentionHours")) is not int or elapsed["configuredRetentionHours"] != 24
+            or elapsed.get("fullRetentionWindowQualified") is not False
+            or type(elapsed.get("waitedMonotonicMs")) not in (int, float)
+            or not math.isfinite(elapsed["waitedMonotonicMs"]) or not 300000 <= elapsed["waitedMonotonicMs"] < 600000):
+        raise ValueError("Incomplete real WebHosting elapsed evidence")
+    return {"schemaVersion": 1, "scope": proof["scope"], "store": "WebHosting",
+            "storeReceipt": {"store": "WebHosting", **dict.fromkeys(store_flags, True)},
+            "borrowedReplacement": dict.fromkeys(borrowed_flags, True),
+            "fullRetentionWindowQualified": False, "installedServiceTimerQualified": False,
+            "elapsed": {**dict.fromkeys(counts, 2), **dict.fromkeys(facts, True),
+                "mode": elapsed["mode"], "configuredRetentionHours": 24, "fullRetentionWindowQualified": False,
+                "waitedMonotonicMs": elapsed["waitedMonotonicMs"],
+                "ownedInterruption": retention_interruption_fields({k: elapsed["ownedInterruption"].get(k) for k in ("scope", "assignedBeforeResume", "rootExit86", "nativeActiveZero", "nativeHandlesClosed", "wrapperClosed")} if isinstance(elapsed.get("ownedInterruption"), dict) else None)}}
+
+
 def webhosting_fields(proof):
     flags = ("publicIssueAndRenewInstalled","twoIndependentCaRequests","freshSerialSpkiAndKey","webHostingProtectedCustody","myCopiesAbsent","exactNativeIisAndHttpSysStore","trustedSniTls","installedDiscoveryInventory","immutableAcceptedStore","predecessorRetentionStorePreserved","storeQualifiedCleanupRegistered")
     if (not isinstance(proof, dict) or proof.get("scope") != "real-adcs-webhosting-issue-and-fresh-key-manual-renewal" or proof.get("store") != "WebHosting" or proof.get("expiryCleanupQualified") is not False or any(proof.get(flag) is not True for flag in flags)):
@@ -836,6 +878,22 @@ def config_encoding_fields(event):
             or type(proof.get("startupFailureCount")) is not int or proof["startupFailureCount"]!=3 or proof.get("encodings")!=encodings or any(proof.get(flag) is not True for flag in flags)):
         raise ValueError("Missing actual installed configuration encoding refusals")
     return {"nativeInstalledConfigEncoding":{"scope":proof["scope"],"encodings":list(encodings),"startupFailureCount":3,**dict.fromkeys(flags,True)}}
+
+
+def active_service_controls_fields(event):
+    """Active-phase controls are not certificate interruption or timer proof."""
+    if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
+            or event.get("name") != "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence" or event.get("type") != "test:pass"):
+        return {}
+    proof = event.get("nativeInstalledActiveServiceControls")
+    flags = ("actualDnsPostBarrier", "sameCurrentClaimAndAttempt", "sameDurablePendingJournal", "samePendingNonexportableCngKey", "interrogateSucceeded", "pauseAndContinueRefused", "sameInstalledSystemProcesses", "sameServingCngBindingAndTrustedTls", "sameProtectedStateBytes", "ownedControlGuardCleared")
+    if (not isinstance(proof, dict) or proof.get("scope") != "installed-scm-controls-during-real-cng-dns-renewal"
+            or type(proof.get("controlCount")) is not int or proof["controlCount"] != 3
+            or proof.get("certificateOperationInterruptionQualified") is not False
+            or proof.get("defaultLeaseGraceQualified") is not False
+            or any(proof.get(flag) is not True for flag in flags)):
+        raise ValueError("Incomplete installed active certificate SCM controls")
+    return {"nativeInstalledActiveServiceControls": {"scope": proof["scope"], "controlCount": 3, "certificateOperationInterruptionQualified": False, "defaultLeaseGraceQualified": False, **dict.fromkeys(flags, True)}}
 
 
 def service_controls_fields(event):
@@ -1202,6 +1260,10 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "windows-webhosting-retention":
+            if value.get("cleanup", {}).get("status") != "passed":
+                raise ValueError("WebHosting owned cleanup incomplete")
+            result["nativeWebHostingRetention"] = webhosting_retention_fields(value.get("nativeWebHostingRetention"))
         if value.get("suite") == "windows-host":
             runtime = value.get("nativePackagedChainRuntime")
             runtime_flags = ("candidateHelperDigestMatched", "literalUnicodeSpaceBracketPath", "defaultPackagedResolverUsed", "nativeMetadataPositiveBeforeFault", "actualCandidateWrongProtocolPeUsed", "realBridgeRefusedWrongProtocol", "ownedChildClosedBeforeRestore", "exactOriginalFileIdentityRestored", "nativeMetadataPositiveAfterRestore")
@@ -1406,6 +1468,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeSameCertificateLateApproval"] = same_certificate_late_approval_fields(value.get("nativeSameCertificateLateApproval"))
             result["nativeRequiredTemplateAttributes"] = required_template_attribute_fields(value.get("nativeRequiredTemplateAttributes"))
             result["nativeLiveEnrollAcl"] = live_enroll_acl_proof.fields(value.get("nativeLiveEnrollAcl"))
+            result["nativeHttpOnlyLeafCrl"] = http_leaf_crl_proof.fields(value.get("nativeHttpOnlyLeafCrl"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
             result["nativeBrowserAdminBoundary"] = browser_admin_boundary_fields(value.get("nativeBrowserAdminBoundary"))
@@ -1695,6 +1758,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result.update(dns_resolver_views_proof.project_report(value))
         if value.get("suite") == acme_browser_lifecycle_proof.SUITE:
             result.update(acme_browser_lifecycle_proof.project_report(value))
+        if value.get("suite") == linux_installed_discovery_proof.SUITE:
+            result.update(linux_installed_discovery_proof.project_report(value))
         if value.get("suite") in daemon_coordinator_proof.SUITES:
             result.update(daemon_coordinator_proof.project_report(value))
         if value.get("suite") == linux_trust_independent_proof.SUITE:
@@ -1797,7 +1862,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                  **installed_iis_refusal_fields(event),
                  **installed_crash_fields(event),
                  **installed_paths_fields(event),
-                 **service_controls_fields(event),
+                 **active_service_controls_fields(event), **service_controls_fields(event),
                  **config_encoding_fields(event),
                  **credential_refusal_fields(event),
                  **retention_config_fields(event),
@@ -2073,8 +2138,10 @@ def main(arguments=()):
                     return True
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
+                    verify_webhosting_retention_workflow(report, run.get("path"))
                     acme_native_console_proof.verify_workflow(report, run.get("path"))
                     acme_browser_lifecycle_proof.verify_workflow(report, run.get("path"))
+                    linux_installed_discovery_proof.verify_workflow(report, run.get("path"))
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"

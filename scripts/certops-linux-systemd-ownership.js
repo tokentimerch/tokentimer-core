@@ -13,4 +13,5 @@ function validateHostedEnvironment(env){
 }
 function assertNoSymlinkTargets(targets){for(const target of targets){const stat=fs.lstatSync(target,{throwIfNoEntry:false});assert.equal(stat?.isSymbolicLink()||false,false,"Refuse symlink ownership target before installer/uninstaller execution");}}
 function claimOwnershipReceipt(file,receipt){fs.writeFileSync(file,JSON.stringify(receipt),{flag:"wx",mode:0o600});}
-module.exports={validateWriteFixture,validateHostedEnvironment,claimOwnershipReceipt,assertNoSymlinkTargets};
+function assertHostReceiptRemoved(runnerTemp){assert.ok(typeof runnerTemp==="string"&&path.isAbsolute(runnerTemp));for(const name of ["certops-linux-systemd-owned.json","certops-linux-systemd-discovery-active.json"])assert.equal(fs.lstatSync(path.join(runnerTemp,name),{throwIfNoEntry:false}),undefined,"Preserve owned database while installed-host ownership remains unresolved");}
+module.exports={validateWriteFixture,validateHostedEnvironment,claimOwnershipReceipt,assertNoSymlinkTargets,assertHostReceiptRemoved};

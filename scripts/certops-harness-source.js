@@ -53,7 +53,7 @@ function readOnlyQueries(source) {
   return queries;
 }
 
-/** Parse native Windows and AD CS database oracles against the actual migrated schema.
+/** Parse native host database oracles against the actual migrated schema.
  * EXPLAIN (without ANALYZE), null parameters and READ ONLY transactions never
  * execute the native harness or modify fixture rows. This catches stale column
  * names before paying for a domain lab. Explicit disposable DB authorization applies.
@@ -64,9 +64,10 @@ async function explainNativeQueries(root = path.resolve(__dirname, "..")) {
   for (const name of ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]) if (!process.env[name]) throw new Error("Explicit disposable database configuration required");
   const files = [...new Set(["tests/e2e/helpers/certops-windows-installed-paths.js", "tests/e2e/helpers/certops-windows-installed-iis-refusal.js", "tests/e2e/helpers/certops-arm64-installed-journey.js", "tests/e2e/certops-adcs-real-e2e.test.js", "tests/e2e/certops-adcs-retention24h-prepare.js", "tests/e2e/certops-adcs-retention-cadence-prepare.js", "tests/e2e/certops-adcs-ttl24h-prepare.js", "scripts/certops-adcs-ttl24h-finish.js", "tests/e2e/windows-real-journey.js", "tests/e2e/windows-adoption-retention-journey.js", ...fs.readdirSync(path.join(root, "tests/e2e/helpers")).filter(name => /^certops-(?:adcs|windows)-.*\.js$/.test(name)).map(name => "tests/e2e/helpers/" + name)])];
   // Native Linux ACME shares the same read-only migrated-schema contract.
-  files.push("tests/e2e/helpers/certops-acme-stage-faults.js", "tests/e2e/helpers/certops-acme-background-renewals.js",
+  files.push("tests/e2e/acme-real-journey.js", "tests/e2e/helpers/certops-acme-stage-faults.js", "tests/e2e/helpers/certops-acme-background-renewals.js",
     "tests/e2e/helpers/certops-acme-browser-console.js", "tests/e2e/helpers/certops-acme-browser-job-admission.js",
-    "tests/e2e/helpers/certops-acme-browser-lifecycle.js");
+    "tests/e2e/helpers/certops-acme-browser-lifecycle.js",
+    "tests/e2e/helpers/certops-linux-installed-discovery.js", "tests/e2e/linux-systemd-real-journey.js");
   const queries = files.flatMap(file => readOnlyQueries(fs.readFileSync(path.join(root, file), "utf8")).map(query => ({ ...query, file })));
   if (queries.length < 20) throw new Error("Native lifecycle SQL inventory unexpectedly empty or narrowed");
   const pool = new Pool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), database: process.env.DB_NAME, user: process.env.DB_USER, password: process.env.DB_PASSWORD, connectionTimeoutMillis: 5000 });

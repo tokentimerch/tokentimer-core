@@ -5,6 +5,7 @@
  * machine key; no due time, successful result or journal is manufactured.
  * The disposable parent owns all created enrollments and final native cleanup.
  */
+const { verifyNativeRequestId } = require("./certops-adcs-live-enroll-acl");
 const assert = require("node:assert/strict");
 const { isDeepStrictEqual } = require("node:util");
 const crypto = require("node:crypto");
@@ -29,6 +30,8 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-background-worker-profile-and-custody-preservation",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
+  "packages/agent/src/issuers/adcs.js",
   "tests/e2e/helpers/certops-adcs-background-renewals.js",
   "tests/e2e/helpers/certops-adcs-worker-runner-child.js",
   "tests/e2e/helpers/certops-adcs-worker-controller.cjs",
@@ -508,10 +511,7 @@ async function qualifyBackgroundRenewals(context) {
           assert.equal(journal.journal.state, "installed");
           assert.equal(journal.journal.containerName, native.value.container);
           assert.equal(journal.journal.csrSpkiSha256, leaf.spki);
-          assert.equal(
-            String(journal.journal.requestId),
-            String(request.requestId),
-          );
+          verifyNativeRequestId(request.requestId, journal.journal.requestId);
           binding(leaf);
           assert.deepEqual(service(), initialService);
           leaves.push(leaf);

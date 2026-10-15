@@ -20,6 +20,8 @@ const REQUIRED_SOURCES = Object.freeze([
       .REQUIRED_SOURCES,
     ...require("../tests/e2e/helpers/certops-acme-background-renewals")
       .REQUIRED_SOURCES,
+    ...require("../tests/e2e/helpers/certops-native-file-discovery")
+      .REQUIRED_SOURCES,
     "scripts/certops-acme-browser-lifecycle.js",
     "scripts/certops-acme-browser-lifecycle-report.js",
     "scripts/certops_acme_browser_lifecycle_proof.py",
@@ -103,6 +105,11 @@ async function closePreview(server) {
 }
 async function main() {
   checkScope();
+  require("../tests/e2e/helpers/certops-native-file-discovery").parseUnprivilegedIdentity(
+    fs.readFileSync("/proc/self/status", "utf8"),
+    process.getuid(),
+    process.getgid(),
+  );
   const fingerprint = (file) => ({
     file,
     sha256: crypto
@@ -161,6 +168,11 @@ async function main() {
         false,
         "Fresh native browser lifecycle sidecar required",
       );
+      assert.equal(
+        fs.existsSync(path.join(ROOT, report.DISCOVERY_SIDECAR)),
+        false,
+        "Fresh native discovery sidecar required",
+      );
       await runChild({
         ...process.env,
         CERTOPS_NATIVE_ACME_LIFECYCLE_URL: "http://localhost:5173",
@@ -174,6 +186,9 @@ async function main() {
       report.verifyActualJourney(events, proof, process.env.GITHUB_SHA);
       gate.report.nativeAcmeBrowserLifecycle = proof;
       gate.report.fixtureSources = REQUIRED_SOURCES.map(fingerprint);
+    });
+    await gate.scenario(report.DISCOVERY_SCENARIO, () => {
+      gate.report.nativeFileDiscoveryRefusals = report.readDiscoveryProof(ROOT);
     });
   } catch (error) {
     primary = error;
@@ -192,13 +207,13 @@ async function main() {
     gate.report.status = "failed";
     gate.report.failure = "Native browser/agent lifecycle qualification failed";
     await gate.finish({
-      requiredScenarios: [report.SCENARIO],
+      requiredScenarios: [report.SCENARIO, report.DISCOVERY_SCENARIO],
       cleanup: { status: "failed" },
     });
     throw new Error("Native browser/agent lifecycle qualification failed");
   }
   await gate.finish({
-    requiredScenarios: [report.SCENARIO],
+    requiredScenarios: [report.SCENARIO, report.DISCOVERY_SCENARIO],
     cleanup: { status: "passed" },
   });
 }

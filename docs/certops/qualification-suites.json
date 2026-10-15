@@ -332,7 +332,9 @@
       "adcs-real-live-machine-enroll-denial": "real-host",
       "adcs-real-live-enroll-acl-restored-same-template-issuance": "real-host",
       "adcs-real-same-certificate-cancel-then-renew": "real-host",
-      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host"
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host",
+      "adcs-real-http-only-leaf-crl-public-renewal": "real-host",
+      "adcs-real-http-only-leaf-crl-endpoint-recovers": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -681,7 +683,9 @@
       "adcs-real-live-enroll-acl-restored-same-template-issuance": "real-host",
       "adcs-hierarchy-http-intermediate-crl-fault-recovers": "real-host",
       "adcs-real-same-certificate-cancel-then-renew": "real-host",
-      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host"
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal": "real-host",
+      "adcs-real-http-only-leaf-crl-public-renewal": "real-host",
+      "adcs-real-http-only-leaf-crl-endpoint-recovers": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -1304,7 +1308,16 @@
       "real-native-acme-console-live-and-completed-claim": "e2e"
     },
     "linux-native-acme-browser-lifecycle": {
-      "real-native-acme-browser-issue-renew-lifecycle": "e2e"
+      "real-native-acme-browser-issue-renew-lifecycle": "e2e",
+      "real-native-unprivileged-file-discovery-refusals": "e2e"
+    },
+    "windows-webhosting-retention": {
+      "windows-webhosting-retention-real-expiry-grace": "real-host",
+      "windows-webhosting-retention-native-interrupted-delete": "real-host",
+      "windows-webhosting-retention-owned-cleanup": "real-host"
+    },
+    "linux-installed-file-discovery": {
+      "linux-installed-systemd-public-discovery": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1837,6 +1850,20 @@
       "linux",
       "api",
       "browser"
+    ],
+    "windows-webhosting-retention": [
+      "windows",
+      "optIn",
+      "elevated",
+      "iis",
+      "openssl",
+      "noInstalledAgent"
+    ],
+    "linux-installed-file-discovery": [
+      "linux",
+      "systemd",
+      "api",
+      "openssl"
     ]
   },
   "suites": {
@@ -2171,7 +2198,9 @@
       "adcs-real-live-machine-enroll-denial",
       "adcs-real-live-enroll-acl-restored-same-template-issuance",
       "adcs-real-same-certificate-cancel-then-renew",
-      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal"
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal",
+      "adcs-real-http-only-leaf-crl-public-renewal",
+      "adcs-real-http-only-leaf-crl-endpoint-recovers"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2520,7 +2549,9 @@
       "adcs-real-live-enroll-acl-restored-same-template-issuance",
       "adcs-hierarchy-http-intermediate-crl-fault-recovers",
       "adcs-real-same-certificate-cancel-then-renew",
-      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal"
+      "adcs-real-same-certificate-cancelled-late-approval-preserves-renewal",
+      "adcs-real-http-only-leaf-crl-public-renewal",
+      "adcs-real-http-only-leaf-crl-endpoint-recovers"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
@@ -3138,7 +3169,16 @@
       "real-native-acme-console-live-and-completed-claim"
     ],
     "linux-native-acme-browser-lifecycle": [
-      "real-native-acme-browser-issue-renew-lifecycle"
+      "real-native-acme-browser-issue-renew-lifecycle",
+      "real-native-unprivileged-file-discovery-refusals"
+    ],
+    "windows-webhosting-retention": [
+      "windows-webhosting-retention-real-expiry-grace",
+      "windows-webhosting-retention-native-interrupted-delete",
+      "windows-webhosting-retention-owned-cleanup"
+    ],
+    "linux-installed-file-discovery": [
+      "linux-installed-systemd-public-discovery"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3244,6 +3284,8 @@
     "filesystem-linux-backup-dac-host": "real-host",
     "windows-domain-installed-retention-default-timer": "real-host",
     "linux-native-acme-browser-console": "e2e",
-    "linux-native-acme-browser-lifecycle": "e2e"
+    "linux-native-acme-browser-lifecycle": "e2e",
+    "windows-webhosting-retention": "real-host",
+    "linux-installed-file-discovery": "real-host"
   }
 }

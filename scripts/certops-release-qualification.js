@@ -94,8 +94,14 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "dns-provider-errors") require("./certops-dns-provider-errors-report").verifyDnsErrors(artifact.report);
         if(slot.suite==="linux-native-acme-browser-lifecycle"){
           require("../tests/e2e/helpers/certops-acme-browser-lifecycle").verifyProof(artifact.report.nativeAcmeBrowserLifecycle);
+          require("../tests/e2e/helpers/certops-native-file-discovery").verifyProof(artifact.report.nativeFileDiscoveryRefusals);
           const n=artifact.report.qualificationEnvironment;
           if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||n.osFamily!=="linux"||n.distributionId!=="ubuntu"||n.distributionVersion!=="24.04"||n.executionSurface!=="host"||n.libc!=="glibc")throw new Error("Native browser issue/renew lifecycle requires exact Ubuntu host scope");
+        }
+        if(slot.suite==="linux-installed-file-discovery"){
+          require("../tests/e2e/helpers/certops-linux-installed-discovery").verifyProof(artifact.report.nativeInstalledFileDiscovery);
+          const native=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||native.measurement!=="native"||native.osFamily!=="linux"||native.distributionId!=="ubuntu"||!["22.04","24.04"].includes(native.distributionVersion)||native.executionSurface!=="host")throw new Error("Installed discovery requires the declared native Ubuntu systemd host");
         }
         if (slot.suite === "dns-routing-host") {
           require("./certops-dns-resolver-views").verifyProof(artifact.report.nativeResolverViews);
@@ -131,6 +137,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-certificate-dry-run") require("../tests/e2e/helpers/certops-windows-certificate-dry-run").verifyProof(artifact.report.nativeCertificateDryRun);
         if (slot.suite === "windows-host") require("./certops-native-key-survivor-proof").verifyProof(artifact.report.nativeKeySurvivors);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/cng-key-usage-proof").verifyProof(artifact.report.nativeKeyUsage);
+        if (slot.suite === "windows-webhosting-retention") { if (artifact.report.cleanup?.status !== "passed") throw new Error("WebHosting owned cleanup incomplete"); require("../packages/agent/scripts/host/retention-webhosting-fixture").verifyProof(artifact.report.nativeWebHostingRetention); }
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/iis-client-settings-fixture").verifyProof(artifact.report.nativeHttpSysClientSettings);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/packaged-helper-runtime-fixture").verifyProof(artifact.report.nativePackagedChainRuntime);
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/retention-ledger-atomic-fixture").verifyAtomicProof(artifact.report.nativeRetentionAtomicReplace);
@@ -183,6 +190,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-public-foreign-spki").verifyCrossProof(artifact.report.nativePublicForeignSpki, artifact.report.nativeUncertainOperatorAmbiguity);
           require("../tests/e2e/helpers/certops-adcs-template-required-attributes").verifyProof(artifact.report.nativeRequiredTemplateAttributes);
           require("../tests/e2e/helpers/certops-adcs-live-enroll-acl").verifyProof(artifact.report.nativeLiveEnrollAcl);
+          require("../tests/e2e/helpers/certops-adcs-http-leaf-crl").verifyProof(artifact.report.nativeHttpOnlyLeafCrl);
           require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-cancel").verifyCrossProof(artifact.report.nativeBrowserCancel, artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-job-approval").verifyCrossProof(artifact.report.nativeBrowserJobApproval, artifact.report.nativeAdcsCapacity);
@@ -294,6 +302,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-installed-iis-refusal").verifyProof(native[0].nativeInstalledIisRefusal);
           require("../tests/e2e/helpers/certops-windows-owned-process").verifyPublicProof(native[0].nativeInstalledCrash);
           require("../tests/e2e/helpers/certops-windows-installed-paths").verifyProof(native[0].nativeInstalledPaths);
+          require("../tests/e2e/helpers/certops-windows-active-service-controls").verifyProof(native[0].nativeInstalledActiveServiceControls);
           require("../tests/e2e/helpers/certops-windows-service-controls").verifyProof(native[0].nativeInstalledServiceControls);
           require("../tests/e2e/helpers/certops-windows-config-encoding").verifyProof(native[0].nativeInstalledConfigEncoding);
           require("../tests/e2e/helpers/certops-windows-public-retirement").verifyProof(native[0].nativeInstalledPublicRetirement);

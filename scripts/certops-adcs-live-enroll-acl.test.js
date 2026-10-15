@@ -8,6 +8,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const subject = require("../tests/e2e/helpers/certops-adcs-live-enroll-acl");
 const fixture = require("./fixtures/certops-adcs-live-enroll-acl.cjs").proof;
+
+test("immediate issuance keeps independent native RequestId mandatory without inventing persisted IDs", () => {
+  assert.equal(subject.verifyNativeRequestId(42, null, undefined), 42);
+  assert.equal(subject.verifyNativeRequestId(42, "42", 42), 42);
+  for (const actual of [undefined, 0, 4294967296, 1.5])
+    assert.throws(() => subject.verifyNativeRequestId(actual));
+  for (const reported of [41, "043", "42x", true])
+    assert.throws(() => subject.verifyNativeRequestId(42, reported));
+});
 test("live machine Enroll proof permits genuine denied CA allocation zero or one", () => {
   for (const delta of [0, 1])
     assert.equal(

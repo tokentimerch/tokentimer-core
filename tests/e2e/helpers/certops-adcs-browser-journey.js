@@ -5,6 +5,7 @@
  * a real enrollment; native CA, CNG, IIS and trusted TLS independently prove it.
  * No UI route interception, fabricated safe verdict, first-issue UI or generic
  * manual AD CS renewal is claimed. Invoked last in comprehensive lab lanes. */
+const { verifyNativeRequestId } = require("./certops-adcs-live-enroll-acl");
 const assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path"),
@@ -19,6 +20,8 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-owned-cleanup",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
+  "packages/agent/src/issuers/adcs.js",
   ".dockerignore",
   "tests/e2e/helpers/certops-adcs-browser-journey.js",
   "infra/certops-adcs/browser-control-plane.sh",
@@ -767,7 +770,7 @@ async function qualifyAdcsBrowserJourney(context) {
         assert.equal(journal.kind, "valid");
         assert.equal(journal.journal.state, "installed");
         assert.equal(journal.journal.csrSpkiSha256, final.spki);
-        assert.equal(String(journal.journal.requestId), requestId);
+        verifyNativeRequestId(native.requestId, journal.journal.requestId, persisted.request_id);
         assert.equal(
           ps(
             `$c=Get-Item 'Cert:\\LocalMachine\\My\\${final.thumb}';$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);try{if($k.Key.KeyName -ne '${container}' -or -not $k.Key.IsMachineKey -or $k.Key.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None -or $k.KeySize -ne 2048){throw 'Browser renewal custody mismatch'};'protected-rsa2048'}finally{$k.Dispose();$c.Dispose()}`,

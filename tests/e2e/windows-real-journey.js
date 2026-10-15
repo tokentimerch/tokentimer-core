@@ -72,6 +72,10 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const workDir = installedPathReceipt.root;
   let installedPathProof;
   const serviceControls = require("./helpers/certops-windows-service-controls");
+  const activeServiceControls=require("./helpers/certops-windows-active-service-controls");
+  let activeServiceControlProof;
+  const activeServiceProofPath=path.join(repoRoot,"qualification-results",`windows-active-service-controls-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
+  assert.equal(fs.existsSync(activeServiceProofPath),false,"Refuse stale active-phase SCM proof");
   const configEncoding = require("./helpers/certops-windows-config-encoding");
   const publicRetirement = require("./helpers/certops-windows-public-retirement");
   let publicRetirementProof;
@@ -639,6 +643,11 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     const readInterrupted = () => fs.existsSync(journalDir) ? fs.readdirSync(journalDir).filter((name) => name.endsWith(".json")).map((name) => JSON.parse(fs.readFileSync(path.join(journalDir, name), "utf8"))).find((row) => row.jobId === interruptedJob.id && row.windowsCngContainerName) : null;
     const interrupted = await waitUntil(readInterrupted);
     assert.ok(command("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(interrupted.windowsCngContainerName), "interruption must follow real native key generation");
+    const activeDnsResponses=[...heldResponses];
+    assert.ok(activeDnsResponses.length>0,"Actual held DNS response required for active SCM controls");
+    const interruptedPaths=fs.readdirSync(journalDir).filter(name=>name.endsWith(".json")).filter(name=>{const row=JSON.parse(fs.readFileSync(path.join(journalDir,name),"utf8"));return row.jobId===interruptedJob.id&&row.claimId===interrupted.claimId;});
+    assert.equal(interruptedPaths.length,1,"Exact current-claim mutation journal required");
+    activeServiceControlProof=await runNamedScenario(activeServiceControls.SCENARIO,()=>activeServiceControls.qualifyActiveServiceControls({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,jobId:interruptedJob.id,journalPath:path.join(journalDir,interruptedPaths[0]),journal:interrupted,barrierObserved:()=>holdDns&&heldResponses.size===activeDnsResponses.length&&activeDnsResponses.every(response=>heldResponses.has(response)&&!response.destroyed),thumbprint:deployedThumbprint,domain,port,roots}));
     const ownedProcess = require("./helpers/certops-windows-owned-process");
     await runNamedScenario(ownedProcess.scenarioName, async () => {
     const crashIdentity = ownedProcess.captureInstalledAgentIdentity({
@@ -706,6 +715,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   } finally {
     publicRetirement.assertCleanupSafe(workDir);
     configEncoding.assertCleanupSafe(workDir);
+    activeServiceControls.assertCleanupSafe(workDir);
     serviceControls.assertCleanupSafe(workDir);
     // Missing/tampered receipts cannot release unresolved in-memory process ownership.
     require("./helpers/certops-windows-owned-process").assertCleanupSafe(workDir);
@@ -772,6 +782,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       fs.writeFileSync(retentionConfigProofPath,JSON.stringify(retentionConfigProof),{flag:"wx"});
       configEncoding.verifyProof(configEncodingProof);
       fs.writeFileSync(configEncodingProofPath,JSON.stringify(configEncodingProof),{flag:"wx"});
+      activeServiceControls.verifyProof(activeServiceControlProof);
+      fs.writeFileSync(activeServiceProofPath,JSON.stringify(activeServiceControlProof),{flag:"wx"});
       serviceControls.verifyProof(serviceControlProof);
       fs.writeFileSync(serviceControlProofPath,JSON.stringify(serviceControlProof),{flag:"wx"});
       installedPaths.verifyProof(installedPathProof);

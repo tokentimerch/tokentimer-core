@@ -95,7 +95,10 @@ async function interruptOwnedCollector({
   thumbprint,
   containerName,
   retentionHours,
+  store = "My",
 }) {
+  assert.ok(["My", "WebHosting"].includes(store));
+  assert.ok(store === "My" || retentionHours === 24);
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_HOST_TESTS, "1");
   assert.ok([24, 168, 720].includes(retentionHours));
@@ -141,6 +144,7 @@ async function interruptOwnedCollector({
         ...(retentionHours === 24
           ? []
           : [`--retention-hours=${retentionHours}`]),
+        ...(store === "My" ? [] : [`--store=${store}`]),
         `--owned-go=${go}`,
       ],
       environment: {

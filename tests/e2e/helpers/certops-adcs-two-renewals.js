@@ -5,6 +5,7 @@
  * machine key; no due time, successful result or journal is manufactured.
  * The disposable parent owns all created enrollments and final native cleanup.
  */
+const { verifyNativeRequestId } = require("./certops-adcs-live-enroll-acl");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -19,6 +20,8 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-two-unattended-profile-and-custody-preservation",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
+  "packages/agent/src/issuers/adcs.js",
   "tests/e2e/helpers/certops-adcs-two-renewals.js",
   "infra/certops-adcs/templates.ps1",
   "infra/certops-adcs/owned-issued-request.ps1",
@@ -139,7 +142,7 @@ async function qualifyTwoRenewals(context) {
       assert.equal(serial(request.serialNumber), leaf.serial); assert.equal(normalized(request.fingerprintSha256), leaf.fingerprint);
       assert.notEqual(leaf.fingerprint, leaves[cycle].fingerprint); assert.notEqual(leaf.spki, leaves[cycle].spki); assert.notEqual(leaf.serial, leaves[cycle].serial); assert.ok(leaf.expires > leaves[cycle].expires);
       assert.equal(native.value.container, buildEnrollmentContainerName(enrollment.id)); assert.equal(native.receipt.jobId, job.id); assert.equal(native.receipt.certificateId, source.id);
-      assert.equal(journal.kind, "valid"); assert.equal(journal.journal.state, "installed"); assert.equal(journal.journal.containerName, native.value.container); assert.equal(journal.journal.csrSpkiSha256, leaf.spki); assert.equal(String(journal.journal.requestId), String(request.requestId));
+      assert.equal(journal.kind, "valid"); assert.equal(journal.journal.state, "installed"); assert.equal(journal.journal.containerName, native.value.container); assert.equal(journal.journal.csrSpkiSha256, leaf.spki); verifyNativeRequestId(request.requestId, journal.journal.requestId);
       binding(leaf); assert.deepEqual(service(), initialService);
       leaves.push(leaf); requests.push(request); custodies.push(native); jobs.push(job);
     }

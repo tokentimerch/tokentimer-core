@@ -201,6 +201,25 @@ def http_crl_proof():
     return json.loads("{\"scope\":\"native-hierarchy-http-intermediate-crl-unavailable-and-recovered\",\"transport\":\"http\",\"revocationTarget\":\"intermediate\",\"nativeHelperSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"publicCrlSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"leafFingerprint\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"nativeVerdicts\":[\"valid\",\"revocation_unknown\",\"valid\"],\"installedAgentQualified\":false,\"httpOnlyLeafQualified\":false,\"ocspQualified\":false,\"actualIntermediateHttpOnlyCdp\":true,\"actualPublicHttpCrlFetched\":true,\"freshNativeChainValidBefore\":true,\"exactProgramScopedHttpBlock\":true,\"httpAvailableOutsideHelper\":true,\"issuingCaLdapAvailable\":true,\"freshNativeRevocationUnknown\":true,\"exactFirewallRuleRemoved\":true,\"freshNativeChainValidAfter\":true,\"originalChainCachePolicyRestored\":true,\"sameNonexportableCngCustody\":true,\"sameNativeBindingAndTrustedTls\":true,\"ownedGuardReleased\":true}")
 
 
+def http_leaf_crl_evidence():
+    return {
+        "scope": collector.http_leaf_crl_proof.SCOPE,
+        "enrollmentId": "10000000-0000-4000-8000-000000000001",
+        "jobId": "10000000-0000-4000-8000-000000000002", "requestId": 42,
+        "restoredEnrollmentId": "10000000-0000-4000-8000-000000000003",
+        "restoredJobId": "10000000-0000-4000-8000-000000000004",
+        "restoredRequestId": 43, "restoredLeafFingerprint": "6" * 64,
+        "leafFingerprint": "1" * 64, "publicCrlSha256": "2" * 64,
+        "nativeHelperSha256": "3" * 64, "originalPublicationSha256": "4" * 64,
+        "appliedPublicationSha256": "5" * 64, "caRequestCounts": [10, 11, 12],
+        "nativeVerdicts": ["valid", "revocation_unknown", "valid"],
+        "endpointStatusCodes": [200, 503, 200], "ocspQualified": False,
+        "caOutageQualified": False, "signedCmcRenewalQualified": False, "installedAgentFaultRecoveryQualified": False,
+        **{key: True for key in collector.http_leaf_crl_proof.FLAGS},
+    }
+
+
+
 def live_enroll_acl_proof():
     return json.loads("{\"scope\":\"real-same-template-machine-enroll-denial-exact-dacl-restore-and-issuance\",\"templateGuid\":\"11111111-2222-4333-8444-555555555555\",\"templateOid\":\"1.3.6.1.4.1.311.21.8.100\",\"machineSid\":\"S-1-5-21-1-2-3-1000\",\"originalDaclSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"appliedDaclSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"restoredDaclSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"deniedCaRequestDelta\":1,\"caRequestCounts\":[10,11,12],\"enrollmentIds\":[\"11111111-1111-4111-8111-111111111111\",\"22222222-2222-4222-8222-222222222222\"],\"jobIds\":[\"33333333-3333-4333-8333-333333333333\",\"44444444-4444-4444-8444-444444444444\"],\"fingerprints\":[\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"],\"caHresult\":\"0x80094012\",\"preflightRefusalQualified\":false,\"signedCmcRenewalQualified\":false,\"sameConfirmedIssuerTemplateAndAlgorithm\":true,\"actualMachineSidDenied\":true,\"nativeTemplateDeniedHresult\":true,\"deniedKeyAbsentAndJournalRetained\":true,\"deniedAttemptPreservedNativeCustodyAndTls\":true,\"exactDaclRestored\":true,\"actualCaCacheRestartAndPing\":true,\"freshPublicEnrollmentInstalled\":true,\"independentIssuedCaRequest\":true,\"newNonexportableMachineKey\":true,\"nativeMyAndIisSniCutover\":true,\"independentTrustedTls\":true,\"claimBoundEvidence\":true,\"ownedCleanupRegisteredBeforeObservation\":true}")
 
@@ -259,6 +278,11 @@ def config_encoding_proof():
     return {"scope":"installed-system-unsupported-config-encoding-startup-refusal","encodings":["utf8-bom","utf16le-bom","utf16be-bom"],"startupFailureCount":3,**dict.fromkeys(("threeActualSystemStartupParseFailures","freshStoppedServiceForEach","credentialAndPinPreserved","nativeCngAndBindingPreserved","trustedTlsPreserved","noNewAgentOrJob","exactOriginalConfigurationRestored","actualRepairedSystemChild","freshAuthenticatedHeartbeat","ownedEncodingGuardCleared"),True)}
 
 
+def active_service_controls_proof():
+    flags = ("actualDnsPostBarrier", "sameCurrentClaimAndAttempt", "sameDurablePendingJournal", "samePendingNonexportableCngKey", "interrogateSucceeded", "pauseAndContinueRefused", "sameInstalledSystemProcesses", "sameServingCngBindingAndTrustedTls", "sameProtectedStateBytes", "ownedControlGuardCleared")
+    return {"scope": "installed-scm-controls-during-real-cng-dns-renewal", "controlCount": 3, "certificateOperationInterruptionQualified": False, "defaultLeaseGraceQualified": False, **dict.fromkeys(flags, True)}
+
+
 def service_controls_proof():
     return {"scope":"installed-system-service-interrogate-and-unsupported-pause-continue","controlCount":3,"certificateOperationInterruptionQualified":False,**dict.fromkeys(("exactOwnedInstalledService","interrogateSucceeded","pauseAndContinueRefused","sameNativeHostAndChild","unchangedCredentialAndConfiguration","unchangedNativeCngAndBinding","trustedTlsPreserved","freshAuthenticatedHeartbeat","unchangedJobClaims","ownedControlGuardCleared"),True)}
 
@@ -272,6 +296,17 @@ def installed_iis_refusal_proof():
 
 
 class CollectorTests(unittest.TestCase):
+    def test_active_certificate_scm_controls_are_bounded_and_private_identity_is_stripped(self):
+        proof = active_service_controls_proof()
+        event = {"scope": "real-agent-windows-acme-iis/rsa-2048", "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "nativeInstalledActiveServiceControls": {**proof,"privateNative":"sentinel"}}
+        self.assertEqual(collector.active_service_controls_fields(event), {"nativeInstalledActiveServiceControls":proof})
+        for field in proof:
+            missing=dict(proof);del missing[field]
+            with self.subTest(field=field),self.assertRaises(ValueError):collector.active_service_controls_fields({**event,"nativeInstalledActiveServiceControls":missing})
+        for patch in ({"actualDnsPostBarrier":False},{"controlCount":True},{"defaultLeaseGraceQualified":True},{"certificateOperationInterruptionQualified":True},{"scope":"idle-controls"}):
+            with self.assertRaises(ValueError):collector.active_service_controls_fields({**event,"nativeInstalledActiveServiceControls":{**proof,**patch}})
+        self.assertEqual(collector.active_service_controls_fields({**event,"scope":"real-agent-acme-filesystem"}),{})
+
     def test_same_certificate_late_approval_projection_is_complete(self):
         proof=same_certificate_late_approval_proof()
         self.assertEqual(collector.same_certificate_late_approval_fields({**proof,"rawCsr":"private"}),proof)
@@ -848,7 +883,7 @@ class CollectorTests(unittest.TestCase):
         fields = ("anonymousAdmissionRefused", "viewerAdmissionRefused", "authorizedAdmissionCreated", "idempotentSameJob", "publicRequesterPreserved", "serverDerivedOsStoreKeyMode", "publicPayloadPreserved", "nativeJobSucceeded", "nativeCngIisTrustedTlsVerified", "ownedActorCleanup")
         facts = {**dict.fromkeys(fields, True), "anonymousStatus": 401, "viewerStatus": 403, "createStatus": 201, "replayStatus": 201, "source": "api", "mode": "real", "authorizedRole": "workspace_manager", "rawSession": {"password": "sentinel"}}
         scope = "real-agent-windows-acme-iis/rsa-2048"
-        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPublicRetirement": public_retirement_proof(), "nativeInstalledRetentionConfig": retention_config_proof(), "nativeInstalledCredentialRefusal": credential_refusal_proof(), "nativeInstalledConfigEncoding": config_encoding_proof(), "nativeInstalledServiceControls": service_controls_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
+        event = {"scope": scope, "name": "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", "type": "test:pass", "windowsPublicIssuance": facts, "nativeInstalledStateHandoff": installed_handoff_proof(), "nativeInstalledIisRefusal": installed_iis_refusal_proof(), "nativeInstalledCrash": {'scope': 'installed-system-native-handle-crash-fixture-lease-recovery', 'retainedNativeHandles': True, 'freshIdentityReverified': True, 'capturedHandlesExited': True, 'capturedLineageAbsent': True, 'fixtureCommandPathsAbsent': True, 'fixtureAdjustedLeaseRecovery': True, 'unresolvedAttemptNotReplayed': True, 'startupOrphanKeyRemoved': True, 'priorTrustedTlsPreserved': True, 'atomicTreeContainmentQualified': False, 'productionLeaseGraceQualified': False}, "nativeInstalledPublicRetirement": public_retirement_proof(), "nativeInstalledRetentionConfig": retention_config_proof(), "nativeInstalledCredentialRefusal": credential_refusal_proof(), "nativeInstalledConfigEncoding": config_encoding_proof(), "nativeInstalledActiveServiceControls": active_service_controls_proof(), "nativeInstalledServiceControls": service_controls_proof(), "nativeInstalledPaths": installed_paths_proof(), "nativeWindowsKeyReuseRefusal": {"scope": "public-windows-acme-profile-reuse-refusal", **dict.fromkeys(("publicAdmissionRefused", "profileUnchanged", "noJobAllocated", "nativeInventoryAndCustodyUnchanged", "trustedTlsUnchanged"), True)}}
         output = collector.sanitized_report([event], set(), {scope})
         self.assertEqual(output[0]["windowsPublicIssuance"]["source"], "api")
         self.assertNotIn("sentinel", json.dumps(output))
@@ -1194,6 +1229,7 @@ class CollectorTests(unittest.TestCase):
         value["nativePublicForeignSpki"] = {**public_foreign_spki_proof(), "privateTrace": "sentinel"}
         value["nativeRequiredTemplateAttributes"] = {**required_template_attribute_proof(), "privateTrace": "sentinel"}
         value["nativeLiveEnrollAcl"] = {**live_enroll_acl_proof(), "privateDacl": "sentinel"}
+        value["nativeHttpOnlyLeafCrl"] = {**http_leaf_crl_evidence(), "privatePublication": "sentinel"}
         value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
         value["nativeBrowserAdcs"] = browser_adcs_proof()
         value["nativeBrowserAdcs"]["privateCookie"] = "sentinel"
@@ -1279,6 +1315,20 @@ class CollectorTests(unittest.TestCase):
             invalid["nativeUncertainOperatorAmbiguity"].update(patch)
             with self.subTest(ambiguity_patch=patch), self.assertRaises(ValueError):
                 collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
+        self.assertEqual(result[0][1]["nativeHttpOnlyLeafCrl"], http_leaf_crl_evidence())
+        for key in (None, *http_leaf_crl_evidence()):
+            bad = json.loads(json.dumps(value))
+            if key is None:
+                del bad["nativeHttpOnlyLeafCrl"]
+            else:
+                del bad["nativeHttpOnlyLeafCrl"][key]
+            with self.subTest(http_leaf_missing=key), self.assertRaises(ValueError):
+                collector.sanitized_report(bad, {value["suite"]}, set())
+        for patch_value in ({"actualOwnedHttp503": False}, {"installedAgentFaultRecoveryQualified": True}, {"caRequestCounts": [10, 11, 13]}, {"restoredRequestId": 42}):
+            bad = json.loads(json.dumps(value))
+            bad["nativeHttpOnlyLeafCrl"].update(patch_value)
+            with self.subTest(http_leaf_invalid=patch_value), self.assertRaises(ValueError):
+                collector.sanitized_report(bad, {value["suite"]}, set())
         self.assertEqual(result[0][1]["nativeBrowserAdcs"], browser_adcs_proof())
         self.assertEqual(result[0][1]["nativeLocalRulePairs"], local_pairs_proof())
         self.assertEqual(result[0][1]["nativeForeignSpkiCandidate"], foreign_spki_proof())

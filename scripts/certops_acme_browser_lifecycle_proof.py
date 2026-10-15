@@ -5,6 +5,7 @@ import re
 SUITE = "linux-native-acme-browser-lifecycle"
 FIELD = "nativeAcmeBrowserLifecycle"
 FLAGS = "actualIssueAndRenewForms cancelBothFormsWithoutMutation exactPublicIssueAndRenewAdmission sameOwnedCertificate actualNativeClaimsAndActor claimBoundFingerprintEvidence independentNativeCertificateKeyPairs distinctLeafSerialAndSpki trustedTlsBothGenerations ownedBrowserClosed nativeOperationGuardCleared".split()
+DISCOVERY_FLAGS = "actualUnprivilegedAgent noEffectiveCapabilities actualOsEacces fileAndDirectorySymlinksUnfollowed twoActualPositiveScans publicInventoryRegularLocation negativeFingerprintAbsent outsidePublicBytesUnchanged exactAgentClosed ownedInputsRemoved".split()
 
 
 def require(condition):
@@ -25,7 +26,17 @@ def project_report(value):
     for flag in FLAGS:
         require(p[flag] is True)
     require(isinstance(e, dict) and e.get("measurement") == "native" and e.get("osFamily") == "linux" and e.get("distributionId") == "ubuntu" and e.get("distributionVersion") == "24.04" and e.get("executionSurface") == "host" and e.get("libc") == "glibc")
-    return {FIELD: copy.deepcopy(p)}
+    d = value.get("nativeFileDiscoveryRefusals")
+    require(isinstance(d, dict) and set(d) == {"scope", "uid", "gid", "positiveFingerprint", "negativeFingerprint", "positiveScanCount", *DISCOVERY_FLAGS})
+    require(d["scope"] == "actual-unprivileged-linux-file-discovery-refusals")
+    for key in ("uid", "gid"):
+        require(type(d[key]) is int and d[key] > 0)
+    for key in ("positiveFingerprint", "negativeFingerprint"):
+        require(isinstance(d[key], str) and re.fullmatch(r"[a-f0-9]{64}", d[key]))
+    require(d["positiveFingerprint"] != d["negativeFingerprint"])
+    require(type(d["positiveScanCount"]) is int and 2 <= d["positiveScanCount"] <= 10000)
+    require(all(d[flag] is True for flag in DISCOVERY_FLAGS))
+    return {FIELD: copy.deepcopy(p), "nativeFileDiscoveryRefusals": copy.deepcopy(d)}
 
 
 def verify_workflow(value, workflow):

@@ -8,13 +8,19 @@ const assert = require("node:assert/strict"),
 const helper = require("../tests/e2e/helpers/certops-acme-browser-lifecycle");
 const SUITE = "linux-native-acme-browser-lifecycle";
 const SCENARIO = "real-native-acme-browser-issue-renew-lifecycle";
+const DISCOVERY_SCENARIO = "real-native-unprivileged-file-discovery-refusals";
 const NATIVE_CASES = Object.freeze([
   "real-acme-browser-issue-native-completion",
   "real-acme-browser-renew-native-completion",
+  DISCOVERY_SCENARIO,
 ]);
 const SIDECAR = "qualification-results/acme-browser-lifecycle-proof.json";
-function readProof(root = path.resolve(__dirname, "..")) {
-  const file = path.join(root, SIDECAR),
+function readClosedProof(
+  root = path.resolve(__dirname, ".."),
+  sidecar = SIDECAR,
+  verify = helper.verifyProof,
+) {
+  const file = path.join(root, sidecar),
     original = fs.lstatSync(file, { bigint: true });
   assert.ok(
     original.isFile() &&
@@ -47,7 +53,7 @@ function readProof(root = path.resolve(__dirname, "..")) {
     fs.closeSync(fd);
   }
   const proof = JSON.parse(bytes.subarray(0, length).toString("utf8"));
-  helper.verifyProof(proof);
+  verify(proof);
   return proof;
 }
 function verifyActualJourney(events, proof, candidateSha) {
@@ -69,8 +75,19 @@ function verifyActualJourney(events, proof, candidateSha) {
 module.exports = {
   SUITE,
   SCENARIO,
+  DISCOVERY_SCENARIO,
+  DISCOVERY_SIDECAR: "qualification-results/native-file-discovery-proof.json",
+  readDiscoveryProof(root) {
+    return readClosedProof(
+      root,
+      "qualification-results/native-file-discovery-proof.json",
+      require("../tests/e2e/helpers/certops-native-file-discovery").verifyProof,
+    );
+  },
   NATIVE_CASES,
   SIDECAR,
-  readProof,
+  readProof(root) {
+    return readClosedProof(root);
+  },
   verifyActualJourney,
 };

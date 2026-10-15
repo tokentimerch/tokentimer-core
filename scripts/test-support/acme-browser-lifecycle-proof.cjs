@@ -16,6 +16,7 @@ function proof() {
   return value;
 }
 function envelope() {
+  const discovery = require("../../tests/e2e/helpers/certops-native-file-discovery");
   return {
     suite: "linux-native-acme-browser-lifecycle",
     platform: "linux",
@@ -29,6 +30,15 @@ function envelope() {
       libc: "glibc",
     },
     nativeAcmeBrowserLifecycle: proof(),
+    nativeFileDiscoveryRefusals: {
+      scope: discovery.SCOPE,
+      uid: 1001,
+      gid: 1002,
+      positiveFingerprint: "e".repeat(64),
+      negativeFingerprint: "f".repeat(64),
+      positiveScanCount: 2,
+      ...Object.fromEntries(discovery.FLAGS.map((flag) => [flag, true])),
+    },
   };
 }
 function artifact() {
@@ -62,7 +72,7 @@ function artifact() {
       finishedAt: date,
       artifactQualification: "workflow-checkout-source",
       cleanup: { status: "passed" },
-      requiredScenarios: [r.SCENARIO],
+      requiredScenarios: [r.SCENARIO, r.DISCOVERY_SCENARIO],
       missingScenarios: [],
       requiredCapabilities: ["linux", "api", "browser"],
       missingCapabilities: [],
@@ -74,6 +84,13 @@ function artifact() {
       scenarios: [
         {
           id: r.SCENARIO,
+          status: "passed",
+          evidenceLevel: "e2e",
+          startedAt: date,
+          finishedAt: date,
+        },
+        {
+          id: r.DISCOVERY_SCENARIO,
           status: "passed",
           evidenceLevel: "e2e",
           startedAt: date,

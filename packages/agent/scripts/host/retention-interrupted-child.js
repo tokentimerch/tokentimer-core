@@ -20,6 +20,14 @@ function parseArguments(args) {
     ownedGo = inputs.pop().slice("--owned-go=".length);
     assert.ok(path.win32.isAbsolute(ownedGo));
   }
+  let store = "My",
+    explicitStore = false;
+  if (inputs.at(-1)?.startsWith("--store=")) {
+    const flag = inputs.pop();
+    assert.match(flag, /^--store=(My|WebHosting)$/);
+    store = flag.slice("--store=".length);
+    explicitStore = true;
+  }
   const [stateDir, thumbprint, containerName, inputMode, residentConfigSha256] =
     inputs;
   let residentConfigPath = inputMode,
@@ -35,12 +43,28 @@ function parseArguments(args) {
   } else if (inputMode === undefined) assert.equal(inputs.length, 3);
   else {
     assert.equal(inputs.length, 5);
+    assert.equal(
+      explicitStore,
+      false,
+      "Resident campaign retains its original My-store contract",
+    );
     assert.ok(path.win32.isAbsolute(residentConfigPath));
     assert.match(residentConfigSha256, /^[a-f0-9]{64}$/);
     assert.equal(
       ownedGo,
       undefined,
       "Resident launch uses its separate original config-bound gate",
+    );
+  }
+  if (store === "WebHosting") {
+    assert.equal(
+      retentionHours,
+      24,
+      "WebHosting source retains the reviewed24h policy",
+    );
+    assert.ok(
+      ownedGo,
+      "WebHosting interruption requires its contained launch gate",
     );
   }
   assert.equal(typeof stateDir, "string");
@@ -53,6 +77,7 @@ function parseArguments(args) {
     residentConfigPath,
     residentConfigSha256,
     retentionHours,
+    ...(store === "My" ? {} : { store }),
     ownedGo,
   };
 }
@@ -66,6 +91,7 @@ async function main() {
     residentConfigPath,
     residentConfigSha256,
     retentionHours,
+    store = "My",
     ownedGo,
   } = parseArguments(process.argv.slice(2));
   assert.match(thumbprint, /^[A-F0-9]{40}$/);
@@ -118,7 +144,7 @@ async function main() {
   assert.equal(row.oldThumbprint, thumbprint);
   assert.equal(row.cngKeyContainerId, containerName);
   assert.equal(row.ownershipProvenance, "tokentimer_installed");
-  assert.equal(row.store, "My");
+  assert.equal(row.store, store);
   let nativeDeletionObserved = false;
   const execFileImpl = (file, args, options, callback) =>
     childProcess.execFile(file, args, options, (error, stdout, stderr) => {
@@ -127,7 +153,7 @@ async function main() {
         path.basename(file).toLowerCase() === "certutil.exe" &&
         args.length === 3 &&
         args[0] === "-delstore" &&
-        args[1] === "My" &&
+        args[1] === store &&
         args[2] === thumbprint
       ) {
         assert.equal(nativeDeletionObserved, false);

@@ -6758,7 +6758,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
 
 /**
  * Runs the agent process: load config, register if needed, then run the
- * heartbeat and claim loops until SIGINT/SIGTERM or until the control plane
+ * heartbeat and claim loops until SIGINT/SIGTERM (or Windows SIGBREAK) or until the control plane
  * retires this agent (heartbeat HTTP 410 -> clean exit, no respawn loop,
  * ADR-0002).
  *
@@ -6839,6 +6839,9 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   }
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  // SCM host Stop sends CTRL_BREAK_EVENT; Node exposes it as SIGBREAK.
+  // Reuse the same transport/poll shutdown and awaited log drain.
+  if (process.platform === "win32") process.once("SIGBREAK", stop);
 
   // Default deny: with no policy block in config.json every allowlist is
   // empty, so the engine rejects all command/path/CA/DNS dimensions. The
@@ -6893,6 +6896,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   } catch (err) {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    if (process.platform === "win32") process.removeListener("SIGBREAK", stop);
     if (externalSignal) externalSignal.removeEventListener("abort", stop);
     throw err;
   }
@@ -7140,6 +7144,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    if (process.platform === "win32") process.removeListener("SIGBREAK", stop);
     if (externalSignal) externalSignal.removeEventListener("abort", stop);
     await drainJobLogSessions();
   }

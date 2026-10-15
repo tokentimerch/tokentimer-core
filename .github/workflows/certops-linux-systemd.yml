@@ -50,13 +50,19 @@ jobs:
             CERTOPS_REGISTRATION_ENCRYPTION_KEY="$CERTOPS_REGISTRATION_ENCRYPTION_KEY" \
             "$candidate_node" scripts/certops-linux-systemd.js
       - name: Independently clean only receipt-owned host resources
+        id: owned-host-cleanup
         if: always()
         run: |
           sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" CERTOPS_LINUX_SYSTEMD_DISPOSABLE_HOST=1 \
             "$(command -v node)" scripts/certops-linux-systemd-cleanup.js
       - name: Destroy disposable database stack
         if: always()
-        run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+        env:
+          CERTOPS_HOST_CLEANUP_OUTCOME: ${{ steps.owned-host-cleanup.outcome }}
+        run: |
+          test "$CERTOPS_HOST_CLEANUP_OUTCOME" = success
+          node -e "require('./scripts/certops-linux-systemd-ownership').assertHostReceiptRemoved(process.env.RUNNER_TEMP)"
+          docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
       - name: Preserve sanitized qualification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -66,4 +72,5 @@ jobs:
             qualification-results/linux-systemd.jsonl
             qualification-results/linux-systemd-writepath.json
             qualification-results/linux-systemd-reapply.json
+            qualification-results/linux-installed-file-discovery.json
           if-no-files-found: error

@@ -1,0 +1,64 @@
+# Manual Azure-free native store retention. No domain/CA lab, OIDC or paid VM.
+name: "CertOps / Windows WebHosting expiry retention"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-webhosting-retention-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      CERTOPS_HOST_TESTS: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/reference/adcs-chain/go.mod
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Expose hosted Git OpenSSL
+        shell: pwsh
+        run: |
+          $directory = @('C:\Program Files\Git\usr\bin','C:\Program Files\Git\mingw64\bin') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'openssl.exe') } | Select-Object -First 1
+          if (-not $directory) { throw 'Hosted OpenSSL prerequisite missing' }
+          $directory | Out-File -LiteralPath $env:GITHUB_PATH -Append -Encoding utf8
+          & (Join-Path $directory 'openssl.exe') version
+          if ($LASTEXITCODE -ne 0) { throw 'Hosted OpenSSL prerequisite unusable' }
+      - name: Enable hosted IIS without reboot
+        shell: pwsh
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Scripting-Tools -IncludeManagementTools
+          if (-not $result.Success -or $result.RestartNeeded -ne 'No') { throw 'Hosted IIS unavailable without reboot' }
+      - name: Build candidate native metadata/query helper
+        run: node packages/agent/scripts/build-windows-chain-helper.js
+      - name: Genuine WebHosting expiry grace and owned native recovery
+        timeout-minutes: 15
+        run: node scripts/certops-windows-webhosting-retention.js
+      - name: Require every named native and cleanup oracle
+        run: node scripts/certops-qualification-report.js qualification-results/windows-webhosting-retention.json
+      - name: Preserve bounded public execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-webhosting-retention-${{ matrix.os }}
+          path: qualification-results/windows-webhosting-retention.json
+          if-no-files-found: error

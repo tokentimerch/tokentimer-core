@@ -284,6 +284,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativePublicForeignSpki: require("./fixtures/certops-adcs-public-foreign-spki.cjs").proof(),
     nativeRequiredTemplateAttributes: require("./fixtures/certops-adcs-template-required-attributes.cjs").proof(),
     nativeLiveEnrollAcl: require("./fixtures/certops-adcs-live-enroll-acl.cjs").proof(),
+    nativeHttpOnlyLeafCrl: require("./fixtures/certops-adcs-http-leaf-crl.cjs").proof(),
     nativeBrowserAdminBoundary: {"scope":"public-manager-viewer-adcs-admin-boundary-not-mounted-admin-withdrawal","enrollmentId":"11111111-1111-1111-1111-111111111111","forbiddenMutations":4,"roleChanges":2,"adminDemotions":0,"mountedAdminWithdrawalQualified":false,"distinctOwnedNonownerActors":true,"noGlobalAdminBypassAssumed":true,"publicManagerViewerManagerTransitions":true,"managerAndViewerUiDenied":true,"bothRolesReconcileAndAbandonForbidden":true,"publicOwnerAdminPatchDemotionRefused":true,"exactOwnerAdminUnchanged":true,"actualUncertainEnrollmentAndJobsUnchanged":true,"nativeCaAndUnacceptedKeyUnchanged":true,"servingNativeCustodyAndTrustedTlsUnchanged":true,"targetCertOpsAuditUnchanged":true,"exactMembershipAudits":true,"managerMembershipRestored":true,"browserAndTrustDrained":true},
     nativeBrowserReconcile: browserReconcileProof(),
     nativeIssuedSanBoundary: issuedSanProof(),
@@ -316,6 +317,10 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   const publicForeign = require("./fixtures/certops-adcs-public-foreign-spki.cjs").proof();
   for (const key of Object.keys(publicForeign)) { const missing=structuredClone(value);delete missing.report.nativePublicForeignSpki[key];assert.ok(verifyMatrix([missing],options).length); }
   for (const patch of [{foreignRequestId:"101"},{failedJobId:operatorAmbiguityProof().jobIds[1]},{selectedFingerprint:"f".repeat(64)},{originalSpkiSha256:"f".repeat(64)},{reconcileSearchFrom:99},{foreignSubjectRequestCount:2},{privateExtra:"sentinel"}]) { const wrong=structuredClone(value);Object.assign(wrong.report.nativePublicForeignSpki,patch);assert.ok(verifyMatrix([wrong],options).length); }
+  const httpLeaf=require("./fixtures/certops-adcs-http-leaf-crl.cjs").proof();
+  const absentHttpLeaf=structuredClone(value);delete absentHttpLeaf.report.nativeHttpOnlyLeafCrl;assert.ok(verifyMatrix([absentHttpLeaf],options).length);
+  for(const key of Object.keys(httpLeaf)){const missing=structuredClone(value);delete missing.report.nativeHttpOnlyLeafCrl[key];assert.ok(verifyMatrix([missing],options).length);}
+  for(const patch of [{actualOwnedHttp503:false},{caRequestCounts:[10,11,13]},{installedAgentFaultRecoveryQualified:true},{restoredRequestId:42},{privateReceipt:"sentinel"}]){const wrong=structuredClone(value);Object.assign(wrong.report.nativeHttpOnlyLeafCrl,patch);assert.ok(verifyMatrix([wrong],options).length);}
   const liveAcl=require("./fixtures/certops-adcs-live-enroll-acl.cjs").proof();
   for(const key of Object.keys(liveAcl)){const wrong=structuredClone(value);delete wrong.report.nativeLiveEnrollAcl[key];assert.ok(verifyMatrix([wrong],options).length);}
   for(const patch of [{exactDaclRestored:false},{restoredDaclSha256:"e".repeat(64)},{caRequestCounts:[10,11,13]},{deniedCaRequestDelta:2},{signedCmcRenewalQualified:true},{rawDacl:"private"}]){const wrong=structuredClone(value);Object.assign(wrong.report.nativeLiveEnrollAcl,patch);assert.ok(verifyMatrix([wrong],options).length);}
@@ -552,6 +557,7 @@ test("Windows native stack slots require public admission proof beyond service-c
   events.at(-1).nativeInstalledCrash={"scope": "installed-system-native-handle-crash-fixture-lease-recovery", "retainedNativeHandles": true, "freshIdentityReverified": true, "capturedHandlesExited": true, "capturedLineageAbsent": true, "fixtureCommandPathsAbsent": true, "fixtureAdjustedLeaseRecovery": true, "unresolvedAttemptNotReplayed": true, "startupOrphanKeyRemoved": true, "priorTrustedTlsPreserved": true, "atomicTreeContainmentQualified": false, "productionLeaseGraceQualified": false};
   events.at(-1).nativeInstalledIisRefusal={"scope":"installed-agent-public-standalone-iis-deploy-refusal","jobId":"11111111-1111-1111-1111-111111111111","claimId":"22222222-2222-2222-2222-222222222222","genuinePriorIssuance":true,"publicDeployAdmitted":true,"sameInstalledAgentClaimedOnce":true,"specificUnsupportedTargetFailure":true,"claimBoundFailureAudit":true,"nativeInventoryAndCustodyUnchanged":true,"bothBindingsAndTrustedTlsUnchanged":true,"actualAcmeClientNotInvoked":true,"dnsTrafficUnchanged":true,"credentialAndPinUnchanged":true,"exactOwnedShadowRemoved":true};
   const installedPaths=require("../tests/e2e/helpers/certops-windows-installed-paths");events.at(-1).nativeInstalledPaths={scope:installedPaths.SCOPE,...Object.fromEntries(installedPaths.FLAGS.map(flag=>[flag,true]))};
+  const activeScm=require("../tests/e2e/helpers/certops-windows-active-service-controls");events.at(-1).nativeInstalledActiveServiceControls={scope:activeScm.SCOPE,controlCount:3,certificateOperationInterruptionQualified:false,defaultLeaseGraceQualified:false,...Object.fromEntries(activeScm.FLAGS.map(flag=>[flag,true]))};
   const scm=require("../tests/e2e/helpers/certops-windows-service-controls");events.at(-1).nativeInstalledServiceControls={scope:scm.SCOPE,controlCount:3,certificateOperationInterruptionQualified:false,...Object.fromEntries(scm.FLAGS.map(flag=>[flag,true]))};
   events.at(-1).nativeInstalledPublicRetirement={"scope":"public-idle-installed-windows-agent-retirement","inFlightRetirementQualified":false,"anonymousStatus":401,"viewerStatus":403,"managerStatus":200,"replayStatus":200,"retirementAuditCount":1,"noRespawnObservedMs":5000,"sameOwnedSystemRuntimeBeforeRetirement":true,"anonymousAndViewerRefused":true,"authorizedManagerPublicRetirement":true,"sameActorAppendOnlyAudit":true,"idempotentWithoutDuplicateAudit":true,"actualAuthenticatedRetirementExit86":true,"nativeScmCleanExitZero":true,"measuredNoRespawnWindow":true,"capturedHostAndChildAbsent":true,"nativeCustodyAndTrustedTlsPreserved":true,"credentialConfigurationAndPinPreserved":true,"noJobClaimMutation":true,"ownedRetirementGuardCleared":true};
   events.at(-1).nativeInstalledRetentionConfig={"scope":"installed-system-invalid-retention-policy-startup-refusal","policies":["below-minimum-hours","above-maximum-hours","zero-sweep-interval"],"startupFailureCount":3,"retentionTimerQualified":false,"threeActualSystemValidationFailures":true,"freshStoppedServiceForEach":true,"credentialAndPinPreserved":true,"nativeCngAndBindingPreserved":true,"trustedTlsPreserved":true,"noNewAgentOrJob":true,"exactOriginalConfigurationRestored":true,"actualRepairedSystemChild":true,"freshAuthenticatedHeartbeat":true,"ownedPolicyGuardCleared":true};
@@ -570,6 +576,7 @@ test("Windows native stack slots require public admission proof beyond service-c
   {const bad=structuredClone(value);bad.events[0].fixtureSources.find(row=>row.file===reuse.requiredSources[0]).sha256="0".repeat(64);assert.ok(verifyMatrix([bad],options).length);}
   // The helper's pure tests and Python parity cover every field. These cases
   // exercise release delegation without repeatedly hashing the whole archive.
+  for(const mutate of [v=>delete v.nativeInstalledActiveServiceControls,v=>v.nativeInstalledActiveServiceControls.actualDnsPostBarrier=false,v=>v.nativeInstalledActiveServiceControls.defaultLeaseGraceQualified=true,v=>v.nativeInstalledActiveServiceControls.certificateOperationInterruptionQualified=true,v=>v.nativeInstalledActiveServiceControls.privateNative="secret"]){const bad=structuredClone(value);mutate(bad.events.at(-1));assert.ok(verifyMatrix([bad],options).length);}
   for(const mutate of [v=>delete v.nativeInstalledServiceControls,v=>v.nativeInstalledServiceControls.interrogateSucceeded=false,v=>v.nativeInstalledServiceControls.scope="supporting-only"]){const bad=structuredClone(value);mutate(bad.events.at(-1));assert.ok(verifyMatrix([bad],options).length);}
   for(const patch of [{controlCount:2},{certificateOperationInterruptionQualified:true},{rawCommandLine:"private"}]){const bad=structuredClone(value);Object.assign(bad.events.at(-1).nativeInstalledServiceControls,patch);assert.ok(verifyMatrix([bad],options).length);}
   for(const mutate of [v=>delete v.nativeInstalledPublicRetirement,v=>v.nativeInstalledPublicRetirement.authorizedManagerPublicRetirement=false,v=>v.nativeInstalledPublicRetirement.inFlightRetirementQualified=true,v=>v.nativeInstalledPublicRetirement.noRespawnObservedMs=4999,v=>v.nativeInstalledPublicRetirement.privatePath="secret"]){const bad=structuredClone(value);mutate(bad.events.at(-1));assert.ok(verifyMatrix([bad],options).length);}
@@ -844,4 +851,21 @@ test("resident domain retention requires genuine day, complete native facts and 
  const missing=structuredClone(value);delete missing.report.nativeRetention24h;assert.ok(verifyMatrix([missing],options).length);
  const stale=structuredClone(value);stale.report.fixtureSources[0].sha256="0".repeat(64);assert.ok(verifyMatrix([stale],options).length);
  const omitted=structuredClone(value);omitted.report.fixtureSources.pop();assert.ok(verifyMatrix([omitted],options).length);
+});
+
+
+test("WebHosting hosted cells require independent store, elapsed and borrowed-key custody proof", () => {
+ const runner=require('./certops-windows-webhosting-retention');
+ const fixture=require('./fixtures/certops-webhosting-retention.cjs');
+ const slots=require('../docs/certops/release-qualification-matrix.json').slots.filter(x=>x.suite===runner.SUITE);
+ assert.equal(slots.length,2);
+ for(const slot of slots){
+  const value=suiteArtifact(slot.suite,slot.source,{nativeWebHostingRetention:fixture.proof(),cleanup:{status:"passed"}});
+  value.environment=slot.environment; value.report.qualificationEnvironment={...slot.environment,measurement:"native"};
+  value.report.fixtureSources=slot.requiredSources.map(file=>({file,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(root,file))).digest('hex')}));
+  assert.deepEqual(verifyMatrix([value],{candidateSha,specification:{schemaVersion:1,slots:[slot]}}),[]);
+  for(const mutate of [p=>{p.cleanup.status="failed"},p=>{delete p.nativeWebHostingRetention},p=>{p.nativeWebHostingRetention.store='My'},p=>{p.nativeWebHostingRetention.storeReceipt.nativeIisWebHostingStoreObserved=false},p=>{p.nativeWebHostingRetention.borrowedReplacement.sameOriginalMyPrivateKeyPossession=false},p=>{p.nativeWebHostingRetention.elapsed.waitedMonotonicMs=1},p=>{delete p.nativeWebHostingRetention.elapsed.ownedInterruption},p=>{p.nativeWebHostingRetention.privateNative='forbidden'},p=>{p.fixtureSources.pop()}]){
+   const bad=structuredClone(value);mutate(bad.report);assert.ok(verifyMatrix([bad],{candidateSha,specification:{schemaVersion:1,slots:[slot]}}).length);
+  }
+ }
 });
