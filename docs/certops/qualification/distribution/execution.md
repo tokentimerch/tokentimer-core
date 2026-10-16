@@ -1,5 +1,8 @@
 # Distribution execution record
 
+The original record below is preserved. The latest continuation and fresh
+15-phase cohorts are in [execution-2026-10-16.md](execution-2026-10-16.md).
+
 Date: 2026-10-15. Candidate is PR #358's branch after integration of PR #329.
 The final enrolled-agent cohort candidate is `3d47e52c6b89b9c72d2dc9c73b453f6b12b9afb4`.
 The concurrent native qualification additions at `f1359f66` were merged and

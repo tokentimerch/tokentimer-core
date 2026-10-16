@@ -4,9 +4,10 @@
 native nginx/HAProxy processes on disposable containers, with experimental
 capabilities. `Integration` includes injected SQL/receipts or bounded adapter
 fault servers. Neither classification means released/native qualification.
-Execution outcomes are recorded separately in [execution.md](execution.md).
-The additional security/runtime-controls sources require fresh 15-phase cohort
-reports; the original 13-phase reports remain historical supporting evidence.
+Latest execution outcomes are recorded separately in
+[execution-2026-10-16.md](execution-2026-10-16.md). All three fresh 15-phase
+cohorts passed; the original 13-phase reports remain historical supporting
+evidence. Neither set qualifies a released/native artifact.
 
 Sources below are rooted at `tests/wildcard-vault/` unless stated otherwise.
 
