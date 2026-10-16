@@ -1,0 +1,64 @@
+name: "CertOps / Isolated native signing key rotation qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-signing-rotation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  signing-rotation:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_CSR_API_URL: http://localhost:4000
+      CERTOPS_SIGNING_ROTATION_API_URL: http://localhost:4000
+      CERTOPS_CSR_DISPOSABLE_STACK: '1'
+      CERTOPS_SIGNING_ROTATION_DISPOSABLE_STACK: '1'
+      CERTOPS_E2E_REQUIRED: '1'
+      CERTOPS_SIGNING_ROTATION_REPORT: qualification-results/signing-rotation.json
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: tokentimer
+      DB_PASSWORD: password
+      DB_NAME: tokentimer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start isolated actual API and database
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Execute actual operator rotation and native fleet acknowledgements
+        run: |
+          node --test tests/e2e/certops-signing-rotation-e2e.test.js
+          node scripts/certops-qualification-report.js qualification-results/signing-rotation.json
+      - name: Destroy isolated stack
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - name: Preserve only bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-signing-rotation-${{ github.sha }}
+          path: qualification-results/signing-rotation.json
+          if-no-files-found: error
+          retention-days: 14

@@ -33,12 +33,7 @@ function notAllowlisted(message) {
   };
 }
 
-function matchEnrollmentRule(rules, caConfig, template) {
-  if (!Array.isArray(rules)) return null;
-  return (
-    rules.find((rule) => rule && rule.caConfig === caConfig && rule.template === template) || null
-  );
-}
+const { matchWholeEnrollmentRule: matchEnrollmentRule } = require("./adcs-enrollment-rules");
 
 function unquote(value) {
   return String(value || "").trim().replace(/^"+|"+$/g, "");
@@ -65,7 +60,9 @@ function oidList(values) {
   for (const value of values) {
     for (const part of value.split(/[\s,;]+/)) {
       const token = unquote(part);
-      if (/^\d+(?:\.\d+)+$/.test(token)) oids.push(token);
+      if (!token) continue;
+      if (!/^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(token)) return [];
+      oids.push(token);
     }
   }
   return oids;
@@ -101,6 +98,43 @@ function unreadableTemplate() {
   };
 }
 
+function templateUint(values) {
+  if (values.length !== 1) return null;
+  const value = unquote(values[0]);
+  const nativePair = /^(0x[0-9a-f]+|[0-9a-f]+)[ \t]*\(([0-9]+)\)$/i.exec(value);
+  if (nativePair) {
+    const hex = Number.parseInt(nativePair[1].replace(/^0x/i, ""),16);
+    const decimal = Number(nativePair[2]);
+    return Number.isSafeInteger(decimal) && decimal >= 0 && decimal <= 0xffffffff && hex === decimal ? decimal : null;
+  }
+  if (!/^(?:[0-9]+|0x[0-9a-f]+)$/i.test(value)) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 && number <= 0xffffffff ? number : null;
+}
+
+function templateAlgorithm(text) {
+  const direct = attributeValues(text, "msPKI-Asymmetric-Algorithm");
+  const tuples = [];
+  let malformed = direct.length > 1;
+  for (const value of attributeValues(text, "msPKI-RA-Application-Policies")) {
+    const fields = unquote(value).split("`").map(unquote);
+    // Native typed property lists may terminate their last value with one
+    // delimiter. Additional empty fields remain malformed.
+    if (fields.at(-1) === "") fields.pop();
+    if (!fields.some((field) => field.toLowerCase() === "mspki-asymmetric-algorithm")) continue;
+    if (fields.length % 3 !== 0) { malformed = true; continue; }
+    for (let index = 0; index < fields.length; index += 3) {
+      if (fields[index].toLowerCase() !== "mspki-asymmetric-algorithm") continue;
+      if (fields[index + 1] !== "PZPWSTR") malformed = true;
+      else tuples.push(fields[index + 2]);
+    }
+  }
+  if (tuples.length > 1) malformed = true;
+  const values = [...direct.map(unquote), ...tuples].map((value) => value.toUpperCase());
+  if (values.some((value) => !/^[A-Z0-9_]{1,32}$/.test(value)) || new Set(values).size > 1) malformed = true;
+  return { algorithm: !malformed && values.length ? values[0] : null, malformed };
+}
+
 function parseTemplateDump(text, expectedTemplate) {
   if (typeof expectedTemplate === "string") {
     const identities = templateIdentities(text);
@@ -114,43 +148,49 @@ function parseTemplateDump(text, expectedTemplate) {
     return unreadableTemplate();
   }
   const reasons = [];
-  const schemaText = unquote(schemaRaw[0] || "");
-  const schemaVersion = /^\d+$/.test(schemaText) ? Number(schemaText) : null;
-  if (schemaVersion == null) reasons.push("template_unreadable");
+  const schemaVersion = templateUint(schemaRaw);
+  if (schemaVersion == null || schemaVersion < 1 || schemaVersion > 16) reasons.push("template_unreadable");
   else if (schemaVersion === 1) reasons.push("schema_version_1");
   const eku = oidList(ekuRaw);
   if (!exactlyServerAuth(eku)) reasons.push("eku_not_server_auth_only");
   const appRaw = attributeValues(text, "msPKI-Certificate-Application-Policy");
-  if (appRaw.length > 0 && !exactlyServerAuth(oidList(appRaw))) {
+  if (!exactlyServerAuth(oidList(appRaw))) {
     reasons.push("application_policy_not_server_auth_only");
   }
+  const oidValues = attributeValues(text, "msPKI-Cert-Template-OID");
+  const oid = oidValues.length === 1 ? unquote(oidValues[0]) : null;
+  const templateOid = oid && /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(oid) ? oid : null;
+  const minimalKeySize = templateUint(attributeValues(text, "msPKI-Minimal-Key-Size"));
+  const parsed = templateUint(attributeValues(text, "msPKI-Certificate-Name-Flag"));
+  const algorithm = templateAlgorithm(text);
+  if (!templateOid || minimalKeySize == null || minimalKeySize === 0 || parsed == null ||
+      algorithm.malformed || (schemaVersion >= 3 && !algorithm.algorithm)) reasons.push("template_unreadable");
   const uniqueReasons = [...new Set(reasons)].slice(0, 4);
-  const oid = unquote(attributeValues(text, "msPKI-Cert-Template-OID")[0] || "") || null;
-  const keyRaw = unquote(attributeValues(text, "msPKI-Minimal-Key-Size")[0]);
-  const nameFlag = unquote(attributeValues(text, "msPKI-Certificate-Name-Flag")[0]);
-  const algorithm = unquote(attributeValues(text, "msPKI-Asymmetric-Algorithm")[0] || "") || null;
-  const parsed = /^\d+$/.test(nameFlag || "") ? Number(nameFlag) : null;
   return {
-    verdict: uniqueReasons.length === 0 ? "safe" : uniqueReasons.includes("template_unreadable") ? "unreadable" : "unsafe",
+    verdict: uniqueReasons.length === 0 ? "safe" : uniqueReasons.some((reason) => reason !== "template_unreadable") ? "unsafe" : "unreadable",
     reasons: uniqueReasons,
-    schemaVersion,
-    templateOid: oid && /^[0-2](\.(0|[1-9][0-9]{0,9})){1,63}$/.test(oid) ? oid : null,
-    minimalKeySize: /^\d+$/.test(keyRaw || "") ? Number(keyRaw) : null,
-    asymmetricAlgorithm: algorithm && /^[A-Za-z0-9_]{1,32}$/.test(algorithm) ? algorithm : null,
+    schemaVersion: schemaVersion >= 1 && schemaVersion <= 16 ? schemaVersion : null,
+    templateOid,
+    minimalKeySize,
+    asymmetricAlgorithm: algorithm.algorithm,
     enrolleeSuppliesSubject: parsed == null ? null : (parsed & 0x1) === 0x1,
   };
 }
 
 function parseRegDword(text) {
   // certutil prints hex without 0x, then the decimal in parentheses: 641 (1601).
-  const match = String(text || "").match(
-    /REG_DWORD\s*=\s*(0x[0-9a-fA-F]+|[0-9a-fA-F]+)(?:\s*\((\d+)\))?/i,
-  );
-  if (!match) return null;
+  const matches = [...String(text || "").matchAll(
+    /REG_DWORD\s*=\s*(0x[0-9a-fA-F]+|[0-9a-fA-F]+)(?:[ \t]*\((\d+)\))?[ \t]*$/gim,
+  )];
+  if (matches.length !== 1) return null;
+  const match = matches[0];
   const raw = match[1];
   const paren = match[2] != null ? Number(match[2]) : null;
   let value;
-  if (Number.isInteger(paren)) value = paren;
+  if (Number.isInteger(paren)) {
+    if (Number.parseInt(raw.replace(/^0x/i, ""), 16) !== paren) return null;
+    value = paren;
+  }
   else if (raw.toLowerCase().startsWith("0x") || /[a-f]/i.test(raw)) {
     value = Number.parseInt(raw.replace(/^0x/i, ""), 16);
   } else value = Number(raw);
@@ -161,24 +201,22 @@ function parseRegDword(text) {
 function parseCaCheck(editText, interfaceText, operatorAttested) {
   const editFlags = parseRegDword(editText);
   const interfaceFlags = parseRegDword(interfaceText);
-  if (editFlags == null || interfaceFlags == null) {
-    return {
-      verdict: "unreadable",
-      reasons: ["flags_unreadable"],
-      operatorAttested: operatorAttested === true,
-    };
-  }
   const reasons = [];
-  if ((editFlags & EDITF_ATTRIBUTESUBJECTALTNAME2) !== 0) {
+  if (editFlags != null && (editFlags & EDITF_ATTRIBUTESUBJECTALTNAME2) !== 0) {
     reasons.push("subject_alt_name_attribute_enabled");
   }
-  if ((interfaceFlags & IF_ENFORCEENCRYPTICERTREQUEST) === 0) {
+  if (interfaceFlags != null && (interfaceFlags & IF_ENFORCEENCRYPTICERTREQUEST) === 0) {
     reasons.push("encrypted_requests_not_enforced");
   }
+  // An attestation can cover unreadable values, never a known unsafe flag.
+  // Check both independently before classifying a partially readable CA.
+  const knownUnsafe = reasons.length > 0;
+  const unreadable = editFlags == null || interfaceFlags == null;
+  if (unreadable) reasons.push("flags_unreadable");
   return {
-    verdict: reasons.length === 0 ? "safe" : "unsafe",
+    verdict: knownUnsafe ? "unsafe" : unreadable ? "unreadable" : "safe",
     reasons,
-    operatorAttested: false,
+    operatorAttested: !knownUnsafe && unreadable && operatorAttested === true,
   };
 }
 
@@ -247,37 +285,21 @@ async function runCertutilPreflight({
     return stdout.toString(utf16 ? "utf16le" : "utf8").replace(/^\uFEFF/, "");
   }
 
-  let templateText = "";
-  let editText = "";
-  let interfaceText = "";
-  let countText = "";
-  try {
-    // -dsTemplate rejects -config. The template lives in AD, so this call does not select a CA.
-    note(`AD CS preflight reading template ${template}`);
-    templateText = textOf(await call(["-dstemplate", template]));
-    note(`AD CS preflight reading CA EditFlags on ${caConfig}`);
-    editText = textOf(await call(["-config", caConfig, "-getreg", "policy\\EditFlags"]));
-    note(`AD CS preflight reading CA InterfaceFlags on ${caConfig}`);
-    interfaceText = textOf(await call(["-config", caConfig, "-getreg", "CA\\InterfaceFlags"]));
-    note("AD CS preflight reading CA certificate count");
-    countText = textOf(await call(["-config", caConfig, "-cainfo", "certcount"]));
-  } catch (error) {
-    const code = error && error.code != null ? ` code=${error.code}` : "";
-    note(`AD CS preflight stopped reading the CA${code}`);
-    return {
-      preflightResult: {
-        caConfig,
-        template,
-        templateCheck: parseTemplateDump(templateText, template),
-        caCheck: {
-          verdict: "unreadable",
-          reasons: ["ca_unreachable"],
-          operatorAttested: operatorAttested === true,
-        },
-        caCertificates: [],
-      },
-    };
+  async function readText(label, argv) {
+    note(`AD CS preflight reading ${label}`);
+    try { return textOf(await call(argv)); }
+    catch (_error) {
+      // An unreadable flag must not hide another observed unsafe flag or
+      // prevent the independently required CA-certificate pin check.
+      note(`AD CS preflight could not read ${label}`);
+      return "";
+    }
   }
+  // -dsTemplate rejects -config. The template lives in AD, so this call does not select a CA.
+  const templateText = await readText(`template ${template}`, ["-dstemplate", template]);
+  const editText = await readText(`CA EditFlags on ${caConfig}`, ["-config", caConfig, "-getreg", "policy\\EditFlags"]);
+  const interfaceText = await readText(`CA InterfaceFlags on ${caConfig}`, ["-config", caConfig, "-getreg", "CA\\InterfaceFlags"]);
+  const countText = await readText("CA certificate count", ["-config", caConfig, "-cainfo", "certcount"]);
 
   const count = parseCertCount(countText);
   const caCertificates = [];

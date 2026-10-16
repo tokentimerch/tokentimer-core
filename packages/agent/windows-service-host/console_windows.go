@@ -15,12 +15,12 @@ package main
 // association) for the call to succeed. A Windows service runs in session 0
 // with no console of its own, so without this attach/detach dance every
 // GenerateConsoleCtrlEvent call from the service fails with
-// ERROR_INVALID_HANDLE. Attaching to the child's console group (the child
-// was started with CREATE_NEW_PROCESS_GROUP, so it has one even though
-// nothing ever allocated a visible window), sending the event, then
-// detaching again is the documented workaround and is the same technique
-// other Windows service wrappers use to deliver a soft-stop signal to a
-// console-subsystem child.
+// ERROR_INVALID_HANDLE. Attaching to the child's available console
+// association, sending the event to its specific process group, then
+// detaching again allows soft-stop delivery when that association exists.
+// CREATE_NEW_PROCESS_GROUP establishes the group, not a console, and
+// CREATE_NO_WINDOW does not promise to allocate a console. A failed attach
+// is reported to stopGracefully, which uses its explicit termination path.
 
 import (
 	"golang.org/x/sys/windows"

@@ -15,6 +15,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { main: buildWindowsServiceHost } = require("./build-windows-service-host.js");
+const { main: buildWindowsChainHelper } = require("./build-windows-chain-helper.js");
 
 const packageRoot = path.resolve(__dirname, "..");
 const pkg = JSON.parse(
@@ -136,6 +137,9 @@ function main(argv = process.argv.slice(2)) {
   // next to the tarball instead of packages/agent/bin/ and leave the
   // packed tarball without the Windows service host.
   buildWindowsServiceHost([]);
+  // Rebuild the chain/store-survivor helper for each shipped architecture too.
+  // Source-tree reference/dist executables are never distribution inputs.
+  buildWindowsChainHelper([]);
 
   const pack = spawnSync(
     "npm",

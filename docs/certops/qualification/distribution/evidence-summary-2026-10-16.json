@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-16",
+  "scope": "supporting-source-mounted-distribution-e2e",
+  "allFeaturesQualified": false,
+  "productionNativeQualification": "not-qualified",
+  "cohorts": [
+    {
+      "certificateMode": "ordinary",
+      "candidateSha": "248de16d31448e573a0300039d2916ae6a2f431a",
+      "evidenceLevel": "e2e",
+      "qualificationScope": "source-mounted-enrolled-agent-lab",
+      "status": "passed",
+      "experimental": true,
+      "productionNativeQualification": "not-qualified",
+      "mandatoryPhases": 15,
+      "passedPhases": 15,
+      "sourceDigests": 31,
+      "missingScenarios": [],
+      "missingCapabilities": [],
+      "acmeOrders": 3,
+      "privacy": {
+        "privateKeySourcesChecked": 8,
+        "scopedVaultCredentialFilesChecked": 13,
+        "historicalVaultCredentialsChecked": 10,
+        "historicalVaultVersionsChecked": 3,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false
+      },
+      "startedAt": "2026-10-15T22:38:07.308Z",
+      "finishedAt": "2026-10-15T22:47:58.156Z",
+      "reportSha256": "edb7cf158b1643e98ee3af4524e0022d6b053e8cadb06daa7204f151a76f5a1b"
+    },
+    {
+      "certificateMode": "san",
+      "candidateSha": "248de16d31448e573a0300039d2916ae6a2f431a",
+      "evidenceLevel": "e2e",
+      "qualificationScope": "source-mounted-enrolled-agent-lab",
+      "status": "passed",
+      "experimental": true,
+      "productionNativeQualification": "not-qualified",
+      "mandatoryPhases": 15,
+      "passedPhases": 15,
+      "sourceDigests": 31,
+      "missingScenarios": [],
+      "missingCapabilities": [],
+      "acmeOrders": 3,
+      "privacy": {
+        "privateKeySourcesChecked": 8,
+        "scopedVaultCredentialFilesChecked": 13,
+        "historicalVaultCredentialsChecked": 10,
+        "historicalVaultVersionsChecked": 3,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false
+      },
+      "startedAt": "2026-10-15T22:24:50.289Z",
+      "finishedAt": "2026-10-15T22:34:46.842Z",
+      "reportSha256": "57e50c1a84b5067a6fe7dd1d98747db59fa4b7a337f25a76ac0cbe87cb344956"
+    },
+    {
+      "certificateMode": "wildcard",
+      "candidateSha": "248de16d31448e573a0300039d2916ae6a2f431a",
+      "evidenceLevel": "e2e",
+      "qualificationScope": "source-mounted-enrolled-agent-lab",
+      "status": "passed",
+      "experimental": true,
+      "productionNativeQualification": "not-qualified",
+      "mandatoryPhases": 15,
+      "passedPhases": 15,
+      "sourceDigests": 31,
+      "missingScenarios": [],
+      "missingCapabilities": [],
+      "acmeOrders": 3,
+      "privacy": {
+        "privateKeySourcesChecked": 8,
+        "scopedVaultCredentialFilesChecked": 13,
+        "historicalVaultCredentialsChecked": 10,
+        "historicalVaultVersionsChecked": 3,
+        "privateNeedlesExported": false,
+        "dnsCredentialQualification": false
+      },
+      "startedAt": "2026-10-15T22:38:17.476Z",
+      "finishedAt": "2026-10-15T22:48:09.520Z",
+      "reportSha256": "d31f70ffaf2436d43dce4a9f7031cf53a26b641b31f98353a008e0edb95a2f9c"
+    }
+  ],
+  "tooling": {
+    "candidateSha": "75cc6a66d5a4f92d423710c4e1de3bfa90f94ede",
+    "platform": "Windows",
+    "command": "pnpm run test:certops:qualification",
+    "discoveredFiles": 220,
+    "passed": 846,
+    "failed": 0,
+    "skipped": 0,
+    "durationMs": 257887.2573,
+    "workers": 4,
+    "timeoutMs": 720000
+  },
+  "supporting": {
+    "candidateSha": "069f822b06ffe3c6977559b42cb9fbb4dc455594",
+    "postgresPassed": 42,
+    "vaultPassed": 9,
+    "nativeAgentQualified": false
+  },
+  "collector": {
+    "candidateSha": "248de16d31448e573a0300039d2916ae6a2f431a",
+    "passed": 206,
+    "nativeAgentQualified": false
+  }
+}

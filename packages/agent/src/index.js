@@ -188,10 +188,12 @@ const { deployIisBinding, resolveVerificationTarget, queryCurrentBinding } = req
 const {
   createLedgerRow,
   readLedgerRow,
+  resolveBoundReplacement,
   sweepLedger,
   normalizeThumbprint: normalizeRetentionThumbprint,
 } = require("./windows-retention");
 const { listMachineStoreCertificates, listHttpSysBindings } = require("./windows-discovery");
+const { inspectMachineKeySurvivors } = require("./windows-key-survivors");
 const {
   resolveTrustStorePrerequisites,
   distributeTrust,
@@ -846,6 +848,12 @@ async function renewJobLeaseOrAbort({
  * @param {{ intervalMs?: number, onAbort?: (abort: object) => void }} [options]
  * @returns {{ stop: () => void, getAbort: () => object|null }}
  */
+function startExecutionLeaseRenewal(leaseOpts, options = {}) {
+  const controller = new AbortController();
+  const heartbeat = startPeriodicLeaseRenewal(leaseOpts, {...options, onAbort: abort => controller.abort(abort)});
+  return {...heartbeat, signal: controller.signal};
+}
+
 function startPeriodicLeaseRenewal(leaseOpts, { intervalMs = LEASE_HEARTBEAT_INTERVAL_MS, onAbort } = {}) {
   let stopped = false;
   let inFlight = null;
@@ -2085,7 +2093,7 @@ async function handleSignedJob({
       log,
       leaseState,
     };
-    const leaseHeartbeat = startPeriodicLeaseRenewal(leaseOpts);
+    const leaseHeartbeat = startExecutionLeaseRenewal(leaseOpts);
     let outcome;
     try {
       outcome = await withJobConsole(jobLogSession, () => executeJob({
@@ -2098,6 +2106,7 @@ async function handleSignedJob({
         leaseClient: client,
         leaseState,
         executionContext: materialRecoveryOnly ? { ...executionContext, materialRecoveryOnly: true } : executionContext,
+        signal: leaseHeartbeat.signal,
         log,
         jobLog: jobLogSession?.logger,
       }));
@@ -2319,6 +2328,7 @@ function stepForAction(action) {
 
 async function executeJob({
   job,
+  signal = null,
   jobId,
   attemptId = null,
   claimId = null,
@@ -2512,6 +2522,19 @@ async function executeJob({
     }
   }
 
+  // Windows CNG enrollment creates a fresh non-exportable key. Refuse an
+  // explicit reuse request before planning or any lock/native/CA mutation;
+  // a dry run must not advertise a plan the real executor cannot honor.
+  if (action === "renew" && resolvedIssuerKind.kind === "acme" &&
+      job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis" &&
+      job.keyRotation === false) {
+    return {
+      status: "blocked",
+      keyRotated: null,
+      errorMessage: "WINDOWS_ACME_KEY_REUSE_UNSUPPORTED: Windows CNG renewal requires a fresh key; set keyRotation to true",
+    };
+  }
+
   // B4: signed job.mode wins. Local execution.dryRun may only refuse a
   // real job outright — never silently swap in the dry-run code path.
   if (jobMode === "dry_run") {
@@ -2586,6 +2609,7 @@ async function executeJob({
     if (job.keyMode === "os-store-managed" && job?.target?.type === "windows-iis") {
       return executeWindowsIisRenewJob({
         job,
+      signal,
         jobId,
         policyEngine,
         client: claimBoundClient,
@@ -2598,6 +2622,7 @@ async function executeJob({
     }
     return executeRenewJob({
       job,
+      signal,
       jobId,
       policyEngine,
       client: claimBoundClient,
@@ -2881,6 +2906,7 @@ function discardStagedKeyReportingResidue({ keyPath, stagedKeyPath, log, jobId }
  */
 async function executeRenewJob({
   job,
+  signal = null,
   jobId,
   policyEngine,
   client,
@@ -3021,6 +3047,7 @@ async function executeRenewJob({
   const acmeKind = SUPPORTED_ACME_KINDS.includes(job.acmeKind) ? job.acmeKind : "certbot";
   const issuer = createAcmeIssuer({
     acmeKind,
+    signal,
     argv: commandVerdict.argv,
     caEndpoint: job.caEndpoint,
     preferredChain: resolveJobPreferredChain(job),
@@ -3392,6 +3419,7 @@ async function runWindowsIisDeployTail({
   journaledPredecessorThumbprint = null,
   windowsExecFileImpl,
   windowsConnectImpl,
+  windowsKeySurvivorHelperPath,
 }) {
   const retainKeyOnAcceptFailureEffective =
     retainKeyOnAcceptFailure === true || requireStoreAbsenceBeforeKeyDelete === true;
@@ -3457,14 +3485,16 @@ async function runWindowsIisDeployTail({
               const cleanup = await removeAbandonedKeyContainer({
                 containerName,
                 signal,
+                assertHeld: () => storeLock.assertHeld(),
+                ...(windowsKeySurvivorHelperPath ? { keySurvivorHelperPath: windowsKeySurvivorHelperPath } : {}),
                 ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
               });
               if (cleanup.ok !== true) {
                 emitLog(
                   log,
-                  `job ${jobId}: failed to delete abandoned CNG key container ` +
-                    `${containerName} after certreq -accept failure (exit code ${cleanup.exitCode}); ` +
-                    `it will remain orphaned in the CNG key store until manually removed.`,
+                  `job ${jobId}: CNG key cleanup deferred for ${containerName} after ` +
+                    `certreq -accept failure (${cleanup.reason || "native_delete_failed"}); ` +
+                    `the key and ownership receipt remain for reconciliation.`,
                 );
               } else {
                 removeIssuedContainerRecord({ stateDir, containerName });
@@ -3898,16 +3928,18 @@ function resolveSweepVerificationTarget(binding) {
  * @param {number} [input.timeoutMs]
  * @returns {Promise<string|null>} uppercase 40-hex-char thumbprint, or null.
  */
-function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.connect, timeoutMs = 5000 }) {
+function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.connect, timeoutMs = 5000, signal }) {
   return new Promise((resolve) => {
     let settled = false;
     let timer = null;
     let socket = null;
+    const onAbort = () => settle(null);
 
     function settle(value) {
       if (settled) return;
       settled = true;
       if (timer !== null) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       if (socket) {
         try {
           socket.destroy();
@@ -3918,6 +3950,8 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
       resolve(value);
     }
 
+    if (signal?.aborted) { settle(null); return; }
+    signal?.addEventListener("abort", onAbort, { once: true });
     timer = setTimeout(() => settle(null), timeoutMs);
 
     try {
@@ -3979,19 +4013,22 @@ function probeTlsSha1Thumbprint({ host, port, servername, connectImpl = tls.conn
  * @param {object} [input.log]
  * @param {Function} [input.execFileImpl] injection point for certutil.exe/netsh.exe.
  * @param {Function} [input.connectImpl] injection point for the replacement handshake probe.
+ * @param {string} [input.keySurvivorHelperPath] explicit helper override for embedded runs/tests.
  * @returns {Promise<{removed: string[], deferred: object[], deferredCountByReason: Record<string, number>}|null>}
  *   null when there is no ledger directory yet (nothing has ever been superseded).
  */
-async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl }) {
+async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFileImpl, connectImpl, keySurvivorHelperPath }) {
   const ledgerDir = path.join(stateDir, WINDOWS_RETENTION_LEDGER_DIR_NAME);
   if (!fs.existsSync(ledgerDir)) return null;
 
-  async function gatherContext(row) {
+  async function gatherContext(row, { signal, assertHeld }) {
     const store = row.store || "My";
 
     const bindingsResult = await listHttpSysBindings({
+      signal,
       ...(execFileImpl ? { execFileImpl } : {}),
     });
+    assertHeld();
     const bindingStillReferencesOldThumbprint =
       bindingsResult.ok !== true
         ? true
@@ -4001,26 +4038,38 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
               normalizeRetentionThumbprint(binding.thumbprint) === row.oldThumbprint,
           );
 
-    const storeResult = await listMachineStoreCertificates({
+    // A machine KSP key can remain referenced by another logical store,
+    // including an identical certificate mirrored outside the predecessor store.
+    // Crypt32 metadata enumeration excludes only this exact store/thumbprint;
+    // incomplete inventories keep the predecessor and key intact.
+    const survivorResult = await inspectMachineKeySurvivors({
+      containerName: row.cngKeyContainerId,
       store,
+      thumbprint: row.oldThumbprint,
+      signal,
+      ...(keySurvivorHelperPath ? { helperPath: keySurvivorHelperPath } : {}),
       ...(execFileImpl ? { execFileImpl } : {}),
     });
+    assertHeld();
     const keyContainerSharedWithSurvivor =
-      storeResult.ok !== true
-        ? true
-        : storeResult.certificates.some(
-            (cert) =>
-              cert.thumbprint !== row.oldThumbprint &&
-              isNonEmptyStringValue(cert.keyContainer) &&
-              cert.keyContainer === row.cngKeyContainerId,
-          );
+      survivorResult.ok !== true || survivorResult.shared !== false;
 
     let replacementPassesHandshakeNow = false;
     if (bindingsResult.ok === true) {
+      const replacementThumbprint = resolveBoundReplacement({
+        ledgerDir,
+        row,
+        isBound: (thumbprint, storeName) => bindingsResult.bindings.some(binding =>
+          isNonEmptyStringValue(binding.thumbprint) &&
+          normalizeRetentionThumbprint(binding.thumbprint) === thumbprint &&
+          (binding.storeName || "My").toUpperCase() === storeName),
+      });
       const replacementBinding = bindingsResult.bindings.find(
         (binding) =>
+          replacementThumbprint !== null &&
           isNonEmptyStringValue(binding.thumbprint) &&
-          normalizeRetentionThumbprint(binding.thumbprint) === row.replacementThumbprint,
+          normalizeRetentionThumbprint(binding.thumbprint) === replacementThumbprint &&
+          (binding.storeName || "My").toUpperCase() === store.toUpperCase(),
       );
       const target = replacementBinding ? resolveSweepVerificationTarget(replacementBinding) : null;
       if (target !== null) {
@@ -4028,50 +4077,54 @@ async function runWindowsRetentionSweep({ stateDir, retentionHours, log, execFil
           host: target.host,
           port: target.port,
           servername: target.servername,
+          signal,
           ...(connectImpl ? { connectImpl } : {}),
         });
-        replacementPassesHandshakeNow = observedThumbprint === row.replacementThumbprint;
+        assertHeld();
+        replacementPassesHandshakeNow = observedThumbprint === replacementThumbprint;
       }
     }
 
     return { bindingStillReferencesOldThumbprint, keyContainerSharedWithSurvivor, replacementPassesHandshakeNow };
   }
 
-  async function performCleanup(row) {
+  async function performCleanup(row, { signal, assertHeld }) {
     const store = row.store || "My";
-    const storeLock = acquireStoreLock(stateDir, store);
-    try {
-      await storeLock.run(async (signal) => {
-        const result = await removeCertificateAndKeyContainer({
-          thumbprint: row.oldThumbprint,
-          store,
-          containerName: row.cngKeyContainerId,
-          signal,
-          ...(execFileImpl ? { execFileImpl } : {}),
-        });
-        storeLock.assertHeld();
-        if (result.ok !== true) {
-          if (result.reason === "aborted") {
-            throw Object.assign(
-              new Error(
-                `removeCertificateAndKeyContainer aborted at stage ${result.stage}: store lock lost`,
-              ),
-              { code: "STORE_LOCK_LOST" },
-            );
-          }
-          throw new Error(
-            `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` +
-              result.stderrExcerpt,
-          );
-        }
-        removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
-      });
-    } finally {
-      storeLock.release();
+    assertHeld();
+    const result = await removeCertificateAndKeyContainer({
+      thumbprint: row.oldThumbprint,
+      store,
+      containerName: row.cngKeyContainerId,
+      signal,
+      assertHeld,
+      ...(execFileImpl ? { execFileImpl } : {}),
+    });
+    assertHeld();
+    if (result.ok !== true) {
+      if (result.reason === "aborted") {
+        throw Object.assign(
+          new Error(`removeCertificateAndKeyContainer aborted at stage ${result.stage}: store lock lost`),
+          { code: "STORE_LOCK_LOST" },
+        );
+      }
+      throw new Error(
+        `removeCertificateAndKeyContainer failed at stage ${result.stage} (exit code ${result.exitCode}): ` + result.stderrExcerpt,
+      );
     }
+    removeIssuedContainerRecord({ stateDir, containerName: row.cngKeyContainerId });
   }
 
-  const summary = await sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup });
+  const summary = await sweepLedger({
+    ledgerDir, retentionHours, gatherContext, performCleanup,
+    withRowLock: async (row, work) => {
+      // Agent acceptance/mirroring always takes My before its target store.
+      // Share that lock scope so a concurrent cutover cannot introduce another
+      // machine-key reference between inventory and irreversible deletion.
+      const storeLock = acquireWindowsStoreLocks(stateDir, row.store || "My");
+      try { return await storeLock.run(signal => work({ signal, assertHeld: () => storeLock.assertHeld() })); }
+      finally { storeLock.release(); }
+    },
+  });
   emitLog(
     log,
     `windows-retention sweep: removed=${summary.removed.length} ` +
@@ -4276,9 +4329,10 @@ function acquireWindowsStoreLocks(stateDir, targetStore) {
  * @param {string} input.stateDir agent state dir (journal + store-mutex location).
  * @param {object} [input.log]
  * @param {Function} [input.execFileImpl] injection point for certutil.exe.
+ * @param {string} [input.keySurvivorHelperPath] explicit helper override for embedded runs/tests.
  * @returns {Promise<{ freed: string[], skipped: { containerName: string, reason: string }[] }>}
  */
-async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl }) {
+async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileImpl, keySurvivorHelperPath }) {
   const freed = [];
   const skipped = [];
 
@@ -4333,8 +4387,9 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
     // Deduplicated: the common case (store: "My", or no store recorded at
     // all) checks the same store only once. Must match
     // acquireWindowsStoreLocks' own store set exactly, since the lock
-    // acquired below and the certificate query further down must agree on
-    // which stores are in scope.
+    // acquired below covers the default acceptance and recorded target stores.
+    // These local probes are fast positive checks only; global absence is
+    // independently required before freeing a key.
     const storesToCheck = [...new Set(["My", targetStore])];
 
     let storeLocks;
@@ -4357,6 +4412,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           storeLocks.assertHeld();
           const storeResult = await listMachineStoreCertificates({
             store: storeName,
+            signal,
             ...(execFileImpl ? { execFileImpl } : {}),
           });
           storeLocks.assertHeld();
@@ -4370,6 +4426,19 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           }
         }
 
+        // Absence in My/target is not global absence: an operator may have
+        // adopted this key in any other LocalMachine store since the crash.
+        if (!queryFailure && !enrolled) {
+          const survivors = await inspectMachineKeySurvivors({
+            containerName, signal,
+            ...(keySurvivorHelperPath ? { helperPath: keySurvivorHelperPath } : {}),
+            ...(execFileImpl ? { execFileImpl } : {}),
+          });
+          storeLocks.assertHeld();
+          if (survivors.ok !== true) queryFailure = "global machine-store inventory unavailable";
+          else enrolled = survivors.shared === true;
+        }
+
         if (queryFailure) {
           // Fail closed: a store lookup that could not be completed is NOT
           // evidence the container is unused there, so this entry must be
@@ -4380,7 +4449,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
 
         if (enrolled) {
           // A later attempt (or an operator) legitimately enrolled a
-          // certificate to this container -- either in "My" (e.g. certreq
+          // certificate to this container -- in any machine store, including "My" (e.g. certreq
           // -accept succeeded but a crash interrupted the later mirror step
           // into targetStore) or in targetStore itself -- since the journal
           // entry was written; never free a container backing a real
@@ -4405,15 +4474,24 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
           containerName,
           ...(execFileImpl ? { execFileImpl } : {}),
           signal,
+          assertHeld: () => storeLocks.assertHeld(),
+          ...(keySurvivorHelperPath ? { keySurvivorHelperPath } : {}),
         });
         storeLocks.assertHeld();
         if (cleanup.ok !== true) {
+          if (cleanup.reason === "key_container_referenced") {
+            try { markWindowsCngContainerReconciled({stateDir,jobId:entry.jobId,attemptId:entry.attemptId}); } catch { /* Preserve the key even if receipt update fails. */ }
+            skipped.push({containerName,reason:"enrolled"});
+            return;
+          }
           skipped.push({
             containerName,
             reason:
               cleanup.reason === "aborted"
                 ? "store lock lost during delkey"
-                : `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
+                : cleanup.reason === "key_reference_probe_failed"
+                  ? "global machine-store inventory unavailable during deletion"
+                  : `delkey failed (exit code ${cleanup.exitCode}): ${cleanup.stderrExcerpt}`,
           });
           return;
         }
@@ -4554,6 +4632,7 @@ async function reconcileOrphanedWindowsCngContainers({ stateDir, log, execFileIm
  */
 async function executeWindowsIisRenewJob({
   job,
+  signal = null,
   jobId,
   policyEngine,
   client,
@@ -4691,9 +4770,11 @@ async function executeWindowsIisRenewJob({
   const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
   const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
   const windowsExecFileImpl = executionContext.windowsExecFileImpl;
+  const windowsKeySurvivorHelperPath = executionContext.windowsKeySurvivorHelperPath;
   const windowsConnectImpl = executionContext.windowsConnectImpl;
   const issuer = createAcmeIssuer({
     acmeKind,
+    signal,
     argv: commandVerdict.argv,
     caEndpoint: job.caEndpoint,
     preferredChain: resolveJobPreferredChain(job),
@@ -4793,6 +4874,12 @@ async function executeWindowsIisRenewJob({
     if (issuance.outcome !== "issued") {
       return { ...resultForUnissuedOutcome(issuance), keyRotated: null };
     }
+    // A valid tool-returned leaf can belong to another pending machine key.
+    // Refuse it before certreq acceptance; leaving certificatePem unset also
+    // permits definitive cleanup of this job's never-accepted CNG container.
+    if (!require("./issuers/csr-certificate-key").certificateMatchesCsr(csrResult.csrPem, issuance.certificatePem)) {
+      return { status: "failed", keyRotated: null, errorMessage: "ACME_CERTIFICATE_KEY_MISMATCH: returned certificate does not match this enrollment CSR" };
+    }
     certificatePem = issuance.certificatePem;
   } finally {
     // Unlike the file-based path, there is no staged private key to worry
@@ -4806,21 +4893,22 @@ async function executeWindowsIisRenewJob({
     // anywhere else, so this is the only place that can ever free it.
     // Best-effort and non-fatal: a cleanup failure here must not turn an
     // already-reported ACME failure into a second, different failure, and
-    // the orphaned container itself is inert (non-exportable, unbound,
-    // and safely re-attemptable) rather than a security or correctness
-    // problem if it is briefly leaked.
+    // A complete global inventory must still prove no certificate references
+    // this key. Unknown or adopted references retain the ownership receipt for
+    // reconciliation; they must never invite manual deletion of a live key.
     if (certificatePem === undefined) {
       try {
         const cleanup = await removeAbandonedKeyContainer({
           containerName,
+          ...(windowsKeySurvivorHelperPath ? { keySurvivorHelperPath: windowsKeySurvivorHelperPath } : {}),
           ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
         });
         if (cleanup.ok !== true) {
           emitLog(
             log,
-            `job ${jobId}: failed to delete abandoned CNG key container ` +
-              `${containerName} after ACME failure (exit code ${cleanup.exitCode}); it will remain ` +
-              `orphaned in the CNG key store until manually removed.`,
+            `job ${jobId}: CNG key cleanup deferred for ${containerName} after ACME failure ` +
+              `(${cleanup.reason || "native_delete_failed"}); ` +
+              `the key and ownership receipt remain for reconciliation.`,
           );
         } else {
           removeIssuedContainerRecord({ stateDir, containerName });
@@ -4851,6 +4939,7 @@ async function executeWindowsIisRenewJob({
     onBeforeMutation,
     windowsExecFileImpl,
     windowsConnectImpl,
+    windowsKeySurvivorHelperPath,
   });
 }
 
@@ -6665,6 +6754,8 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   for certreq.exe/certutil.exe/netsh.exe
  * @param {Function} [params.windowsConnectImpl] test-only tls.connect
  *   override for the post-bind verification handshake
+ * @param {string} [params.windowsKeySurvivorHelperPath] local test/embedding
+ *   override; execution configuration and signed jobs cannot select this path.
  * @returns {{
  *   enabled: true,
  *   execution: object,
@@ -6675,9 +6766,10 @@ function createCandidateAgentId(hostname = os.hostname(), pid = process.pid) {
  *   acmeExecFileImpl: Function|undefined,
  *   windowsExecFileImpl: Function|undefined,
  *   windowsConnectImpl: Function|undefined,
+ *   windowsKeySurvivorHelperPath: string|undefined,
  * }|null}
  */
-function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl } = {}) {
+function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, windowsConnectImpl, windowsKeySurvivorHelperPath } = {}) {
   if (!config?.execution || config.execution.enabled !== true) {
     return null;
   }
@@ -6722,6 +6814,8 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
     acmeExecFileImpl,
     windowsExecFileImpl,
     windowsConnectImpl,
+    windowsKeySurvivorHelperPath,
+    adcsValidationTimeoutSeconds: config.adcs?.validationTimeoutSeconds,
     adcsEnrollmentRules: Array.isArray(config.adcs?.enrollmentRules)
       ? config.adcs.enrollmentRules
       : [],
@@ -6730,7 +6824,7 @@ function buildExecutionContext({ config, acmeExecFileImpl, windowsExecFileImpl, 
 
 /**
  * Runs the agent process: load config, register if needed, then run the
- * heartbeat and claim loops until SIGINT/SIGTERM or until the control plane
+ * heartbeat and claim loops until SIGINT/SIGTERM (or Windows SIGBREAK) or until the control plane
  * retires this agent (heartbeat HTTP 410 -> clean exit, no respawn loop,
  * ADR-0002).
  *
@@ -6811,6 +6905,9 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   }
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  // SCM host Stop sends CTRL_BREAK_EVENT; Node exposes it as SIGBREAK.
+  // Reuse the same transport/poll shutdown and awaited log drain.
+  if (process.platform === "win32") process.once("SIGBREAK", stop);
 
   // Default deny: with no policy block in config.json every allowlist is
   // empty, so the engine rejects all command/path/CA/DNS dimensions. The
@@ -6865,6 +6962,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   } catch (err) {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    if (process.platform === "win32") process.removeListener("SIGBREAK", stop);
     if (externalSignal) externalSignal.removeEventListener("abort", stop);
     throw err;
   }
@@ -6908,6 +7006,9 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
       const ntpSynced = await checkNtpSynced();
       const response = await client.heartbeat({
         agentVersion: AGENT_VERSION,
+        // Observe-only processes do not claim jobs, so heartbeat must revoke
+        // the previous execution declaration after a configuration change.
+        supportedOperations: resolveClaimSupportedActions(executionContext),
         ntpSynced,
         uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
         supportedDnsProviders,
@@ -6921,6 +7022,10 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
         // never returns an empty set, only the base set or the base set plus
         // agent-id-binding-v1.
         declaredCapabilities: resolveDeclaredCapabilities(config.requireSignedAgentId),
+        // Observe-only processes never claim jobs; publish both profile additions
+        // and explicit removals here so their declarations cannot remain stale.
+        ...(Array.isArray(config.declaredCommandProfileNames)
+          ? { declaredCommandProfileNames: config.declaredCommandProfileNames } : {}),
         // Publishes DNS names added to config.json. An empty list is omitted
         // so a restart cannot wipe the stored selectors.
         ...(Array.isArray(config.declaredTargetSelectors) &&
@@ -7105,6 +7210,7 @@ async function runAgent(_argv, { signal: externalSignal } = {}) {
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    if (process.platform === "win32") process.removeListener("SIGBREAK", stop);
     if (externalSignal) externalSignal.removeEventListener("abort", stop);
     await drainJobLogSessions();
   }
@@ -7147,6 +7253,7 @@ module.exports = {
   adoptSigningKeyRotation,
   renewJobLeaseOrAbort,
   createLeaseState,
+  startExecutionLeaseRenewal,
   startPeriodicLeaseRenewal,
   stopPeriodicLeaseRenewal,
   AGENT_VERSION,

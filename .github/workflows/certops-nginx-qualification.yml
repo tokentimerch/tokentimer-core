@@ -1,0 +1,70 @@
+name: "CertOps / Native Linux consuming-server certificate reload qualification"
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Select one os or explicitly all supported values
+        type: choice
+        default: 'ubuntu-24.04'
+        options: ['ubuntu-22.04', 'ubuntu-24.04', 'all']
+      service:
+        description: Select one service or explicitly all supported values
+        type: choice
+        default: 'nginx'
+        options: ['nginx', 'apache', 'haproxy', 'all']
+permissions:
+  contents: read
+jobs:
+  selection:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: select
+        name: Validate bounded manual qualification selection
+        env:
+          CERTOPS_MATRIX_INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: node scripts/certops-manual-matrix.js server
+  nginx:
+    needs: selection
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CERTOPS_RELOAD_DISPOSABLE_HOST: '1'
+      CERTOPS_RELOAD_SERVICE: ${{ matrix.service }}
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/nginx.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Install actual consuming server
+        run: |
+          sudo apt-get update
+          package='${{ matrix.service }}'
+          if [ "$package" = apache ]; then package=apache2; fi
+          sudo apt-get install -y "$package"
+      - name: Qualify owned nginx process and trusted TLS cutover
+        run: node scripts/certops-nginx-host.js
+      - name: Independently verify every mandatory case
+        run: node scripts/certops-qualification-report.js qualification-results/nginx.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-reload-${{ matrix.service }}-${{ matrix.os }}
+          path: qualification-results/nginx.json
+          if-no-files-found: error

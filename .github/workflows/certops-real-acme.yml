@@ -1,0 +1,101 @@
+name: "CertOps / Real agent API ACME filesystem qualification"
+on:
+  workflow_dispatch:
+    inputs:
+      client:
+        description: Select one client or explicitly all supported values
+        type: choice
+        default: 'certbot'
+        options: ['certbot', 'acme.sh', 'all']
+      eab:
+        description: Select one eab or explicitly all supported values
+        type: choice
+        default: 'none'
+        options: ['none', 'required', 'all']
+permissions:
+  contents: read
+jobs:
+  selection:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - id: select
+        name: Validate bounded manual qualification selection
+        env:
+          CERTOPS_MATRIX_INPUTS_JSON: ${{ toJSON(inputs) }}
+        run: node scripts/certops-manual-matrix.js linux-acme
+  real-acme:
+    needs: selection
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: '1'
+      CERTOPS_REAL_ACME_CLIENT: ${{ matrix.client }}
+      CERTOPS_REAL_ACME_EAB: ${{ matrix.eab }}
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install pinned native test CA and ACME client
+        run: |
+          python3 -m venv "$RUNNER_TEMP/certbot"
+          "$RUNNER_TEMP/certbot/bin/pip" install certbot==4.2.0
+          echo "$RUNNER_TEMP/certbot/bin" >> "$GITHUB_PATH"
+          git init "$RUNNER_TEMP/acme-sh"
+          git -C "$RUNNER_TEMP/acme-sh" remote add origin https://github.com/acmesh-official/acme.sh.git
+          git -C "$RUNNER_TEMP/acme-sh" fetch --depth 1 origin 40290ad42a37aba57eb246e507c11944a52c0f68
+          git -C "$RUNNER_TEMP/acme-sh" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/acme-sh" rev-parse HEAD)" = 40290ad42a37aba57eb246e507c11944a52c0f68
+          echo "CERTOPS_LINUX_ACMESH=$RUNNER_TEMP/acme-sh/acme.sh" >> "$GITHUB_ENV"
+          GOBIN="$RUNNER_TEMP/pebble-bin" go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.8.0
+          GOBIN="$RUNNER_TEMP/pebble-bin" go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          echo "$RUNNER_TEMP/pebble-bin" >> "$GITHUB_PATH"
+      - name: Validate scenario and skip ownership
+        run: |
+          node scripts/certops-qualification-catalog.js
+          pnpm run check:certops:skip-qualification
+      - run: docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+      - name: Wait for migrated API stack
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Execute signed dispatch real DNS01 issuance deployment and TLS oracle
+        run: node scripts/certops-real-acme.js
+      - name: Destroy stack
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - name: Preserve sanitized execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: real-agent-acme-filesystem-${{ matrix.client }}-${{ matrix.eab }}
+          path: qualification-results/real-acme.jsonl
+          if-no-files-found: error

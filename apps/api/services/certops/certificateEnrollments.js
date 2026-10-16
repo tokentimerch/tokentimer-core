@@ -18,6 +18,7 @@ function assertSchema(validate, value, code) {
   throw serviceError("enrollment report does not match its contract", code);
 }
 const { writeAudit } = require("../audit");
+const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const { createCertificateJob } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
 const { lockWorkspaceForCertOpsSideEffect } = require("./workspaceKillSwitch");
@@ -296,6 +297,10 @@ function createEnrollment({
   keyAlgorithm,
   keySize,
   profileId,
+  pollInterval,
+  pendingTimeout,
+  minimumRemainingValidity,
+  requireLaterNotAfter,
   source = "api",
   mode = "real",
   env,
@@ -379,6 +384,10 @@ function createEnrollment({
       authorizedDnsNames,
       keyAlgorithm,
       keySize,
+      pollInterval,
+      pendingTimeout,
+      minimumRemainingValidity,
+      requireLaterNotAfter,
     });
     const inserted = await tx.query(
       `INSERT INTO certificate_enrollments (
@@ -404,6 +413,7 @@ function createEnrollment({
       workspaceId,
       operation: "renew",
       source,
+      requestedByUserId: actorUserId || null,
       mode,
       requestedByUserId: actorUserId || null,
       idempotencyKey,
@@ -510,18 +520,24 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
   if (enrollmentResult.state === "pending_issuance" && !pendingSince) pendingSince = new Date();
   if (
     enrollmentResult.state === "pending_issuance" ||
-    enrollmentResult.state === "validation_deferred"
+    enrollmentResult.state === "validation_deferred" ||
+    enrollmentResult.state === "installing"
   ) {
     nextAt = nextPollAt(new Date(), pollSeconds);
   }
   if (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR) {
     nextAt = nextPollAt(new Date(), pollSeconds);
   }
+  const retriesOperatorCandidate = enrollmentResult.state === "submission_uncertain" &&
+    parseRequestId(row.operator_request_id) != null;
+  if (retriesOperatorCandidate) nextAt = nextPollAt(new Date(), pollSeconds);
   // A poll date left over from an earlier pending attempt must not survive a
   // terminal result, or every maintenance sweep keeps selecting the row.
   const keepsPolling =
+    retriesOperatorCandidate ||
     enrollmentResult.state === "pending_issuance" ||
     enrollmentResult.state === "validation_deferred" ||
+    enrollmentResult.state === "installing" ||
     (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR);
   if (!keepsPolling) nextAt = null;
   await db.query(
@@ -777,6 +793,100 @@ async function countInstalledEnrollments({ client, workspaceId }) {
   return { enrollmentCount: Number(result.rows[0]?.n || 0) };
 }
 
+// Installation retry reuses the enrollment's immutable issuer/key/target.
+// It is an explicit operator decision, not an automatic fresh enrollment.
+async function retryEnrollmentInstallation({ client, workspaceId, enrollmentId, actorUserId,
+  createJob = createCertificateJob, audit = writeAudit, env = process.env }) {
+  return withTransaction(dbOf(client), async (tx) => {
+    await lockWorkspaceForCertOpsSideEffect({ client: tx, workspaceId, env });
+    const row = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+    if (row.state !== "install_failed") {
+      throw serviceError("only a failed installation can be retried", "CERTOPS_ENROLLMENT_TRANSITION_INVALID");
+    }
+    // A waiting SELECT FOR UPDATE can refresh e while retaining the joined
+    // job from its pre-lock snapshot. Re-read that job after owning the row.
+    if (row.current_job_id) {
+      const current = await tx.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2 AND enrollment_id=$3",
+        [workspaceId,row.current_job_id,enrollmentId]);
+      if (current.rows.length !== 1) throw serviceError("current installation job is not bound to this enrollment", "CERTOPS_ENROLLMENT_UNBOUND");
+      if (enrollmentView({ ...row, job_status: current.rows[0].status }).activeJob) return { jobId: row.current_job_id, created: false };
+    }
+    if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
+      throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
+    }
+    const attempt = Number(row.attempt || 0) + 1;
+    const job = await createJob({ client: tx, workspaceId, operation: "continue-enrollment",
+      allowEnrollmentContinuation: true, source: "api", requestedByUserId: actorUserId || null, subjectType: "managed_certificate",
+      subjectId: row.certificate_id, assignedAgentId: row.agent_id,
+      payload: storedAdcsPayload({ certificateId: row.certificate_id, target: row.deploy_target }),
+      enrollmentId: row.id, env });
+    await tx.query(`UPDATE certificate_enrollments
+      SET attempt = $3, current_job_id = $4, next_poll_at = NULL, updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2`, [workspaceId,enrollmentId,attempt,job.id]);
+    await audit({ client: tx, actorUserId: actorUserId || null, subjectUserId: actorUserId || null,
+      action: "certops.enrollment.installation_retry_requested", targetType: "certificate_enrollment",
+      workspaceId, metadata: { enrollmentId, jobId: job.id, attempt } });
+    return { jobId: job.id, created: true };
+  });
+}
+
+async function recoverOrphanedEnrollment({ client, workspaceId, enrollmentId, orphanedJobId,
+  acknowledgeUnknownEffect, reason, actorUserId, createJob = createCertificateJob,
+  audit = writeAudit, env = process.env }) {
+  if (typeof orphanedJobId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orphanedJobId)) {
+    throw serviceError("Recovery requires an orphaned job identifier", "CERTOPS_ENROLLMENT_UNBOUND");
+  }
+  orphanedJobId=orphanedJobId.toLowerCase();
+  if (acknowledgeUnknownEffect !== true) throw serviceError("Unknown effects must be explicitly acknowledged", "CERTOPS_ENROLLMENT_RECOVERY_ACK_REQUIRED");
+  if (typeof reason !== "string" || !reason.trim() || reason.trim().length > 500 || /[\u0000-\u001f\u007f]/.test(reason)) {
+    throw serviceError("A printable recovery reason of 1 to 500 characters is required", "CERTOPS_ENROLLMENT_RECOVERY_REASON_INVALID");
+  }
+  const safeReason = redactGenericSecrets(reason.trim());
+  return withTransaction(dbOf(client), async (tx) => {
+    await lockWorkspaceForCertOpsSideEffect({ client: tx, workspaceId, env });
+    const row = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+    if (!["requested", "prepared", "submitting", "pending_issuance", "submission_uncertain", "issued", "validation_deferred", "validated", "installing"].includes(row.state)) {
+      throw serviceError("terminal enrollments and failed installations cannot be revived by recovery", "CERTOPS_ENROLLMENT_TRANSITION_INVALID");
+    }
+    const jobs = await tx.query(`SELECT id,status,operation,mode,executor_kind,assigned_agent_id,needs_operator_reconciliation,payload
+      FROM certificate_jobs WHERE workspace_id=$1 AND enrollment_id=$2 AND id=ANY($3::uuid[])`,
+      [workspaceId,enrollmentId,[orphanedJobId,row.current_job_id].filter(Boolean)]);
+    const original = jobs.rows.find(job => job.id === orphanedJobId);
+    const current = jobs.rows.find(job => job.id === row.current_job_id);
+    if (!original || original.status !== "orphaned_unknown_effect" || original.needs_operator_reconciliation !== true ||
+        original.mode !== "real" || original.executor_kind !== "agent" || !["renew", "continue-enrollment"].includes(original.operation) || original.assigned_agent_id !== row.agent_id) {
+      throw serviceError("Recovery requires the exact enrollment-bound orphaned job awaiting reconciliation", "CERTOPS_ENROLLMENT_UNBOUND");
+    }
+    if (row.current_job_id !== orphanedJobId) {
+      const linked = current?.payload?.metadata?.some(item => item.name === "adcs.recoveryFromJobId" && item.value === orphanedJobId);
+      if (linked && current.operation === "continue-enrollment" && current.mode === "real" && current.executor_kind === "agent" &&
+          current.assigned_agent_id === row.agent_id && enrollmentView({ ...row, job_status: current.status }).activeJob) {
+        return {jobId:current.id,created:false};
+      }
+      throw serviceError("Another enrollment attempt has superseded the orphaned job", "CERTOPS_ENROLLMENT_JOB_ACTIVE");
+    }
+    if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
+      throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
+    }
+    const attempt=Number(row.attempt || 0)+1;
+    const job=await createJob({client:tx,workspaceId,operation:"continue-enrollment",allowEnrollmentContinuation:true,
+      source:"api",requestedByUserId:actorUserId || null,subjectType:"managed_certificate",subjectId:row.certificate_id,
+      assignedAgentId:row.agent_id,enrollmentId:row.id,env,
+      payload:storedAdcsPayload({certificateId:row.certificate_id,target:row.deploy_target,
+        metadata:[{name:"adcs.recoveryFromJobId",value:orphanedJobId}]})});
+    await tx.query(`UPDATE certificate_enrollments SET attempt=$3,current_job_id=$4,next_poll_at=NULL,updated_at=NOW()
+      WHERE workspace_id=$1 AND id=$2`,[workspaceId,enrollmentId,attempt,job.id]);
+    // Preserve the orphan's unknown-effect flag as historical evidence. A new
+    // native continuation must prove the actual outcome instead of clearing it.
+    await audit({client:tx,actorUserId:actorUserId || null,subjectUserId:actorUserId || null,
+      action:"certops.enrollment.recovery_requested",targetType:"certificate_enrollment",workspaceId,
+      metadata:{enrollmentId,orphanedJobId,jobId:job.id,attempt,acknowledgeUnknownEffect:true,reason:safeReason}});
+    return {jobId:job.id,created:true};
+  });
+}
+
 async function loadDispatchEnrollment(client, workspaceId, enrollmentId) {
   const row = await loadEnrollment(dbOf(client), workspaceId, enrollmentId);
   if (!row) return null;
@@ -873,6 +983,16 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
           WHERE workspace_id = $1 AND id = $2`,
         [row.workspace_id, row.id, attempt, job.id],
       );
+      if (decision.state === "expired" || decision.reason === "free_key" || decision.reason === "reconcile" || decision.reason === "resume_installation") {
+        // Claiming consumed the previous poll date. Keep a retry date until
+        // the native agent acknowledges actual key cleanup; activeJob prevents
+        // another dispatch while this continuation is still in progress.
+        await tx.query(
+          `UPDATE certificate_enrollments SET next_poll_at = $3, updated_at = NOW()
+            WHERE workspace_id = $1 AND id = $2`,
+          [row.workspace_id, row.id, nextPollAt(now, snapshot.pollInterval || 900)],
+        );
+      }
       return { enrollmentId: row.id, jobId: job.id, attempt, target: payload.target };
     });
     if (dispatched) created.push(dispatched);
@@ -1051,4 +1171,6 @@ module.exports = {
   recordEnrollmentResult,
   recordPreflightResult,
   scheduleDueEnrollments,
+  retryEnrollmentInstallation,
+  recoverOrphanedEnrollment,
 };

@@ -1,25 +1,11 @@
 #!/usr/bin/env node
 "use strict";
 
-// Guard: regression test for ADR-0012 decision 19's core-dump suppression,
-// both platform halves: Linux and Windows. Statically asserts the shipped
-// systemd unit sets
-// LimitCORE=0, and that the Windows installer sets the WER LocalDumps
-// DumpType=0 registry value for node.exe.
-//
-// This is deliberately static, not the live checks
-// themselves: those require reading back real running-process/registry
-// state on a real deployed host to prove the mitigation actually governs
-// what runs, which source alone cannot prove (a unit file or installer
-// script can be present and not be the one actually governing the
-// process -- ADR-0012 says so explicitly for both halves). This guard
-// exists only to catch a future edit that silently drops either line.
-// The Linux unit had no LimitCORE directive at all until this guard's
-// sibling fix, so `Max core file size` on a real running agent process
-// read "0 / unlimited" (soft/hard) instead of "0 / 0"; the Windows
-// installer had no LocalDumps write at all until the fix this guard's
-// other half covers, despite ADR-0012 documenting it as already
-// implemented.
+// Static readiness guard for ADR-0012 decision 19. Linux still requires
+// LimitCORE=0 and independent native limit checks. Windows DumpType=0 means
+// custom dump, so a registry write must never count as suppression. The
+// installer preserves operator policy and states that containment is unqualified.
+// This guard does not turn source inspection into native crash evidence.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -63,6 +49,13 @@ function checkLinux() {
   console.log(`core-dump-suppression: ok (${relUnitPath} sets LimitCORE=0 in [Service])`);
 }
 
+function validateWindowsInstaller(content) {
+  const errors = [];
+  if (/Set-WindowsDumpSuppression/.test(content) || /New-ItemProperty[^\r\n]*Name\s+"DumpType"[^\r\n]*Value\s+0/.test(content)) errors.push("DumpType=0 must not be installed as suppression");
+  if (/Crash dumps[^\r\n]*suppressed/i.test(content)) errors.push("Installer must not claim unqualified dump suppression");
+  if (!content.includes("Windows crash-dump containment is not qualified.")) errors.push("Windows containment qualification status must be explicit");
+  return errors;
+}
 function checkWindows() {
   if (!fs.existsSync(installScriptPath)) {
     console.log(
@@ -72,21 +65,13 @@ function checkWindows() {
   }
 
   const content = fs.readFileSync(installScriptPath, "utf8");
-  const hasLocalDumpsKey = /LocalDumps\\\$ExeName/.test(content) || /LocalDumps\\node\.exe/.test(content);
-  const hasDumpTypeZero = /Name\s+"DumpType"[\s\S]{0,80}Value\s+0/.test(content);
-  const setsForNodeExe = /Set-WindowsDumpSuppression\s+-ExeName\s+"node\.exe"/.test(content);
-
-  if (!hasLocalDumpsKey || !hasDumpTypeZero || !setsForNodeExe) {
-    console.error(
-      `::error file=${relInstallScriptPath}::core-dump-suppression: install-agent.ps1 is missing the WER ` +
-        "LocalDumps DumpType=0 write for node.exe (ADR-0012 decision 19) -- without it, the Windows " +
-        "Error Reporting default for the process that holds agent key material is left unspecified rather " +
-        "than explicitly disabled",
-    );
+  const errors = validateWindowsInstaller(content);
+  if (errors.length) {
+    console.error(`::error file=${relInstallScriptPath}::${errors.join("; ")}`);
     process.exit(1);
   }
 
-  console.log(`core-dump-suppression: ok (${relInstallScriptPath} sets WER LocalDumps DumpType=0 for node.exe)`);
+  console.log("core-dump-suppression: Windows installer preserves WER policy; native containment remains unqualified");
 }
 
 function main() {
@@ -94,4 +79,5 @@ function main() {
   checkWindows();
 }
 
-main();
+if (require.main === module) main();
+module.exports = { validateWindowsInstaller };

@@ -1,0 +1,59 @@
+name: "CertOps / Collect Certificate release qualification"
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Evidence scope; standard-hosted omits domain labs but still requires every selected hosted/provider cell
+        type: choice
+        default: full
+        options: [full, standard-hosted, adcs, extended-adcs]
+      candidate_sha:
+        description: Exact trusted main candidate commit (40 lowercase hexadecimal characters)
+        required: true
+        type: string
+      run_ids:
+        description: Unique completed run IDs as JSON; budget grows with committed matrix (absolute maximum 1024)
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  collect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CERTOPS_RELEASE_CANDIDATE: ${{ inputs.candidate_sha }}
+      CERTOPS_RELEASE_RUN_IDS: ${{ inputs.run_ids }}
+      CERTOPS_QUALIFICATION_PROFILE: ${{ inputs.profile }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify candidate belongs to trusted main history
+        shell: bash
+        run: |
+          [[ "$CERTOPS_RELEASE_CANDIDATE" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          git cat-file -e "$CERTOPS_RELEASE_CANDIDATE^{commit}"
+          git merge-base --is-ancestor "$CERTOPS_RELEASE_CANDIDATE" origin/main
+          git checkout --detach "$CERTOPS_RELEASE_CANDIDATE"
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Collect explicit trusted candidate runs and verify every matrix slot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/run-certops-collector-tests.js
+          node --test scripts/certops-release-qualification.test.js scripts/certops-arm64-release.test.js
+          python3 scripts/certops-release-collector.py --profile "$CERTOPS_QUALIFICATION_PROFILE"
+      - name: Preserve sanitized consolidated verdict
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certificate-release-qualification-verdict
+          path: qualification-results/release-collection/summary.json
+          if-no-files-found: warn
+          retention-days: 30

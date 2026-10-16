@@ -1,0 +1,58 @@
+name: "CertOps / Native Linux trust-store qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trust:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            family: ubuntu
+          - runner: ubuntu-24.04
+            family: ubuntu
+          - runner: ubuntu-24.04
+            family: almalinux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      CERTOPS_LINUX_TRUST_DISPOSABLE_HOST: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/linux-trust.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Qualify actual Ubuntu trust store
+        if: matrix.family == 'ubuntu'
+        run: |
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted GITHUB_SHA="$GITHUB_SHA" CERTOPS_LINUX_TRUST_DISPOSABLE_HOST=1 CERTOPS_QUALIFICATION_REPORT="$CERTOPS_QUALIFICATION_REPORT" "$(command -v node)" scripts/certops-linux-trust.js
+      - name: Qualify actual AlmaLinux trust store in disposable container
+        if: matrix.family == 'almalinux'
+        run: |
+          docker run --rm --platform linux/amd64 --name "certops-trust-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            -v "$GITHUB_WORKSPACE:/candidate" -v "$(command -v node):/opt/node:ro" -w /candidate \
+            -e GITHUB_ACTIONS=true -e RUNNER_ENVIRONMENT=github-hosted -e GITHUB_SHA \
+            -e CERTOPS_LINUX_TRUST_DISPOSABLE_HOST -e CERTOPS_QUALIFICATION_REPORT \
+            almalinux:9.6@sha256:1d06c00a6025b4faf042d3827d9ea8dc6b7a75278cacc1c1399dcc7a89c07a01 \
+            bash -euc 'dnf install -y ca-certificates openssl libstdc++ libatomic >/dev/null; /opt/node scripts/certops-linux-trust.js'
+      - name: Independently verify every mandatory scenario
+        run: node scripts/certops-qualification-report.js qualification-results/linux-trust.json
+      - name: Stop owned container after interruption or failure
+        if: always() && matrix.family == 'almalinux'
+        run: |
+          if docker container inspect "certops-trust-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >/dev/null 2>&1; then
+            docker rm -f "certops-trust-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          fi
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-linux-trust-${{ matrix.runner }}-${{ matrix.family }}
+          path: qualification-results/linux-trust.json
+          if-no-files-found: error

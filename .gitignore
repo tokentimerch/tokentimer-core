@@ -86,3 +86,7 @@ reports/
 /docs/agents/
 # .scratch is local-only planning/notes space; nothing under it is tracked.
 /.scratch/
+/.qualification-browsers/
+/qualification-results/
+# Qualification collector interpreter cache is local execution output.
+/scripts/__pycache__/

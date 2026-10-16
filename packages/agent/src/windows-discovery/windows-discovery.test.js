@@ -14,6 +14,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { X509Certificate } = require("node:crypto");
+const { EventEmitter } = require("node:events");
 
 const {
   buildStoreQueryScript,
@@ -498,6 +499,74 @@ describe("parseHttpSysBindingQueryOutput", () => {
 // ---------------------------------------------------------------------------
 
 describe("listMachineStoreCertificates", () => {
+  it("launches no native query when the optional signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Owned sweep authority is gone"));
+    let commands = 0;
+    const result = await listMachineStoreCertificates({
+      store: "My", signal: controller.signal,
+      execFileImpl() { commands += 1; throw new Error("Aborted discovery must never spawn"); },
+    });
+    assert.equal(commands, 0);
+    assert.equal(result.ok, false);
+    assert.equal(result.exitCode, null);
+    assert.equal(result.certificates, undefined);
+  });
+
+  it("cancels and drains an in-flight certutil key lookup without accepting late success", { timeout: 3000 }, async () => {
+    const controller = new AbortController(), commands = [];
+    let lookupStarted, lookupCallback, lookupChild, lookupKills = 0, storeKills = 0;
+    const started = new Promise(resolve => { lookupStarted = resolve; });
+    const execFileImpl = (file, args, _options, callback) => {
+      commands.push({file, args});
+      const child = new EventEmitter();
+      if (file === "powershell.exe") {
+        child.kill = () => { storeKills += 1; return true; };
+        queueMicrotask(() => callback(null, STORE_JSON, ""));
+      } else {
+        assert.equal(file, "certutil.exe");
+        assert.deepEqual(args, ["-store", "My"]);
+        lookupCallback = callback; lookupChild = child;
+        child.kill = () => { lookupKills += 1; return true; };
+        queueMicrotask(lookupStarted);
+      }
+      return child;
+    };
+    let settled = false;
+    const pending = listMachineStoreCertificates({ store: "My", execFileImpl, signal: controller.signal, timeoutMs: 2000 })
+      .then(result => { settled = true; return result; });
+    await started;
+    controller.abort(new Error("Owned sweep lost authority during key lookup"));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(lookupKills, 1, "Abort must cancel the actual active certutil child");
+    assert.equal(storeKills, 0, "Completed PowerShell work must have removed its abort listener");
+    assert.equal(settled, false, "Discovery must retain authority until the cancelled child drains");
+    assert.equal(commands.length, 2);
+    lookupChild.emit("exit", null, "SIGTERM");
+    const result = await pending;
+    assert.equal(result.ok, false); assert.equal(result.exitCode, null);
+    assert.equal(result.certificates, undefined);
+    // A delayed execFile callback cannot turn cancelled lookup into inventory.
+    lookupCallback(null, CERTUTIL_KEY_INFO_EN, "");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(commands.length, 2);
+    assert.equal(lookupKills, 1);
+  });
+
+  it("does not launch certutil when cancellation lands after the store query", async () => {
+    const controller = new AbortController(), commands = [];
+    const execFileImpl = (file, _args, _options, callback) => {
+      commands.push(file); assert.equal(file, "powershell.exe");
+      const child = new EventEmitter(); child.kill = () => true;
+      queueMicrotask(() => { callback(null, STORE_JSON, ""); controller.abort(); });
+      return child;
+    };
+    const result = await listMachineStoreCertificates({store: "My", execFileImpl, signal: controller.signal});
+    assert.deepEqual(commands, ["powershell.exe"]);
+    assert.equal(result.ok, false); assert.equal(result.exitCode, null);
+    assert.equal(result.certificates, undefined);
+  });
+
   it("joins the store query's fields with certutil's key container and provider", async () => {
     const execFileImpl = makeExecRouter({ powershell: { stdout: STORE_JSON }, certutil: { stdout: CERTUTIL_KEY_INFO_EN } });
     const result = await listMachineStoreCertificates({ store: "My", execFileImpl });

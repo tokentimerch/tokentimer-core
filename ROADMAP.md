@@ -1,9 +1,12 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-14 for the integrated AD CS and distribution candidate. Dropped the optional already-expired-import
-notification ask ([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
-quiet historical imports stay the default without a toggle. The AD CS
-issuer and enrollment surface target **0.18.0**.
+Last reviewed: 2026-10-15 for the integrated AD CS, distribution and real-host
+qualification candidate targeting **0.18.0**. Released agent capabilities remain
+gated until independent real-host qualification passes; lifecycle testing
+infrastructure and coverage remain in progress. Dropped the optional
+already-expired-import notification ask
+([#231](https://github.com/tokentimerch/tokentimer-core/issues/231));
+quiet historical imports stay the default without a toggle.
 
 This page is the repository milestone index: what Core takes next, what must
 land before v1.0.0 so that release is a stable product, what ships in 0.x
@@ -67,6 +70,17 @@ called stable while they are open.
 
 Accepted work that ships in 0.x stages on its own schedule. v1.0.0 can be
 called stable while it is open.
+
+- **Verifiable certificate lifecycle and real-host qualification**
+  ([#354](https://github.com/tokentimerch/tokentimer-core/issues/354)).
+  Cover Windows installation, services, CNG, certificate stores and IIS,
+  enterprise AD CS enrollment and recovery, ACME, Linux destinations and
+  edition integration. Use disposable hosted Windows runners and isolated
+  on-demand domain labs, with independent cleanup safeguards. Mandatory
+  execution reports must fail on missing prerequisites or skipped tests.
+  Implementation and focused local evidence are separate from hosted
+  execution and release qualification; see
+  [the qualification guide](docs/certops/e2e-qualification.md).
 
 - **AD CS issuer for the Windows agent**
   ([#321](https://github.com/tokentimerch/tokentimer-core/issues/321)).

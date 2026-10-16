@@ -1667,6 +1667,7 @@ async function removeCertificateAndKeyContainer({
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal = undefined,
+  assertHeld = undefined,
 } = {}) {
   if (!isNonEmptyString(thumbprint) || !THUMBPRINT_PATTERN.test(thumbprint)) {
     throw buildError(`thumbprint must be a 40-hex-char SHA-1 string (got ${JSON.stringify(thumbprint)})`);
@@ -1684,7 +1685,9 @@ async function removeCertificateAndKeyContainer({
 
   const delstoreArgv = [certutilPath, "-delstore", store, thumbprint];
   assertSafeArgvElements("delstoreArgv", delstoreArgv);
+  if (typeof assertHeld === "function") assertHeld();
   const delstoreResult = await execWithoutShell(execFileImpl, delstoreArgv, timeoutMs, signal);
+  if (typeof assertHeld === "function") assertHeld();
   if (delstoreResult.execError && delstoreResult.execError.code === "ABORT_ERR") {
     return guardReturnValue({
       ok: false,
@@ -1705,6 +1708,7 @@ async function removeCertificateAndKeyContainer({
     });
   }
 
+  if (typeof assertHeld === "function") assertHeld();
   const delkeyArgv = [
     certutilPath,
     "-csp",
@@ -1763,7 +1767,8 @@ async function removeCertificateAndKeyContainer({
  * certificate in any store for this attempt, so unlike
  * removeCertificateAndKeyContainer there is nothing to `-delstore` and no
  * thumbprint to require -- only the orphaned key container itself needs
- * freeing. Deliberately a single-step, best-effort operation: callers
+ * freeing. Complete metadata-only machine-store absence is required before
+ * deletion; missing/incomplete probes preserve the key. Callers
  * (index.js's executeWindowsIisRenewJob) treat a failure here as a safe,
  * logged, non-fatal condition, never a reason to also fail the
  * already-failed renewal a second way.
@@ -1776,6 +1781,8 @@ async function removeCertificateAndKeyContainer({
  * @param {Function} [input.execFileImpl]
  * @param {string} [input.certutilPath] defaults to "certutil.exe".
  * @param {number} [input.timeoutMs]
+ * @param {string} [input.keySurvivorHelperPath] explicit helper path for embedded runs/tests
+ * @param {boolean} [input.requireAlreadyAbsent] listing-only proof; never deletes a present key
  * @returns {Promise<
  *   { ok: true }
  *   | { ok: false, exitCode: number|null, stdoutExcerpt: string, stderrExcerpt: string }
@@ -1787,6 +1794,10 @@ async function removeAbandonedKeyContainer({
   certutilPath = "certutil.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal = undefined,
+  assertHeld = undefined,
+  allowAlreadyAbsent = false,
+  requireAlreadyAbsent = false,
+  keySurvivorHelperPath = undefined,
 } = {}) {
   if (!isNonEmptyString(containerName) || !CONTAINER_NAME_PATTERN.test(containerName)) {
     throw buildError(`containerName must match ${CONTAINER_NAME_PATTERN} (got ${JSON.stringify(containerName)})`);
@@ -1796,6 +1807,37 @@ async function removeAbandonedKeyContainer({
   }
   assertSafeArgvElements("certutilPath", [certutilPath]);
 
+  if (typeof assertHeld === "function") assertHeld();
+  if (signal?.aborted) return guardReturnValue({ ok: false, reason: "aborted", exitCode: null, stdoutExcerpt: "", stderrExcerpt: "" });
+  if (allowAlreadyAbsent || requireAlreadyAbsent) {
+    const listing = await execWithoutShell(execFileImpl,
+      [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-key"], timeoutMs, signal);
+    if (typeof assertHeld === "function") assertHeld();
+    if (signal?.aborted) return guardReturnValue({ ok: false, reason: "aborted", exitCode: null, stdoutExcerpt: "", stderrExcerpt: "" });
+    if (listing.exitCode !== 0 || listing.execError) {
+      return guardReturnValue({ ok: false, reason: "container_probe_failed", exitCode: listing.exitCode });
+    }
+    if (!String(listing.stdout || "").split(/\r?\n/).map((line) => line.trim()).includes(containerName)) {
+      return guardReturnValue({ ok: true, alreadyAbsent: true });
+    }
+  }
+  if (requireAlreadyAbsent) {
+    return guardReturnValue({ ok: false, reason: "unproven_container_ownership", exitCode: null });
+  }
+  // A CA/accept failure does not prove no other machine store references the
+  // same persisted key. Probe all references again at the destructive boundary.
+  // Lazy import avoids the adapter's validation dependency on this module.
+  const references = await require("../windows-key-survivors").inspectMachineKeySurvivors({
+    containerName, signal, execFileImpl, timeoutMs,
+    ...(keySurvivorHelperPath ? { helperPath: keySurvivorHelperPath } : {}),
+  });
+  if (typeof assertHeld === "function") assertHeld();
+  if (signal?.aborted || references.ok !== true || references.shared !== false) {
+    return guardReturnValue({ ok: false, exitCode: null,
+      reason: signal?.aborted ? "aborted" : references.ok === true ? "key_container_referenced" : "key_reference_probe_failed",
+      stdoutExcerpt: "", stderrExcerpt: "" });
+  }
+  if (typeof assertHeld === "function") assertHeld();
   const delkeyArgv = [certutilPath, "-csp", MICROSOFT_SOFTWARE_KSP, "-delkey", containerName];
   assertSafeArgvElements("delkeyArgv", delkeyArgv);
   const delkeyResult = await execWithoutShell(execFileImpl, delkeyArgv, timeoutMs, signal);

@@ -15,9 +15,53 @@ const {
   readWatermark,
   captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
+  retrieveProposedEnrollmentCandidate,
+  leafSpkiSha256Hex,
   watermarkPath,
   watermarkLockPath,
 } = require("./adcs-enrollment-reconcile");
+
+describe("signed operator enrollment reconciliation", () => {
+  const certificatePem = fs.readFileSync(path.join(__dirname, "..", "verify", "fixtures", "selfsigned.crt.pem"), "utf8");
+  const csrSpkiSha256 = leafSpkiSha256Hex(certificatePem);
+  const { assertIssuanceOutcome } = require("./index");
+  it("retrieves exactly the proposed RequestId and requires a real matching leaf SPKI", async () => {
+    const calls = [];
+    const result = await retrieveProposedEnrollmentCandidate({ requestId: 77, csrSpkiSha256,
+      reconcileSearchFrom: 12, assertIssuanceOutcome, issuer: {
+        retrieve: async (id) => { calls.push(id); return { outcome: "issued", certificatePem }; },
+      } });
+    assert.deepEqual(calls, [77]);
+    assert.equal(result.status, "unique_candidate");
+    assert.equal(result.requestId, 77);
+    assert.equal(result.nextSearchFrom, 12);
+    assert.equal(result.attachmentEligible, true);
+  });
+  it("refuses a foreign SPKI or malformed certificate without attaching or resubmitting", async () => {
+    for (const candidate of [certificatePem, "not a certificate"]) {
+      const result = await retrieveProposedEnrollmentCandidate({ requestId: 77, csrSpkiSha256: "0".repeat(64),
+        assertIssuanceOutcome, issuer: { retrieve: async () => ({ outcome: "issued", certificatePem: candidate }) } });
+      assert.equal(result.status, "error");
+      assert.equal(result.requestId, undefined);
+    }
+  });
+  it("keeps unissued and inaccessible operator candidates uncertain", async () => {
+    for (const outcome of [{ outcome: "pending", requestId: 77 }, { outcome: "denied", caHresult: "0x80094012", detail: "denied" },
+      { outcome: "uncertain", caHresult: "0x80070005", detail: "inaccessible" }]) {
+      const result = await retrieveProposedEnrollmentCandidate({ requestId: 77, csrSpkiSha256,
+        assertIssuanceOutcome, issuer: { retrieve: async () => outcome } });
+      assert.equal(result.status, "unresolved");
+      assert.equal(result.requestId, undefined);
+    }
+  });
+  it("rejects invalid unsigned-size ids before any CA call", async () => {
+    for (const requestId of [0, -1, 1.5, 4294967296, "77"]) {
+      const result = await retrieveProposedEnrollmentCandidate({ requestId, csrSpkiSha256,
+        assertIssuanceOutcome, issuer: { retrieve: async () => { assert.fail("no invalid CA call"); } } });
+      assert.equal(result.status, "error");
+    }
+  });
+});
 
 describe("adcs-enrollment-reconcile", () => {
   let stateDir;

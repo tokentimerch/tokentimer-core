@@ -1,0 +1,90 @@
+name: "CertOps / Windows ARM64 installed agent API"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certops-windows-arm64-agent-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  installed-agent:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-11-arm
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_ARM64_AGENT_REQUIRED: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      DB_HOST: '127.0.0.1'
+      DB_PORT: '55432'
+      DB_USER: postgres
+      DB_PASSWORD: qualification-local-only
+      DB_NAME: certops_arm64_qualification
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          architecture: arm64
+          cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+          architecture: arm64
+          cache: false
+      - name: Require native runtimes and an unused disposable database port
+        run: |
+          $ErrorActionPreference='Stop'
+          if ([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne [Runtime.InteropServices.Architecture]::Arm64) { throw 'Native ARM64 PowerShell required' }
+          node -e "if(process.arch!=='arm64')throw Error('Native ARM64 Node required')"
+          if ($LASTEXITCODE) { throw 'Native Node architecture failed' }
+          if (Get-NetTCPConnection -LocalPort 55432 -State Listen -ErrorAction SilentlyContinue) { throw 'Disposable PostgreSQL port already occupied' }
+          "CERTOPS_ARM64_AGENT_PWSH=$((Get-Process -Id $PID).Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - run: pnpm install --frozen-lockfile
+      - name: Initialize pinned x64 PostgreSQL under Windows emulation
+        run: |
+          node scripts/certops-arm64-postgres.js
+          if ($LASTEXITCODE) { throw 'Pinned x64 PostgreSQL prerequisite failed; no native PostgreSQL claim' }
+      - name: Apply real application migrations
+        run: |
+          pnpm --filter @tokentimer/api migrate
+          if ($LASTEXITCODE) { throw 'Disposable schema migrations failed' }
+      - name: Run original installed ARM64 product agent as SYSTEM
+        timeout-minutes: 20
+        run: |
+          $ErrorActionPreference='Stop'
+          ./scripts/certops-arm64-installed-driver.ps1
+          node -e "const r=require('./qualification-results/windows-arm64-installed-agent.json');require('./scripts/certops-arm64-installed-proof').verifyProof(r.nativeArm64InstalledAgent);if(r.status!=='passed'||r.candidateSha!==process.env.GITHUB_SHA)throw Error('Native cleanup proof required')"
+          if ($LASTEXITCODE) { throw 'Native cleanup did not qualify; preserve database ownership evidence' }
+          'CERTOPS_ARM64_AGENT_NATIVE_COMPLETED=1' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Independently stop only the exact owned PostgreSQL process tree
+        if: always()
+        run: |
+          if ($env:CERTOPS_ARM64_PG_RECEIPT) {
+            node scripts/certops-arm64-postgres.js --cleanup
+            if ($LASTEXITCODE) { throw 'Owned PostgreSQL cleanup refused; preserve private evidence on disposable runner' }
+          }
+      - name: Require actual native facts without broad ARM64 certificate claims
+        run: |
+          node -e "const r=require('./qualification-results/windows-arm64-installed-agent.json');require('./scripts/certops-arm64-installed-proof').verifyProof(r.nativeArm64InstalledAgent);if(r.status!=='passed')throw Error('Actual native qualification failed')"
+          if ($LASTEXITCODE) { throw 'Installed ARM64 proof refused' }
+      - name: Preserve bounded public installed-agent report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-windows-arm64-installed-agent
+          path: qualification-results/windows-arm64-installed-agent.json
+          if-no-files-found: error

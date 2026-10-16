@@ -1,0 +1,53 @@
+name: "CertOps / Native certificate filesystem qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  filesystem:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      CERTOPS_FILESYSTEM_DISPOSABLE_HOST: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/filesystem.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Select native Windows OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $opensslDir = 'C:\Program Files\Git\usr\bin'
+          if (-not (Test-Path -LiteralPath (Join-Path $opensslDir 'openssl.exe'))) { throw 'Required native OpenSSL missing' }
+          $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Execute native deployment and independent filesystem oracles
+        run: node scripts/certops-filesystem-host.js
+      - name: Qualify native Linux nonroot backup permission refusal
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          selected_node="$(readlink -f "$(command -v node)")"
+          [[ "$selected_node" = /* && -x "$selected_node" ]] || exit 1
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,GITHUB_SHA,CERTOPS_FILESYSTEM_DISPOSABLE_HOST -- "$selected_node" scripts/certops-linux-filesystem-permission.js --report qualification-results/filesystem-linux-dac.json
+      - name: Verify mandatory Linux DAC execution
+        if: runner.os == 'Linux'
+        run: node scripts/certops-qualification-report.js qualification-results/filesystem-linux-dac.json
+      - name: Independently verify all mandatory execution
+        run: node scripts/certops-qualification-report.js qualification-results/filesystem.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-filesystem-${{ matrix.os }}
+          path: |
+            qualification-results/filesystem.json
+            qualification-results/filesystem-linux-dac.json
+          if-no-files-found: error

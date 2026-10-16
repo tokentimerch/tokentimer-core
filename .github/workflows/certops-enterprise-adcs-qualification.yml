@@ -1,0 +1,65 @@
+name: "CertOps / Disposable enterprise AD CS native qualification"
+on:
+  workflow_dispatch:
+    inputs:
+      lab_hours:
+        description: Maximum resource lifetime in hours
+        type: choice
+        options: ['4', '8']
+        default: '4'
+      windows_version:
+        description: Domain member Windows Server image to qualify
+        type: choice
+        options: ['2019', '2022', '2025']
+        default: '2022'
+      language:
+        description: Installed native Windows display language on CA and member
+        type: choice
+        options: ['en-US', 'de-DE', 'fr-FR']
+        default: 'en-US'
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  lab:
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: certops-adcs-lab
+    timeout-minutes: 150
+    env:
+      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+      LAB_HOURS: ${{ inputs.lab_hours }}
+      WINDOWS_VERSION: ${{ inputs.windows_version }}
+      WINDOWS_LANGUAGE: ${{ inputs.language }}
+      CERTOPS_WINDOWS_LANGUAGE_ASSETS: ${{ secrets.CERTOPS_WINDOWS_LANGUAGE_ASSETS }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Require every AD CS safety fixture family before provisioning
+        run: node scripts/certops-adcs-safety-inventory.js
+      - name: Authenticate dedicated lab environment with OIDC
+        shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Provision isolated domain CA control plane and member and execute real scenarios
+        shell: pwsh
+        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE
+      - name: Assert mandatory native scenarios and candidate source evidence
+        run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
+      - name: Destroy owned temporary resources
+        if: always()
+        shell: pwsh
+        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP
+      - name: Preserve infrastructure scope receipts only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: disposable-enterprise-adcs-infrastructure
+          path: qualification-results/enterprise-adcs-*.json
+          if-no-files-found: warn

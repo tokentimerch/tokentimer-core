@@ -7,6 +7,11 @@
 //	tokentimer-adcs-chain --cert <file> --ca-key-sha256 <hex> [--ca-cert <file>]
 //	                      [--extra-store <file>] [--revocation require|best-effort]
 //
+// Metadata-only retention mode (no private-key acquisition):
+//
+// tokentimer-adcs-chain --key-survivors --container <owned-name>
+//                     --exclude-store <store> --exclude-thumbprint <SHA1>
+//
 // Exit codes:
 //
 //	0  verdict=valid
@@ -24,6 +29,7 @@ import (
 	"os"
 
 	"tokentimer-adcs-chain/chaincore"
+	"tokentimer-adcs-chain/keyrefs"
 )
 
 const exitOK = 0
@@ -33,12 +39,48 @@ const exitFail = 2
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("tokentimer-adcs-chain", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	survivors := fs.Bool("key-survivors", false, "metadata-only machine-store key reference check")
+	container := fs.String("container", "", "exact owned machine Software-KSP container")
+	excludeStore := fs.String("exclude-store", "", "old certificate store")
+	excludeThumb := fs.String("exclude-thumbprint", "", "old certificate SHA1")
 	certPath := fs.String("cert", "", "path to the leaf certificate (PEM or DER)")
 	caKey := fs.String("ca-key-sha256", "", "hex SHA-256 of the pinned CA public key")
 	caCertPath := fs.String("ca-cert", "", "optional PEM/DER CA certificate added to the extra store")
 	extraStore := fs.String("extra-store", "", "optional PEM/DER certificates for the extra store")
 	revocation := fs.String("revocation", "require", "require or best-effort (best-effort is applied by the agent)")
 	if err := fs.Parse(args); err != nil {
+		return exitFail
+	}
+	if *survivors {
+		var hasStore, hasThumb bool
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "exclude-store" {
+				hasStore = true
+			}
+			if f.Name == "exclude-thumbprint" {
+				hasThumb = true
+			}
+		})
+		if hasStore != hasThumb || (hasStore && (*excludeStore == "" || *excludeThumb == "")) {
+			return exitFail
+		}
+		if fs.NArg() != 0 || *certPath != "" || *caKey != "" || *caCertPath != "" || *extraStore != "" {
+			return exitFail
+		}
+		request := keyrefs.Request{Container: *container, ExcludeStore: *excludeStore, ExcludeThumbprint: *excludeThumb}
+		if !request.Valid() {
+			return exitFail
+		}
+		result := keyrefs.Scan(request)
+		if json.NewEncoder(stdout).Encode(result) != nil {
+			return exitFail
+		}
+		if result.Complete {
+			return exitOK
+		}
+		return exitFail
+	}
+	if *container != "" || *excludeStore != "" || *excludeThumb != "" {
 		return exitFail
 	}
 	if *certPath == "" || *caKey == "" {

@@ -14,7 +14,8 @@
  * applied. The whole suite self-skips when the DB is unreachable, following
  * the tests/contract/api-endpoints.test.js describe.skip pattern.
  *
- * Run: pnpm test:e2e:agent  (or node --test tests/e2e/certops-agent-e2e.test.js)
+ * Set CERTOPS_PROTOCOL_DISPOSABLE_STACK=1 before running against a disposable
+ * database. Run: pnpm test:e2e:agent.
  */
 
 const { describe, it, before, after } = require("node:test");
@@ -39,7 +40,8 @@ const DB_ENV = {
 // The signing key row in certops_signing_keys is encrypted with this env
 // key. A fresh random key would make an existing active key undecryptable at
 // dispatch time, so the suite retires any active key it cannot own and lets
-// registerAgent mint a fresh one (restored in cleanup).
+// registerAgent mint a fresh one. This changes global signing-key state and
+// therefore requires an explicitly authorized disposable database.
 const SIGNING_ENCRYPTION_KEY =
   process.env.CERTOPS_SIGNING_ENCRYPTION_KEY ||
   crypto.randomBytes(32).toString("hex");
@@ -108,6 +110,7 @@ async function waitForHealth(url, timeoutMs = 120000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {
+    if (apiProcess && (apiProcess.exitCode !== null || apiProcess.signalCode !== null)) throw new Error("Owned API exited before its health prerequisite became ready");
     try {
       const res = await fetch(`${url}/health`);
       if (res.ok) return;
@@ -140,29 +143,30 @@ async function startApiServer() {
       ENABLE_METRICS: "false",
     },
   });
-  let output = "";
-  apiProcess.stdout.on("data", (chunk) => {
-    output += chunk.toString();
-  });
-  apiProcess.stderr.on("data", (chunk) => {
-    output += chunk.toString();
-  });
-  apiProcess.on("exit", (code) => {
-    if (code !== null && code !== 0 && baseUrl) {
-      // Surface startup crashes in the failure message of waitForHealth.
-      output += `\n[api exited with code ${code}]`;
-    }
-  });
+  // Test reports contain bounded case outcomes, never raw API startup output.
+  apiProcess.stdout.resume(); apiProcess.stderr.resume();
+  apiProcess.on("error", () => {});
   try {
     await waitForHealth(baseUrl);
   } catch (err) {
-    throw new Error(`${err.message}\n--- api output ---\n${output.slice(-4000)}`);
+    throw new Error(`Owned API prerequisite failed (${err.name}; exit=${apiProcess.exitCode ?? "pending"}); raw output withheld`);
   }
 }
 
-function stopApiServer() {
-  if (apiProcess && !apiProcess.killed) {
-    apiProcess.kill();
+async function stopApiServer() {
+  const child = apiProcess;
+  if (!child) return;
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  const awaitExit = async () => {
+    const deadline = Date.now() + 5000;
+    while (!exited() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(exited(), "Owned API process did not terminate within cleanup bound");
+  };
+  if (!exited()) { child.kill("SIGTERM"); try { await awaitExit(); } catch { child.kill("SIGKILL"); await awaitExit(); } }
+  if (baseUrl) {
+    const oracle = net.createServer();
+    try { await new Promise((resolve, reject) => { oracle.once("error", reject); oracle.listen(Number(new URL(baseUrl).port), "127.0.0.1", resolve); }); }
+    finally { if (oracle.listening) await new Promise((resolve) => oracle.close(resolve)); }
   }
   apiProcess = null;
 }
@@ -354,6 +358,7 @@ function claimEnvelope(agentId, maxJobs = 1) {
 
 async function cleanupSeededRows() {
   if (!pool || !seeded.workspaceId) return;
+  if(process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") require("./windows-real-journey").assertAllCleanupSafe();
   const ws = seeded.workspaceId;
   await pool.query(
     `DELETE FROM certificate_evidence WHERE workspace_id = $1`,
@@ -395,12 +400,16 @@ describe("CertOps agent surface E2E", () => {
   before(async () => {
     dbAvailable = await probeDatabase();
     if (!dbAvailable) {
+      if (process.env.CERTOPS_E2E_REQUIRED === "1" || process.env.CERTOPS_QUALIFICATION_STRICT === "1") {
+        throw new Error(`Required CertOps E2E prerequisites unavailable: ${skipReason}`);
+      }
       console.log(
         `certops-agent-e2e skipped: ${skipReason} ` +
           "(start the tokentimer-pg docker Postgres and apply migrations)",
       );
       return;
     }
+    assert.equal(process.env.CERTOPS_PROTOCOL_DISPOSABLE_STACK, "1", "Protocol qualification requires an explicitly disposable database");
     services = loadServices();
     await ensureOwnableSigningKey();
     await seedWorkspace();
@@ -408,13 +417,39 @@ describe("CertOps agent surface E2E", () => {
   });
 
   after(async () => {
-    stopApiServer();
-    await cleanupSeededRows();
-    if (services?.apiDb?.pool) {
-      await services.apiDb.pool.end().catch(() => {});
+    const failures = [];
+    for (const action of [stopApiServer, cleanupSeededRows, () => services?.apiDb?.pool?.end(), () => pool?.end()]) {
+      try { await action(); } catch (error) { failures.push(error); }
     }
-    if (pool) await pool.end().catch(() => {});
+    if (failures.length) throw new AggregateError(failures, "Protocol fixture independent cleanup failed");
   });
+
+  if (process.env.CERTOPS_REAL_ACME_REQUIRED === "1") {
+    it("real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence", { timeout: process.env.CERTOPS_REPORT_SCOPE === "real-agent-acme-filesystem" ? 1800000 : 1200000 }, async (context) => {
+      assert.equal(dbAvailable, true, "real ACME requires migrated PostgreSQL");
+      const runScenario = async (name, action) => { let failure; await context.test(name, async () => { try { await action(); } catch (error) { failure = error; throw error; } }); if (failure) throw failure; };
+      await require("./acme-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, runScenario });
+    });
+  }
+  if (process.env.CERTOPS_REAL_LINUX_SYSTEMD_REQUIRED === "1") {
+    // Bound actual first install, reapplication, crash recovery and service restarts.
+    it("real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart", { timeout: 600000 }, async () => {
+      assert.equal(dbAvailable, true, "Linux systemd journey requires migrated PostgreSQL");
+      await require("./linux-systemd-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot });
+    });
+  }
+  if (process.env.CERTOPS_REAL_WINDOWS_FIXED_ROOT_REQUIRED === "1") {
+    it("real Windows canonical root: unmodified installer registers restarts reapplies and uninstalls", { timeout: 900000 }, async () => {
+      assert.equal(dbAvailable, true, "Canonical Windows lifecycle requires migrated PostgreSQL");
+      await require("./helpers/certops-windows-fixed-root").qualifyFixedRoot({ pool, baseUrl, workspaceId: seeded.workspaceId, createBootstrap, repoRoot });
+    });
+  }
+  if (process.env.CERTOPS_REAL_WINDOWS_REQUIRED === "1") {
+    it("real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence", { timeout: process.env.CERTOPS_WINDOWS_FAILED_ROLLBACK_REQUIRED === "1" ? 1200000 : process.env.CERTOPS_WINDOWS_ALIVE_GRACE_REQUIRED === "1" ? 6000000 : process.env.CERTOPS_WINDOWS_STOP_OFFLINE_REQUIRED === "1" ? 2400000 : 1920000 }, async (t) => {
+      assert.equal(dbAvailable, true, "Windows journey requires migrated PostgreSQL");
+      await require("./windows-real-journey")({ pool, baseUrl, workspaceId: seeded.workspaceId, userId: seeded.userId, createBootstrap, repoRoot, runNamedScenario: async (name, work) => { let proof; await t.test(name, async () => { proof = await work(); }); return proof; } });
+    });
+  }
 
   // Shared across the sequential subtests below.
   const state = {};
@@ -972,4 +1007,5 @@ describe("CertOps agent surface E2E", () => {
     );
     assert.equal(Number(freshLastSequence.rows[0].last_sequence), 0);
   });
+
 });

@@ -97,7 +97,7 @@ function makeExcerptRedactor(secretValues) {
 
     // Redaction is checked on the FULL text (not just the excerpt window)
     // so a secret echoed past the first 1024 chars still triggers it.
-    if (text.includes(PRIVATE_KEY_MARKER)) {
+    if (text.includes(PRIVATE_KEY_MARKER) || text.includes(REDACTED_EXCERPT_PLACEHOLDER)) {
       return REDACTED_EXCERPT_PLACEHOLDER;
     }
     if (secrets.some((secret) => text.includes(secret))) {
@@ -173,6 +173,27 @@ async function readBoundedBodyText(bodyStream) {
  * @returns {Promise<{ status: number, ok: boolean, bodyText: string }>}
  */
 async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
+  // OAuth access tokens and signed assertions are generated after solver
+  // construction. Redact reflections using this request's credentials, without
+  // retaining a growing token history or modifying successful token responses.
+  const headerEntries = options.headers && typeof options.headers.entries === "function"
+    ? [...options.headers.entries()] : Object.entries(options.headers || {});
+  const requestSecrets = [];
+  for (const [name, value] of headerEntries) {
+    if (/^(authorization|x-api-key|api-key|x-auth-key|x-ovh-consumer|x-ovh-signature)$/i.test(name) && typeof value === "string") {
+      requestSecrets.push(value);
+      const signature = /\bsignature=([^,\s]+)/i.exec(value);
+      if (signature) requestSecrets.push(signature[1]);
+      const bearer = /^Bearer\s+(.+)$/i.exec(value);
+      if (bearer) requestSecrets.push(bearer[1]);
+    }
+  }
+  const contentType = headerEntries.find(([name]) => name.toLowerCase() === "content-type")?.[1];
+  if (typeof contentType === "string" && /application\/x-www-form-urlencoded/i.test(contentType) && typeof options.body === "string") {
+    const form = new URLSearchParams(options.body);
+    for (const name of ["assertion", "client_secret", "password", "refresh_token", "access_token"]) requestSecrets.push(...form.getAll(name));
+  }
+  const redactRequest = makeExcerptRedactor(requestSecrets.filter(isNonEmptyString).flatMap(value => [value, encodeURIComponent(value)]));
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort(new Error(`request timed out after ${timeoutMs} ms`));
@@ -202,8 +223,20 @@ async function fetchWithTimeout(fetchImpl, url, options, timeoutMs) {
     return {
       status: response.status,
       ok: response.status >= 200 && response.status < 300,
-      bodyText,
+      // Preserve full non-reflected error text until the provider checks its
+      // static credentials. Premature truncation could expose a partial secret
+      // straddling the final excerpt boundary.
+      bodyText: response.status >= 200 && response.status < 300 ? bodyText :
+        redactRequest(bodyText) === REDACTED_EXCERPT_PLACEHOLDER ? REDACTED_EXCERPT_PLACEHOLDER : bodyText,
     };
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    if (redactRequest(message) === REDACTED_EXCERPT_PLACEHOLDER) {
+      const sanitized = new Error(REDACTED_EXCERPT_PLACEHOLDER);
+      if (["AbortError", "TimeoutError"].includes(error?.name)) sanitized.name = error.name;
+      throw sanitized;
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }

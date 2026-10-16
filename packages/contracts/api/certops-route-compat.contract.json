@@ -274,6 +274,14 @@
       {
         "path": "/api/v1/certops/agent/jobs/{jobId}/logs",
         "method": "POST"
+      },
+      {
+        "path": "/api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/retry-installation",
+        "method": "POST"
+      },
+      {
+        "path": "/api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover",
+        "method": "POST"
       }
     ],
     "rejectionPolicy": {

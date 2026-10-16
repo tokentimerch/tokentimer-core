@@ -11,7 +11,7 @@
 //   node windows-retention-restart.js create <ledgerDir>   (process 1)
 //   node windows-retention-restart.js resume <ledgerDir>   (process 2, fresh)
 
-const retMod = require("C:\\TokenTimerAgentTest\\src\\windows-retention\\index.js");
+const retMod = require("../../src/windows-retention/index.js");
 
 const THUMBPRINT = "AA00000000000000000000000000000000009A".slice(0, 40).padEnd(40, "0").toUpperCase();
 

@@ -104,6 +104,27 @@ describe("decodeEnrollmentSnapshot", () => {
     assert.equal(decoded.snapshot.kind, "adcs");
   });
 
+  it("bounds signed cleanup directives to known terminal states", () => {
+    for (const terminalState of ["expired", "cancelled", "abandoned", "installed", "", null]) {
+      const decoded = decodeEnrollmentSnapshot({ enrollment: {
+        enrollmentId, attempt: 2, snapshotB64, snapshotSha256, terminalState,
+      } });
+      assert.equal(decoded.ok, ["expired", "cancelled", "abandoned"].includes(terminalState));
+      if (decoded.ok) assert.equal(decoded.terminalState, terminalState);
+    }
+  });
+
+  it("bounds proposed RequestIds and rejects mixed cleanup/reconcile directives", () => {
+    for (const reconcileRequestId of [1, 4294967295, 0, -1, 4294967296, 1.5, "77", null]) {
+      const decoded = decodeEnrollmentSnapshot({ enrollment: {
+        enrollmentId, attempt: 2, snapshotB64, snapshotSha256, reconcileRequestId,
+      } });
+      assert.equal(decoded.ok, [1, 4294967295].includes(reconcileRequestId));
+    }
+    assert.equal(decodeEnrollmentSnapshot({ enrollment: { enrollmentId, attempt: 2,
+      snapshotB64, snapshotSha256, reconcileRequestId: 77, terminalState: "abandoned" } }).ok, false);
+  });
+
   it("rejects a digest mismatch", () => {
     const decoded = decodeEnrollmentSnapshot({
       enrollment: {

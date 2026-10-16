@@ -16,7 +16,7 @@ const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 
-const discoveryRoot = "C:\\TokenTimerAgentTest\\src\\discovery";
+const discoveryRoot = path.resolve(__dirname, "../../src/discovery");
 const { fetchRawCertificateDerByThumbprint, computeFingerprintSha256 } = require(
   path.join(discoveryRoot, "windows.js"),
 );

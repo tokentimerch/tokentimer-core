@@ -299,6 +299,14 @@ async function findCertificatesDueForRenewal({
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
           (status) => `'${status}'`,
         ).join(", ")})
+        -- Source status can lag behind an operator retirement when that cache
+        -- row is held by another writer. Identity lifecycle is authoritative.
+        AND NOT EXISTS (
+          SELECT 1 FROM certops_certificate_identities identity
+           WHERE identity.workspace_id = mc.workspace_id
+             AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+             AND identity.lifecycle_status IN ('revoked', 'decommissioned')
+        )
         -- cp.status IS NULL means the LEFT JOIN found no profile at all, which
         -- is a different (incomplete-profile) outcome resolved further down,
         -- not a disabled one. Without the explicit IS NULL test the ANY()
@@ -362,6 +370,14 @@ async function countCertificatesWithAutoRenewDisabled({
         AND mc.status NOT IN (${NON_RENEWABLE_CERTIFICATE_STATUSES.map(
           (status) => `'${status}'`,
         ).join(", ")})
+        -- Source status can lag behind an operator retirement when that cache
+        -- row is held by another writer. Identity lifecycle is authoritative.
+        AND NOT EXISTS (
+          SELECT 1 FROM certops_certificate_identities identity
+           WHERE identity.workspace_id = mc.workspace_id
+             AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+             AND identity.lifecycle_status IN ('revoked', 'decommissioned')
+        )
         AND cp.status = ANY($3::text[])
         AND NOT EXISTS (
           SELECT 1
@@ -729,6 +745,7 @@ async function runRenewalSchedulerSweep({
     created: 0,
     replayed: 0,
     skippedPaused: 0,
+    skippedRetired: 0,
     skippedByCaCap: 0,
     skippedIncompleteProfile: 0,
     skippedNotAgentDeployable: 0,
@@ -817,6 +834,13 @@ async function runRenewalSchedulerSweep({
           error?.code === CERTOPS_DISABLED
         ) {
           summary.skippedPaused += 1;
+          continue;
+        }
+        // Retirement may commit after the scan but before final transactional
+        // admission. Only that exact policy refusal is a normal skip; unrelated
+        // database or executor failures remain in errors below.
+        if (error?.code === "CERTOPS_CERTIFICATE_NOT_RENEWABLE") {
+          summary.skippedRetired += 1;
           continue;
         }
         if (error?.code === CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED) {

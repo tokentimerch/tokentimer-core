@@ -1,0 +1,109 @@
+name: "CertOps / Distribution supporting E2E"
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'apps/worker/**'
+      - 'apps/dashboard/**'
+      - 'packages/**'
+      - 'tests/wildcard-vault/**'
+      - 'scripts/certops-distribution-*'
+      - 'docs/certops/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/certops-distribution-qualification.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-distribution-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  postgres:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/certops-distribution-postgres.js
+      - name: Real isolated Vault adapter and ACL regressions
+        run: node scripts/certops-distribution-vault.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: distribution-postgres
+          path: |
+            qualification-results/distribution-postgres-*/*.jsonl
+            qualification-results/distribution-postgres-*/summary.json
+            qualification-results/distribution-vault-*/*.jsonl
+            qualification-results/distribution-vault-*/summary.json
+          if-no-files-found: error
+  agent-lab:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        certificate-mode: [ordinary, san, wildcard]
+    env:
+      LAB_PROJECT: tt-wildcard-ux-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.certificate-mode }}
+      CERTIFICATE_MODE: ${{ matrix.certificate-mode }}
+      CERTOPS_DISTRIBUTION_QUALIFICATION: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Build and start uniquely owned lab
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Up -Project $env:LAB_PROJECT -BasePort 60800 -CertificateMode $env:CERTIFICATE_MODE -BuildImages
+      - name: Execute all mandatory API, agent and browser phases
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $env:LAB_PROJECT
+      - name: Verify supporting scope and copy only public evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/certops-distribution-report.js ".scratch/$LAB_PROJECT/qualification.json"
+          mkdir -p qualification-results/distribution
+          cp ".scratch/$LAB_PROJECT/qualification.json" qualification-results/distribution/
+          cp ".scratch/$LAB_PROJECT/privacy.json" qualification-results/distribution/
+          cp ".scratch/$LAB_PROJECT/"distribution-*.png qualification-results/distribution/
+      - name: Preserve failed bounded qualification report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p qualification-results/distribution
+          if test -f ".scratch/$LAB_PROJECT/qualification.json"; then
+            cp ".scratch/$LAB_PROJECT/qualification.json" qualification-results/distribution/
+          fi
+      - name: Stop only the owned lab
+        if: always()
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Stop -Project $env:LAB_PROJECT
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: distribution-agent-${{ matrix.certificate-mode }}
+          path: qualification-results/distribution/
+          if-no-files-found: error

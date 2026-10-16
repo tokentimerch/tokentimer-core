@@ -1,0 +1,44 @@
+# Native Linux agent fault qualification
+
+The separate manual `certops-native-agent-qualification.yml` workflow runs the actual candidate Node agent against the real API/PostgreSQL stack on a disposable hosted Ubuntu 24.04 runner. It allows the test's 300-second deadline and does not use the central API runner's shorter timeout.
+
+Eighteen mandatory scenarios cover registration/local credential permissions, a signed harmless noop, a signed dry-run noop, rejection of disallowed command references on a genuine signed reload job, restart with preserved credential/signing pin, altered payload/signature/unknown-key claims, a genuine separately authenticated agent's valid signed job misdelivered across agent identity, unavailable initial lease, durable outbox retry after process restart, rejection of the exact previously completed signed job after restart without repeated success/lease side effects, actual execution-log persistence and finalization across process restart, corrupt owned signing pin, observe-only behavior and cleanup. Deliberate loopback proxy faults affect actual traffic; no production agent module or provider response is mocked. The selected wire format follows the candidate's actual advertised capabilities; this source does not claim signed-payload-v2 coverage.
+
+The log case reads the actual process's signed-execution console output through the authenticated public log API. It requires ordered unique sequence numbers, a completed stream, no local bootstrap or registration credentials, unchanged persisted lines after a real agent restart, and no second execution attempt. No synthetic diagnostic batch is submitted by the fixture. This harmless job does not qualify streamed ACME subprocess output, Windows service logs, fleet budgets or interrupted certificate execution.
+
+Four additional real-console scenarios fault only the loopback transport: HTTP503 then429 plus a connection reset, loss of the acknowledgement after the API commits a batch, recursive413 splitting, and permanent rejection of one split line. Independent API and PostgreSQL reads require exact ordered unique sequences, one execution attempt, completed streams and unchanged successful job outcomes. Lost acknowledgements must return the exact original cached acknowledgement without duplicate storage. Single-line rejection must produce exactly one agent gap, zero server drops and no double counting. No diagnostic lines are injected. The fixture uses one-second polling and three-second heartbeats to respect the unchanged production machine-token rate budget; observe-only proof waits for an actual200 heartbeat and committed empty operation declaration.
+
+Normal noop admission uses the public API. Dry-run admission uses the production job-creation service because the generic public job route does not expose that mode. This is genuine process/signing/lease/state integration, while the harmless operation avoids certificate or service mutations. It does not prove every certificate-operation dry-run, native CA/custody/deployment fault, systemd installation or Windows recovery scenario.
+
+The independent verifier requires the committed scenario/capability inventory, exact candidate and current fixture-source identity. Failed prerequisites or skipped/missing scenarios cannot qualify. Only the bounded report is uploaded; private state, proxy traffic and raw agent/API logs stay out of artifacts. The harness removes owned child processes, temporary state and workspace fixtures. The workflow destroys its disposable stack on failure; hosted runner disposal covers interruption.
+
+Native execution results are recorded separately from the catalog's partial source mappings. A passing source/style check is not a passing host qualification.
+
+A focused local execution passed all twenty scenarios with an actual Linux Node 24 container agent and the isolated API/PostgreSQL fixture, including command-policy refusal, cross-agent claim binding, durable replay, real console persistence after restart and the actual elapsed shortened-dispatch refusal/recovery case. The independently verified report binds the current fixture source; the disposable container and its temporary dependencies were removed on exit. Local worktree/baseline-SHA evidence cannot qualify the hosted Ubuntu lane or release matrix.
+
+The child-output confidentiality case runs genuine allowlisted Node validate/reload commands that emit generated test-only password, bearer and private-key-shaped sentinels to both stdout and stderr. Private owned receipts prove both children emitted output. Production reload handling intentionally withholds raw child output; the real agent console retains its benign execution markers, and authenticated logs, PostgreSQL evidence/results and parent console must contain none of the sentinels or raw child markers. This tests withholding, not a claim that child stdout is streamed or that a native certificate operation ran.
+
+### Real elapsed short dispatch expiry
+
+The timing case receives a genuine public noop claim, then uses the production
+signing service's explicit `nonceTtlSeconds: 2` fixture setting over the same
+claimed job, agent and attempt. Its owned transport holds that signed response
+for at least five monotonic seconds and sends a fresh actual HTTP Date header.
+The local supported clock tolerance is temporarily one millisecond, then the
+exact original configuration is restored. Host, CA and database clocks are
+never changed, and no persisted expiry/journal timestamps are rewritten.
+
+The actual native agent must refuse the stale signature window before its
+first lease or any execution-success evidence. Its policy rejection can be
+observed even though the server correctly refuses the now-expired result nonce
+with HTTP 409. The test requires the exact rejected outcome to survive in the
+production dead-letter outbox; it does not invent a server-side rejected job
+state (the original job remains claimed). A fresh ordinary claim must then
+succeed with the same credential and signing-key pin.
+
+The strict native report binds the timing helper's current source and records
+only bounded durations, public times, response codes and custody/recovery
+booleans. This is an actual elapsed **shortened signing fixture**, not proof of
+waiting through the stock long-lived dispatch window, changing the machine
+clock, or exercising Windows SCM timing. Portable proof-verifier tests are
+separate from native execution results.

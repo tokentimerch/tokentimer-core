@@ -1,0 +1,81 @@
+name: "CertOps / Real certificate dashboard qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CERTOPS_CSR_API_URL: http://localhost:4000
+      CERTOPS_BROWSER_URL: http://localhost:5173
+      CERTOPS_CSR_DISPOSABLE_STACK: '1'
+      CERTOPS_QUALIFICATION_STRICT: '1'
+      CERTOPS_QUALIFICATION_REPORT: qualification-results/browser.json
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: tokentimer
+      DB_PASSWORD: password
+      DB_NAME: tokentimer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Start real isolated backend and dashboard
+        run: |
+          docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+          VITE_API_URL=http://localhost:4000 pnpm --filter @tokentimer/dashboard dev --host 127.0.0.1 > /tmp/certops-dashboard.log 2>&1 &
+          echo "$!" > /tmp/certops-dashboard.pid
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:4000/ >/dev/null && curl -fsS http://localhost:5173/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Authenticated browser and responsive certificate navigation
+        run: |
+          node scripts/certops-browser.js
+          node scripts/certops-qualification-report.js qualification-results/browser.json
+      - name: Live console authority and real network reconnect
+        env:
+          CERTOPS_BROWSER_CONSOLE_REPORT: qualification-results/browser-console.json
+        run: |
+          node scripts/certops-browser-console.js
+          node scripts/certops-qualification-report.js qualification-results/browser-console.json
+      - name: Retired certificate visibility and factual observed details
+        env:
+          CERTOPS_BROWSER_RETIREMENT_REPORT: qualification-results/browser-retirement.json
+        run: |
+          node scripts/certops-browser-retirement.js
+          node scripts/certops-qualification-report.js qualification-results/browser-retirement.json
+      - name: Genuine certificate audit attribution filters and pagination
+        env:
+          CERTOPS_BROWSER_AUDIT_REPORT: qualification-results/browser-audit.json
+        run: |
+          node scripts/certops-browser-audit.js
+          node scripts/certops-qualification-report.js qualification-results/browser-audit.json
+      - name: Stop owned fixture processes and stack
+        if: always()
+        run: |
+          if [ -f /tmp/certops-dashboard.pid ]; then kill "$(cat /tmp/certops-dashboard.pid)" || true; fi
+          docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-browser-sanitized
+          path: |
+            qualification-results/browser.json
+            qualification-results/browser-console.json
+            qualification-results/browser-retirement.json
+            qualification-results/browser-audit.json
+          if-no-files-found: error

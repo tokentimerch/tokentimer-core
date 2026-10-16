@@ -1,0 +1,70 @@
+name: "CertOps / Native Linux ACME browser console qualification"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-console:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: "true"
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: "1"
+      CERTOPS_NATIVE_ACME_CONSOLE: "1"
+      CERTOPS_REAL_ACME_CLIENT: certbot
+      CERTOPS_REAL_ACME_EAB: none
+      CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: "11.13.0"
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install exact browser and native qualification CA/client
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          python3 -m venv "$RUNNER_TEMP/certbot"
+          "$RUNNER_TEMP/certbot/bin/pip" install certbot==4.2.0
+          echo "$RUNNER_TEMP/certbot/bin" >> "$GITHUB_PATH"
+          GOBIN="$RUNNER_TEMP/pebble-bin" go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.8.0
+          GOBIN="$RUNNER_TEMP/pebble-bin" go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          echo "$RUNNER_TEMP/pebble-bin" >> "$GITHUB_PATH"
+      - name: Build actual dashboard for the isolated API
+        env:
+          VITE_API_URL: http://localhost:4000
+        run: pnpm --filter @tokentimer/dashboard build
+      - name: Validate qualification inventory
+        run: |
+          node scripts/certops-qualification-catalog.js
+          pnpm run check:certops:skip-qualification
+      - run: docker compose -f deploy/compose/docker-compose.test.yml up -d --build
+      - name: Wait for migrated isolated API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Render actual claimed and completed native agent output
+        run: |
+          node scripts/certops-acme-native-console.js
+          node scripts/certops-qualification-report.js qualification-results/acme-native-console.json
+      - name: Destroy owned disposable stack
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.test.yml down -v --remove-orphans
+      - name: Preserve sanitized closed execution proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-linux-native-acme-console
+          path: qualification-results/acme-native-console.json
+          if-no-files-found: error

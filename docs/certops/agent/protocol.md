@@ -72,9 +72,15 @@ Flow:
   see `AGENT_DECLARED_CAPABILITIES`), `declaredTargetSelectors` when that
   list is non-empty (so a DNS name added in config.json is published after
   a restart; an empty list is omitted and does not clear the stored names),
-  and (on the envelope) `clockOffsetMs`.
+  `supportedOperations` (the currently executable actions; an explicit empty
+  list clears the server projection when execution is disabled),
+  `declaredCommandProfileNames` (current names of local command profiles; an explicit
+  empty list clears stale profiles after configuration changes), and
+  (on the envelope) `clockOffsetMs`. Older clients that omit
+  `supportedOperations` or `declaredCommandProfileNames` preserve the corresponding
+  existing projection. Command arguments remain local and are never advertised.
   **Rollout order: the server must accept `declaredCapabilities` and
-  `declaredTargetSelectors` on `heartbeatBody` before any agent build that
+  `declaredTargetSelectors`, `supportedOperations`, and `declaredCommandProfileNames` on `heartbeatBody` before any agent build that
   sends them is deployed.**
   `heartbeatBody` has `additionalProperties: false`, so an older server
   rejects a heartbeat carrying an unrecognized field with a 400 instead of

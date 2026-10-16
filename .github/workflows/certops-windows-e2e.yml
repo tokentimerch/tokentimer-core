@@ -1,0 +1,210 @@
+name: "CertOps / Installed Windows agent API ACME IIS qualification"
+on:
+  workflow_dispatch:
+    inputs:
+      historical_upgrade:
+        description: Upgrade from verified v0.17.2 historical source build; does not qualify its incomplete published package
+        type: boolean
+        default: true
+      wer_probe:
+        description: Experimental benign SYSTEM abort positive control; never qualifies dump suppression
+        type: boolean
+        default: false
+      windows_server:
+        description: Actual Windows Server runner; choose all for both supported versions
+        type: choice
+        default: windows-2022
+        options:
+          - windows-2022
+          - windows-2025
+          - all
+      key_profile:
+        description: Windows key profile; choose all for complete algorithm qualification
+        type: choice
+        default: rsa-2048
+        options:
+          - rsa-2048
+          - rsa-3072
+          - rsa-4096
+          - ec-p256
+          - ec-p384
+          - all
+permissions:
+  contents: read
+jobs:
+  windows-e2e:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.windows_server }}
+    timeout-minutes: 51
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        windows_server: ${{ fromJSON(inputs.windows_server == 'all' && '["windows-2022","windows-2025"]' || format('["{0}"]', inputs.windows_server)) }}
+        key_profile: ${{ fromJSON(inputs.key_profile == 'all' && '["rsa-2048","rsa-3072","rsa-4096","ec-p256","ec-p384"]' || format('["{0}"]', inputs.key_profile)) }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: '1'
+      CERTOPS_WINDOWS_KEY_PROFILE: ${{ matrix.key_profile }}
+      CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
+      CERTOPS_WER_EXPERIMENTAL_PROBE: ${{ inputs.wer_probe && '1' || '0' }}
+      DB_HOST: '127.0.0.1'
+      DB_PORT: '55432'
+      DB_USER: postgres
+      DB_PASSWORD: 'qualification-local-only'
+      DB_NAME: certops_qualification
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Verify literal installer filesystem paths without native service mutation
+        run: node --test packages/agent/scripts/host/windows-installed-paths-filesystem.test.js scripts/certops-windows-installed-paths.test.js
+      - name: Verify actual benign retained-job process containment
+        run: node --test packages/agent/scripts/host/windows-contained-process.test.js
+      - name: Checkout immutable historical release source
+        if: inputs.historical_upgrade && matrix.key_profile == 'rsa-2048'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 6c902405c7b5d229e2f47b4d5436d780e91c5e17
+          path: qualification-historical-source
+          persist-credentials: false
+      - name: Verify historical release tag and build its own Windows package
+        if: inputs.historical_upgrade && matrix.key_profile == 'rsa-2048'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = gh api repos/tokentimerch/tokentimer-core/git/tags/853ac07cce5d3ea01900c1cdfa7ad32c070d3b49 | ConvertFrom-Json
+          if ($LASTEXITCODE -or $tag.tag -ne 'v0.17.2' -or $tag.object.sha -ne '6c902405c7b5d229e2f47b4d5436d780e91c5e17' -or !$tag.verification.verified -or $tag.verification.reason -ne 'valid') { throw 'Historical signed release tag verification failed' }
+          Remove-Item Env:GH_TOKEN
+          $source = Join-Path $env:GITHUB_WORKSPACE 'qualification-historical-source'
+          $output = Join-Path $env:RUNNER_TEMP 'certops-historical-source-package'
+          node scripts/certops-historical-windows-package.js $source $output
+          if ($LASTEXITCODE) { throw 'Historical source-only native package build failed' }
+          "CERTOPS_WINDOWS_HISTORICAL_PACKAGE=$output" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Prepare IIS and pinned native ACME fixture tools
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Scripting-Tools -IncludeManagementTools
+          if (!$result.Success -or $result.RestartNeeded -ne 'No') { throw 'IIS feature qualification requires success without reboot' }
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP 'pebble-bin'
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.8.0
+          if ($LASTEXITCODE) { throw 'Pebble build failed' }
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          if ($LASTEXITCODE) { throw 'Pebble challenge server build failed' }
+          $env:GOBIN | Out-File -FilePath $env:GITHUB_PATH -Append
+          'C:\Program Files\Git\usr\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+          $acmeDir = Join-Path $env:RUNNER_TEMP 'acme-sh'
+          git clone --depth 1 --branch 3.1.2 https://github.com/acmesh-official/acme.sh.git $acmeDir
+          if ($LASTEXITCODE) { throw 'Pinned acme.sh checkout failed' }
+          "CERTOPS_WINDOWS_BASH=C:\Program Files\Git\bin\bash.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CERTOPS_WINDOWS_ACMESH=$acmeDir\acme.sh" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Initialize isolated native PostgreSQL and apply migrations
+        run: |
+          if (!(Test-Path "$env:PGBIN\initdb.exe")) { throw 'Hosted image PostgreSQL tools unavailable' }
+          if (Get-NetTCPConnection -LocalPort 55432 -State Listen -ErrorAction SilentlyContinue) { throw 'Qualification PostgreSQL port is occupied' }
+          $data = Join-Path $env:RUNNER_TEMP 'certops-pgdata'
+          "CERTOPS_PGDATA=$data" | Out-File -FilePath $env:GITHUB_ENV -Append
+          & "$env:PGBIN\initdb.exe" -D $data -U postgres -A trust --encoding=UTF8
+          if ($LASTEXITCODE) { throw 'PostgreSQL initialization failed' }
+          & "$env:PGBIN\pg_ctl.exe" -D $data -l "$env:RUNNER_TEMP\certops-pg.log" -o '-h 127.0.0.1 -p 55432' -w start
+          if ($LASTEXITCODE) { throw 'PostgreSQL startup failed' }
+          & "$env:PGBIN\createdb.exe" -h 127.0.0.1 -p 55432 -U postgres certops_qualification
+          if ($LASTEXITCODE) { throw 'Qualification database creation failed' }
+          pnpm --filter @tokentimer/api migrate
+          if ($LASTEXITCODE) { throw 'Migrations failed' }
+      - name: Execute signed installed-agent Windows CNG IIS ACME journey
+        run: |
+          $taskName = 'CertOpsQualification-' + [Guid]::NewGuid().ToString()
+          $launchDir = Join-Path $env:RUNNER_TEMP $taskName
+          New-Item -ItemType Directory -Path $launchDir | Out-Null
+          $environment = [ordered]@{}
+          foreach ($name in @('NODE_ENV','CERTOPS_ENABLED','CERTOPS_PROTOCOL_DISPOSABLE_STACK','CERTOPS_WINDOWS_KEY_PROFILE','CERTOPS_WINDOWS_DISPOSABLE_HOST','CERTOPS_WINDOWS_HISTORICAL_PACKAGE','CERTOPS_WER_EXPERIMENTAL_PROBE','GITHUB_ACTIONS','RUNNER_ENVIRONMENT','RUNNER_TEMP','DB_HOST','DB_PORT','DB_USER','DB_PASSWORD','DB_NAME','CERTOPS_WINDOWS_BASH','CERTOPS_WINDOWS_ACMESH','GITHUB_SHA','PATH')) {
+            $environment[$name] = [Environment]::GetEnvironmentVariable($name)
+          }
+          $environment['GIT_CONFIG_COUNT'] = '1'
+          $environment['GIT_CONFIG_KEY_0'] = 'safe.directory'
+          $environment['GIT_CONFIG_VALUE_0'] = $env:GITHUB_WORKSPACE
+          $environment | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $launchDir 'environment.json')
+          $nodePath = (Get-Command node.exe).Source
+          $receipt = Join-Path $launchDir 'exit.txt'
+          $launcher = Join-Path $launchDir 'launch.ps1'
+          $nodeLiteral = $nodePath.Replace("'", "''")
+          $cwdLiteral = $env:GITHUB_WORKSPACE.Replace("'", "''")
+          $envLiteral = (Join-Path $launchDir 'environment.json').Replace("'", "''")
+          $receiptLiteral = $receipt.Replace("'", "''")
+          @"
+          `$ErrorActionPreference='Stop'
+          try {
+            `$settings=Get-Content -Raw -LiteralPath '$envLiteral' | ConvertFrom-Json
+            foreach (`$property in `$settings.PSObject.Properties) { [Environment]::SetEnvironmentVariable(`$property.Name,[string]`$property.Value,'Process') }
+            Set-Location -LiteralPath '$cwdLiteral'
+            & '$nodeLiteral' scripts/certops-windows-e2e.js
+            `$code=`$LASTEXITCODE
+            [IO.File]::WriteAllText('$receiptLiteral',[string]`$code)
+            exit `$code
+          } catch { [IO.File]::WriteAllText('$receiptLiteral','1'); exit 1 }
+          "@ | Set-Content -LiteralPath $launcher
+          $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $action = New-ScheduledTaskAction -Execute $powershellPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $env:GITHUB_WORKSPACE
+          $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          # Native test: 32min; producer: 34min, including two additional genuine
+          # public renewal waits (180s each). Leave three minutes for producer
+          # finalization before receipt timeout, then one minute before task termination.
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 38)
+          Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
+          try {
+            Start-ScheduledTask -TaskName $taskName
+            $deadline = [DateTime]::UtcNow.AddMinutes(37)
+            while (!(Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 2 }
+            if (!(Test-Path -LiteralPath $receipt)) { throw 'SYSTEM qualification exceeded its deadline' }
+            if ((Get-Content -LiteralPath $receipt -Raw).Trim() -ne '0') { throw 'SYSTEM installed-agent qualification failed; inspect sanitized report' }
+          } finally {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            $tempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+            $cleanupTarget = [IO.Path]::GetFullPath($launchDir)
+            if (!$cleanupTarget.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing cleanup outside runner temporary directory' }
+            Remove-Item -LiteralPath $launchDir -Recurse -Force
+          }
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: |
+          if ($env:CERTOPS_PGDATA -and (Test-Path $env:CERTOPS_PGDATA)) {
+            & "$env:PGBIN\pg_ctl.exe" -D $env:CERTOPS_PGDATA -m immediate -w stop
+            if ($LASTEXITCODE -and (Test-Path "$env:CERTOPS_PGDATA\postmaster.pid")) { throw 'PostgreSQL cleanup failed' }
+          }
+      - name: Preserve sanitized execution report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: installed-windows-agent-acme-iis-${{ matrix.windows_server }}-${{ matrix.key_profile }}
+          path: |
+            qualification-results/windows-real-${{ matrix.key_profile }}.jsonl
+            qualification-results/windows-installed-paths-${{ matrix.key_profile }}.json
+            qualification-results/windows-installed-handoff-${{ matrix.key_profile }}.json
+            qualification-results/windows-adoption-${{ matrix.key_profile }}.json
+            qualification-results/windows-native-crash-${{ matrix.key_profile }}.json
+            qualification-results/windows-output-privacy-${{ matrix.key_profile }}.json
+            qualification-results/windows-wrong-spki-${{ matrix.key_profile }}.json
+            qualification-results/windows-two-renewals-${{ matrix.key_profile }}.json
+            qualification-results/windows-certificate-dry-run.json
+            qualification-results/windows-candidate-${{ matrix.key_profile }}.json
+            qualification-results/historical-supporting-rsa-2048/windows-source-upgrade.json
+            qualification-results/windows-first-rename-refusal.json
+            qualification-results/windows-second-rename-activation.json
+          if-no-files-found: error

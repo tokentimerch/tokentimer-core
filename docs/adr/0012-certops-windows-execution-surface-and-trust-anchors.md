@@ -2,6 +2,15 @@
 
 ## Status
 
+**Qualification correction (2026-10-14), decision 19.** Windows
+`LocalDumps\DumpType=0` selects a custom dump; it does not disable collection.
+The earlier registry-only Windows verification rule is superseded. Candidate
+installation preserves existing WER policy and makes no suppression claim.
+Windows crash containment remains unqualified until an effective process-level
+control is tested with native crash and positive-control evidence. Linux's
+independently checked `LimitCORE=0` requirement remains in force. See
+[Microsoft's LocalDumps definitions](https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps).
+
 **Accepted (2026-08-03).** Proposed 2026-08-02; amended seven times against
 successive external audits, five on 2026-08-02 and two more on 2026-08-03,
 before acceptance: decisions 2, 3 and 16 first (Finding A's
@@ -82,10 +91,10 @@ active/closed rollback-journal-reference semantics), since safe cleanup
 cannot survive an agent restart between cutover and the cleanup deadline
 without one, and the sixth amendment's text implied the ledger's existence
 without ever specifying it. (4) Decision 19's "core dumps are disabled"
-clause named no platform-specific mechanism or verification method; it now
-names the Windows Error Reporting `LocalDumps` registry key (`DumpType=0` or
-absent) and the Linux `LimitCORE=0`/`RLIMIT_CORE` mechanism, each with its
-own verification command, rather than an unqualified claim.
+clause named no platform-specific mechanism or verification method; that amendment
+named the Windows Error Reporting `LocalDumps` registry key and the Linux
+`LimitCORE=0`/`RLIMIT_CORE` mechanism. The Windows interpretation and verification
+were incorrect and are superseded by the 2026-10-14 qualification correction.
 **This record is accepted as of 2026-08-03 following this seventh amendment;
 the Windows execution-surface, signed-envelope and trust-anchor work
 described below may now begin.** The PRs that implement this feature set
@@ -2021,20 +2030,18 @@ scattered facts:
 - No unnecessary private-key export from a `KeyObject` or a CNG handle; export
   happens only where a consuming API leaves no alternative, per decision 9's
   PFX-import cases.
-- **Core dumps are disabled for the production agent Windows Service and its
+- **Core dumps must be disabled for the production agent Windows Service and its
   Linux daemon equivalent, by a named, platform-specific mechanism, not by an
   unspecified "disabled" claim**, since a core dump is an alternate, unlocked
   copy of process memory that no in-process buffer discipline can prevent:
-  - **Windows.** The Windows Error Reporting `LocalDumps` key for the agent's
-    service executable is either absent or configured with `DumpType=0`
-    (no dump), under
-    `HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\<agent-service-exe-name>`;
-    the installer sets this explicitly rather than relying on the
-    machine-wide default, since a machine-wide default is exactly the kind
-    of ambient configuration decision 10 already refuses to depend on
-    elsewhere. Verified by reading that registry value back after install and
-    asserting it is either absent or `0`, not by triggering an actual crash
-    in CI.
+  - **Windows: unqualified.** `LocalDumps\DumpType=0` means a custom dump.
+    An absent per-executable key also cannot establish suppression because
+    global settings may apply. The installer preserves operator WER policy
+    rather than writing an ineffective, host-wide `node.exe` override. No
+    registry-read assertion can satisfy this requirement. A future containment
+    mechanism must govern the actual key-handling process and prove behavior
+    with a benign native crash plus a functioning dump positive control on the
+    owned disposable host. Until then the Windows portion remains incomplete.
   - **Linux.** The systemd unit sets `LimitCORE=0` (equivalently, the
     process's `RLIMIT_CORE` soft and hard limits are both `0` before the
     Node process starts handling key material), which is authoritative
@@ -2078,11 +2085,11 @@ anywhere in its path, asserted by test; the Linux key-generation path never
 assigns key bytes to a JavaScript string at any point, asserted by test; every
 agent-owned key buffer is zeroized on both its success path and every failure
 path it has, asserted by test rather than by inspection; the production
-service's deployed configuration disables core dumps, verified on Windows by
-reading back the `LocalDumps` registry value for the agent's service
-executable (absent or `DumpType=0`) and on Linux by reading the running
-service's `/proc/<pid>/limits` `Max core file size` row (both soft and hard
-limits `0`), neither asserted from the installer/unit-file source alone; a
+service's deployed configuration must disable core dumps. The Windows
+requirement remains unqualified and needs actual crash/positive-control proof;
+`DumpType=0` or a missing application key cannot satisfy it. Linux verification
+reads the running service's `/proc/<pid>/limits` `Max core file size` row (both
+soft and hard limits `0`), rather than relying on unit-file source alone; a
 canary key/password value seeded at the start of a key-handling test run does
 not appear in process arguments, environment, logs, evidence, or crash
 diagnostics captured during that run; the shipped documentation states the

@@ -7,29 +7,32 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 67
+Total skips found: 131
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
-| `packages/agent/scripts/installer-smoke.test.js` | 348 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/scripts/host/windows-contained-process.test.js` | 55 | real owned JobObject preserves suspended identity and drains an actual descendant | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/scripts/host/windows-host.test.js` | 56 | Windows real-host discovery and service-host qualification | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 14 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 148 | re-asserts the ACL when a foreign principal was granted (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 936 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1033 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1130 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1190 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1205 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1218 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1532 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1542 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1553 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1629 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1641 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/config/config.test.js` | 1654 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/deploy/deploy.test.js` | 527 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/deploy/deploy.test.js` | 556 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 946 | sets 0600 permissions on the pin file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1043 | refuses to write the pin through a symlink | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1140 | sets 0600 permissions on the credential file on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1200 | refuses a credential file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1215 | refuses a credential file owned by an untrusted principal (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1228 | refuses a credential file owned by an untrusted principal (win32) | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1542 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1552 | refuses a credentials file whose ACL grants Everyone (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1563 | accepts a credentials file restricted to the agent and SYSTEM (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1639 | refuses a group/other-readable credentials file (POSIX) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1651 | refuses an ACL granting Everyone and never falls back to a skip (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/config/config.test.js` | 1664 | fails closed when the ACL cannot be inspected at all (win32) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/deploy/deploy.test.js` | 563 | rejects a symlinked destination escaping the allowed root (realpath re-check) | it(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/deploy/deploy.test.js` | 592 | rejects a symlinked parent directory escaping the allowed root | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 308 | rejects symbolic-link certificate candidates | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 343 | parses a real self-signed certificate and extracts public fields, normalizing the fingerprint | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/discovery.test.js` | 372 | never reads private key bytes into the returned certificate entry, even when it peeks the key | it(..., { skip }) option-object | `no-host` |
@@ -41,8 +44,8 @@ Total skips found: 67
 | `packages/agent/src/discovery/windows.test.js` | 462 | unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 515 | reports an http.sys binding with no matching IIS site as http_sys, not iis_binding | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/discovery/windows.test.js` | 603 | reports real subjectAltNames end-to-end from the certificate's raw bytes | it(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 338 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `no-host` |
-| `packages/agent/src/issuers/adcs-enrollment.test.js` | 149 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/issuers/adcs-enrollment-reconcile.test.js` | 382 | skips E_ACCESSDENIED and denied probes so a later unique match can attach | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/issuers/adcs-enrollment.test.js` | 170 | pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 180 | sets 0600 on the key file and 0700 on the parent dir on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |
@@ -52,17 +55,78 @@ Total skips found: 67
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/trust-store/receipt.test.js` | 559 | reports {corrupt: true} for a symlink at the receipt path, never following it | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 424 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 540 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 554 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 572 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 588 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 623 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 646 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 688 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 710 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 772 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
-| `tests/e2e/certops-agent-e2e.test.js` | 827 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-adcs-gates-api-e2e.test.js` | 17 | unqualified AD CS onboarding and dispatch gates through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-alert-e2e.test.js` | 16 | agent alert governance persists policy and rejects foreign groups and unauthorized roles | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 459 | happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 575 | tamper: mutating a signed field fails agent-side verification | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 589 | bootstrap token reuse is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 607 | bad agent credential is rejected with 401 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 623 | retired agent gets 410 on heartbeat, claim, and results | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 658 | workspace kill switch blocks claims with 409 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 681 | evidence is accepted; private key material is rejected with 422 | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 723 | second claim returns no jobs while the lease is held | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 745 | lease reaper defers, then requeues once the claiming agent goes silent | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 807 | lease reaper fails an expired job with exhausted retry budget | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-e2e.test.js` | 862 | sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-lease-api-e2e.test.js` | 18 | active claim force retirement fences real agent HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-log-boundaries-e2e.test.js` | 18 | agent log size and ownership boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-log-order-e2e.test.js` | 18 | actual agent telemetry ordering, conflict and final closure | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-log-quota-e2e.test.js` | 21 | production fleet-log quota concurrency and workspace isolation | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-agent-logs-api-e2e.test.js` | 17 | registered agent log redaction and replay through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-audit-history-e2e.test.js` | 14 | certificate profile audit history remains searchable scoped and role restricted | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-bootstrap-fences-e2e.test.js` | 17 | unused bootstrap revocation, expiry and workspace ownership through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-bulk-eligible-e2e.test.js` | 13 | mixed eligible bulk renewal shares issuance capacity and conserves replay | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-ca-capacity-e2e.test.js` | 13 | public issuance shares race-safe CA admission and terminal release | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-certificate-transfer-e2e.test.js` | 16 | public certificate token transfer preserves workspace authority and atomic identity conflicts | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-credentials-api-e2e.test.js` | 17 | public machine credential and agent enrollment lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-algorithms-e2e.test.js` | 20 | external CSR algorithm compatibility through public API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-bound-observation-e2e.test.js` | 17 | real TLS CSR observation preserves selected active identity and expiry until name review | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-chain-e2e.test.js` | 20 | external signing chain lifecycle through public CSR API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-frozen-e2e.test.js` | 16 | signed CSR material freezes review until explicit cancel and restart | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-lifecycle-e2e.test.js` | 25 | CSR authenticated API lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-observation-e2e.test.js` | 17 | real TLS CSR observation defers changed names then promotes through acknowledgement | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-csr-provisional-e2e.test.js` | 37 | shared CSR ownership, cancellation and truthful installation evidence | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-decommission-e2e.test.js` | 27 | decommission acknowledgement and factual rediscovery preserve operator lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-derivation-failure-e2e.test.js` | 19 | missing renewal derivation fields preserve real public certificate state | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-diagnostic-agent-e2e.test.js` | 16 | diagnostic agent kind fences ordinary work and preserves bootstrap idempotency | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-enrollment-policy-api-e2e.test.js` | 15 | public AD CS enrollment policy bounds and immutable snapshots | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-enrollment-recovery-api-e2e.test.js` | 20 | AD CS installation retry through real API and PostgreSQL | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-first-issuance-admission-e2e.test.js` | 19 | public first issuance retains period and fresh execution admission fences | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-governance-e2e.test.js` | 21 | observed certificate governance through public API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-import-metadata-e2e.test.js` | 13 | public reimport preserves operator contacts and group assignments | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-integration-sources-e2e.test.js` | 22 | certificate-producing integration source provenance survives authenticated import and replay | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-inventory-lifecycle-e2e.test.js` | 23 | real TLS endpoint certificate inventory lifecycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-job-decisions-e2e.test.js` | 19 | real API approval rejection and protocol terminal transitions | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-jobs-api-e2e.test.js` | 17 | manual job approval and pause boundaries through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-log-disabled-e2e.test.js` | 13 | missing log capability produces explicit disabled offer without inventing job completion | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-log-maintenance-e2e.test.js` | 27 | actual log upload grace, abandoned stream and worker retention | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-log-pagination-e2e.test.js` | 13 | agent log cursor polling preserves live append and reconnect order | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-membership-fences-e2e.test.js` | 17 | live workspace membership and machine workspace fences | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-multi-target-deploy-e2e.test.js` | 21 | production multi-target coordinator preserves files and exposes uncertain rollback | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-native-agent-e2e.test.js` | 33 | real native agent signed gates durable outbox restart and observe-only behavior | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-observe-only-e2e.test.js` | 16 | observe-only polling preserves queued work until explicit execution advertisement | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-pause-ingestion-e2e.test.js` | 21 | workspace pause blocks new work while retaining owned result ingestion | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-profile-issuer-switch-e2e.test.js` | 13 | public renewal issuer changes retain runnable policy and atomic audit | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-profile-permissions-e2e.test.js` | 17 | public renewal profile permissions and immutable execution policy | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-profiles-api-e2e.test.js` | 17 | AD CS profile administration through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-public-import-e2e.test.js` | 21 | public certificate import parsing, refusal and identity conservation | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-queued-profile-snapshot-e2e.test.js` | 13 | public queued renewal freezes profile across operator edits approval and signed claim | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-renewal-admission-e2e.test.js` | 20 | renewal admission preserves monitored-only and terminal certificate policy | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-renewal-alert-worker-e2e.test.js` | 15 | owned renewal failure outbox reaches actual delivery worker SMTP receipt | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-renewal-key-facts-e2e.test.js` | 42 | renewal certificate changes invalidate unproven predecessor key facts | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-renewal-toggle-e2e.test.js` | 17 | disabled automatic renewal preserves manual admission and SQL batch fairness | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-result-fences-e2e.test.js` | 16 | real result API rejects forged nonce and attempt before consuming an owned lease | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-retired-observation-e2e.test.js` | 22 | fresh TLS observation cannot reactivate a retired identity | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-retired-scheduler-e2e.test.js` | 38 | automatic renewal cannot revive an authoritative retired identity behind a stale source | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-retirement-approval-e2e.test.js` | 36 | operator retirement fences concurrent approvals and actual registered-agent dispatch | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-scheduler-capacity-e2e.test.js` | 13 | SQL clock scheduler shares public issuance capacity and pause fences | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-shared-sources-e2e.test.js` | 22 | shared served fingerprint keeps source history and management accounting | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-signing-rotation-native-e2e.test.js` | 67 | isolated operator signing rotation adopts native pins and fences incomplete fleet completion | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-terminal-renewal-e2e.test.js` | 39 | public renew cannot revive retired fully profiled certificates after real rediscovery | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-token-boundaries-e2e.test.js` | 17 | scoped machine token expiry and revocation through executor HTTP | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-trust-api-e2e.test.js` | 20 | trust approval and workspace pause through real API | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-trust-multiple-e2e.test.js` | 13 | independent public trust anchors remain scoped through concurrent approval and retirement | dynamic (this.skip() / t.skip()) | `no-host` |
+| `tests/e2e/certops-unmanaged-discovery-e2e.test.js` | 20 | quota-blocked real filesystem discovery preserves unmanaged visibility | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 50 | (unknown - no enclosing it()/test() title found above this line) | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 135 | sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row | dynamic (this.skip() / t.skip()) | `no-host` |
 | `tests/integration/certops-agent-health-alerts-worker-cron.test.js` | 177 | a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level) | dynamic (this.skip() / t.skip()) | `no-host` |

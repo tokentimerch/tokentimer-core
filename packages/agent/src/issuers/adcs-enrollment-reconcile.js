@@ -292,6 +292,32 @@ async function tryReconcileUncertainSubmission({
   return { status: "unresolved", probed, nextSearchFrom };
 }
 
+// An operator supplies a candidate id, not proof of enrollment ownership.
+// Retrieve only that id; require the actual leaf SPKI before decision-6 may
+// promote it. Pending, denied, malformed and foreign-key leaves stay uncertain.
+async function retrieveProposedEnrollmentCandidate({ issuer, requestId, csrSpkiSha256,
+  reconcileSearchFrom, assertIssuanceOutcome }) {
+  if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0xffffffff ||
+      typeof csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(csrSpkiSha256)) {
+    return { status: "error", error: "Invalid proposed RequestId or enrollment SPKI" };
+  }
+  let issuance;
+  try { issuance = assertIssuanceOutcome(await issuer.retrieve(requestId)); }
+  catch { return { status: "error", error: "Proposed RequestId retrieve failed" }; }
+  const nextSearchFrom = Number.isInteger(reconcileSearchFrom) && reconcileSearchFrom >= 1 ? reconcileSearchFrom : 1;
+  if (issuance.outcome !== "issued" || typeof issuance.certificatePem !== "string") {
+    return { status: "unresolved", probed: 1, nextSearchFrom };
+  }
+  let actualSpki;
+  try { actualSpki = leafSpkiSha256Hex(issuance.certificatePem); }
+  catch { return { status: "error", error: "Proposed RequestId returned an invalid certificate" }; }
+  if (actualSpki !== csrSpkiSha256) {
+    return { status: "error", error: "Proposed RequestId certificate SPKI does not match this enrollment" };
+  }
+  return { status: "unique_candidate", requestId, certificatePem: issuance.certificatePem,
+    attachmentEligible: true, nextSearchFrom, probed: 1 };
+}
+
 module.exports = {
   DEFAULT_RECONCILE_WINDOW,
   readWatermark,
@@ -299,6 +325,7 @@ module.exports = {
   recordHighestRequestId,
   captureEnrollmentReconcileSearchFrom,
   tryReconcileUncertainSubmission,
+  retrieveProposedEnrollmentCandidate,
   watermarkPath,
   watermarkLockPath,
   leafSpkiSha256Hex,

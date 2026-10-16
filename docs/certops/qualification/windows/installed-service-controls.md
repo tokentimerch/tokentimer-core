@@ -1,0 +1,9 @@
+# Installed Windows service control contract
+
+This source sends actual `Interrogate`, `Pause` and `Continue` controls through SCM to the existing installed LocalSystem agent. The production service host supports interrogation and does not advertise pause or continuation. Interrogation must succeed; both unsupported requests must finish with native `ERROR_INVALID_SERVICE_CONTROL` (1052), rather than an unrelated permission or service-state failure. This follows the documented [ControlService contract](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-controlservice). No certificate job, service or key is created by this fixture.
+
+Before every control, the fixture independently decodes the exact SCM arguments and observes the original SYSTEM host and Node child identities. After each control those identities, configuration, credential and signing pin must remain unchanged. Native certificate-to-CNG association, protected machine key and HTTP.sys hostname certificate/store/application metadata must remain unchanged, and the independent trusted TLS leaf must be preserved. Actual API state must then show a fresh authenticated heartbeat with increased persisted process uptime and unchanged certificate job claims. Claim polling also updates last-seen time, so timestamp advancement alone cannot qualify this heartbeat.
+
+An original owned-root receipt is required. A sticky private guard precedes the first control and is removed only after all observations succeed; parent cleanup must check it before deleting any borrowed native state. Unknown control outcomes fail qualification and preserve state. This source does not qualify forced shutdown or interruption during certificate operations.
+
+Source and offline adversarial controls are implemented. The installed journey, strict public proof and source inventory are mandatory in all ten Windows/key-profile cells. Native Windows execution remains pending.

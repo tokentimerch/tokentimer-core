@@ -1,0 +1,11 @@
+# Supporting CertOps integration qualification
+
+`certops-integration-qualification.yml` manually runs eleven independently reported groups on trusted `main`: AD CS lifecycle/readiness, controllers, inventory/import, trust anchors, identity/token authorization, jobs/executor/logging, workers, external CSR workflows, imported certificate absence, retired certificate alert suppression, and renewal-path health. At most two disposable jobs run simultaneously.
+
+Each group starts the existing migrated API/PostgreSQL test stack and explicitly enables CertOps. The committed group inventory names every selected source file and its literal mandatory cases. The reporter records only source filename, test name, pass/fail/pending status, scope and candidate SHA. Assertions, API responses, keys, credentials and raw subprocess output are excluded. Required names must pass exactly once; every selected file must produce executed tests, and every reported test must pass. Missing prerequisites, empty collections, pending tests and process timeouts fail qualification.
+
+Run a group against a disposable local stack with `NODE_ENV=test`, `CERTOPS_ENABLED=true`, database settings and `TEST_API_URL` configured, then set `CERTOPS_INTEGRATION_GROUP` to the group name and run `node scripts/certops-integration-qualification.js`. The default group is `adcs`. The runner has a ten-minute deadline, and the workflow always tears down its stack.
+
+These are supporting database, HTTP and service integration tests. Some cases use explicit executor/provider doubles. Successful execution does not replace real Windows, native AD CS, Kubernetes or ACME host qualification, and it does not establish coverage for all planned certificate scenarios. Extend the committed inventory whenever adding mandatory cases to a selected group.
+
+The renewal-path health group exercises real PostgreSQL topology, current agent readiness, management periods and eligibility. Its database fixtures supply explicit prerequisite records; successful assertions demonstrate the production eligibility decision, not installed-service or CA execution. The committed JSON inventory is the authoritative list of mandatory cases and source hashes.

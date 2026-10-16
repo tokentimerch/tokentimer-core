@@ -1,0 +1,139 @@
+# Manual Azure-free genuine default15min lease plus60min alive-agent hard grace.
+name: "CertOps / Installed Windows alive default grace renewal"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-e2e:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.windows_server }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        windows_server: [windows-2022, windows-2025]
+        key_profile: [rsa-2048]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      NODE_ENV: test
+      CERTOPS_ENABLED: 'true'
+      CERTOPS_PROTOCOL_DISPOSABLE_STACK: '1'
+      CERTOPS_WINDOWS_KEY_PROFILE: ${{ matrix.key_profile }}
+      CERTOPS_WINDOWS_DISPOSABLE_HOST: '1'
+      CERTOPS_WINDOWS_ALIVE_GRACE_REQUIRED: '1'
+      DB_HOST: '127.0.0.1'
+      DB_PORT: '55432'
+      DB_USER: postgres
+      DB_PASSWORD: 'qualification-local-only'
+      DB_NAME: certops_qualification
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: packages/agent/windows-service-host/go.mod
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Verify literal installer filesystem paths without native service mutation
+        run: node --test packages/agent/scripts/host/windows-installed-paths-filesystem.test.js scripts/certops-windows-installed-paths.test.js
+      - name: Verify actual benign retained-job process containment
+        run: node --test packages/agent/scripts/host/windows-contained-process.test.js
+      - name: Prepare IIS and pinned native ACME fixture tools
+        run: |
+          $result = Install-WindowsFeature Web-Server,Web-Scripting-Tools -IncludeManagementTools
+          if (!$result.Success -or $result.RestartNeeded -ne 'No') { throw 'IIS feature qualification requires success without reboot' }
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP 'pebble-bin'
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.8.0
+          if ($LASTEXITCODE) { throw 'Pebble build failed' }
+          go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
+          if ($LASTEXITCODE) { throw 'Pebble challenge server build failed' }
+          $env:GOBIN | Out-File -FilePath $env:GITHUB_PATH -Append
+          'C:\Program Files\Git\usr\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+          $acmeDir = Join-Path $env:RUNNER_TEMP 'acme-sh'
+          git clone --depth 1 --branch 3.1.2 https://github.com/acmesh-official/acme.sh.git $acmeDir
+          if ($LASTEXITCODE) { throw 'Pinned acme.sh checkout failed' }
+          "CERTOPS_WINDOWS_BASH=C:\Program Files\Git\bin\bash.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CERTOPS_WINDOWS_ACMESH=$acmeDir\acme.sh" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Initialize isolated native PostgreSQL and apply migrations
+        run: |
+          node scripts/certops-windows-stop-offline-postgres.js setup
+          if ($LASTEXITCODE) { throw 'Owned PostgreSQL setup failed; unknown state preserved' }
+          pnpm --filter @tokentimer/api migrate
+          if ($LASTEXITCODE) { throw 'Migrations failed' }
+      - name: Execute real native outcome and default alive-agent hard-grace classification
+        run: |
+          $taskName = 'CertOpsQualification-' + [Guid]::NewGuid().ToString()
+          $launchDir = Join-Path $env:RUNNER_TEMP $taskName
+          New-Item -ItemType Directory -Path $launchDir | Out-Null
+          $environment = [ordered]@{}
+          foreach ($name in @('NODE_ENV','CERTOPS_ENABLED','CERTOPS_PROTOCOL_DISPOSABLE_STACK','CERTOPS_WINDOWS_KEY_PROFILE','CERTOPS_WINDOWS_DISPOSABLE_HOST','CERTOPS_WINDOWS_ALIVE_GRACE_REQUIRED','GITHUB_ACTIONS','RUNNER_ENVIRONMENT','RUNNER_TEMP','DB_HOST','DB_PORT','DB_USER','DB_PASSWORD','DB_NAME','CERTOPS_WINDOWS_BASH','CERTOPS_WINDOWS_ACMESH','GITHUB_SHA','PATH')) {
+            $environment[$name] = [Environment]::GetEnvironmentVariable($name)
+          }
+          $environment['GIT_CONFIG_COUNT'] = '1'
+          $environment['GIT_CONFIG_KEY_0'] = 'safe.directory'
+          $environment['GIT_CONFIG_VALUE_0'] = $env:GITHUB_WORKSPACE
+          $environment | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $launchDir 'environment.json')
+          $nodePath = (Get-Command node.exe).Source
+          $receipt = Join-Path $launchDir 'exit.txt'
+          $launcher = Join-Path $launchDir 'launch.ps1'
+          $nodeLiteral = $nodePath.Replace("'", "''")
+          $cwdLiteral = $env:GITHUB_WORKSPACE.Replace("'", "''")
+          $envLiteral = (Join-Path $launchDir 'environment.json').Replace("'", "''")
+          $receiptLiteral = $receipt.Replace("'", "''")
+          @"
+          `$ErrorActionPreference='Stop'
+          try {
+            `$settings=Get-Content -Raw -LiteralPath '$envLiteral' | ConvertFrom-Json
+            foreach (`$property in `$settings.PSObject.Properties) { [Environment]::SetEnvironmentVariable(`$property.Name,[string]`$property.Value,'Process') }
+            Set-Location -LiteralPath '$cwdLiteral'
+            & '$nodeLiteral' scripts/certops-windows-alive-grace.js
+            `$code=`$LASTEXITCODE
+            [IO.File]::WriteAllText('$receiptLiteral',[string]`$code)
+            exit `$code
+          } catch { [IO.File]::WriteAllText('$receiptLiteral','1'); exit 1 }
+          "@ | Set-Content -LiteralPath $launcher
+          $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $action = New-ScheduledTaskAction -Execute $powershellPath -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $env:GITHUB_WORKSPACE
+          $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+          # Actual persisted15min lease +unchanged60min hard grace; native100min, producer102min.
+          # Leave five minutes for producer cleanup before task deadline.
+          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 108)
+          Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
+          try {
+            Start-ScheduledTask -TaskName $taskName
+            $deadline = [DateTime]::UtcNow.AddMinutes(107)
+            while (!(Test-Path -LiteralPath $receipt) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Seconds 2 }
+            if (!(Test-Path -LiteralPath $receipt)) { throw 'SYSTEM qualification exceeded its deadline' }
+            if ((Get-Content -LiteralPath $receipt -Raw).Trim() -ne '0') { throw 'SYSTEM installed-agent qualification failed; inspect sanitized report' }
+          } finally {
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            $tempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')
+            $cleanupTarget = [IO.Path]::GetFullPath($launchDir)
+            if (!$cleanupTarget.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing cleanup outside runner temporary directory' }
+            Remove-Item -LiteralPath $launchDir -Recurse -Force
+          }
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: |
+          node scripts/certops-windows-stop-offline-postgres.js cleanup
+          if ($LASTEXITCODE) { throw 'Owned PostgreSQL cleanup failed; private state preserved' }
+      - name: Preserve sanitized execution report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-installed-alive-grace-${{ matrix.windows_server }}
+          path: qualification-results/windows-installed-alive-grace.json
+          if-no-files-found: error

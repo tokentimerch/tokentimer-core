@@ -225,6 +225,13 @@ async function listCertificateManagerCertificates({
       });
 
       const data = response.data;
+      // An omitted repeated field is a legitimate empty protobuf response.
+      // A primitive body or malformed present field is not an enumeration and
+      // must never become authoritative certificate absence for cleanup.
+      if (!data || typeof data !== "object" || Array.isArray(data) ||
+          (Object.hasOwn(data, "certificates") && !Array.isArray(data.certificates))) {
+        throw new Error("Invalid GCP Certificate Manager list response");
+      }
       if (Array.isArray(data.certificates)) {
         certs.push(...data.certificates);
       }
@@ -294,11 +301,20 @@ async function listComputeSslCertificates({
       });
 
       const data = response.data;
+      if (!data || typeof data !== "object" || Array.isArray(data) ||
+          (Object.hasOwn(data, "items") && (!data.items || typeof data.items !== "object" || Array.isArray(data.items))) ||
+          (Object.hasOwn(data, "unreachables") && !Array.isArray(data.unreachables))) {
+        throw new Error("Invalid GCP Compute SSL certificate list response");
+      }
       // aggregatedList buckets results under a per-scope key ("global" or
       // "regions/<region>"); flatten every scope's sslCertificates into one
       // list, tagging each with the scope it came from.
       if (data.items && typeof data.items === "object") {
         for (const [scopeName, scoped] of Object.entries(data.items)) {
+          if (!scoped || typeof scoped !== "object" || Array.isArray(scoped) ||
+              (Object.hasOwn(scoped, "sslCertificates") && !Array.isArray(scoped.sslCertificates))) {
+            throw new Error("Invalid GCP Compute SSL certificate scope response");
+          }
           if (Array.isArray(scoped?.sslCertificates)) {
             for (const cert of scoped.sslCertificates) {
               certs.push({ ...cert, scope: scopeName });

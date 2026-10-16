@@ -107,6 +107,17 @@
           "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
           "description": "Standard padded base64 of the snapshot bytes stored on the enrollment, at most 28 KiB decoded. That covers the largest snapshot enrollment-snapshot.schema.json admits and leaves room for the rest of the signed payload within the envelope's decoded-size limit."
         },
+        "terminalState": {
+          "type": "string",
+          "enum": ["expired", "cancelled", "abandoned"],
+          "description": "Control-plane-only signed directive to free an uninstalled enrollment key in a continuation. Derived from the current durable enrollment state; never supplied by a job request."
+        },
+        "reconcileRequestId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295,
+          "description": "Operator-proposed CA RequestId, attached from the durable enrollment row at signed dispatch. The agent retrieves it but validates its SPKI and frozen issuer constraints before attaching it to this enrollment."
+        },
         "snapshotSha256": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
@@ -276,7 +287,7 @@
     },
     "keyRotation": {
       "type": "boolean",
-      "description": "When true the agent generates a fresh private key for the renewal instead of reusing the existing one. The key never leaves the agent."
+      "description": "When true the agent generates a fresh private key for the renewal instead of reusing the existing one. Windows os-store-managed IIS ACME renewal does not support reuse and refuses explicit false, including dry runs; omission retains fresh-key behavior. The key never leaves the agent."
     },
     "certPath": {
       "type": "string",
@@ -609,6 +620,34 @@
     }
   },
   "allOf": [
+    {
+      "description": "Windows CNG renewal cannot reuse an existing private key; omission retains fresh-key behavior.",
+      "if": { "required": ["action", "keyMode", "target"], "properties": { "action": { "const": "renew" }, "keyMode": { "const": "os-store-managed" }, "target": { "required": ["type"], "properties": { "type": { "const": "windows-iis" } } } } },
+      "then": { "properties": { "keyRotation": { "const": true } } }
+    },
+    {
+      "if": {
+        "required": ["enrollment"],
+        "properties": { "enrollment": { "required": ["reconcileRequestId"] } }
+      },
+      "then": {
+        "required": ["action"],
+        "properties": {
+          "action": { "const": "continue-enrollment" },
+          "enrollment": { "not": { "required": ["terminalState"] } }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["enrollment"],
+        "properties": { "enrollment": { "required": ["terminalState"] } }
+      },
+      "then": {
+        "required": ["action"],
+        "properties": { "action": { "const": "continue-enrollment" } }
+      }
+    },
     {
       "if": {
         "required": [

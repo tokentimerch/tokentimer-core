@@ -776,3 +776,7 @@ test("resolveAcmeStatePaths nests certbot and acme.sh under stateDir/acme", () =
   assert.equal(paths.certbotLogsDir, path.join(root, "acme", "certbot", "logs"));
   assert.equal(paths.acmeShHome, path.join(root, "acme", "acme.sh"));
 });
+
+test("adapter propagates the local execution abort signal before external ACME mutation",async()=>{
+ const ac=new AbortController();ac.abort();const exec=makeExecStub();const result=await certbotAdapter(exec,{signal:ac.signal}).runRenewal(baseRenewalInputs());assert.equal(result.renewed,false);assert.equal(exec.calls.length,0);
+});

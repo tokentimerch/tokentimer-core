@@ -1,0 +1,74 @@
+# Optional cost-bearing AD CS installed-service campaign. Generic hosted Windows checks do not need Azure.
+name: "CertOps / Optional AD CS / Prepare default retention timer"
+on:
+  workflow_dispatch:
+concurrency:
+  group: certops-retention-cadence-prepare-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-lab
+    timeout-minutes: 180
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      GH_TOKEN: ${{ github.token }}
+      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: "24"
+      - name: Validate bounded ownership contracts before provisioning
+        run: node --test scripts/certops-retention-cadence-contract.test.js scripts/certops-retention-cadence-azure.test.js
+      - name: Create unique observer nonce
+        shell: bash
+        run: echo "CERTOPS_RETENTION_CADENCE_NONCE=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')" >> "$GITHUB_ENV"
+      - name: Authenticate isolated lab identity
+        shell: pwsh
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Prepare actual AD CS cutover and original installed service
+        shell: pwsh
+        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -RetentionCadencePrepare 1 -RetentionCadenceNonce $env:CERTOPS_RETENTION_CADENCE_NONCE
+      - name: Seal independently verified original four-hour ownership
+        run: node scripts/certops-retention-cadence-azure.js seal
+      - name: Upload immutable original receipt before any extension
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retention-cadence-original-${{ github.run_attempt }}-${{ env.CERTOPS_RETENTION_CADENCE_NONCE }}
+          path: qualification-results/retention-cadence-original.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Download original artifact and reverify the same installed service
+        run: node scripts/certops-retention-cadence-azure.js handoff
+      - name: Seal immutable controller ownership receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retention-cadence-ownership-${{ github.run_attempt }}-${{ env.CERTOPS_RETENTION_CADENCE_NONCE }}
+          path: qualification-results/retention-cadence-ownership.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve bounded controller and cost diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: retention-cadence-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            qualification-results/retention-cadence-cost.json
+            qualification-results/retention-cadence-controller-failure-abort-*.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Destroy exact owned lab after failed or interrupted preparation
+        if: failure() || cancelled()
+        run: node scripts/certops-retention-cadence-azure.js abort

@@ -441,6 +441,10 @@ const ALLOWED_TRANSITIONS = Object.freeze({
     "denied",
   ]),
   refused: new Set([
+    // A stricter local rule may refuse an issued but still unaccepted key.
+    "issued",
+    "validation_deferred",
+    "keygen_intent",
     "submitting",
     "prepared",
     "pending",
@@ -464,7 +468,16 @@ const ALLOWED_TRANSITIONS = Object.freeze({
 });
 
 function missingRequiredFields(state, parsed) {
-  const required = REQUIRED_FIELDS_BY_STATE[state];
+  // A first-submit safety refusal can precede the CSR itself. This local
+  // receipt must never be used to erase evidence of a submitted request.
+  const beforeCsr = state === "refused" && parsed.preSubmitPhase === "keygen_intent";
+  if (beforeCsr) {
+    if (!["ADCS_TEMPLATE_UNSAFE", "ADCS_CA_CONFIG_UNSAFE", "ADCS_CA_KEY_UNPINNED"].includes(parsed.errorCode)) return "errorCode";
+    for (const field of ["csrSha256", "csrSpkiSha256", "templateOid", "requestId", "leafSha256", "acceptedThumbprint", "submittedAt"]) {
+      if (parsed[field] != null) return `unexpected ${field} before CSR`;
+    }
+  }
+  const required = beforeCsr ? ["containerName", "snapshotSha256", "errorCode"] : REQUIRED_FIELDS_BY_STATE[state];
   if (!required) return null;
   for (const field of required) {
     const value = parsed[field];
@@ -911,6 +924,11 @@ async function writeEnrollmentJournal(stateDir, enrollmentId, fields) {
   }
 
   const mergedFields = mergeImmutableJournalFields(previousJournal, previousState, fields);
+  if (mergedFields.preSubmitPhase === "keygen_intent" &&
+      previousState !== "keygen_intent" &&
+      !(previousState === "refused" && previousJournal?.preSubmitPhase === "keygen_intent")) {
+    throw new Error("pre-CSR refusal requires an existing key-generation intent");
+  }
   const missing = missingRequiredFields(mergedFields.state, mergedFields);
   if (missing) {
     throw new TypeError(

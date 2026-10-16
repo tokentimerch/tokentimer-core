@@ -310,6 +310,25 @@
       ],
       "description": "Steady-state heartbeat: updates last_seen_at, carries version-negotiation and clock-drift-relevant fields. A retired agent's heartbeat returns 410 without updating last_seen_at; that behavior lives server-side and is out of scope for this body shape.",
       "properties": {
+        "supportedOperations": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/definitions/claimBody/properties/supportedActions/items"
+          },
+          "description": "Current executable wire actions. Omitted preserves the previous set for older clients; explicit [] clears it when execution is disabled. The server must accept this optional field before agents that send it are deployed."
+        },
+        "declaredCommandProfileNames": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "Names only of agent-local command profiles: argv itself never leaves the agent config file.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_.:-]+$"
+          }
+        },
         "agentVersion": {
           "type": "string",
           "minLength": 1,

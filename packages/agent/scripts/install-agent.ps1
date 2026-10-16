@@ -23,9 +23,8 @@
 #   5. Installs a native Windows Service (sc.exe / New-Service; no NSSM or
 #      other third-party service wrapper) running as LocalSystem per
 #      ADR-0012 decision 11, then starts it.
-#   6. Sets the Windows Error Reporting LocalDumps DumpType=0 for node.exe
-#      (ADR-0012 decision 19: core dumps are disabled by a named,
-#      explicit mechanism, not an unspecified machine-wide default).
+#   6. Preserves existing Windows Error Reporting policy. DumpType=0 is a
+#      custom dump, not suppression; Windows dump containment remains unqualified.
 #   7. On an upgrade (the service already exists), health-checks the
 #      restarted service and rolls back to the previous app version, with
 #      the credential and configuration preserved and its ACL re-asserted,
@@ -324,7 +323,7 @@ if ($script:Uninstall) {
         Write-Log "No $ServiceName service found; nothing to stop or delete."
     }
     Invoke-Step "Remove-Item -Recurse -Force $AppDir" {
-        if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
+        if (Test-Path -LiteralPath $AppDir) { Remove-Item -LiteralPath $AppDir -Recurse -Force }
     }
     Write-Log ""
     Write-Log "Uninstalled the service and app dir."
@@ -379,7 +378,7 @@ if (($script:ApiUrl + $script:WorkspaceId) -match '[\x00-\x08\x0B\x0C\x0E-\x1F\x
 
 # Match the agent runtime serverUrl gate exactly (src/protocol parseServerUrl):
 # https always ok; plain http only for loopback when --allow-insecure-local-http.
-if (-not (Test-Path $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
+if (-not (Test-Path -LiteralPath $ValidateServerUrlJs)) { Fail "server URL validator not found: $ValidateServerUrlJs" }
 $validateArgs = @($script:ApiUrl)
 if ($script:AllowInsecureLocalHttp) { $validateArgs += "--allow-insecure-local-http" }
 $normalizedApiUrl = & node $ValidateServerUrlJs @validateArgs 2>$null
@@ -389,21 +388,21 @@ if ($LASTEXITCODE -ne 0) {
 $script:ApiUrl = $normalizedApiUrl.Trim()
 
 if (-not [string]::IsNullOrEmpty($script:CaBundle)) {
-    if (-not (Test-Path $script:CaBundle -PathType Leaf)) { Fail "--ca-bundle file not found: $script:CaBundle" }
-    $caBundleContent = Get-Content -Raw $script:CaBundle
+    if (-not (Test-Path -LiteralPath $script:CaBundle -PathType Leaf)) { Fail "--ca-bundle file not found: $script:CaBundle" }
+    $caBundleContent = Get-Content -Raw -LiteralPath $script:CaBundle
     if ($caBundleContent -notmatch "BEGIN CERTIFICATE") { Fail "--ca-bundle contains no PEM certificate block" }
     if ($caBundleContent -match "PRIVATE KEY") {
         Fail "--ca-bundle contains private key material; a CA bundle must hold public certificates only"
     }
 }
 
-if (-not (Test-Path (Join-Path $PackageDir "package.json"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $PackageDir "package.json"))) {
     Fail "agent package.json not found next to this script (expected $PackageDir\package.json); run from an unpacked agent package"
 }
-if (-not (Test-Path (Join-Path $PackageDir "bin\tokentimer-agent.js"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $PackageDir "bin\tokentimer-agent.js"))) {
     Fail "agent entrypoint bin\tokentimer-agent.js not found in $PackageDir"
 }
-if (-not (Test-Path $HostSandboxJs)) { Fail "host sandbox helper not found: $HostSandboxJs" }
+if (-not (Test-Path -LiteralPath $HostSandboxJs)) { Fail "host sandbox helper not found: $HostSandboxJs" }
 
 # Windows-native absolute path validator for --write-path: a drive-letter
 # rooted path (C:\...) or a UNC path (\\server\share\...), no ".." segments.
@@ -425,8 +424,8 @@ function Test-WindowsAbsolutePath {
 
 # Merge --write-paths-file into WritePaths, then validate every path.
 if (-not [string]::IsNullOrEmpty($script:WritePathsFile)) {
-    if (-not (Test-Path $script:WritePathsFile -PathType Leaf)) { Fail "--write-paths-file not found: $script:WritePathsFile" }
-    foreach ($line in Get-Content $script:WritePathsFile) {
+    if (-not (Test-Path -LiteralPath $script:WritePathsFile -PathType Leaf)) { Fail "--write-paths-file not found: $script:WritePathsFile" }
+    foreach ($line in Get-Content -LiteralPath $script:WritePathsFile) {
         $trimmed = $line.Trim()
         if ($trimmed.Length -eq 0 -or $trimmed.StartsWith("#")) { continue }
         $script:WritePaths.Add($trimmed)
@@ -454,7 +453,7 @@ if (-not $script:DryRun -and -not (Test-IsAdministrator)) {
 # engines.node is a single ">=x.y.z <a.b.c" range in this package; a plain
 # regex parse of the lower bound avoids needing node before the node check
 # itself, mirroring install-agent.sh's sed parse.
-$packageJsonText = Get-Content -Raw (Join-Path $PackageDir "package.json")
+$packageJsonText = Get-Content -Raw -LiteralPath (Join-Path $PackageDir "package.json")
 $engineMatch = [regex]::Match($packageJsonText, '"node"\s*:\s*"([^"]*)"')
 if (-not $engineMatch.Success) {
     Fail "could not find engines.node in $PackageDir\package.json"
@@ -512,8 +511,140 @@ function Invoke-PlatformAcl {
             Fail "failed to apply a restricted ACL to $TargetPath (kind=$Kind)"
         }
     } finally {
-        Remove-Item -Force -ErrorAction SilentlyContinue $scriptPath
+        Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
     }
+}
+
+# Native package checks run before any installed application/state mutation.
+function Assert-WindowsPeImage {
+    param(
+        [Parameter(Mandatory)][string]$LiteralPath,
+        [Parameter(Mandatory)][ValidateSet('AMD64','ARM64')][string]$Architecture
+    )
+    if (-not [IO.Path]::IsPathRooted($LiteralPath)) { throw 'Native helper path must be absolute' }
+    $ancestor = [IO.Path]::GetFullPath($LiteralPath)
+    while ($ancestor) {
+        $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked native helper path' }
+        $next = [IO.Path]::GetDirectoryName($ancestor)
+        if (!$next -or $next -eq $ancestor) { break }
+        $ancestor = $next
+    }
+    $stream = $null
+    try {
+        # Hold a read-only, non-write/delete-shared handle while inspecting the
+        # bounded public image. Never execute an unvalidated candidate helper.
+        $stream = [IO.FileStream]::new($LiteralPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        if ($stream.Length -lt 64 -or $stream.Length -gt 67108864) { throw 'Native helper size is outside supported PE bounds' }
+        $bytes = New-Object byte[] ([int]$stream.Length)
+        $read = 0
+        while ($read -lt $bytes.Length) {
+            $count = $stream.Read($bytes,$read,$bytes.Length-$read)
+            if ($count -eq 0) { throw 'Native helper truncated during PE read' }
+            $read += $count
+        }
+        if ([BitConverter]::ToUInt16($bytes,0) -ne 0x5a4d) { throw 'Native helper DOS signature invalid' }
+        [UInt64]$pe = [BitConverter]::ToUInt32($bytes,60)
+        if ($pe -lt 64 -or $pe+24 -gt $bytes.Length) { throw 'Native helper PE offset invalid' }
+        if ([BitConverter]::ToUInt32($bytes,[int]$pe) -ne 0x4550) { throw 'Native helper PE signature invalid' }
+        $expected = if ($Architecture -eq 'AMD64') { 0x8664 } else { 0xaa64 }
+        if ([BitConverter]::ToUInt16($bytes,[int]$pe+4) -ne $expected) { throw 'Native helper architecture mismatch' }
+        [UInt64]$sections = [BitConverter]::ToUInt16($bytes,[int]$pe+6)
+        [UInt64]$optionalSize = [BitConverter]::ToUInt16($bytes,[int]$pe+20)
+        $characteristics = [BitConverter]::ToUInt16($bytes,[int]$pe+22)
+        if ($sections -lt 1 -or $sections -gt 96 -or ($characteristics -band 2) -eq 0 -or ($characteristics -band 0x2000) -ne 0) { throw 'Native helper executable COFF header invalid' }
+        [UInt64]$optional = $pe+24
+        [UInt64]$table = $optional+$optionalSize
+        if ($optionalSize -lt 112 -or $optionalSize -gt 4096 -or $table+$sections*40 -gt $bytes.Length) { throw 'Native helper optional or section header truncated' }
+        if ([BitConverter]::ToUInt16($bytes,[int]$optional) -ne 0x20b) { throw 'Native helper must be a PE32+ image' }
+        [UInt64]$entry = [BitConverter]::ToUInt32($bytes,[int]$optional+16)
+        [UInt64]$sectionAlignment = [BitConverter]::ToUInt32($bytes,[int]$optional+32)
+        [UInt64]$fileAlignment = [BitConverter]::ToUInt32($bytes,[int]$optional+36)
+        [UInt64]$imageSize = [BitConverter]::ToUInt32($bytes,[int]$optional+56)
+        [UInt64]$headers = [BitConverter]::ToUInt32($bytes,[int]$optional+60)
+        [UInt64]$directories = [BitConverter]::ToUInt32($bytes,[int]$optional+108)
+        if ($directories -gt 16 -or 112+$directories*8 -gt $optionalSize) { throw 'Native helper data directory header invalid' }
+        if ($fileAlignment -lt 512 -or $fileAlignment -gt 65536 -or ($fileAlignment -band ($fileAlignment-1)) -ne 0 -or $sectionAlignment -lt $fileAlignment -or ($sectionAlignment -band ($sectionAlignment-1)) -ne 0) { throw 'Native helper image alignment invalid' }
+        if ($headers -lt $table+$sections*40 -or $headers -gt $bytes.Length -or $headers % $fileAlignment -ne 0 -or $imageSize -eq 0 -or $imageSize % $sectionAlignment -ne 0 -or $entry -eq 0 -or $entry -ge $imageSize) { throw 'Native helper image/header/entry bounds invalid' }
+        $ranges = @()
+        $entryBacked = $false
+        for ($index=0; $index -lt $sections; $index++) {
+            [int]$offset = [int]($table+$index*40)
+            [UInt64]$virtualSize = [BitConverter]::ToUInt32($bytes,$offset+8)
+            [UInt64]$address = [BitConverter]::ToUInt32($bytes,$offset+12)
+            [UInt64]$rawSize = [BitConverter]::ToUInt32($bytes,$offset+16)
+            [UInt64]$raw = [BitConverter]::ToUInt32($bytes,$offset+20)
+            [UInt64]$flags = [BitConverter]::ToUInt32($bytes,$offset+36)
+            [UInt64]$span = [Math]::Max($virtualSize,$rawSize)
+            if ($address % $sectionAlignment -ne 0 -or $address -lt $headers -or $address+$span -gt $imageSize) { throw 'Native helper virtual section bounds invalid' }
+            if ($rawSize -gt 0 -and ($raw -lt $headers -or $raw % $fileAlignment -ne 0 -or $rawSize % $fileAlignment -ne 0 -or $raw+$rawSize -gt $bytes.Length)) { throw 'Native helper raw section bounds invalid' }
+            foreach ($prior in $ranges) {
+                if ($rawSize -gt 0 -and $prior.rawSize -gt 0 -and $raw -lt $prior.raw+$prior.rawSize -and $prior.raw -lt $raw+$rawSize) { throw 'Native helper overlapping raw sections' }
+                if ($span -gt 0 -and $prior.span -gt 0 -and $address -lt $prior.address+$prior.span -and $prior.address -lt $address+$span) { throw 'Native helper overlapping virtual sections' }
+            }
+            if ($entry -ge $address -and $entry -lt $address+$span -and $entry-$address -lt $rawSize -and ($flags -band 0x20000000) -ne 0 -and ($flags -band 0x20) -ne 0) { $entryBacked=$true }
+            $ranges += @{raw=$raw;rawSize=$rawSize;address=$address;span=$span}
+        }
+        if (!$entryBacked) { throw 'Native helper entry point is not file-backed executable code' }
+    } finally { if ($stream) { $stream.Dispose() } }
+}
+
+function Assert-WindowsPackageHelpers {
+    param(
+        [Parameter(Mandatory)][string]$PackageDirectory,
+        [Parameter(Mandatory)][ValidateSet('AMD64','ARM64')][string]$Architecture
+    )
+    $tag = $Architecture.ToLowerInvariant()
+    foreach ($name in @("tokentimer-agent-host-$tag.exe","tokentimer-adcs-chain-$tag.exe")) {
+        Assert-WindowsPeImage -LiteralPath (Join-Path $PackageDirectory "bin\$name") -Architecture $Architecture
+    }
+}
+
+function Get-PackageDirectoryIdentity {
+    param([Parameter(Mandatory)][string]$Directory)
+    if (-not [IO.Path]::IsPathRooted($Directory)) { throw 'Package directory identity requires an absolute path' }
+    $item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing nonregular package directory identity' }
+    $ancestor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Directory))
+    while ($ancestor) {
+        $parentItem = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+        if (($parentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package directory ancestor' }
+        $next = [IO.Path]::GetDirectoryName($ancestor)
+        if (!$next -or $next -eq $ancestor) { break }
+        $ancestor = $next
+    }
+    $prior = [Environment]::GetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH','Process')
+    $priorNodeOptions = [Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
+    $priorNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH','Process')
+    try {
+        $env:TOKENTIMER_INSTALLER_STAGE_ID_PATH = $Directory
+        # Do not allow inherited preload/module search settings into this identity probe.
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process')
+        # Built-in fs obtains the volume/file index, never package code. Passing
+        # the literal path through an environment value avoids argv quoting.
+        $identity = & $script:NodeExe -p '(()=>{const s=require(''fs'').statSync(process.env.TOKENTIMER_INSTALLER_STAGE_ID_PATH,{bigint:true});return s.dev.toString()+ '':'' + s.ino.toString()})()'
+        if ($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\d+:[1-9]\d*$') { throw 'Package directory file identity unavailable' }
+        return ([string]$identity).Trim()
+    } finally {
+        [Environment]::SetEnvironmentVariable('TOKENTIMER_INSTALLER_STAGE_ID_PATH',$prior,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_OPTIONS',$priorNodeOptions,'Process')
+        [Environment]::SetEnvironmentVariable('NODE_PATH',$priorNodePath,'Process')
+    }
+}
+
+function Remove-OwnedPackageStaging {
+    param([Parameter(Mandatory)][string]$Directory,[Parameter(Mandatory)][string]$ExpectedIdentity)
+    if ((Get-PackageDirectoryIdentity -Directory $Directory) -ne $ExpectedIdentity) { throw 'Refusing replaced package staging directory' }
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($Directory)
+    while ($pending.Count) {
+        foreach ($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop) {
+            if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked package staging content' }
+            if ($entry.PSIsContainer) { $pending.Push($entry.FullName) }
+        }
+    }
+    Remove-Item -LiteralPath $Directory -Recurse -Force -ErrorAction Stop
 }
 
 # ------------------------------------------------------------ install files
@@ -530,6 +661,47 @@ function Copy-PackageTree {
         [Parameter(Mandatory = $true)][string]$Destination
     )
     $excludedDirNames = @("node_modules", ".git")
+    # Validate the whole candidate and any existing destination before creating
+    # or copying a single destination entry. A later activation guard cannot
+    # undo a staging copy that already followed a source/destination junction.
+    # Literal paths also keep brackets and other valid filename characters
+    # from becoming wildcard selectors during this safety preflight.
+    function Get-UnlinkedCopyItem {
+        param([string]$LiteralPath)
+        $item = $null
+        try { $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { return $null }
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'refusing linked package copy paths'
+        }
+        return $item
+    }
+    function Assert-UnlinkedCopyAncestors {
+        param([string]$LiteralPath)
+        if (-not [IO.Path]::IsPathRooted($LiteralPath)) { throw 'refusing relative package copy paths' }
+        $current = [IO.Path]::GetFullPath($LiteralPath)
+        while ($current) {
+            $null = Get-UnlinkedCopyItem -LiteralPath $current
+            $parent = [IO.Path]::GetDirectoryName($current)
+            if (!$parent -or $parent.Equals($current,[StringComparison]::OrdinalIgnoreCase)) { break }
+            $current = $parent
+        }
+    }
+    function Assert-UnlinkedCopyTree {
+        param([string]$LiteralPath,[bool]$Required,[bool]$SkipExcluded = $false)
+        $item = Get-UnlinkedCopyItem -LiteralPath $LiteralPath
+        if (!$item) { if ($Required) { throw 'required package source directory is missing' }; return }
+        if (!$item.PSIsContainer) { throw 'refusing non-directory package copy root' }
+        foreach ($entry in Get-ChildItem -LiteralPath $LiteralPath -Force -ErrorAction Stop) {
+            if ($SkipExcluded -and $entry.PSIsContainer -and $excludedDirNames -contains $entry.Name) { continue }
+            $null = Get-UnlinkedCopyItem -LiteralPath $entry.FullName
+            if ($entry.PSIsContainer) { Assert-UnlinkedCopyTree -LiteralPath $entry.FullName -Required $true -SkipExcluded $SkipExcluded }
+        }
+    }
+    Assert-UnlinkedCopyAncestors -LiteralPath $Source
+    Assert-UnlinkedCopyAncestors -LiteralPath $Destination
+    Assert-UnlinkedCopyTree -LiteralPath $Source -Required $true -SkipExcluded $true
+    Assert-UnlinkedCopyTree -LiteralPath $Destination -Required $false
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
         if ($_.PSIsContainer) {
@@ -541,6 +713,68 @@ function Copy-PackageTree {
     }
 }
 
+# Both directory renames belong to the same recovery boundary. In particular,
+# a sharing violation on the still-running predecessor must remove the copied
+# staging tree without changing the predecessor or restarting its service.
+function Activate-StagedPackage {
+    param(
+        [Parameter(Mandatory = $true)][string]$AppDirectory,
+        [Parameter(Mandatory = $true)][string]$StagingDirectory,
+        [Parameter(Mandatory = $true)][string]$PreviousDirectory,
+        [string]$ExpectedStagingIdentity = ""
+    )
+    $ErrorActionPreference = 'Stop'
+    $appPath = [IO.Path]::GetFullPath($AppDirectory).TrimEnd('\')
+    $stagingPath = [IO.Path]::GetFullPath($StagingDirectory).TrimEnd('\')
+    $previousPath = [IO.Path]::GetFullPath($PreviousDirectory).TrimEnd('\')
+    if (-not [IO.Path]::IsPathRooted($AppDirectory) -or
+        -not $stagingPath.Equals("$appPath.staging.$PID", [StringComparison]::OrdinalIgnoreCase) -or
+        -not $previousPath.Equals("$appPath.previous.$PID", [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'refusing unexpected package swap paths'
+    }
+    foreach ($targetPath in @([IO.Path]::GetDirectoryName($appPath), $appPath, $stagingPath, $previousPath)) {
+        $item = Get-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+        if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $item.PSIsContainer)) {
+            throw 'refusing linked or non-directory package swap targets'
+        }
+    }
+    if (Test-Path -LiteralPath $PreviousDirectory) { throw 'refusing an existing package recovery directory' }
+    if ($ExpectedStagingIdentity -and (Get-PackageDirectoryIdentity -Directory $StagingDirectory) -ne $ExpectedStagingIdentity) { throw 'refusing replaced package staging before activation' }
+    $previousMoved = $false
+    try {
+        if (Test-Path -LiteralPath $AppDirectory) {
+            Rename-Item -LiteralPath $AppDirectory -NewName (Split-Path -Leaf $PreviousDirectory) -ErrorAction Stop
+            $previousMoved = $true
+        }
+        Rename-Item -LiteralPath $StagingDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop
+    } catch {
+        $activationError = $_.Exception.Message
+        $recoveryErrors = @()
+        if ($previousMoved) {
+            try { Rename-Item -LiteralPath $PreviousDirectory -NewName (Split-Path -Leaf $AppDirectory) -ErrorAction Stop }
+            catch { $recoveryErrors += 'previous installation restoration failed' }
+        }
+        try {
+            $stagedItem = Get-Item -LiteralPath $StagingDirectory -Force -ErrorAction SilentlyContinue
+            if ($stagedItem) {
+                if (($stagedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $stagedItem.PSIsContainer) { throw 'staging ownership changed' }
+                if ($ExpectedStagingIdentity) { Remove-OwnedPackageStaging -Directory $StagingDirectory -ExpectedIdentity $ExpectedStagingIdentity }
+                else { Remove-Item -LiteralPath $StagingDirectory -Recurse -Force -ErrorAction Stop }
+            }
+        } catch { $recoveryErrors += 'staging cleanup failed' }
+        if ($recoveryErrors.Count) {
+            throw "failed to activate the staged agent package; recovery incomplete ($($recoveryErrors -join '; ')); $activationError"
+        }
+        $previousOutcome = if ($previousMoved) { 'restored' } else { 'preserved' }
+        throw "failed to activate the staged agent package; the previous install was $previousOutcome ($activationError)"
+    }
+}
+
+if (-not $script:DryRun) {
+    try { Assert-WindowsPackageHelpers -PackageDirectory $PackageDir -Architecture $arch }
+    catch { Fail "native package preflight failed before installation changes ($($_.Exception.Message))" }
+}
+
 Write-Log "Installing agent package from $PackageDir to $AppDir"
 if (-not $script:DryRun) {
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
@@ -548,28 +782,30 @@ if (-not $script:DryRun) {
 
 $script:AppStaging = "$AppDir.staging.$PID"
 $script:AppPrevious = "$AppDir.previous.$PID"
-$script:IsUpgrade = (Test-Path $AppDir)
+$script:IsUpgrade = (Test-Path -LiteralPath $AppDir)
 
 if ($script:DryRun) {
     Write-Host "[dry-run] copy $PackageDir into $($script:AppStaging) (excluding node_modules, .git), then atomically swap into $AppDir"
 } else {
-    if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
+    if (Test-Path -LiteralPath $script:AppStaging) { Fail 'refusing an existing package staging directory' }
+    New-Item -ItemType Directory -Path $script:AppStaging -ErrorAction Stop | Out-Null
+    $stagingIdentity = Get-PackageDirectoryIdentity -Directory $script:AppStaging
     try {
         Copy-PackageTree -Source $PackageDir -Destination $script:AppStaging
+        Assert-WindowsPackageHelpers -PackageDirectory $script:AppStaging -Architecture $arch
     } catch {
-        if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
-        Fail "failed to stage the agent package; $AppDir was left untouched ($($_.Exception.Message))"
-    }
-    if (Test-Path $script:AppPrevious) { Remove-Item -Recurse -Force $script:AppPrevious }
-    if (Test-Path $AppDir) {
-        Rename-Item -LiteralPath $AppDir -NewName (Split-Path -Leaf $script:AppPrevious)
+        $stagingError = $_.Exception.Message
+        try {
+            Remove-OwnedPackageStaging -Directory $script:AppStaging -ExpectedIdentity $stagingIdentity
+        } catch {
+            Fail "failed to stage the agent package; staging cleanup refused; preserve $($script:AppStaging) for inspection; $AppDir was left untouched ($stagingError)"
+        }
+        Fail "failed to stage the agent package; $AppDir was left untouched ($stagingError)"
     }
     try {
-        Rename-Item -LiteralPath $script:AppStaging -NewName (Split-Path -Leaf $AppDir)
+        Activate-StagedPackage -AppDirectory $AppDir -StagingDirectory $script:AppStaging -PreviousDirectory $script:AppPrevious -ExpectedStagingIdentity $stagingIdentity
     } catch {
-        if (Test-Path $script:AppPrevious) { Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir) }
-        if (Test-Path $script:AppStaging) { Remove-Item -Recurse -Force $script:AppStaging }
-        Fail "failed to activate the staged agent package; the previous install was restored ($($_.Exception.Message))"
+        Fail $_.Exception.Message
     }
 }
 
@@ -610,10 +846,10 @@ $configPath = Join-Path $StateDir "config.json"
 $caBundleDest = ""
 if (-not [string]::IsNullOrEmpty($script:CaBundle)) {
     $caBundleDest = Join-Path $StateDir "ca-bundle.pem"
-    Invoke-Step "copy $($script:CaBundle) to $caBundleDest" { Copy-Item -Force $script:CaBundle $caBundleDest }
+    Invoke-Step "copy $($script:CaBundle) to $caBundleDest" { Copy-Item -LiteralPath $script:CaBundle -Destination $caBundleDest -Force }
 }
 
-if ((Test-Path $configPath) -and -not $script:DryRun) {
+if ((Test-Path -LiteralPath $configPath) -and -not $script:DryRun) {
     Write-Log "Existing $configPath found; leaving it untouched (delete it to re-generate)."
 } elseif ($script:DryRun) {
     $caNote = if ($caBundleDest) { " caBundlePath=$caBundleDest" } else { "" }
@@ -739,7 +975,7 @@ $quotedEntry = '"' + (Join-Path $AppDir "bin\tokentimer-agent.js") + '"'
 # selects which of the two binaries this OS can execute.
 $hostArchTag = $arch.ToLowerInvariant()
 $serviceHostExe = Join-Path $AppDir "bin\tokentimer-agent-host-$hostArchTag.exe"
-if (-not $script:DryRun -and -not (Test-Path $serviceHostExe)) {
+if (-not $script:DryRun -and -not (Test-Path -LiteralPath $serviceHostExe)) {
     Fail (
         "service host binary not found at $serviceHostExe; the staged app dir looks incomplete " +
         "or was not built with 'pnpm run build:windows-service-host' before packaging"
@@ -772,40 +1008,17 @@ if ($script:DryRun) {
     Write-Host "[dry-run] sc.exe create/config $ServiceName binPath= $binPath start= auto obj= LocalSystem"
     Write-Host "[dry-run] sc.exe failure $ServiceName reset= 86400 actions= restart/5000"
     Write-Host "[dry-run] set HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName\Environment"
-    Write-Host "[dry-run] set HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\node.exe DumpType=0"
+    Write-Host "[dry-run] preserve existing Windows Error Reporting policy"
     Write-Host "[dry-run] (re)start $ServiceName and health-check it"
     Write-Log ""
     Write-Log "Dry run complete. No changes were made."
     exit 0
 }
 
-# --------------------------------------- Windows Error Reporting dump suppression
-# ADR-0012 decision 19: core dumps must be disabled for the production
-# agent by a named, platform-specific mechanism, not an unspecified
-# "disabled" claim, since a crash dump is an alternate, unlocked copy of
-# process memory that no in-process buffer discipline can prevent. This
-# was previously documented in ADR-0012 but never implemented; a real-host
-# verification pass found the gap.
-#
-# WER's LocalDumps key is scoped by executable *file name*, not full path,
-# and Windows has no path-scoped equivalent. node.exe is the process that
-# actually runs the agent's key-handling JS code; the windows-service-host
-# shim (see windows-service-host/) is a thin SCM adapter that spawns
-# node.exe as its child and never itself holds key bytes, so suppressing
-# dumps only for the service-host executable would not protect the
-# process that matters. Setting this for node.exe suppresses WER dumps for
-# any node.exe process on this host, not only this agent's -- an accepted
-# trade-off per decision 10's own established principle that a
-# narrow-but-ineffective control is worse than a broad-but-deterministic
-# one. An operator who needs WER dumps for an unrelated Node service on
-# the same host should not colocate it with this agent.
-function Set-WindowsDumpSuppression {
-    param([string]$ExeName)
-    $key = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\$ExeName"
-    New-Item -Path $key -Force | Out-Null
-    New-ItemProperty -Path $key -Name "DumpType" -PropertyType DWord -Value 0 -Force | Out-Null
-}
-Invoke-Step "set WER LocalDumps DumpType=0 for node.exe" { Set-WindowsDumpSuppression -ExeName "node.exe" }
+# Preserve operator WER policy. Microsoft's LocalDumps DumpType=0 selects a
+# custom dump and may enable collection; it does not disable dumps. Do not
+# rewrite the machine-wide node.exe policy or infer containment from a registry
+# value. Native crash containment remains a separate qualification requirement.
 
 $serviceExisted = [bool](Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)
 if (-not $serviceExisted) {
@@ -850,10 +1063,10 @@ try {
 
 $healthy = Test-ServiceHealthy -TimeoutSeconds 20
 
-if (-not $healthy -and $script:IsUpgrade -and (Test-Path $script:AppPrevious)) {
+if (-not $healthy -and $script:IsUpgrade -and (Test-Path -LiteralPath $script:AppPrevious)) {
     Write-Log "Health check failed after upgrade; rolling back to the previous version."
     Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force $AppDir
+    Remove-Item -LiteralPath $AppDir -Recurse -Force
     Rename-Item -LiteralPath $script:AppPrevious -NewName (Split-Path -Leaf $AppDir)
     $rollbackBinPath = $binPath
     Set-ServiceBinaryPath -ServiceName $ServiceName -BinPath $rollbackBinPath -DisplayName $ServiceDisplayName
@@ -862,20 +1075,21 @@ if (-not $healthy -and $script:IsUpgrade -and (Test-Path $script:AppPrevious)) {
     # The credential file's ACL must be re-asserted after rollback, not
     # inherited from whatever the failed install left behind.
     $credentialPath = Join-Path $StateDir "credential"
-    if (Test-Path $credentialPath) {
+    if (Test-Path -LiteralPath $credentialPath) {
         Invoke-PlatformAcl -TargetPath $credentialPath -Kind "file"
     }
     Fail "upgrade failed its post-install health check and was rolled back to the previous version; the agent credential and configuration were preserved and the credential file's ACL was re-asserted"
 }
 
-if (Test-Path $script:AppPrevious) { Remove-Item -Recurse -Force $script:AppPrevious }
+if (Test-Path -LiteralPath $script:AppPrevious) { Remove-Item -LiteralPath $script:AppPrevious -Recurse -Force }
 
 if (-not $healthy) {
     Fail "the $ServiceName service did not reach the Running state within 20 seconds; check 'Get-Service $ServiceName' and the agent's own logs"
 }
 
 Write-Log ""
-Write-Log "Install complete. Crash dumps (WER LocalDumps) are suppressed for node.exe on this host."
+Write-Log "Install complete. Existing Windows Error Reporting policy was preserved."
+Write-Log "Windows crash-dump containment is not qualified."
 Write-Log "Next steps:"
 Write-Log "  1. Check the service:      Get-Service $ServiceName"
 Write-Log "  2. Confirm registration in the dashboard (CertOps > Agent fleet):"

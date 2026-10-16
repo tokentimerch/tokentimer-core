@@ -440,7 +440,8 @@ function handleCertOpsError(res, err) {
   if (err?.code === "CERTOPS_IDENTITY_PRECONDITION_FAILED") {
     return res.status(412).json({ error: err.message, code: err.code });
   }
-  if (err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING" ||
+  if (err?.code === CERTOPS_CERTIFICATE_NOT_RENEWABLE ||
+      err?.code === "CERTOPS_CERTIFICATE_STILL_SERVING" ||
       err?.code === "CERTOPS_CERTIFICATE_RETIRED" ||
       err?.code === "CERTOPS_MUTATION_RUNNING" ||
       err?.code === "CERTOPS_LIFECYCLE_DOWNGRADE" ||

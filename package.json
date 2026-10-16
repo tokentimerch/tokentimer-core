@@ -49,6 +49,13 @@
     "test:quick": "pnpm exec mocha tests/integration/endpoint-monitor.test.js tests/integration/endpoint-health-alerts.test.js --timeout 30000 --exit",
     "test:contracts": "node --test tests/contract/**/*.test.js",
     "test:e2e:agent": "node --test tests/e2e/certops-agent-e2e.test.js",
+    "test:certops:qualification": "node scripts/run-certops-tooling-tests.js",
+    "test:certops:release-collector": "node scripts/run-certops-collector-tests.js",
+    "check:certops:release-matrix": "node scripts/ci-guards/certops-release-matrix.cjs",
+    "check:certops:release-qualification": "node scripts/certops-release-qualification.js",
+    "check:certops:dns-errors": "node scripts/ci-guards/certops-dns-errors.cjs",
+    "check:certops:catalog": "node scripts/certops-qualification-catalog.js docs/certops/e2e-scenario-catalog.json",
+    "check:certops:skip-qualification": "node scripts/certops-skip-qualification.js",
     "test:baseline": "node scripts/run-baseline.js",
     "test:proxy-smoke": "node scripts/proxy-smoke-test.js",
     "test:ci": "pnpm run test:unit && node scripts/run-tests-local.js core",
@@ -124,6 +131,7 @@
     "mocha-junit-reporter": "2.2.1",
     "otplib": "13.3.0",
     "pg": "8.18.0",
+    "playwright": "1.63.0",
     "supertest": "7.2.2"
   },
   "mocha": {

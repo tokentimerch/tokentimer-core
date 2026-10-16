@@ -25,6 +25,7 @@ const {
   listEnrollments,
   listIssuers,
   scheduleDueEnrollments,
+  retryEnrollmentInstallation,
 } = require("../../apps/api/services/certops/certificateEnrollments");
 const { PREFLIGHT_PER_HOUR } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { validateSignedJob } = require("../../packages/contracts/certops/validate-signed-job.cjs");
@@ -67,11 +68,35 @@ describe("AD CS enrollment lifecycle", () => {
     const frozen = freezeSnapshot(snapshotInput());
     assert.equal(frozen.sha256, require("node:crypto").createHash("sha256").update(frozen.bytes).digest("hex"));
     assert.doesNotThrow(() => assertForwardTransition("submitting", "submission_uncertain"));
+    for(const state of ["pending_issuance","issued","validation_deferred","validated"])assert.doesNotThrow(()=>assertForwardTransition(state,"refused"));
+    for(const state of ["installing","install_failed","installed"])assert.throws(()=>assertForwardTransition(state,"refused"));
     assert.doesNotThrow(() => assertForwardTransition("installing", "install_failed"));
     assert.throws(
       () => assertForwardTransition("installed", "submitting"),
       (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
     );
+  });
+
+  it("attaches terminal cleanup only from the durable enrollment state", () => {
+    const frozen = freezeSnapshot(snapshotInput());
+    for (const state of ["expired", "cancelled", "abandoned", "pending_issuance", "installed"]) {
+      const result = attachEnrollmentDispatch({ certificateId: "cert-1" }, {
+        id: ENROLLMENT, attempt: 2, snapshotB64: frozen.b64,
+        snapshotSha256: frozen.sha256, state,
+      });
+      assert.equal(result.enrollment.terminalState,
+        ["expired", "cancelled", "abandoned"].includes(state) ? state : undefined);
+    }
+  });
+
+  it("replaces stale reconcile metadata with the current durable operator proposal", () => {
+    const frozen = freezeSnapshot(snapshotInput());
+    const signed = attachEnrollmentDispatch({ metadata: [{ name: "adcs.reconcileRequestId", value: 12 }] }, {
+      id: ENROLLMENT, state: "submission_uncertain", attempt: 2, operatorRequestId: 77,
+      snapshotB64: frozen.b64, snapshotSha256: frozen.sha256,
+    });
+    assert.equal(signed.enrollment.reconcileRequestId, 77);
+    assert.deepEqual(signed.metadata, [{ name: "adcs.reconcileRequestId", value: 77 }]);
   });
 
   it("builds a signed adcs renew payload without storing issuer fields", () => {
@@ -106,6 +131,22 @@ describe("AD CS enrollment lifecycle", () => {
     assert.equal(validated.valid, true, JSON.stringify(validated.errors));
     assert.equal(signed.metadata[0].name, "adcs.reconcileRequestId");
     assert.equal(signed.metadata[0].value, 42);
+    for (const terminalState of ["expired", "cancelled", "abandoned"]) {
+      const cleanup = { ...signed, action: "continue-enrollment",
+        enrollment: { ...signed.enrollment, terminalState } };
+      assert.equal(validateSignedJob(cleanup).valid, true);
+      assert.equal(validateSignedJob({ ...cleanup, action: "renew" }).valid, false);
+    }
+    assert.equal(validateSignedJob({ ...signed, action: "continue-enrollment",
+      enrollment: { ...signed.enrollment, terminalState: "installed" } }).valid, false);
+    const reconcile = { ...signed, action: "continue-enrollment",
+      enrollment: { ...signed.enrollment, reconcileRequestId: 4294967295 } };
+    assert.equal(validateSignedJob(reconcile).valid, true);
+    assert.equal(validateSignedJob({ ...reconcile, action: "renew" }).valid, false);
+    assert.equal(validateSignedJob({ ...reconcile,
+      enrollment: { ...reconcile.enrollment, terminalState: "expired" } }).valid, false);
+    assert.equal(validateSignedJob({ ...reconcile,
+      enrollment: { ...reconcile.enrollment, reconcileRequestId: 4294967296 } }).valid, false);
   });
 
   it("polls a pending enrollment and retries an unreachable submit", () => {
@@ -283,6 +324,13 @@ function rowDb() {
     },
     async query(sql, params = []) {
       const text = sql.replace(/\s+/g, " ").trim();
+      if (text.includes("FROM workspaces") && text.includes("certops_paused")) {
+        return { rows: [{id: WORKSPACE, certops_paused: this.paused === true, certops_require_approval_always: false}] };
+      }
+      if (text.startsWith("SELECT status FROM certificate_jobs") && text.includes("enrollment_id=$3")) {
+        const row=enrollments.get(params[2]);
+        return {rows:row?.current_job_id===params[1] ? [{status:row.job_status}] : []};
+      }
       if (text === "BEGIN") {
         checkpoint = {
           enrollments: cloneRows(),
@@ -418,6 +466,10 @@ function rowDb() {
         row.next_poll_at = params[2];
         return { rows: [] };
       }
+      if (text.includes("UPDATE certificate_enrollments SET next_poll_at = $3")) {
+        enrollments.get(params[1]).next_poll_at = params[2];
+        return { rows: [] };
+      }
       if (text.includes("UPDATE certificate_jobs")) return { rows: [] };
       if (text.includes("INSERT INTO certificate_issuer_versions")) {
         const issuer = issuers.get(params[1]);
@@ -458,6 +510,52 @@ function storedEnrollment(id, state, extra = {}) {
   };
 }
 
+describe("installation recovery dispatch", () => {
+  const env = { CERTOPS_ENABLED: "true" };
+  it("retries only the frozen failed installation and reuses an active retry", async () => {
+    const db = rowDb(); const original = storedEnrollment(ENROLLMENT,"install_failed",{attempt:2}); db.putEnrollment(original);
+    const jobs=[]; const audits=[];
+    const options={client:db,workspaceId:WORKSPACE,enrollmentId:ENROLLMENT,actorUserId:"operator",env,
+      createJob:async input=>{jobs.push(input);return {id:JOB_ID};},audit:async input=>audits.push(input)};
+    assert.deepEqual(await retryEnrollmentInstallation(options),{jobId:JOB_ID,created:true});
+    assert.deepEqual(await retryEnrollmentInstallation(options),{jobId:JOB_ID,created:false});
+    assert.equal(jobs.length,1); assert.equal(audits.length,1); assert.equal(audits[0].actorUserId,"operator");
+    assert.equal(jobs[0].operation,"continue-enrollment"); assert.equal(jobs[0].source,"api");
+    assert.equal(jobs[0].requestedByUserId,"operator");
+    assert.equal(jobs[0].allowEnrollmentContinuation,true); assert.equal(jobs[0].enrollmentId,ENROLLMENT);
+    assert.equal(jobs[0].assignedAgentId,original.agent_id); assert.deepEqual(jobs[0].payload.target,original.deploy_target);
+    const row=db.enrollments.get(ENROLLMENT); assert.equal(row.attempt,3); assert.equal(row.state,"install_failed");
+    assert.deepEqual(row.snapshot_bytes,original.snapshot_bytes); assert.equal(row.snapshot_sha256,original.snapshot_sha256);
+  });
+  it("refuses other phases and a paused workspace without creating or auditing a job", async () => {
+    for(const state of ["pending_issuance","submission_uncertain","installed","installing"]){
+      const db=rowDb();db.putEnrollment(storedEnrollment(ENROLLMENT,state));
+      await assert.rejects(retryEnrollmentInstallation({client:db,workspaceId:WORKSPACE,enrollmentId:ENROLLMENT,env,
+        createJob:async()=>{throw Error("must not create");},audit:async()=>{throw Error("must not audit");}}),e=>e.code==="CERTOPS_ENROLLMENT_TRANSITION_INVALID");
+    }
+    const db=rowDb();db.paused=true;db.putEnrollment(storedEnrollment(ENROLLMENT,"install_failed"));
+    await assert.rejects(retryEnrollmentInstallation({client:db,workspaceId:WORKSPACE,enrollmentId:ENROLLMENT,env}),e=>e.code==="CERTOPS_WORKSPACE_PAUSED");
+  });
+  it("automatically resumes an interrupted installing phase but leaves install_failed for operator decision",()=>{
+    const now=new Date(); const snapshot=snapshotInput();
+    assert.deepEqual(decideContinuation({state:"installing",activeJob:false,nextPollAt:now},snapshot,now),{dispatch:true,reason:"resume_installation"});
+    assert.equal(decideContinuation({state:"installing",activeJob:true,nextPollAt:now},snapshot,now),null);
+    assert.equal(decideContinuation({state:"install_failed",activeJob:false,nextPollAt:now},snapshot,now),null);
+  });
+  it("retains installing eligibility until its signed recovery acknowledges completion",async()=>{
+    const db=rowDb();db.putEnrollment(storedEnrollment(ENROLLMENT,"issued",{attempt:1}));
+    await recordEnrollmentResult(db,{workspaceId:WORKSPACE,job:{enrollment_id:ENROLLMENT},
+      enrollmentResult:{enrollmentId:ENROLLMENT,attempt:1,state:"installing",requestId:42}});
+    const due=db.enrollments.get(ENROLLMENT).next_poll_at;assert.ok(due instanceof Date);
+    const jobs=await scheduleDueEnrollments({client:db,now:new Date(due.getTime()+1000),
+      createJob:async input=>{assert.equal(input.operation,"continue-enrollment");assert.equal(input.enrollmentId,ENROLLMENT);return {id:JOB_ID};}});
+    assert.equal(jobs.length,1);assert.ok(db.enrollments.get(ENROLLMENT).next_poll_at>due);
+    await recordEnrollmentResult(db,{workspaceId:WORKSPACE,job:{enrollment_id:ENROLLMENT},
+      enrollmentResult:{enrollmentId:ENROLLMENT,attempt:2,state:"installed",requestId:42}});
+    assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at,null);
+  });
+});
+
 describe("enrollment rows", () => {
   const audit = async () => {};
 
@@ -494,6 +592,10 @@ describe("enrollment rows", () => {
     assert.equal(db.enrollments.get(uncertainId).next_poll_at, null);
     assert.equal(db.enrollments.get(installedId).state, "installed");
     assert.ok(db.enrollments.get(deferredId).next_poll_at instanceof Date);
+  });
+
+  it("records stricter local-rule refusal from every still-unaccepted server phase",async()=>{
+    for(const state of ["pending_issuance","issued","validation_deferred","validated"]){const db=rowDb();db.putEnrollment(storedEnrollment(ENROLLMENT,state,{next_poll_at:new Date()}));await recordEnrollmentResult(db,{workspaceId:WORKSPACE,job:{enrollment_id:ENROLLMENT},enrollmentResult:{enrollmentId:ENROLLMENT,attempt:1,state:"refused",errorCode:"ADCS_CA_CONFIG_UNSAFE"}});assert.equal(db.enrollments.get(ENROLLMENT).state,"refused");assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at,null);}
   });
 
   it("clears a leftover poll date when a pending attempt ends in a terminal result", async () => {
@@ -701,6 +803,16 @@ describe("enrollment rows", () => {
     assert.equal(created.length, 1);
     assert.equal(jobs[0].target.store, "WebHosting");
     assert.equal(jobs[0].metadata[0].value, 77);
+    assert.ok(db.enrollments.get(id).next_poll_at > new Date());
+    const signed = attachEnrollmentDispatch(jobs[0], {
+      id, state: "submission_uncertain", attempt: 2, operatorRequestId: 77,
+      snapshotB64: Buffer.from(db.enrollments.get(id).snapshot_bytes).toString("base64"),
+      snapshotSha256: db.enrollments.get(id).snapshot_sha256,
+    });
+    assert.equal(signed.enrollment.reconcileRequestId, 77);
+    await recordEnrollmentResult(db, { workspaceId: WORKSPACE, job: { enrollment_id: id },
+      enrollmentResult: { enrollmentId: id, attempt: 2, state: "submission_uncertain", errorCode: "ADCS_DISPOSITION_UNKNOWN" } });
+    assert.ok(db.enrollments.get(id).next_poll_at > new Date(), "unissued proposed candidates must remain scheduled");
   });
 
   it("restores the due date when continuation job creation fails", async () => {
@@ -949,7 +1061,8 @@ describe("enrollment rows", () => {
     });
     assert.equal(created.length, 1);
     assert.equal(created[0].jobId, "job-free-key");
-    assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at, null);
+    assert.ok(db.enrollments.get(ENROLLMENT).next_poll_at > new Date(),
+      "failed or interrupted native cleanup must retain a bounded retry date");
   });
 
   it("refuses to abandon an enrollment that has not reached an uncertain submission", async () => {
@@ -1359,4 +1472,10 @@ describe("enrollment rows", () => {
       (error) => error?.code === "CERTOPS_ISSUER_NOT_FOUND",
     );
   });
+});
+
+describe("bounded immutable AD CS enrollment policy options",()=>{
+  it("preserves omitted defaults and freezes explicit supported options into distinct canonical bytes",()=>{const defaults=freezeSnapshot(snapshotInput());assert.equal(defaults.snapshot.pollInterval,900);assert.equal(defaults.snapshot.pendingTimeout,1209600);assert.equal(defaults.snapshot.minimumRemainingValidity,0);assert.equal(defaults.snapshot.requireLaterNotAfter,false);const options={pollInterval:60,pendingTimeout:3600,minimumRemainingValidity:86400,requireLaterNotAfter:true};const chosen=freezeSnapshot({...snapshotInput(),...options});for(const [key,value] of Object.entries(options))assert.equal(chosen.snapshot[key],value);assert.notEqual(chosen.sha256,defaults.sha256);assert.equal(chosen.sha256,require("node:crypto").createHash("sha256").update(chosen.bytes).digest("hex"));});
+  it("rejects explicit null strings fractional values and out-of-contract bounds instead of coercing defaults",()=>{for(const options of [{pollInterval:0},{pollInterval:59},{pollInterval:86401},{pollInterval:60.5},{pollInterval:"900"},{pollInterval:null},{pendingTimeout:3599},{pendingTimeout:7776001},{pendingTimeout:null},{minimumRemainingValidity:-1},{minimumRemainingValidity:31536001},{minimumRemainingValidity:"0"},{minimumRemainingValidity:null},{requireLaterNotAfter:"true"},{requireLaterNotAfter:1},{requireLaterNotAfter:null}])assert.throws(()=>freezeSnapshot({...snapshotInput(),...options}),error=>error.code==="CERTOPS_SNAPSHOT_INVALID");});
+  it("public creation service persists the policy with first-job enrollment binding",async()=>{const db=rowDb();db.putIssuer({id:ISSUER,workspace_id:WORKSPACE,kind:"adcs",version:1,ca_config:snapshotInput().caConfig,template:snapshotInput().template,ca_key_sha256:snapshotInput().caKeySha256,revalidation_required:false});const options={pollInterval:120,pendingTimeout:7200,minimumRemainingValidity:300,requireLaterNotAfter:true};let jobOptions;const created=await createEnrollment({client:db,workspaceId:WORKSPACE,issuerId:ISSUER,certificateId:"33333333-3333-4333-8333-333333333333",agentId:"22222222-2222-4222-8222-222222222222",target:WEBHOSTING,authorizedDnsNames:["app.example.com"],keyAlgorithm:"rsa",keySize:2048,...options,audit:async()=>{},createJob:async args=>{jobOptions=args;return {id:JOB_ID};}});const stored=db.enrollments.get(created.enrollmentId);for(const [key,value]of Object.entries(options))assert.equal(JSON.parse(stored.snapshot_bytes)[key],value);assert.equal(stored.snapshot_sha256,created.snapshotSha256);assert.equal(jobOptions.enrollmentId,created.enrollmentId);});
 });

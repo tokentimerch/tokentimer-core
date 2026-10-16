@@ -1,0 +1,9 @@
+# Two-cutover elapsed retention qualification
+
+The mandatory `windows-retention-real-expiry-grace` case in the Windows host workflow creates two distinct owned, non-exportable CNG keys and CA-signed short-lived certificates A and B. Actual IIS cutovers A→B→C produce immutable A→B and B→C retention rows. C is the existing owned long-lived fixture certificate. Independent trusted TLS, native binding and key-association queries verify each cutover.
+
+The first production sweep must defer both predecessors and preserve their custody. One shared real-clock wait reaches the later actual predecessor expiry plus the supported 300-second grace. An independent monotonic wait must cover at least 300 seconds. The configured retention remains 24 hours; this qualifies the supported expiry-grace path, **not an elapsed 24-hour retention window**. No certificate dates, clocks, ledger deadlines or native query results are substituted.
+
+The existing `windows-retention-native-interrupted-delete` case interrupts the first actually enumerated eligible predecessor after successful native certificate deletion and before key deletion. A subsequent production sweep must reclaim the dead owner's lock and finalize both predecessors, including lineage through an already removed intermediary. Independent store/key absence checks and immutable ledger history checks cover both A and B; the rows remain as finalized history. C's trusted TLS, exact binding and native key custody must remain unchanged throughout.
+
+The helper owns a unique site, endpoint, two certificate/key pairs and temporary ledger directory. Cleanup attempts every owned resource and never removes C. Run through the opted-in strict Windows host workflow; it requires elevated disposable Windows, IIS, OpenSSL and the candidate agent dependencies. Native execution of this extended fixture remains pending. Local checks validate JavaScript and generated PowerShell syntax only.

@@ -1,0 +1,9 @@
+# Native orphan reconciliation and open enrollment protection
+
+The protected `windows-host` suite requires three supporting native controls from `packages/agent/scripts/host/orphan-journal-fixture.js`. They create real nonexportable machine CNG RSA keys and CSRs, then invoke the unchanged production orphan reconciler. They use explicit owned local job-journal and prepared enrollment prerequisites; they do not fabricate a signed API claim or a CA request.
+
+A positive unaccepted orphan must actually disappear while an open enrollment key and a separately created untracked control key retain independently verified private-key possession. A malformed owned enrollment journal must defer deletion, preserve custody and recover from the exact original bytes and file identity. Explicit fixture closure then permits removal of the formerly protected orphan. All three names use deterministic production enrollment-container naming; the untracked control has no job, enrollment or issued-container receipt.
+
+A restrictive ownership guard is written before any key creation. Unknown ownership, native failure, surviving keys or irregular filesystem entries preserve the guard and private fixture state for disposable-host teardown. Parent cleanup refuses to erase guarded state. Native diagnostics and private ownership receipts are excluded from the public proof.
+
+`nativeOrphanJournalProtection` is required in every Windows host release cell. Its closed proof explicitly sets `installedServiceQualified`, `caEnrollmentQualified` and `orphanAgePolicyQualified` to false. Current source hashes, all mandatory scenario executions and successful owned cleanup are required. Offline proof/signature tests and PowerShell syntax checks validate the source contract; native execution remains pending. No clock, journal timestamp or orphan age is rewritten to claim elapsed coverage.

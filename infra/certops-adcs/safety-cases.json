@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "templateCases": [
+    {
+      "id": "eku-absent",
+      "name": "TTQualificationUnsafeAbsentEKU",
+      "schema": 2,
+      "eku": [],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-any-purpose-only",
+      "name": "TTQualificationUnsafeAnyPurposeOnly",
+      "schema": 2,
+      "eku": [
+        "2.5.29.37.0"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-any-purpose-mixed",
+      "name": "TTQualificationUnsafeAnyPurposeMixed",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1",
+        "2.5.29.37.0"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-enrollment-agent-only",
+      "name": "TTQualificationUnsafeRequestAgentOnly",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.4.1.311.20.2.1"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-enrollment-agent-mixed",
+      "name": "TTQualificationUnsafeRequestAgentMixed",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1",
+        "1.3.6.1.4.1.311.20.2.1"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-client-auth-only",
+      "name": "TTQualificationUnsafeClientAuthOnly",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.2"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-client-auth-mixed",
+      "name": "TTQualificationUnsafeEKU",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1",
+        "1.3.6.1.5.5.7.3.2"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-smartcard-logon-only",
+      "name": "TTQualificationUnsafeSmartcardOnly",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.4.1.311.20.2.2"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-smartcard-logon-mixed",
+      "name": "TTQualificationUnsafeSmartcardMixed",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1",
+        "1.3.6.1.4.1.311.20.2.2"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-pkinit-only",
+      "name": "TTQualificationUnsafePKINITOnly",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.2.3.4"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "eku-pkinit-mixed",
+      "name": "TTQualificationUnsafePKINITMixed",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1",
+        "1.3.6.1.5.2.3.4"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "eku_not_server_auth_only"
+    },
+    {
+      "id": "schema-version-one",
+      "name": "TTQualificationUnsafeSchema1",
+      "schema": 1,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "reason": "schema_version_1"
+    },
+    {
+      "id": "application-policy-only",
+      "name": "TTQualificationUnsafeAppPolicyOnly",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.2"
+      ],
+      "reason": "application_policy_not_server_auth_only"
+    },
+    {
+      "id": "application-policy-mixed",
+      "name": "TTQualificationUnsafeAppPolicyMixed",
+      "schema": 2,
+      "eku": [
+        "1.3.6.1.5.5.7.3.1"
+      ],
+      "applicationPolicies": [
+        "1.3.6.1.5.5.7.3.1",
+        "1.3.6.1.5.5.7.3.2"
+      ],
+      "reason": "application_policy_not_server_auth_only"
+    }
+  ],
+  "keyConstraintCases": [
+    {
+      "id": "rsa-below-template-minimum",
+      "template": "TTQualificationRSA4096",
+      "algorithm": "rsa",
+      "size": 2048,
+      "schema": 2
+    },
+    {
+      "id": "ec-on-schema-two",
+      "template": "TTQualificationRSAShort",
+      "algorithm": "ecdsa",
+      "size": 256,
+      "schema": 2
+    },
+    {
+      "id": "ec-curve-on-schema-three",
+      "template": "TTQualificationEC256Schema3",
+      "algorithm": "ecdsa",
+      "size": 384,
+      "schema": 3
+    },
+    {
+      "id": "rsa-on-ec-schema-three",
+      "template": "TTQualificationEC256Schema3",
+      "algorithm": "rsa",
+      "size": 2048,
+      "schema": 3
+    },
+    {
+      "id": "ec-curve-on-schema-four",
+      "template": "TTQualificationEC256",
+      "algorithm": "ecdsa",
+      "size": 384,
+      "schema": 4
+    },
+    {
+      "id": "rsa-on-ec-schema-four",
+      "template": "TTQualificationEC256",
+      "algorithm": "rsa",
+      "size": 2048,
+      "schema": 4
+    },
+    {
+      "id": "rsa2048-below-template3072",
+      "template": "TTQualificationRSA3072",
+      "algorithm": "rsa",
+      "size": 2048,
+      "schema": 2
+    },
+    {
+      "id": "rsa3072-below-template4096",
+      "template": "TTQualificationRSA4096",
+      "algorithm": "rsa",
+      "size": 3072,
+      "schema": 2
+    },
+    {
+      "id": "ec256-on-p384-schema-three",
+      "template": "TTQualificationEC384Schema3",
+      "algorithm": "ecdsa",
+      "size": 256,
+      "schema": 3
+    },
+    {
+      "id": "ec256-on-p384-schema-four",
+      "template": "TTQualificationEC384",
+      "algorithm": "ecdsa",
+      "size": 256,
+      "schema": 4
+    }
+  ],
+  "caFlagCases": [
+    {
+      "id": "san-attribute-enabled",
+      "template": "TTQualificationCAFlagSAN",
+      "editFlagsSet": 262144,
+      "interfaceFlagsClear": 0,
+      "reasons": [
+        "subject_alt_name_attribute_enabled"
+      ]
+    },
+    {
+      "id": "encrypted-requests-disabled",
+      "template": "TTQualificationCAFlagEncryption",
+      "editFlagsSet": 0,
+      "interfaceFlagsClear": 512,
+      "reasons": [
+        "encrypted_requests_not_enforced"
+      ]
+    },
+    {
+      "id": "both-ca-flags-unsafe",
+      "template": "TTQualificationCAFlagBoth",
+      "editFlagsSet": 262144,
+      "interfaceFlagsClear": 512,
+      "reasons": [
+        "subject_alt_name_attribute_enabled",
+        "encrypted_requests_not_enforced"
+      ]
+    }
+  ]
+}

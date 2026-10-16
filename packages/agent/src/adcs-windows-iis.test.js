@@ -785,11 +785,13 @@ describe("AD CS accept-failure key retention", () => {
     const block = src.slice(mirrorResume, mirrorResume + 1200);
     assert.match(block, /mirrorAcceptedCertificateToStore\(\{/);
     assert.match(block, /\bsignal\b/);
-    const retention = src.indexOf("async function performCleanup(row)");
+    const retention = src.indexOf("async function performCleanup(row, { signal, assertHeld })");
     assert.ok(retention >= 0);
-    const retentionBlock = src.slice(retention, retention + 900);
-    assert.match(retentionBlock, /storeLock\.run\(async \(signal\)/);
+    const retentionBlock = src.slice(retention, src.indexOf("const summary = await sweepLedger", retention));
     assert.match(retentionBlock, /removeCertificateAndKeyContainer\(\{[\s\S]*?signal,/);
+    const lockBlock = src.slice(src.indexOf("withRowLock: async (row, work)", retention), src.indexOf("windows-retention sweep:", retention));
+    assert.match(lockBlock, /acquireWindowsStoreLocks/);
+    assert.match(lockBlock, /storeLock\.run\(signal => work\(\{ signal,/);
   });
 });
 
@@ -1014,6 +1016,7 @@ describe("reject-A then attach-B continue-enrollment executor", () => {
         adcsHelperPath: helperPath,
         adcsCaCertPath: caCertPath,
         adcsTemplateOid: templateOid,
+        adcsEnrollmentRules:[{caConfig:snapshot.caConfig,template:snapshot.template,dnsScopes:["example.com"],keyAlgorithms:["ecdsa"]}],
         adcsRunDecision6ValidationImpl: async ({ certificatePem }) => {
           if (certificatePem.includes("LEAF-A")) {
             return {
@@ -1088,7 +1091,7 @@ describe("continue-enrollment recovery executor", () => {
     "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n";
   const leafPem = "-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----\n";
 
-  async function seedEnrollment(stateDir, enrollmentId, states) {
+  async function seedEnrollment(stateDir, enrollmentId, states, csrSpkiSha256 = "c".repeat(64)) {
     const caPem = fs.readFileSync(
       path.join(__dirname, "verify", "fixtures", "selfsigned.crt.pem"),
     );
@@ -1117,7 +1120,7 @@ describe("continue-enrollment recovery executor", () => {
       snapshotSha256,
       jobId: `job-${enrollmentId.slice(0, 8)}`,
       csrSha256,
-      csrSpkiSha256: "c".repeat(64),
+      csrSpkiSha256,
       templateOid,
       caConfig: snapshot.caConfig,
       template: snapshot.template,
@@ -1216,9 +1219,11 @@ describe("continue-enrollment recovery executor", () => {
   function contextFor(seed, extra = {}) {
     return {
       execution: { keysDir: path.join(path.dirname(seed.helperPath), "keys") },
+      windowsKeySurvivorHelperPath: __filename,
       adcsHelperPath: seed.helperPath,
       adcsCaCertPath: seed.caCertPath,
       adcsTemplateOid: templateOid,
+      adcsEnrollmentRules:[{caConfig:"ca.example.com\\Example CA",template:"WebServer",dnsScopes:["example.com"],keyAlgorithms:["ecdsa"]}],
       ...extra,
     };
   }
@@ -1231,6 +1236,186 @@ describe("continue-enrollment recovery executor", () => {
       await fsp.rm(stateDir, { recursive: true, force: true });
     }
   }
+
+  it("signed operator proposal rejects a foreign key before validation then validates the matching candidate", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5";
+    await withState(enrollmentId, async (stateDir) => {
+      const matchingPem = fs.readFileSync(path.join(__dirname, "verify", "fixtures", "leaf.crt.pem"), "utf8");
+      const foreignPem = fs.readFileSync(path.join(__dirname, "verify", "fixtures", "wrong-san.crt.pem"), "utf8");
+      const expectedSpki = computeSpkiSha256Hex(matchingPem);
+      assert.notEqual(computeSpkiSha256Hex(foreignPem), expectedSpki, "foreign fixture must actually use another key");
+      const seed = await seedEnrollment(stateDir, enrollmentId, "submitting", expectedSpki);
+      await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+        state: "submission_uncertain", reconcileSearchFrom: 100 });
+      let candidatePem = foreignPem;
+      let validations = 0;
+      let deployments = 0;
+      const retrieved = [];
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir, {
+        runWindowsIisDeployTail: async () => { deployments++; return { status: "succeeded", keyRotated: null }; },
+      });
+      const executionContext = contextFor(seed, {
+        adcsExecFileImpl: async (file, args) => {
+          assert.equal(args.includes("-retrieve"), true, "operator reconcile never submits");
+          retrieved.push(Number(args[args.indexOf("-config") + 2]));
+          fs.writeFileSync(args.at(-1), "unit CMC response fixture");
+          return { stdout: "", stderr: "" };
+        },
+        adcsDecodeCmcImpl: async () => ({ ok: true, result: { disposition: "issued",
+          certificateDerB64: new crypto.X509Certificate(candidatePem).raw.toString("base64") } }),
+        adcsTryReconcileUncertainSubmissionImpl: async () => { assert.fail("signed proposal must bypass automatic scan"); },
+        adcsRunDecision6ValidationImpl: async ({ csrSpkiSha256: actualSpki, snapshot, templateOid: actualOid }) => {
+          validations++;
+          assert.equal(actualSpki, expectedSpki);
+          assert.equal(snapshot.caConfig, "ca.example.com\\Example CA");
+          assert.equal(actualOid, templateOid);
+          return { ok: true };
+        },
+      });
+      seed.job.enrollment.reconcileRequestId = 77;
+      let result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      assert.equal(result.status, "failed");
+      assert.equal(result.enrollmentResult.state, "submission_uncertain");
+      assert.equal(validations, 0);
+      assert.equal(deployments, 0);
+      assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "submission_uncertain");
+      candidatePem = matchingPem;
+      seed.job.enrollment.reconcileRequestId = 78;
+      result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      assert.equal(result.status, "succeeded", result.errorMessage);
+      assert.equal(result.enrollmentResult.state, "installed");
+      assert.equal(result.enrollmentResult.requestId, 78);
+      assert.deepEqual(retrieved, [77, 78]);
+      assert.ok(validations >= 1, "matching SPKI still requires frozen issuer/template validation");
+      assert.equal(deployments, 1);
+    });
+  });
+
+  for (const terminalState of ["expired", "cancelled", "abandoned"]) {
+    it(`signed ${terminalState} continuation frees its pending key and replays without CA contact`, async () => {
+      const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+      await withState(enrollmentId, async (stateDir) => {
+        const seed = await seedEnrollment(stateDir, enrollmentId, "submitting");
+        await writeEnrollmentJournal(stateDir, enrollmentId, {
+          ...seed.journalBase, state: "pending_issuance", requestId: 42,
+        });
+        seed.job.enrollment.terminalState = terminalState;
+        let exists = true;
+        const calls = [];
+        const executionContext = contextFor(seed, {
+          windowsExecFileImpl: (file, args, opts, cb) => {
+            calls.push(args);
+            if (args[0] === "--key-survivors") {
+              assert.equal(file,__filename);
+              assert.deepEqual(args,["--key-survivors","--container",seed.journalBase.containerName]);
+              cb(null,JSON.stringify({complete:true,shared:false,storesScanned:3,certificatesScanned:0,matches:0}),"");
+              return {kill(){},once(){},pid:1};
+            }
+            assert.equal(file, "certutil.exe", "no CA helper or certreq may run");
+            if (args.includes("-key")) cb(null, exists ? seed.journalBase.containerName + "\n" : "", "");
+            else {
+              assert.deepEqual(args.slice(-2), ["-delkey", seed.journalBase.containerName]);
+              exists = false;
+              cb(null, "", "");
+            }
+            return { kill() {}, once() {}, pid: 1 };
+          },
+        });
+        const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+        for (let replay = 0; replay < 2; replay++) {
+          const result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+            jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+          assert.equal(result.status, "succeeded");
+          assert.equal(result.enrollmentResult.state, terminalState);
+          assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, terminalState);
+          assert.equal(exists, false);
+        }
+        assert.equal(calls.filter((args) => args.includes("-delkey")).length, 1);
+      });
+    });
+  }
+
+  it("a missing journal acknowledges only independently absent keys and refuses any deletion", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
+    await withState(enrollmentId, async (stateDir) => {
+      const snapshotBytes = Buffer.from(JSON.stringify({ kind: "adcs" }));
+      const job = { keyMode: "os-store-managed", target: { type: "windows-iis", store: "My", reference: "app.example.com",
+        binding: { site: "test-site", port: 443 } }, enrollment: {
+        enrollmentId, attempt: 1, terminalState: "cancelled",
+        snapshotB64: snapshotBytes.toString("base64"),
+        snapshotSha256: crypto.createHash("sha256").update(snapshotBytes).digest("hex"),
+      } };
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      for (const exists of [false, true]) {
+        const result = await executeWindowsIisContinueEnrollmentJob({ job, jobId: "cleanup-unclaimed",
+          client: {}, log: {}, executionContext: {
+            execution: { keysDir: path.join(stateDir, "keys") },
+            windowsExecFileImpl: (file, args, opts, cb) => {
+              assert.equal(file, "certutil.exe");
+              assert.equal(args.includes("-key"), true, "no delkey without a receipt");
+              cb(null, exists ? `tokentimer-enr-${enrollmentId}\n` : "", "");
+              return { kill() {}, once() {}, pid: 1 };
+            },
+          } });
+        assert.equal(result.status, exists ? "failed" : "succeeded", result.errorMessage);
+        assert.equal(readEnrollmentJournal(stateDir, enrollmentId).kind, "not_found");
+      }
+    });
+  });
+
+  it("terminal cleanup preserves its journal and key when a cross-store reference exists or inventory is incomplete", async()=>{
+    const enrollmentId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9";
+    for(const complete of [true,false]) await withState(enrollmentId,async stateDir=>{
+      const seed=await seedEnrollment(stateDir,enrollmentId,"submitting");seed.job.enrollment.terminalState="cancelled";
+      const before=readEnrollmentJournal(stateDir,enrollmentId).journal;let deletes=0,probes=0;
+      const result=await executorsFor(stateDir).executeWindowsIisContinueEnrollmentJob({job:seed.job,jobId:seed.journalBase.jobId,client:{},log:{},executionContext:contextFor(seed,{
+        windowsExecFileImpl(file,args,options,callback){
+          if(args.includes("-delkey"))deletes++;
+          if(args.includes("-key"))callback(null,seed.journalBase.containerName+"\n","");
+          else{assert.equal(args[0],"--key-survivors");probes++;callback(null,JSON.stringify({complete,shared:true,storesScanned:3,certificatesScanned:1,matches:1,...(!complete?{reason:"store_open_failed"}:{})}),"");}
+          return {kill(){},once(){},pid:1};
+        }
+      })});
+      assert.equal(result.status,"failed");assert.equal(result.enrollmentResult,undefined);assert.equal(deletes,0);assert.equal(probes,1);
+      assert.deepEqual(readEnrollmentJournal(stateDir,enrollmentId).journal,before);
+    });
+  });
+
+  it("terminal cleanup failure retains the journal for retry", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+    await withState(enrollmentId, async (stateDir) => {
+      const seed = await seedEnrollment(stateDir, enrollmentId, "submitting");
+      seed.job.enrollment.terminalState = "expired";
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      const result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext: contextFor(seed, {
+          windowsExecFileImpl: (file, args, opts, cb) => {
+            cb(new Error("denied"), "", ""); return { kill() {}, once() {}, pid: 1 };
+          },
+        }) });
+      assert.equal(result.status, "failed");
+      assert.equal(result.enrollmentResult, undefined);
+      assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "submitting");
+    });
+  });
+
+  it("terminal cleanup cannot delete a key after issuance may have begun", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
+    await withState(enrollmentId, async (stateDir) => {
+      const seed = await seedEnrollment(stateDir, enrollmentId, "issued");
+      seed.job.enrollment.terminalState = "cancelled";
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      const result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext: contextFor(seed, {
+          windowsExecFileImpl: () => { assert.fail("no native mutation allowed"); },
+        }) });
+      assert.equal(result.status, "failed");
+      assert.match(result.errorMessage, /may back an installed certificate/);
+      assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "issued");
+    });
+  });
 
   it("rewrites a crashed submitting journal to submission_uncertain and does not submit again", async () => {
     await withState("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", async (stateDir) => {

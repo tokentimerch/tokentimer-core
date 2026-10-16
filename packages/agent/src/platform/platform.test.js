@@ -597,6 +597,69 @@ describe("platform: durability limits", () => {
 
 describe("platform: clearWindowsServiceBootstrapToken", () => {
   const REG_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent";
+  function registrySpawn(entries, alternate) {
+    return fakeSpawn({ "reg.exe": (args) => args[0] === "query" ? {
+      status: 0, stdout: "Environment REG_MULTI_SZ " + (args[5] === "^" && alternate ? alternate : entries).join(args[5]),
+    } : { status: 0 } });
+  }
+
+  it("refuses a manually run agent whose config does not own the installed service", () => {
+    const spawn = registrySpawn(["TOKENTIMER_AGENT_CONFIG_DIR=C:\\installed\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_other"]);
+    const result = platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\manual\\state", platform: "win32", spawn });
+    assert.equal(result.cleared, false);
+    assert.equal(result.reason, "service config directory does not match this agent");
+    assert.deepEqual(spawn.calls.map((call) => call.args[0]), ["query"]);
+  });
+
+  it("preserves unrelated entries and literal backslash-zero paths while removing both bootstrap values", () => {
+    const retained = ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\state", "PATH=C:\\0sdk;C:\\Program Files\\Node;C:\\PROGRA~1\\Tools", "CUSTOM= spaces = values "];
+    const spawn = registrySpawn([...retained, "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret", "tokentimer_agent_bootstrap_token_id=token-id"]);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:/state/", platform: "win32", spawn }).cleared, true);
+    const write = spawn.calls.find((call) => call.args[0] === "add").args;
+    assert.equal(write[write.indexOf("/d") + 1], retained.join("|"));
+    assert.equal(write[write.indexOf("/s") + 1], "|");
+  });
+
+  it("removes a token-id-only residue for its owning config", () => {
+    const spawn = registrySpawn(["TOKENTIMER_AGENT_CONFIG_DIR=C:\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID=residue"]);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", platform: "win32", spawn }).cleared, true);
+  });
+
+  it("refuses absent or duplicated config ownership and unsafe caller paths", () => {
+    for (const entries of [["TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"],
+      ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\state", "tokentimer_agent_config_dir=C:\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"]]) {
+      const spawn = registrySpawn(entries);
+      assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", platform: "win32", spawn }).cleared, false);
+      assert.equal(spawn.calls.some((call) => call.args[0] === "add"), false);
+    }
+    for (const configDir of [undefined, "state", "C:state", "\\state", "\\\\?\\C:\\state", "C:\\state\nother"]) {
+      const spawn = registrySpawn([]);
+      assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir, platform: "win32", spawn }).attempted, false);
+      assert.equal(spawn.calls.length, 0);
+    }
+  });
+
+  it("refuses separator collisions instead of corrupting unrelated service values", () => {
+    for (const entry of ["CUSTOM=value|LOOKS_LIKE_AN_ENTRY=other", "CUSTOM=value^LOOKS_LIKE_AN_ENTRY=other"]) {
+      const spawn = registrySpawn(["TOKENTIMER_AGENT_CONFIG_DIR=C:\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret", entry]);
+      assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", platform: "win32", spawn }).cleared, false);
+      assert.equal(spawn.calls.some((call) => call.args[0] === "add"), false);
+    }
+  });
+
+  it("refuses an environment changed between its independent native renderings", () => {
+    const spawn = registrySpawn(["TOKENTIMER_AGENT_CONFIG_DIR=C:\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"],
+      ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\other-state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"]);
+    assert.equal(platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", platform: "win32", spawn }).cleared, false);
+    assert.equal(spawn.calls.length, 2);
+  });
+
+  it("reports thrown native launch errors without failing registration", () => {
+    const result = platform.clearWindowsServiceBootstrapToken({ configDir: "C:\\state", platform: "win32",
+      spawn: () => { throw Object.assign(new Error("sensitive native details"), { code: "ENOENT" }); } });
+    assert.equal(result.cleared, false);
+    assert.equal(result.reason, "reg.exe is not available on this host");
+  });
 
   it("is a no-op on a non-Windows platform", () => {
     const spawn = fakeSpawn({});
@@ -618,11 +681,14 @@ describe("platform: clearWindowsServiceBootstrapToken", () => {
             REG_KEY,
             "/v",
             "Environment",
+            "/se",
+            args[5],
           ]);
+          assert.ok(["|", "^"].includes(args[5]));
           return {
             status: 0,
             stdout:
-              "    Environment    REG_MULTI_SZ    TOKENTIMER_AGENT_CONFIG_DIR=C:\\ProgramData\\TokenTimerAgent\\state\\0TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret",
+              ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\ProgramData\\TokenTimerAgent\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"].join(args[5]).replace(/^/, "    Environment    REG_MULTI_SZ    "),
           };
         }
         if (args[0] === "add") {
@@ -635,6 +701,8 @@ describe("platform: clearWindowsServiceBootstrapToken", () => {
             "REG_MULTI_SZ",
             "/d",
             "TOKENTIMER_AGENT_CONFIG_DIR=C:\\ProgramData\\TokenTimerAgent\\state",
+            "/s",
+            "|",
             "/f",
           ]);
           return { status: 0 };
@@ -648,7 +716,7 @@ describe("platform: clearWindowsServiceBootstrapToken", () => {
       spawn,
     });
     assert.deepEqual(result, { attempted: true, cleared: true });
-    assert.equal(spawn.calls.length, 2);
+    assert.equal(spawn.calls.length, 3);
   });
 
   it("does not write anything when the registry value already has no token", () => {
@@ -715,7 +783,7 @@ describe("platform: clearWindowsServiceBootstrapToken", () => {
         if (args[0] === "query") {
           return {
             status: 0,
-            stdout: "Environment REG_MULTI_SZ TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret",
+            stdout: "Environment REG_MULTI_SZ " + ["TOKENTIMER_AGENT_CONFIG_DIR=C:\\state", "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_secret"].join(args[5]),
           };
         }
         return { status: 1, stderr: "access denied" };
