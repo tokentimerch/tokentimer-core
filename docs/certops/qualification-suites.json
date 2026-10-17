@@ -1413,7 +1413,14 @@
       "adcs-lost-submit-owned-candidate": "integration"
     },
     "adcs-uncertain-abandon": {
-      "adcs-uncertain-abandon-accepted": "integration"
+      "adcs-real-installed-native-language": "real-host",
+      "adcs-real-agent-registration-system": "real-host",
+      "adcs-real-uncertain-zero-request-owned-termination": "real-host",
+      "adcs-real-uncertain-zero-request-acknowledged-recovery": "real-host",
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key": "real-host",
+      "adcs-real-browser-uncertain-abandon-confirmation": "real-host",
+      "adcs-real-browser-abandon-native-key-cleanup": "real-host",
+      "adcs-real-owned-cleanup": "real-host"
     },
     "adcs-cmc-renewal": {
       "adcs-cmc-signed-renewal": "integration",
@@ -2127,9 +2134,12 @@
     ],
     "adcs-uncertain-abandon": [
       "windows",
+      "elevated",
       "domain",
       "api",
-      "qualifiedBuild"
+      "qualifiedBuild",
+      "browserRuntime",
+      "dashboard"
     ],
     "adcs-cmc-renewal": [
       "windows",
@@ -3627,7 +3637,14 @@
       "adcs-lost-submit-owned-candidate"
     ],
     "adcs-uncertain-abandon": [
-      "adcs-uncertain-abandon-accepted"
+      "adcs-real-installed-native-language",
+      "adcs-real-agent-registration-system",
+      "adcs-real-uncertain-zero-request-owned-termination",
+      "adcs-real-uncertain-zero-request-acknowledged-recovery",
+      "adcs-real-uncertain-zero-request-public-abandon-cleans-key",
+      "adcs-real-browser-uncertain-abandon-confirmation",
+      "adcs-real-browser-abandon-native-key-cleanup",
+      "adcs-real-owned-cleanup"
     ],
     "adcs-cmc-renewal": [
       "adcs-cmc-signed-renewal",
@@ -3832,7 +3849,7 @@
     "adcs-browser-enrollment": "real-host",
     "adcs-install-interruption": "integration",
     "adcs-lost-submit": "integration",
-    "adcs-uncertain-abandon": "integration",
+    "adcs-uncertain-abandon": "real-host",
     "adcs-cmc-renewal": "integration",
     "adcs-safety-variants": "integration",
     "adcs-crash-experiments": "integration",

@@ -14,6 +14,13 @@ const { pathToFileURL } = require("node:url");
 const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
 const startObserver = require("./certops-adcs-journal-phase");
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-adcs-uncertain-abandon-native.js",
+  "scripts/certops_adcs_uncertain_abandon_proof.py",
+  "infra/certops-adcs/provision-lab.ps1",
+  "infra/certops-adcs/read-report.ps1",
+  "infra/certops-adcs/run-windows-tests.ps1",
+  "infra/certops-adcs/control-plane.sh",
+  ".github/workflows/certops-enterprise-adcs-qualification.yml",
   "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
   "tests/e2e/helpers/certops-adcs-journal-phase.js",
   "infra/certops-adcs/journal-phase-fault.ps1",
@@ -158,6 +165,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
         proof.actualLeaseWaitMs = Math.floor(performance.now() - leaseMeasurementStart);
         proof.actualLeaseExpiry = true;
         const recovered = await fixture.request(`${api}/enrollments/${created.body.enrollmentId}/recover`, "POST", { orphanedJobId: created.body.jobId, acknowledgeUnknownEffect: true, reason: "Disposable qualification verified exact stopped service tree and zero native CA requests; preserve the original CSR and key" }); assert.equal(recovered.status, 201);
+        gate.report.nativeUncertainAbandonIdentity = {enrollmentId:created.body.enrollmentId,originalJobId:created.body.jobId,recoveryJobId:recovered.body.jobId,containerName:original.journal.containerName,csrSha256:original.journal.csrSha256,csrSpkiSha256:original.journal.csrSpkiSha256};
         ps("Start-Service TokenTimerAgent -ErrorAction Stop"); stopped = false;
         await until(async () => (await enrollment())?.state === "submission_uncertain");
         await until(async () => ["failed", "blocked"].includes((await getJob(recovered.body.jobId))?.status));
@@ -175,6 +183,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
         if(abandonActor)await abandonActor.abandonEnrollment(created.body.enrollmentId);
         else assert.equal((await fixture.request(`${api}/enrollments/${created.body.enrollmentId}/abandon`, "POST", {})).status, 204);
         const scheduled = (await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({ client: fixture.pool, now: new Date() })).find(row => row.enrollmentId === created.body.enrollmentId); assert.ok(scheduled); await jobFinished(scheduled.jobId);
+        gate.report.nativeUncertainAbandonIdentity.cleanupJobId=scheduled.jobId;
         const final = readEnrollmentJournal(configDir, created.body.enrollmentId); assert.equal(final.kind, "valid"); assert.equal(final.journal.state, "abandoned");
         const abandonedEnrollment=await enrollment();assert.equal(abandonedEnrollment.state, "abandoned");
         const keyPresent=command("certutil.exe", ["-csp", "Microsoft Software Key Storage Provider", "-key"]).includes(final.journal.containerName);assert.equal(keyPresent,false);

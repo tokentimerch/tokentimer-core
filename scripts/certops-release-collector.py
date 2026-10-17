@@ -55,6 +55,7 @@ import certops_windows_failed_rollback_proof as windows_failed_rollback_proof
 import certops_native_issuer_reassignment_proof as issuer_reassignment_proof
 import certops_windows_bind_failure_native_proof as windows_bind_failure_native_proof
 import certops_adcs_browser_enrollment_proof as browser_enrollment_proof
+import certops_adcs_uncertain_abandon_proof as uncertain_abandon_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -1369,6 +1370,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "adcs-uncertain-abandon":
+            result["nativeAdcsUncertainAbandon"] = uncertain_abandon_proof.fields(value, browser_abandon_fields)
+            result.update(platform="win32", architecture="x64")
         if value.get("suite") == "adcs-browser-enrollment":
             result["nativeAdcsBrowserEnrollment"] = browser_enrollment_proof.fields(value)
             result.update(platform="win32",architecture="x64")
@@ -2273,6 +2277,7 @@ def main(arguments=()):
                     acme_bulk_proof.verify_workflow(report, run.get("path"))
                     issuer_reassignment_proof.verify_workflow(report, run.get("path"))
                     browser_enrollment_proof.verify_workflow(report, run.get("path"))
+                    uncertain_abandon_proof.verify_workflow(report, run.get("path"))
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"

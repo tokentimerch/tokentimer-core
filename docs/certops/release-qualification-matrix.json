@@ -1500,7 +1500,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -1689,7 +1692,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -1878,7 +1884,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -2067,7 +2076,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -2256,7 +2268,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -2445,7 +2460,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -2634,7 +2652,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -2823,7 +2844,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -3012,7 +3036,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -4005,7 +4032,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -6933,7 +6963,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -7124,7 +7157,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -7315,7 +7351,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -7506,7 +7545,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -7697,7 +7739,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -7888,7 +7933,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -8079,7 +8127,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -8270,7 +8321,10 @@
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
         "tests/e2e/helpers/certops-native-issuer-reassignment.js",
         "infra/certops-adcs/read-report.ps1",
-        ".github/workflows/certops-enterprise-adcs-qualification.yml"
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/control-plane.sh"
       ]
     },
     {
@@ -10264,16 +10318,45 @@
       "id": "adcs-uncertain-abandon",
       "kind": "host",
       "suite": "adcs-uncertain-abandon",
-      "source": "scripts/certops-adcs-uncertain-abandon.js",
+      "source": "scripts/certops-adcs-uncertain-abandon-native.js",
       "environment": {
         "osFamily": "windows",
-        "executionSurface": "script-contract"
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
       },
       "requiredSources": [
-        "scripts/certops-adcs-uncertain-abandon.js",
+        "scripts/certops-adcs-uncertain-abandon-native.js",
+        "scripts/certops_adcs_uncertain_abandon_proof.py",
+        "infra/certops-adcs/provision-lab.ps1",
+        "infra/certops-adcs/read-report.ps1",
+        "infra/certops-adcs/run-windows-tests.ps1",
+        "infra/certops-adcs/control-plane.sh",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
-        "docs/certops/adcs/uncertain-abandon.md",
-        ".github/workflows/certops-adcs-coverage-variants.yml"
+        "tests/e2e/helpers/certops-adcs-journal-phase.js",
+        "infra/certops-adcs/journal-phase-fault.ps1",
+        "infra/certops-adcs/owned-request-observation.ps1",
+        "infra/certops-adcs/main.bicep",
+        "apps/worker/src/certops-worker.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "packages/agent/src/adcs-windows-iis.js",
+        "packages/agent/src/windows-cert-store/index.js",
+        "packages/agent/src/windows-key-survivors/index.js",
+        "packages/agent/src/issuers/adcs-enrollment-reconcile.js",
+        "packages/agent/src/issuers/adcs-enrollment.js",
+        "packages/agent/src/issuers/adcs.js",
+        "tests/e2e/helpers/certops-adcs-browser-abandon.js",
+        "tests/e2e/helpers/certops-adcs-browser-journey.js",
+        "tests/e2e/certops-adcs-real-e2e.test.js",
+        "apps/dashboard/src/pages/certops/CertOpsAdcs.jsx",
+        "apps/dashboard/src/components/certops/certopsEnrollmentsApi.js",
+        "apps/api/routes/certops-enrollments.js",
+        "infra/certops-adcs/browser-api-trust.ps1",
+        "infra/certops-adcs/browser-windows-tools.ps1",
+        "package.json",
+        "pnpm-lock.yaml",
+        "tests/e2e/helpers/certops-adcs-browser-session.js"
       ]
     },
     {

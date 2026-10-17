@@ -676,6 +676,8 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
     if(gate.report.experimental!==true && gate.report.qualificationStatus!=="not-qualified" && !issuerSwitch && !elapsedPending && !hierarchy && requestedVersion==="2022" && (process.env.CERTOPS_WINDOWS_LANGUAGE||"en-US")==="en-US"){
       const browserEnrollment=require("./helpers/certops-adcs-browser-enrollment");
       browserEnrollment.writeReport("C:\\ttqualification\\browser-enrollment-native.json",browserEnrollment.createNativeReport(gate.report));
+      const nativeAbandon=require("../../scripts/certops-adcs-uncertain-abandon-native");
+      browserEnrollment.writeReport("C:\\ttqualification\\uncertain-abandon-native.json",nativeAbandon.createNativeReport(gate.report));
     }
   }
 });

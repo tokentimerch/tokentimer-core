@@ -17,7 +17,7 @@ const catalog = require("../docs/certops/e2e-scenario-catalog.json");
 // producer. A passed outer envelope must never upgrade their simulated proofs.
 // A future native implementation must deliberately replace this eligibility gate.
 const localContractSuites = new Set([
-  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => id !== "adcs-browser-enrollment"),
+  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => !["adcs-browser-enrollment","adcs-uncertain-abandon"].includes(id)),
   ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
 ]);
@@ -290,10 +290,14 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const n=artifact.report.qualificationEnvironment;
           if(artifact.report.platform!=="win32"||artifact.report.architecture!=="x64"||n.osFamily!=="windows"||n.osVersion!=="2022"||n.nativeLanguage!=="en-US"||n.identity!=="LocalSystem"||n.measurement!=="native"||artifact.report.cleanup?.status!=="passed")throw new Error("Native browser enrollment requires completed SYSTEM root-domain Server2022 execution");
         }
+        if(slot.suite === "adcs-uncertain-abandon"){
+          require("./certops-adcs-uncertain-abandon-native").verifyNativeProof(artifact.report.nativeAdcsUncertainAbandon);
+          const n=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="win32"||artifact.report.architecture!=="x64"||n.osFamily!=="windows"||n.osVersion!=="2022"||n.nativeLanguage!=="en-US"||n.identity!=="LocalSystem"||n.measurement!=="native"||artifact.report.cleanup?.status!=="passed")throw new Error("Native uncertain abandon requires completed SYSTEM root-domain Server2022 execution");
+        }
         const adcsLocalContracts = {
           "adcs-install-interruption": ["../tests/e2e/helpers/certops-adcs-install-interruption", "nativeAdcsInstallInterruption"],
           "adcs-lost-submit": ["../tests/e2e/helpers/certops-adcs-lost-submit", "nativeAdcsLostSubmit"],
-          "adcs-uncertain-abandon": ["./certops-adcs-uncertain-abandon", "nativeAdcsUncertainAbandon"],
           "adcs-cmc-renewal": ["../tests/e2e/helpers/certops-adcs-cmc-renewal", "nativeAdcsCmcRenewal"],
           "adcs-safety-variants": ["../tests/e2e/helpers/certops-adcs-safety-variants", "nativeAdcsSafetyVariants"],
           "adcs-crash-experiments": ["../tests/e2e/helpers/certops-adcs-crash-experiments", "nativeAdcsCrashExperiments"],

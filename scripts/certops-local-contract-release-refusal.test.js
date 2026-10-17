@@ -39,7 +39,7 @@ function check(suite, extra) {
   return verifyMatrix([artifact], { candidateSha, specification: { schemaVersion: 1, slots: [slot] } });
 }
 const ids = [
-  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => id !== "adcs-browser-enrollment"),
+  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => !["adcs-browser-enrollment","adcs-uncertain-abandon"].includes(id)),
   ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
 ];
