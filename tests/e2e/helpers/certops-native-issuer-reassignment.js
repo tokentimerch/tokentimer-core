@@ -57,6 +57,42 @@ const FLAGS = Object.freeze([
 const SCOPE = "confirmed-adcs-issuer-switch-then-production-scheduler-renewal";
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const normalized = value => String(value).replace(/:/g, "").toLowerCase();
+// Public TLS probes retain their sockets until actual close. A destroy request
+// alone cannot authorize native fixture cleanup or a completed report.
+function createOwnedTlsProbes({ timeoutMs = 10000 } = {}) {
+  const sockets = new Set();
+  async function drain() {
+    await Promise.all([...sockets].map(socket => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Owned TLS probe close unproven")), timeoutMs);
+      socket.once("close", () => { clearTimeout(timer); sockets.delete(socket); resolve(); });
+      socket.destroy();
+    })));
+    assert.equal(sockets.size, 0, "Preserve native fixtures while a TLS probe remains open");
+  }
+  function observe(options, inspect) {
+    return new Promise((resolve, reject) => {
+      const socket = require("node:tls").connect(options);
+      sockets.add(socket);
+      let value, failure, completed = false, closeTimer;
+      const requestClose = () => {
+        closeTimer ??= setTimeout(() => reject(new Error("Owned TLS probe close unproven")), timeoutMs);
+        socket.destroy();
+      };
+      const timer = setTimeout(() => { failure ??= new Error("Owned TLS probe timed out"); requestClose(); }, timeoutMs);
+      socket.once("secureConnect", () => {
+        try { value = inspect(socket); completed = true; } catch (error) { failure = error; }
+        requestClose();
+      });
+      socket.on("error", error => { failure ??= error; requestClose(); });
+      socket.once("close", () => {
+        clearTimeout(timer); clearTimeout(closeTimer); sockets.delete(socket);
+        if (failure || !completed) reject(failure || new Error("TLS probe closed before observation"));
+        else resolve(value);
+      });
+    });
+  }
+  return { observe, drain, isDrained: () => sockets.size === 0 };
+}
 function domain(run) {
   assert.match(run, /^[a-f0-9]{10}$/);
   return `certops-adcs-${run}-issuer-switch.example.test`;
@@ -102,6 +138,7 @@ function verifyProof(value, { requireNative = false } = {}) {
     const configs = ["tt-ca.lab.certops.test\\TTQualificationRoot", "tt-ca-switch.lab.certops.test\\TTQualificationDestination"];
     for (let i = 0; i < 2; i++) {
       const request = value.nativeRequests[i];
+      assert.equal(value.containerNames[i], `tokentimer-enr-${value.enrollmentIds[i]}`);
       assert.deepEqual(Object.keys(request).sort(), ["caConfig", "caKeySha256", "requestId", "disposition", "subjectRequestCount", "fingerprintSha256"].sort());
       assert.equal(request.caConfig, configs[i]);
       assert.equal(request.caKeySha256, i === 0 ? value.originCaKeySha256 : value.destinationCaKeySha256);
@@ -162,17 +199,19 @@ async function qualifyNativeIssuerReassignment(context) {
   const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
   const { buildEnrollmentContainerName, readIssuedContainerRecord } = require("../../../packages/agent/src/windows-cert-store");
   const scheduler = require("../../../apps/api/services/certops/renewalScheduler");
-  const tls = require("node:tls");
   const net = require("node:net");
   const {
     gate, fixture, api, agentRowId, caConfig, destinationCaConfig, command, ps, until, jobFinished,
     configDir, workDir, run, tlsAuthority, ownedEnrollmentIds, ownedCertificateIds, ownedSites,
-    ownedThumbprints, registerOwnedStoreCertificate, reservePrimaryPreflights,
+    ownedThumbprints, registerOwnedStoreCertificate, reservePrimaryPreflights, ownedTlsProbes,
   } = context;
   assert.equal(typeof reservePrimaryPreflights, "function");
   assert.equal(typeof registerOwnedStoreCertificate, "function");
   assert.equal(typeof ownedThumbprints?.add, "function");
   assert.ok(Array.isArray(ownedEnrollmentIds) && Array.isArray(ownedCertificateIds) && Array.isArray(ownedSites));
+  assert.ok(Array.isArray(ownedTlsProbes), "Parent must retain TLS ownership through cleanup");
+  const probes = createOwnedTlsProbes();
+  ownedTlsProbes.push(probes);
   assert.equal(typeof caConfig, "string");
   assert.equal(typeof destinationCaConfig, "string");
   assert.ok(caConfig.includes("\\") && destinationCaConfig.includes("\\"));
@@ -291,18 +330,12 @@ async function qualifyNativeIssuerReassignment(context) {
     assert.equal(originRow.issuer_id, origin.issuerId);
     assert.equal(originRow.assigned_agent_id, agentRowId);
     assert.equal(JSON.parse(Buffer.from(originRow.snapshot_bytes).toString("utf8")).caKeySha256, origin.caKeySha256);
-    const peer = async authority => new Promise((resolve, reject) => {
-      const socket = tls.connect({ host: "127.0.0.1", port, servername: subject, ca: tlsAuthority(authority), rejectUnauthorized: true }, () => {
-        try {
+    const peer = authority => probes.observe({ host: "127.0.0.1", port, servername: subject, ca: tlsAuthority(authority), rejectUnauthorized: true }, socket => {
           assert.equal(socket.authorized, true);
           const leaf = new crypto.X509Certificate(socket.getPeerCertificate().raw);
           assert.equal(leaf.checkHost(subject), subject);
           assert.equal(leaf.subject, `CN=${subject}`);
-          resolve(describe(leaf));
-        } catch (error) { reject(error); } finally { socket.destroy(); }
-      });
-      socket.once("error", reject);
-      socket.setTimeout(10000, () => socket.destroy(new Error("Issuer reassignment trusted TLS observation timed out")));
+          return describe(leaf);
     });
     const nativeRequest = (leaf, issuingCaConfig) => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, "infra/certops-adcs/owned-issued-request.ps1"), "-CommonName", subject, "-FingerprintSha256", leaf.fingerprint, "-CaConfig", issuingCaConfig]));
     const custody = (leaf, enrollmentId, jobId) => {
@@ -436,6 +469,8 @@ async function qualifyNativeIssuerReassignment(context) {
     }, { evidenceLevel: "real-host", oracle: "Default SQL-NOW sweep creates one automation renewal frozen to the destination issuer; the successor leaf is signed by that CA and replaces the same IIS coordinate" });
   } catch (error) {
     primaryError = error;
+  } finally {
+    try { await probes.drain(); } catch (error) { primaryError = new AggregateError([...(primaryError ? [primaryError] : []), error], "Owned issuer-switch TLS probes remain unresolved"); }
   }
   if (primaryError) throw new AggregateError([primaryError], "Native AD CS issuer reassignment failed; preserve unresolved native ownership");
   await gate.scenario(REQUIRED_SCENARIOS[2], async () => {
@@ -491,6 +526,6 @@ async function qualifyNativeIssuerReassignment(context) {
 }
 if (require.main === module) process.exitCode = dispatch();
 module.exports = {
-  NATIVE_REQUIRED_SCENARIOS, qualifyNativeIssuerReassignment, verifyProof, verifyNativeProof, assessLab, dispatch, buildClosedReport,
+  createOwnedTlsProbes, NATIVE_REQUIRED_SCENARIOS, qualifyNativeIssuerReassignment, verifyProof, verifyNativeProof, assessLab, dispatch, buildClosedReport,
   REQUIRED_SCENARIOS, REQUIRED_SOURCES, REQUIRED_CAPABILITIES, FLAGS, SCOPE, SUITE, SOURCE, domain,
 };

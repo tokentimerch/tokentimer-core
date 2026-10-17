@@ -231,3 +231,37 @@ test("the domain-only workflow is manual, protected and destroys its optional fo
   const errors = require("./certops-workflow-security").validateWorkflow(workflow, name);
   assert.deepEqual(errors, []);
 });
+test("real benign loopback TLS probes close before success, refusal and parent cleanup", async () => {
+  const { spawnSync } = require("node:child_process");
+  const tls = require("node:tls");
+  const { createOwnedTlsProbes } = require("../tests/e2e/helpers/certops-native-issuer-reassignment");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "issuer-switch-public-tls-"));
+  const key = path.join(directory, "key.pem"), cert = path.join(directory, "cert.pem");
+  const sockets = new Set();
+  let server;
+  const probes = createOwnedTlsProbes({timeoutMs:3000});
+  try {
+    // Benign software test certificate only; no OS store, CNG or agent custody.
+    const generated = spawnSync(process.env.OPENSSL_BIN || "openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1"], {encoding:"utf8"});
+    assert.ifError(generated.error); assert.equal(generated.status, 0, "OpenSSL test prerequisite failed");
+    server = tls.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(cert)});
+    server.on("tlsClientError", () => {});
+    server.on("connection", socket => {sockets.add(socket);socket.once("close",()=>sockets.delete(socket));});
+    await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+    const options = {host:"127.0.0.1",port:server.address().port,servername:"localhost",ca:fs.readFileSync(cert),rejectUnauthorized:true};
+    const subject = await probes.observe(options, socket => {assert.equal(socket.authorized,true);return socket.getPeerCertificate().subject.CN;});
+    assert.equal(subject,"localhost"); assert.equal(probes.isDrained(),true);
+    await assert.rejects(probes.observe({...options,servername:"foreign.example.test"},()=>true));
+    assert.equal(probes.isDrained(),true);
+    await assert.rejects(probes.observe(options,()=>{throw new Error("Observed refusal");}),/Observed refusal/);
+    assert.equal(probes.isDrained(),true);
+    const pending = assert.rejects(probes.observe(options,()=>true),/closed before observation|reset|hang up|disconnected/i);
+    await probes.drain(); await pending;
+    assert.equal(probes.isDrained(),true);
+  } finally {
+    await probes.drain();
+    for(const socket of sockets)socket.destroy();
+    if(server)await new Promise(resolve=>server.close(resolve));
+    fs.rmSync(directory,{recursive:true,force:true});
+  }
+});

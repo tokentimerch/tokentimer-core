@@ -44,7 +44,6 @@ const ids = [
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
   "windows-installed-bind-failure-rollback",
   "windows-installed-interruption-recovery",
-  "native-adcs-issuer-reassignment",
 ];
 for (const suite of ids) test(`passed envelope cannot qualify local contract ${suite}`, () => {
   assert.match(check(suite).join("\n"), /Local-contract-only suite has no native qualifying producer/);
@@ -64,8 +63,8 @@ test("valid browser, DNS and Windows local proofs remain nonqualifying", () => {
 test("native eligible suite with complete generic evidence still passes", () => {
   assert.deepEqual(check("job-decisions-api"), []);
 });
-test("pending or relabeled installed and issuer proofs cannot bypass producer eligibility", () => {
-  for (const suite of ids.slice(-3)) {
+test("pending or relabeled installed proofs cannot bypass producer eligibility", () => {
+  for (const suite of ids.slice(-2)) {
     for (const extra of [
       { nativeExecutionQualified: false, nativeCell: "pending" },
       { nativeExecutionQualified: true, nativeCell: "qualified" },
@@ -87,4 +86,8 @@ test("second-rename native slot rejects a transplanted valid local proof", () =>
   const { proof } = helper.applySecondRenameFailure(manifest);
   helper.verifyLocalContract(proof);
   assert.match(check("windows-activation-second-rename", { nativeSecondRename: proof }).join("\n"), /Native second-rename activation proof required/);
+});
+
+test("issuer report labels without native proof cannot qualify", () => {
+  for (const nativeCell of ["pending", "qualified"]) assert.ok(check("native-adcs-issuer-reassignment", {nativeCell}).length);
 });

@@ -962,9 +962,19 @@ test("native issuer reassignment stays pending without a disposable forest", () 
   value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
   value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
-  assert.match(verifyMatrix([value], options).join("\n"), /Local-contract-only suite/);
+  assert.ok(verifyMatrix([value], options).length);
   const qualified = structuredClone(value); qualified.report.nativeCell = "qualified";
   assert.ok(verifyMatrix([qualified], options).length);
   const missing = structuredClone(value); delete missing.report.nativeIssuerReassignment;
   assert.ok(verifyMatrix([missing], options).length);
+  const native = structuredClone(value);
+  Object.assign(native.report, {nativeCell:"qualified", platform:"win32", architecture:"x64", cleanup:{status:"passed"}});
+  native.report.nativeIssuerReassignment.nativeCell = "qualified";
+  native.report.nativeIssuerReassignment.requestIds = ["17", "17"];
+  native.report.nativeIssuerReassignment.nativeRequests = ["tt-ca.lab.certops.test\\TTQualificationRoot", "tt-ca-switch.lab.certops.test\\TTQualificationDestination"].map((caConfig,i)=>({caConfig,caKeySha256:i===0?proof.originCaKeySha256:proof.destinationCaKeySha256,requestId:"17",disposition:20,subjectRequestCount:1,fingerprintSha256:proof.fingerprints[i]}));
+  assert.deepEqual(verifyMatrix([native], options), []);
+  for(const mutate of [r=>{r.nativeIssuerReassignment.nativeCell="pending";},r=>{r.nativeIssuerReassignment.nativeRequests[1].caConfig=r.nativeIssuerReassignment.nativeRequests[0].caConfig;},r=>{r.cleanup.status="failed";},r=>{r.architecture="arm64";},r=>{r.qualificationEnvironment.osVersion="2025";},r=>{r.scenarios.pop();}]){
+    const invalid=structuredClone(native);mutate(invalid.report);assert.ok(verifyMatrix([invalid],options).length);
+  }
+
 });

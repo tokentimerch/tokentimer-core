@@ -51,6 +51,7 @@ import certops_linux_installed_discovery_proof as linux_installed_discovery_proo
 import certops_windows_stop_offline_proof as windows_stop_offline_proof
 import certops_windows_alive_grace_proof as windows_alive_grace_proof
 import certops_windows_failed_rollback_proof as windows_failed_rollback_proof
+import certops_native_issuer_reassignment_proof as issuer_reassignment_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -61,7 +62,7 @@ WORKFLOWS = {
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
         "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml", "certops-windows-arm64-agent.yml",
         "certops-windows-fixed-root.yml", "certops-windows-webhosting-retention.yml", "certops-windows-stop-offline.yml", "certops-windows-alive-grace.yml",
-        "certops-native-agent-qualification.yml",
+        "certops-native-agent-qualification.yml", "certops-native-issuer-reassignment.yml",
         "certops-scheduler-capacity-qualification.yml",
         "certops-renewal-alert-qualification.yml",
         "certops-log-maintenance-qualification.yml",
@@ -1359,6 +1360,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "native-adcs-issuer-reassignment":
+            result["nativeIssuerReassignment"] = issuer_reassignment_proof.fields(value)
+            result.update(nativeCell="qualified", platform="win32", architecture="x64")
         if value.get("suite") == "windows-installed-alive-grace-renewal":
             result["nativeWindowsAliveGrace"] = windows_alive_grace_proof.fields(value)
         if value.get("suite") == "windows-installed-failed-rollback-renewal":
@@ -2284,6 +2288,7 @@ def main(arguments=()):
                     acme_browser_lifecycle_proof.verify_workflow(report, run.get("path"))
                     linux_installed_discovery_proof.verify_workflow(report, run.get("path"))
                     acme_bulk_proof.verify_workflow(report, run.get("path"))
+                    issuer_reassignment_proof.verify_workflow(report, run.get("path"))
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"

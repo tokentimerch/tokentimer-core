@@ -1381,9 +1381,12 @@
       "windows-installed-deterministic-interruption": "integration"
     },
     "native-adcs-issuer-reassignment": {
+      "adcs-real-installed-native-language": "real-host",
+      "adcs-real-agent-registration-system": "real-host",
       "adcs-real-issuer-reassignment-confirmed-switch": "real-host",
       "adcs-real-issuer-reassignment-renewal-migrates": "real-host",
-      "adcs-real-issuer-reassignment-cleanup": "real-host"
+      "adcs-real-issuer-reassignment-cleanup": "real-host",
+      "adcs-real-owned-cleanup": "real-host"
     },
     "adcs-browser-enrollment": {
       "adcs-browser-preflight": "integration",
@@ -3577,9 +3580,12 @@
       "windows-installed-deterministic-interruption"
     ],
     "native-adcs-issuer-reassignment": [
+      "adcs-real-installed-native-language",
+      "adcs-real-agent-registration-system",
       "adcs-real-issuer-reassignment-confirmed-switch",
       "adcs-real-issuer-reassignment-renewal-migrates",
-      "adcs-real-issuer-reassignment-cleanup"
+      "adcs-real-issuer-reassignment-cleanup",
+      "adcs-real-owned-cleanup"
     ],
     "adcs-browser-enrollment": [
       "adcs-browser-preflight",

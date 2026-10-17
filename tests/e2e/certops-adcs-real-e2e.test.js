@@ -97,6 +97,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
   const ownedBackgroundStoreCertificates=[];
   const ownedCapacityStoreCertificates=[];
   const ownedIssuerSwitchStoreCertificates=[];
+  const ownedTlsProbes=[];
   const ownedApiFixtures=[];
   const ownedForeignRequests=[];
   const ownedTemplateAttributeRestorations=[];
@@ -193,7 +194,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       assert.doesNotMatch(command("reg.exe", ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent", "/v", "Environment"]), /TOKENTIMER_AGENT_BOOTSTRAP_TOKEN/);
     });
     if(issuerSwitch){
-      await issuerSwitchJourney.qualifyNativeIssuerReassignment({gate,fixture,api,agentRowId,caConfig,destinationCaConfig:process.env.CERTOPS_ADCS_DESTINATION_CA_CONFIG,command,ps,until,jobFinished,configDir,workDir,run,tlsAuthority,ownedEnrollmentIds,ownedCertificateIds,ownedSites,ownedThumbprints,registerOwnedStoreCertificate:value=>webHostingJourney.registerIssuerSwitchStoreCertificate(ownedIssuerSwitchStoreCertificates,value),reservePrimaryPreflights:count=>{assert.equal(count,4);assert.ok(primaryPreflightCount+count<=18);primaryPreflightCount+=count;}});
+      await issuerSwitchJourney.qualifyNativeIssuerReassignment({ownedTlsProbes,gate,fixture,api,agentRowId,caConfig,destinationCaConfig:process.env.CERTOPS_ADCS_DESTINATION_CA_CONFIG,command,ps,until,jobFinished,configDir,workDir,run,tlsAuthority,ownedEnrollmentIds,ownedCertificateIds,ownedSites,ownedThumbprints,registerOwnedStoreCertificate:value=>webHostingJourney.registerIssuerSwitchStoreCertificate(ownedIssuerSwitchStoreCertificates,value),reservePrimaryPreflights:count=>{assert.equal(count,4);assert.ok(primaryPreflightCount+count<=18);primaryPreflightCount+=count;}});
       return;
     }
     for (const item of cases) await gate.scenario(`adcs-real-${item.id}-issued-cng-iis`, async () => {
@@ -623,6 +624,8 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       const assertPendingCaResolved=()=>{assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.ocspPendingVerification===true),"Preserve native state while Microsoft OCSP recovery remains unresolved");assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.httpLeafCrlPendingVerification===true),"Preserve native state while HTTP leaf CRL recovery remains unresolved");assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.machineAclPendingVerification===true),"Preserve native state while live machine Enroll ACL recovery remains unresolved");assert.ok(!ownedBackgroundStoreCertificates.some(receipt=>receipt.workerPendingVerification===true),"Preserve native and durable ownership while background renewal remains unresolved");assert.ok(!ownedCapacityStoreCertificates.some(receipt=>receipt.pendingCaRenewalUnresolved===true),"Preserve native and durable ownership while pending CA renewal remains unresolved");};
       const errors = []; const clean = async (action) => { try { await action(); } catch (error) { errors.push(error); } };
       const cleanNative=action=>clean(()=>nativeCleanupGuard.run(()=>{assertPendingCaResolved();return action();}));
+      for(const probes of ownedTlsProbes)await clean(()=>probes.drain());
+      assert.ok(ownedTlsProbes.every(probes=>probes.isDrained()),"Preserve native fixtures while owned TLS probe close is unproven");
       for(const observer of ownedPhaseObservers)await clean(()=>observer.stopAndDrain());
       assert.equal(ownedPhaseObservers.some(observer=>observer.hasLiveChild()),false,"Preserve native fixtures while an owned fault observer remains alive");
       for(const resource of ownedBrowserResources)await clean(()=>resource.close());

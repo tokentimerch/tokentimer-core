@@ -9621,6 +9621,8 @@
       "source": "tests/e2e/helpers/certops-native-issuer-reassignment.js",
       "environment": {
         "osFamily": "windows",
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
         "identity": "LocalSystem"
       },
       "requiredSources": [
@@ -9637,7 +9639,14 @@
         "packages/agent/src/adcs-windows-iis.js",
         "packages/agent/src/windows-cert-store/index.js",
         "packages/agent/src/issuers/adcs-enrollment.js",
-        ".github/workflows/certops-native-issuer-reassignment.yml"
+        ".github/workflows/certops-native-issuer-reassignment.yml",
+        "tests/e2e/certops-adcs-real-e2e.test.js",
+        "infra/certops-adcs/main.bicep",
+        "infra/certops-adcs/issuer-destination.ps1",
+        "infra/certops-adcs/provision-lab.ps1",
+        "infra/certops-adcs/run-windows-tests.ps1",
+        "infra/certops-adcs/read-report.ps1",
+        "tests/e2e/helpers/certops-adcs-webhosting-renewal.js"
       ]
     },
     {

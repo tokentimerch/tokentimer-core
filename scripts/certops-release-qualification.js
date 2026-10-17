@@ -22,7 +22,6 @@ const localContractSuites = new Set([
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
   "windows-installed-bind-failure-rollback",
   "windows-installed-interruption-recovery",
-  "native-adcs-issuer-reassignment",
 ]);
 function catalogCoverage(specification = catalog) {
   const errors = require("./certops-qualification-catalog").validateCatalog(specification);
@@ -284,9 +283,9 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-installed-interruption-recovery") require("../tests/e2e/helpers/certops-windows-installed-interruption").verifyProof(artifact.report.nativeInstalledInterruption);
         if (slot.suite === "native-adcs-issuer-reassignment") {
           const proof = artifact.report.nativeIssuerReassignment;
-          require("../tests/e2e/helpers/certops-native-issuer-reassignment").verifyProof(proof);
+          require("../tests/e2e/helpers/certops-native-issuer-reassignment").verifyNativeProof(proof);
           const n = artifact.report.qualificationEnvironment;
-          if (proof.nativeCell !== "pending" || artifact.report.nativeCell === "qualified" || n.osFamily !== "windows" || n.identity !== "LocalSystem" || n.measurement !== "native") throw new Error("Native issuer reassignment stays pending until a disposable forest runs");
+          if (artifact.report.nativeCell !== "qualified" || artifact.report.cleanup?.status !== "passed" || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || n.osVersion !== "2022" || n.nativeLanguage !== "en-US" || n.osFamily !== "windows" || n.identity !== "LocalSystem" || n.measurement !== "native") throw new Error("Native issuer reassignment requires completed SYSTEM Server2022 two-CA execution and cleanup");
         }
         const adcsLocalContracts = {
           "adcs-browser-enrollment": ["../tests/e2e/helpers/certops-adcs-browser-enrollment", "nativeAdcsBrowserEnrollment"],

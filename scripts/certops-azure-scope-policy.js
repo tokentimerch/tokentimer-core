@@ -2,6 +2,7 @@
 /** Paid domain infrastructure is an explicit repository opt-in. Scheduled jobs
  * may only finish/clean an already owned manual campaign, never create a lab. */
 const PROVISION = Object.freeze([
+  "certops-native-issuer-reassignment.yml",
   "certops-enterprise-adcs-qualification.yml",
   "certops-enterprise-adcs-hierarchy-qualification.yml",
   "certops-enterprise-adcs-pending-elapsed.yml",
