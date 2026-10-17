@@ -80,4 +80,3 @@ function artifact(version = "2022") {
 }
 
 module.exports={fixture:proof,nativeReceipt:receipt,artifact};
-
