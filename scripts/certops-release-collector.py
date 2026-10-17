@@ -1377,12 +1377,16 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result.update(nativeCell="qualified", platform="win32", architecture="x64")
         if value.get("suite") == "windows-installed-alive-grace-renewal":
             result["nativeWindowsAliveGrace"] = windows_alive_grace_proof.fields(value)
+            result.update(platform="win32", architecture="x64")
         if value.get("suite") == "windows-installed-bind-failure-rollback":
             result["nativeInstalledBindFailure"] = windows_bind_failure_native_proof.fields(value)
+            result.update(platform="win32", architecture="x64")
         if value.get("suite") == "windows-installed-failed-rollback-renewal":
             result["nativeInstalledFailedRollback"] = windows_failed_rollback_proof.fields(value)
+            result.update(platform="win32", architecture="x64")
         if value.get("suite") == "windows-installed-stop-offline-renewal":
             result["nativeWindowsStoppedOffline"] = windows_stop_offline_proof.fields(value)
+            result.update(platform="win32", architecture="x64")
         if value.get("suite") == "windows-webhosting-retention":
             if value.get("cleanup", {}).get("status") != "passed":
                 raise ValueError("WebHosting owned cleanup incomplete")
@@ -1841,6 +1845,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 result["nativePreflightCohorts"].append({key: cohort[key] for key in ("workspaceId", "agentId", "dispatchCount", "dispatchLimit", "nativeIdentity", "runtime")})
         if value.get("suite") == "windows-installed-interruption-recovery":
             result["nativeInstalledInterruption"] = windows_interruption_native_proof.fields(value)
+            result.update(platform="win32", architecture="x64")
         if "fixtureSources" in value:
             result["fixtureSources"] = supporting_sources(value["fixtureSources"])
         if value.get("suite") == "linux-systemd-writepath":
