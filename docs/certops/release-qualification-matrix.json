@@ -362,7 +362,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -463,7 +465,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -564,7 +568,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -665,7 +671,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -766,7 +774,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -946,7 +956,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -1047,7 +1059,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -1148,7 +1162,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -1249,7 +1265,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {
@@ -1350,7 +1368,9 @@
         "packages/contracts/certops/agent-protocol.schema.json",
         "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
         "packages/agent/scripts/host/credential-weak-acl-fixture.js",
-        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
+        "tests/e2e/helpers/certops-windows-source-junction.js",
+        "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
       ]
     },
     {

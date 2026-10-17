@@ -454,6 +454,7 @@ function assertCleanupSafe(workDir) {
   contained.assertCleanupSafe(workDir);
 }
 module.exports = {
+  fileInventory,
   assertCleanupSafe,
   qualifyRenameRefusal,
   verifyProof,

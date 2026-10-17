@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const active = new Map();
-const KINDS = Object.freeze(["first-rename", "second-rename"]);
+const KINDS = Object.freeze(["first-rename", "second-rename", "source-junction"]);
 function identity(file) {
   const stat = fs.lstatSync(file, { bigint: true });
   assert.ok(!stat.isSymbolicLink() && stat.ino > 0n);

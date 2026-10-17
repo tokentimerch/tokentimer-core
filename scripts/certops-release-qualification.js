@@ -433,6 +433,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-windows-signing-pin-refusal").verifyProof(native[0].nativeInstalledSigningPinRefusal);
           require("../tests/e2e/helpers/certops-windows-credential-refusal").verifyProof(native[0].nativeInstalledCredentialRefusal);
           require("../tests/e2e/helpers/certops-windows-installed-weak-acl").verifyProof(native[0].nativeInstalledWeakCredentialAcl);
+          require("../tests/e2e/helpers/certops-windows-source-junction").verifyProof(native[0].nativeInstalledSourceJunction);
         }
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);

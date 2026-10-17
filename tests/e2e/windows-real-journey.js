@@ -140,6 +140,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   let signingPinRefusalProof;
   const signingPinRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-signing-pin-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
   assert.equal(fs.existsSync(signingPinRefusalProofPath),false,"Refuse stale signing-pin startup proof");
+  const sourceJunction=require("./helpers/certops-windows-source-junction");let sourceJunctionProof;
+  const sourceJunctionProofPath=path.join(repoRoot,"qualification-results",`windows-source-junction-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
+  assert.equal(fs.existsSync(sourceJunctionProofPath),false,"Refuse stale source junction proof");
   const weakAcl=require("./helpers/certops-windows-installed-weak-acl");let weakAclProof;
   const weakAclProofPath=path.join(repoRoot,"qualification-results",`windows-installed-weak-acl-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
   assert.equal(fs.existsSync(weakAclProofPath),false,"Refuse stale installed weak ACL proof");
@@ -417,6 +420,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     assert.ok(fs.existsSync(path.join(workDir, "app/bin/tokentimer-agent.js")));
     assert.equal(fs.existsSync(path.join(configDir, "bootstrap.env")), false, "existing credential startup must remove the newly staged bootstrap environment");
     lastSeenBeforeRestart = (await pool.query("SELECT last_seen_at FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [workspaceId, agentId])).rows[0].last_seen_at;
+    sourceJunctionProof=await runNamedScenario(sourceJunction.SCENARIO,()=>sourceJunction.qualify({receipt:installedPathReceipt,configDir,packageDir:candidateRoot,ps,pool,workspaceId,agentId,installerFixture,baseUrl,createBootstrap,waitUntil,thumbprint,domain,port,roots}));
     // A native ReadData denial on one disposable public fixture file forces
     // the real copy stage to fail, before activation or a service restart.
     const unreadableFixture = path.join(candidateRoot, "qualification-copy-denied.txt");
@@ -820,6 +824,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     for(const resource of ownedStopObservers){try{await resource.waitForClose();}catch(error){stopObserverErrors.push(error);}}
     if(stopObserverErrors.length)throw new AggregateError(stopObserverErrors,"Read-only stop observers must close before nativecleanup");
     verifyRollback.assertCleanupSafe(workDir);
+    sourceJunction.assertCleanupSafe(workDir);
     if(bindFailureOnly)require("./helpers/certops-windows-bind-interposer").assertCleanupSafe(workDir);
     require("../../packages/agent/scripts/host/credential-weak-acl-fixture").assertCleanupSafe(workDir);
     if(stoppedOffline)stoppedOffline.assertCleanupSafe(workDir);
@@ -908,6 +913,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
       publicRetirement.verifyProof(publicRetirementProof);
       fs.writeFileSync(publicRetirementProofPath,JSON.stringify(publicRetirementProof),{flag:"wx"});
+      sourceJunction.verifyProof(sourceJunctionProof);fs.writeFileSync(sourceJunctionProofPath,JSON.stringify(sourceJunctionProof),{flag:"wx"});
       weakAcl.verifyProof(weakAclProof);fs.writeFileSync(weakAclProofPath,JSON.stringify(weakAclProof),{flag:"wx"});
       credentialRefusal.verifyProof(credentialRefusalProof);
       signingPinRefusal.verifyProof(signingPinRefusalProof);
