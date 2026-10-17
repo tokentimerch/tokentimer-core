@@ -70,7 +70,8 @@
       "controller-incluster-client": "real-host",
       "controller-readonly-client": "real-host",
       "controller-secret-fallback": "real-host",
-      "controller-native-watch-compaction": "real-host"
+      "controller-native-watch-compaction": "real-host",
+      "controller-native-rbac-startup-recovery": "real-host"
     },
     "csr-api-lifecycle": {
       "csr-api-private-material-refusal": "integration",
@@ -2299,7 +2300,8 @@
       "controller-incluster-client",
       "controller-readonly-client",
       "controller-secret-fallback",
-      "controller-native-watch-compaction"
+      "controller-native-watch-compaction",
+      "controller-native-rbac-startup-recovery"
     ],
     "csr-api-lifecycle": [
       "csr-api-create-idempotency",

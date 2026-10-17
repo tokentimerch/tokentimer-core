@@ -230,7 +230,7 @@ test("Windows child-output proof requires native profile identity bounded facts 
 
 test("native Kubernetes compaction needs actual expired cursor and newer observed revision", () => {
   const suite = "kubernetes-host", file = "scripts/certops-kubernetes-host.js";
-  const value = suiteArtifact(suite, file, { nativeCompaction: { expiredStatus: 410, originalResourceVersion: "10", compactedRevision: "20", observedResourceVersion: "21", certificateUid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", productionClient: true, productionObserver: true, controlPlaneRestarted: true, ownedSingleNodeCluster: true } });
+  const value = suiteArtifact(suite, file, { nativeKubernetesRbacStartupRecovery: require("./test-support/kubernetes-rbac-artifact.cjs").proof(), nativeCompaction: { expiredStatus: 410, originalResourceVersion: "10", compactedRevision: "20", observedResourceVersion: "21", certificateUid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", productionClient: true, productionObserver: true, controlPlaneRestarted: true, ownedSingleNodeCluster: true } });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "compaction", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
   for (const mutate of [item => { delete item.report.nativeCompaction; }, item => { item.report.nativeCompaction.expiredStatus = 200; }, item => { item.report.nativeCompaction.productionObserver = false; }, item => { item.report.nativeCompaction.observedResourceVersion = "20"; }, item => { item.report.nativeCompaction.originalResourceVersion = "30"; }, item => { item.report.nativeCompaction.certificateUid = "-".repeat(36); }]) {

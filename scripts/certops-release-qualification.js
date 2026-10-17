@@ -118,6 +118,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || native.osFamily!=="linux" || native.distributionId!=="ubuntu" || native.distributionVersion!=="24.04" || native.executionSurface!=="host")throw new Error("Native configured DNS resolver views require the owned Ubuntu host");
         }
         if (slot.suite === "kubernetes-host") {
+          require("./certops-kubernetes-rbac").verifyProof(artifact.report.nativeKubernetesRbacStartupRecovery);
           const evidence = artifact.report.nativeCompaction;
           if (!evidence || evidence.expiredStatus !== 410 || !["productionClient", "productionObserver", "controlPlaneRestarted", "ownedSingleNodeCluster"].every(key => evidence[key] === true) ||
               !["originalResourceVersion", "compactedRevision", "observedResourceVersion"].every(key => typeof evidence[key] === "string" && /^[1-9][0-9]{0,19}$/.test(evidence[key])) ||

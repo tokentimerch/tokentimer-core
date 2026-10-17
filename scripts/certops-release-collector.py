@@ -26,6 +26,7 @@ import certops_adcs_ttl24h_collection as adcs_ttl24h_collection
 import certops_retention_cadence_collection as retention_cadence_collection
 import certops_linux_backup_dac_proof as linux_backup_dac_proof
 import certops_filesystem_concurrent_proof as filesystem_concurrent_proof
+import certops_kubernetes_rbac_proof as kubernetes_rbac_proof
 import certops_linux_trust_independent_proof as linux_trust_independent_proof
 import certops_linux_signed_trust_proof as linux_signed_trust_proof
 import certops_acme_certificate_signing_proof as certificate_signing_proof
@@ -1859,6 +1860,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeWritePath"] = {key: evidence.get(key) is True for key in ("freshExecStartPreEvidence", "hostDacWriteVerified", "allowedWrite")}
             result["nativeWritePath"].update({"deniedError": "EROFS" if evidence.get("deniedError") == "EROFS" else "invalid", "samePeerDacMode": "0777" if evidence.get("samePeerDacMode") == "0777" else "invalid", "nonRootUid": evidence.get("nonRootUid") if type(evidence.get("nonRootUid")) is int and 0 < evidence["nonRootUid"] <= 4294967295 else 0})
         if value.get("suite") == "kubernetes-host":
+            result.update(kubernetes_rbac_proof.project_report(value))
             evidence = value.get("nativeCompaction")
             if not isinstance(evidence, dict):
                 raise ValueError("Missing native compaction evidence")

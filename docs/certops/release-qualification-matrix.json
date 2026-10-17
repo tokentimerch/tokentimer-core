@@ -173,7 +173,16 @@
       },
       "requiredSources": [
         "scripts/certops-kubernetes-compaction.js",
-        "scripts/certops-kubernetes-compaction-incluster.js"
+        "scripts/certops-kubernetes-compaction-incluster.js",
+        "scripts/certops-kubernetes-host.js",
+        "scripts/certops-kubernetes-rbac.js",
+        "scripts/certops-kubernetes-rbac-incluster.js",
+        "apps/k8s-controller/src/cert-manager-client.js",
+        "apps/k8s-controller/src/cert-manager-observer.js",
+        "apps/k8s-controller/src/certificate-provisioner.js",
+        "apps/k8s-controller/src/tls-crt-secret-reader.js",
+        "apps/k8s-controller/src/public-certificate-parser.js",
+        "packages/agent/scripts/host-gate.js"
       ]
     },
     {

@@ -6,26 +6,34 @@ const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { createHostGate } = require("../packages/agent/scripts/host-gate");
 const { createCertificateProvisioner } = require("../apps/k8s-controller/src/certificate-provisioner");
-function kubectl(args, input) {
+function rawKubectl(args, input) {
   const result = spawnSync("kubectl", ["--context", process.env.CERTOPS_KUBE_CONTEXT, ...args], { input, encoding: "utf8", timeout: 180000, maxBuffer: 4*1024*1024 });
   if (result.error || result.status !== 0) { const error = new Error("Disposable cluster operation failed"); error.statusCode = /NotFound/.test(result.stderr || "") ? 404 : result.status; throw error; }
   return result.stdout;
 }
 async function main() {
+  const rbac = require("./certops-kubernetes-rbac");
+  const namespace = "certops-"+crypto.randomBytes(8).toString("hex");
+  const namespaceOwner = crypto.randomBytes(16).toString("hex");
+  let namespaceUid, owned = false;
+  const kubectl = (args, input) => {
+    if (owned) rbac.verifyNamespace(JSON.parse(rawKubectl(["get", "namespace", namespace, "-o", "json"])), { namespace, uid: namespaceUid, owner: namespaceOwner });
+    return rawKubectl(args, input);
+  };
   if (!/^kind-certops-qualification-[a-z0-9-]+$/.test(process.env.CERTOPS_KUBE_CONTEXT || "")) throw new Error("Dedicated disposable kind context required");
   const gate = createHostGate({suite:"kubernetes-host", requiredCapabilities:["cluster","optIn"], probeCapabilities:async()=>({cluster:{available:JSON.parse(kubectl(["get","nodes","-o","json"])).items.length>0},optIn:{available:process.env.CERTOPS_KUBE_HOST_TESTS==="1"}})});
   gate.report.fixtureSource={file:"scripts/certops-kubernetes-host.js",sha256:crypto.createHash("sha256").update(require("node:fs").readFileSync(__filename)).digest("hex")};
   gate.report.artifactQualification=process.env.GITHUB_ACTIONS==="true"?"workflow-checkout-source":"local-worktree-source-baseline-sha-only";
   if (!await gate.preflight()) return;
-  const namespace = "certops-"+crypto.randomBytes(8).toString("hex");
-  let owned=false;
   let primaryError;
   try {
     // A random name is reserved for this run; refuse any collision before
     // recording ownership so a partial create still receives teardown.
     const existing = JSON.parse(kubectl(["get", "namespaces", "-o", "json"]));
     assert.ok(!existing.items.some((item) => item.metadata.name === namespace));
-    owned=true; kubectl(["create","namespace",namespace]);
+    owned=true;
+    const createdNamespace=JSON.parse(rawKubectl(["create","-f","-","-o","json"],JSON.stringify({apiVersion:"v1",kind:"Namespace",metadata:{name:namespace,labels:{[rbac.OWNER_LABEL]:namespaceOwner}}})));
+    namespaceUid=rbac.verifyNamespace(createdNamespace,{namespace,owner:namespaceOwner});
     kubectl(["apply","-f","-"], JSON.stringify({apiVersion:"cert-manager.io/v1",kind:"Issuer",metadata:{name:"fixture",namespace},spec:{selfSigned:{}}}));
     kubectl(["apply","-f","-"],JSON.stringify({apiVersion:"v1",kind:"List",items:[
       {apiVersion:"v1",kind:"ServiceAccount",metadata:{name:"observe-fixture",namespace}},
@@ -107,6 +115,9 @@ async function main() {
       assert.deepEqual(after.spec,resource.spec);
       await assert.rejects(client.getCertificate({namespace,name:"forbidden-create"}),{statusCode:404});
     },{evidenceLevel:"real-host",oracle:"Production client under read-only mounted credentials receives actual Kubernetes 403 for create and patch, existing resource remains unchanged"});
+    await gate.scenario(rbac.SCENARIO, async () => {
+      await rbac.qualifyNativeRbac({kubectl,namespace,namespaceUid,namespaceOwner,command,gate});
+    }, {evidenceLevel:"real-host",oracle:"Genuine mounted-SA403 list/watch/create denial, missed update relist by the same production observer, live watch recovery and production provisioning after namespace-only Role restoration"});
     await gate.scenario("controller-local-scope",async()=>{
       const identity=`system:serviceaccount:${namespace}:observe-fixture`;
       assert.equal(kubectl(["auth","can-i","list","certificates.cert-manager.io","-n",namespace,"--as",identity]).trim(),"yes");
@@ -131,9 +142,15 @@ async function main() {
   finally {
     try {
     await gate.scenario("controller-fixture-cleanup",async()=>{
-      if(owned) kubectl(["delete","namespace",namespace,"--wait=true","--timeout=120s"]);
+      if(owned) {
+        const retained=rawKubectl(["get","namespace",namespace,"--ignore-not-found","-o","json"]).trim();
+        if(retained) {
+          rbac.verifyNamespace(JSON.parse(retained),{namespace,uid:namespaceUid,owner:namespaceOwner});
+          kubectl(["delete","namespace",namespace,"--wait=true","--timeout=120s"]);
+        }
+      }
     },{evidenceLevel:"real-host",oracle:"Owned namespace deletion completes"});
-    await gate.finish({requiredScenarios:["controller-owned-provision","controller-secret-fallback","controller-incluster-client","controller-readonly-client","controller-local-scope","controller-native-watch-compaction","controller-fixture-cleanup"]});
+    await gate.finish({requiredScenarios:["controller-owned-provision","controller-secret-fallback","controller-incluster-client","controller-readonly-client","controller-local-scope","controller-native-watch-compaction",rbac.SCENARIO,"controller-fixture-cleanup"]});
     } catch(error) {
       if(primaryError) throw new AggregateError([primaryError,error],"Kubernetes journey and cleanup/finalization failed");
       throw error;

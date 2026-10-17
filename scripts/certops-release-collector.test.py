@@ -1324,7 +1324,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_native_compaction_evidence_keeps_only_bounded_public_facts(self):
         evidence = {"expiredStatus": 410, "originalResourceVersion": "10", "compactedRevision": "20", "observedResourceVersion": "21", "certificateUid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "productionClient": True, "productionObserver": True, "controlPlaneRestarted": True, "ownedSingleNodeCluster": True, "private": "sentinel"}
-        value = {"suite": "kubernetes-host", "nativeCompaction": evidence}
+        value = {"suite": "kubernetes-host", "nativeCompaction": evidence, "nativeKubernetesRbacStartupRecovery": json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/kubernetes-rbac-artifact.cjs').proof()))"], cwd=Path(__file__).resolve().parent.parent, text=True))}
         result = collector.extract_reports(self.archive("kube.json", value), {"kubernetes-host"}, set())
         self.assertEqual(result[0][1]["nativeCompaction"]["expiredStatus"], 410)
         self.assertNotIn("sentinel", json.dumps(result))
