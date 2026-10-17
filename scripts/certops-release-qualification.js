@@ -17,7 +17,7 @@ const catalog = require("../docs/certops/e2e-scenario-catalog.json");
 // producer. A passed outer envelope must never upgrade their simulated proofs.
 // A future native implementation must deliberately replace this eligibility gate.
 const localContractSuites = new Set([
-  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id),
+  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => id !== "adcs-browser-enrollment"),
   ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
   "windows-installed-interruption-recovery",
@@ -286,8 +286,12 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const n = artifact.report.qualificationEnvironment;
           if (artifact.report.nativeCell !== "qualified" || artifact.report.cleanup?.status !== "passed" || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || n.osVersion !== "2022" || n.nativeLanguage !== "en-US" || n.osFamily !== "windows" || n.identity !== "LocalSystem" || n.measurement !== "native") throw new Error("Native issuer reassignment requires completed SYSTEM Server2022 two-CA execution and cleanup");
         }
+        if(slot.suite === "adcs-browser-enrollment"){
+          require("../tests/e2e/helpers/certops-adcs-browser-enrollment").verifyNativeProof(artifact.report.nativeAdcsBrowserEnrollment);
+          const n=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="win32"||artifact.report.architecture!=="x64"||n.osFamily!=="windows"||n.osVersion!=="2022"||n.nativeLanguage!=="en-US"||n.identity!=="LocalSystem"||n.measurement!=="native"||artifact.report.cleanup?.status!=="passed")throw new Error("Native browser enrollment requires completed SYSTEM root-domain Server2022 execution");
+        }
         const adcsLocalContracts = {
-          "adcs-browser-enrollment": ["../tests/e2e/helpers/certops-adcs-browser-enrollment", "nativeAdcsBrowserEnrollment"],
           "adcs-install-interruption": ["../tests/e2e/helpers/certops-adcs-install-interruption", "nativeAdcsInstallInterruption"],
           "adcs-lost-submit": ["../tests/e2e/helpers/certops-adcs-lost-submit", "nativeAdcsLostSubmit"],
           "adcs-uncertain-abandon": ["./certops-adcs-uncertain-abandon", "nativeAdcsUncertainAbandon"],

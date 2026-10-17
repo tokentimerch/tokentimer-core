@@ -1496,7 +1496,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -1681,7 +1685,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -1866,7 +1874,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -2051,7 +2063,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -2236,7 +2252,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -2421,7 +2441,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -2606,7 +2630,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -2791,7 +2819,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -2976,7 +3008,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -3965,7 +4001,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -6889,7 +6929,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -7076,7 +7120,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -7263,7 +7311,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -7450,7 +7502,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -7637,7 +7693,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -7824,7 +7884,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -8011,7 +8075,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -8198,7 +8266,11 @@
         "apps/api/routes/certops-agent.js",
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml"
       ]
     },
     {
@@ -9904,13 +9976,42 @@
       "source": "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
       "environment": {
         "osFamily": "windows",
-        "executionSurface": "script-contract"
+        "osVersion": "2022",
+        "nativeLanguage": "en-US",
+        "identity": "LocalSystem"
       },
       "requiredSources": [
         "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
-        "scripts/certops-adcs-browser-enrollment.js",
-        "docs/certops/adcs/browser-enrollment.md",
-        ".github/workflows/certops-adcs-coverage-variants.yml"
+        "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+        "tests/e2e/certops-adcs-real-e2e.test.js",
+        "infra/certops-adcs/read-report.ps1",
+        ".github/workflows/certops-enterprise-adcs-qualification.yml",
+        "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
+        "packages/agent/src/issuers/adcs.js",
+        ".dockerignore",
+        "tests/e2e/helpers/certops-adcs-browser-journey.js",
+        "infra/certops-adcs/browser-control-plane.sh",
+        "infra/certops-adcs/browser-windows-tools.ps1",
+        "infra/certops-adcs/browser-api-trust.ps1",
+        "apps/dashboard/src/components/certops/AdcsIssuerWizard.jsx",
+        "apps/dashboard/src/components/certops/AdcsProfileWizard.jsx",
+        "apps/dashboard/src/pages/certops/CertOpsAdcs.jsx",
+        "apps/dashboard/src/pages/certops/CertOpsRenewals.jsx",
+        "apps/dashboard/src/components/certops/certopsEnrollmentsApi.js",
+        "apps/dashboard/src/components/certops/certopsRenewalApi.js",
+        "apps/dashboard/src/components/certops/certopsApi.js",
+        "apps/api/services/certops/renewalScheduler.js",
+        "apps/api/services/certops/adcsPreflightGate.js",
+        "apps/api/services/certops/certificateEnrollments.js",
+        "package.json",
+        "pnpm-lock.yaml",
+        "deploy/compose/Dockerfile.dashboard",
+        "deploy/compose/docker-entrypoint-dashboard.sh",
+        "deploy/compose/nginx.conf",
+        "infra/certops-adcs/provision-lab.ps1",
+        "infra/certops-adcs/run-windows-tests.ps1",
+        "infra/certops-adcs/owned-issued-request.ps1",
+        "packages/agent/src/adcs-windows-iis.js"
       ]
     },
     {

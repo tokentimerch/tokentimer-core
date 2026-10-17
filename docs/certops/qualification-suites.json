@@ -1390,9 +1390,15 @@
       "adcs-real-owned-cleanup": "real-host"
     },
     "adcs-browser-enrollment": {
-      "adcs-browser-preflight": "integration",
-      "adcs-browser-confirmation-before-submit": "integration",
-      "adcs-browser-enrollment": "integration"
+      "adcs-real-installed-native-language": "real-host",
+      "adcs-real-agent-registration-system": "real-host",
+      "adcs-real-browser-issuer-native-preflight": "real-host",
+      "adcs-real-browser-confirmed-ca-pin": "real-host",
+      "adcs-real-browser-profile-attachment": "real-host",
+      "adcs-real-browser-automation-native-enrollment": "real-host",
+      "adcs-real-browser-installed-enrollment-visible": "real-host",
+      "adcs-real-browser-owned-cleanup": "real-host",
+      "adcs-real-owned-cleanup": "real-host"
     },
     "adcs-install-interruption": {
       "adcs-install-interruption-role-install": "integration",
@@ -2097,10 +2103,12 @@
     ],
     "adcs-browser-enrollment": [
       "windows",
+      "elevated",
       "domain",
       "api",
-      "browser",
-      "qualifiedBuild"
+      "qualifiedBuild",
+      "browserRuntime",
+      "dashboard"
     ],
     "adcs-install-interruption": [
       "windows",
@@ -3593,9 +3601,15 @@
       "adcs-real-owned-cleanup"
     ],
     "adcs-browser-enrollment": [
-      "adcs-browser-preflight",
-      "adcs-browser-confirmation-before-submit",
-      "adcs-browser-enrollment"
+      "adcs-real-installed-native-language",
+      "adcs-real-agent-registration-system",
+      "adcs-real-browser-issuer-native-preflight",
+      "adcs-real-browser-confirmed-ca-pin",
+      "adcs-real-browser-profile-attachment",
+      "adcs-real-browser-automation-native-enrollment",
+      "adcs-real-browser-installed-enrollment-visible",
+      "adcs-real-browser-owned-cleanup",
+      "adcs-real-owned-cleanup"
     ],
     "adcs-install-interruption": [
       "adcs-install-interruption-role-install",
@@ -3812,7 +3826,7 @@
     "windows-installed-bind-failure-rollback": "real-host",
     "windows-installed-interruption-recovery": "integration",
     "native-adcs-issuer-reassignment": "real-host",
-    "adcs-browser-enrollment": "integration",
+    "adcs-browser-enrollment": "real-host",
     "adcs-install-interruption": "integration",
     "adcs-lost-submit": "integration",
     "adcs-uncertain-abandon": "integration",

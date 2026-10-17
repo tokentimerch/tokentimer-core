@@ -9,8 +9,7 @@ const { verifyNativeRequestId } = require("./certops-adcs-live-enroll-acl");
 const assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path"),
-  crypto = require("node:crypto"),
-  tls = require("node:tls");
+  crypto = require("node:crypto");
 const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-issuer-native-preflight",
   "adcs-real-browser-confirmed-ca-pin",
@@ -20,6 +19,11 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-browser-owned-cleanup",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+  "tests/e2e/helpers/certops-native-issuer-reassignment.js",
+  "tests/e2e/certops-adcs-real-e2e.test.js",
+  "infra/certops-adcs/read-report.ps1",
+  ".github/workflows/certops-enterprise-adcs-qualification.yml",
   "tests/e2e/helpers/certops-adcs-live-enroll-acl.js",
   "packages/agent/src/issuers/adcs.js",
   ".dockerignore",
@@ -50,6 +54,7 @@ const REQUIRED_SOURCES = Object.freeze([
 const FLAGS = Object.freeze([
   "browserIssuerCreation",
   "nativeSafePreflight",
+  "noEnrollmentBeforeConfirmation",
   "browserCaConfirmation",
   "postConfirmationNativePreflight",
   "browserProfileCreation",
@@ -207,7 +212,11 @@ async function qualifyAdcsBrowserJourney(context) {
     ownedThumbprints,
     ownedBrowserResources,
     ownedBrowserPreflightJobIds,
+    ownedTlsProbes,
   } = context;
+  assert.ok(Array.isArray(ownedTlsProbes), "Parent must retain native browser TLS ownership");
+  const probes=require("./certops-native-issuer-reassignment").createOwnedTlsProbes();
+  ownedTlsProbes.push(probes);
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   assert.equal(process.env.CERTOPS_ADCS_BROWSER, "1");
@@ -333,39 +342,12 @@ async function qualifyAdcsBrowserJourney(context) {
     mutations++;
     return response;
   }
-  const peer = () =>
-    new Promise((resolve, reject) => {
-      const roots = preflight.caCertificates.flatMap((value) =>
-        [tlsAuthority(value)].flat(),
-      );
-      const socket = tls.connect(
-        {
-          host: "127.0.0.1",
-          port,
-          servername: item.domain,
-          ca: roots,
-          rejectUnauthorized: true,
-        },
-        () => {
-          try {
-            assert.equal(socket.authorized, true);
-            const cert = new crypto.X509Certificate(
-              socket.getPeerCertificate().raw,
-            );
-            assert.equal(cert.checkHost(item.domain), item.domain);
-            resolve(describe(cert));
-          } catch (error) {
-            reject(error);
-          } finally {
-            socket.destroy();
-          }
-        },
-      );
-      socket.once("error", reject);
-      socket.setTimeout(10000, () =>
-        socket.destroy(new Error("Browser AD CS trusted TLS oracle timed out")),
-      );
-    });
+  const peer = () => probes.observe({host:"127.0.0.1",port,servername:item.domain,ca:preflight.caCertificates.flatMap(value=>[tlsAuthority(value)].flat()),rejectUnauthorized:true}, socket => {
+    assert.equal(socket.authorized,true);
+    const cert=new crypto.X509Certificate(socket.getPeerCertificate().raw);
+    assert.equal(cert.checkHost(item.domain),item.domain);
+    return describe(cert);
+  });
   try {
     // Isolate one actual default sweep using public profile policy operations;
     // the main fixture has no continuously running scheduler worker. Restore
@@ -481,6 +463,8 @@ async function qualifyAdcsBrowserJourney(context) {
         assert.equal(preflight.template, "TTQualificationRSAShort");
         assert.ok(preflight.templateCheck.templateOid);
         assert.equal((await issuer()).currentVersion, 0);
+        assert.equal((await query("SELECT count(*)::int AS count FROM certificate_enrollments WHERE workspace_id=$1 AND issuer_id=$2",[fixture.workspaceId,issuerId])).rows[0].count,0,"The browser must confirm its new issuer before any enrollment");
+        facts.noEnrollmentBeforeConfirmation=true;
         const nativeJob = (
           await query(
             "SELECT status,assigned_agent_id,claim_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",
@@ -875,6 +859,7 @@ async function qualifyAdcsBrowserJourney(context) {
   } finally {
     const clean = async () => {
       const failures = [];
+      try {await probes.drain();} catch(error){failures.push(error);}
       try {
         await resource.close();
       } catch (error) {

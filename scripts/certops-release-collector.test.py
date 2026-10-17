@@ -210,7 +210,7 @@ def cmc_proof():
 
 
 def browser_adcs_proof():
-    flags = ("browserIssuerCreation", "nativeSafePreflight", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
+    flags = ("browserIssuerCreation", "nativeSafePreflight", "noEnrollmentBeforeConfirmation", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
     def uuid(value):
         return f"{value * 8}-{value * 4}-4{value * 3}-8{value * 3}-{value * 12}"
     return {**dict.fromkeys(flags, True), "scope": "browser-issuer-profile-default-scheduler-native-adcs", "lifecycle": "renew-existing-inventory-not-first-issue-or-manual-job", "scheduler": "production-default-sweep-not-background-worker-loop", "browserEngine": "chromium", "browserMutationCount": 6, "successfulEnrollments": 1,

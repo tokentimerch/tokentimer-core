@@ -53,6 +53,7 @@ import certops_windows_alive_grace_proof as windows_alive_grace_proof
 import certops_windows_failed_rollback_proof as windows_failed_rollback_proof
 import certops_native_issuer_reassignment_proof as issuer_reassignment_proof
 import certops_windows_bind_failure_native_proof as windows_bind_failure_native_proof
+import certops_adcs_browser_enrollment_proof as browser_enrollment_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -1367,6 +1368,9 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if not isinstance(proof, dict) or proof.get("scope") != scope or any(proof.get(field) is not True for field in fields):
                 raise ValueError("Incomplete canonical Windows installer lifecycle evidence")
             result["nativeCanonicalRoot"] = {**dict.fromkeys(fields, True), "scope": scope}
+        if value.get("suite") == "adcs-browser-enrollment":
+            result["nativeAdcsBrowserEnrollment"] = browser_enrollment_proof.fields(value)
+            result.update(platform="win32",architecture="x64")
         if value.get("suite") == "native-adcs-issuer-reassignment":
             result["nativeIssuerReassignment"] = issuer_reassignment_proof.fields(value)
             result.update(nativeCell="qualified", platform="win32", architecture="x64")
@@ -1642,29 +1646,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 seen_pairs.add(row["caseId"])
                 bounded_pairs.append({key: row[key] for key in ("caseId", *pair_flags)})
             result["nativeLocalRulePairs"] = bounded_pairs
-            browser = value.get("nativeBrowserAdcs")
-            browser_flags = ("browserIssuerCreation", "nativeSafePreflight", "browserCaConfirmation", "postConfirmationNativePreflight", "browserProfileCreation", "browserProfileAttachment", "actualDueSelection", "defaultSweepCreatedEnrollment", "automaticSourceAndRealMode", "claimBoundEvidence", "installedEnrollment", "freshLeafAndSpki", "nativeCaRequestMatched", "nonexportableMachineCng", "nativeIisSniMatched", "independentTrustedTls", "browserInstalledStateVisible", "noSyntheticResponses", "noDateOrJournalOverrides", "ownedEnrollmentRegistered", "browserAndTrustCleaned", "otherProfilePoliciesRestored")
-            fixed = {"scope": "browser-issuer-profile-default-scheduler-native-adcs", "lifecycle": "renew-existing-inventory-not-first-issue-or-manual-job", "scheduler": "production-default-sweep-not-background-worker-loop", "browserEngine": "chromium"}
-            if (not isinstance(browser, dict) or any(browser.get(key) != expected for key, expected in fixed.items())
-                    or any(browser.get(key) is not True for key in browser_flags)
-                    or type(browser.get("browserMutationCount")) is not int or browser["browserMutationCount"] != 6
-                    or type(browser.get("successfulEnrollments")) is not int or browser["successfulEnrollments"] != 1):
-                raise ValueError("Invalid native AD CS browser lifecycle evidence")
-            bounded_browser = {key: browser[key] for key in (*fixed, *browser_flags, "browserMutationCount", "successfulEnrollments")}
-            for key in ("fingerprints", "spkiFingerprints"):
-                values = browser.get(key)
-                if not isinstance(values, list) or len(values) != 2 or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item) for item in values) or len(set(values)) != 2:
-                    raise ValueError("Invalid browser native certificate identities")
-                bounded_browser[key] = values
+            result["nativeBrowserAdcs"] = browser_enrollment_proof.journey_fields(value.get("nativeBrowserAdcs"))
             uuid_pattern = r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}"
-            for key in ("enrollmentId", "jobId", "profileId", "issuerId"):
-                if not isinstance(browser.get(key), str) or not re.fullmatch(uuid_pattern, browser[key]):
-                    raise ValueError("Invalid browser native lifecycle identity")
-                bounded_browser[key] = browser[key]
-            if not isinstance(browser.get("requestId"), str) or not re.fullmatch(r"[1-9][0-9]{0,9}", browser["requestId"]) or int(browser["requestId"]) > 0xffffffff:
-                raise ValueError("Invalid browser native CA request identity")
-            bounded_browser["requestId"] = browser["requestId"]
-            result["nativeBrowserAdcs"] = bounded_browser
             dispatch = value.get("browserNativePreflightDispatch")
             if (not isinstance(dispatch, dict) or type(dispatch.get("count")) is not int or dispatch["count"] != 2
                     or not isinstance(dispatch.get("jobIds"), list) or len(dispatch["jobIds"]) != 2
@@ -2299,6 +2282,7 @@ def main(arguments=()):
                     linux_installed_discovery_proof.verify_workflow(report, run.get("path"))
                     acme_bulk_proof.verify_workflow(report, run.get("path"))
                     issuer_reassignment_proof.verify_workflow(report, run.get("path"))
+                    browser_enrollment_proof.verify_workflow(report, run.get("path"))
                     if len(files) >= limits["reports"]:
                         raise ValueError("Collection qualification report count exceeds limit")
                     destination = output / f"report-{run_id}-{artifact_id}-{len(files)}{suffix}"
