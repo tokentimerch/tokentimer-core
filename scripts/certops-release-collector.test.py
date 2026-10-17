@@ -193,6 +193,10 @@ def foreign_spki_proof():
     return {"scope": "read-only-native-foreign-spki-candidate-not-public-uncertain-recovery", **dict.fromkeys(flags, True), "requestIds": ["17", "18"], "spkiFingerprints": ["a" * 64, "b" * 64]}
 
 
+def pending_key_survivor_proof():
+    return {"scope":"native-pending-key-policy-refusal-then-public-cancellation","store":"WebHosting","recovery":"public-cancel-then-terminal-cleanup","firstError":"Local policy refusal could not free the protected enrollment key; retry required","enrollmentId":"11111111-1111-1111-1111-111111111111","requestId":"17","failedJobId":"22222222-2222-2222-2222-222222222222","cleanupJobId":"33333333-3333-3333-3333-333333333333","fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","csrSpkiSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","caRequestCounts":[7,7,7],"automaticRetryQualified":False,"schedulerDefaultClockQualified":False,"actualOwnedPendingRequest":True,"actualOwnedCaLeafSameCsrSpki":True,"exactWebHostingAssociationAndProtectedKey":True,"nativeSurvivorReferenceObserved":True,"signedCleanupRefusedWhileReferenced":True,"pendingJournalAndKeyPreserved":True,"noAdditionalCaRequest":True,"exactPublicAssociationOnlyRemoved":True,"publicCancellationAcknowledged":True,"signedTerminalCleanupCompleted":True,"predecessorCustodyIisTlsPreserved":True,"configurationCredentialRestored":True,"ownedCaLeafRevoked":True,"ownershipGuardReleased":True}
+
+
 def local_pairs_proof():
     fields = ("actualSignedJobRefused", "claimBoundOutcome", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "originalNativeCustodyPreserved", "outgoingTrustedTlsPreserved", "configurationAndCredentialRestored")
     return [{"caseId": case, **dict.fromkeys(fields, True)} for case in ("ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch", "empty-allowlist")]
@@ -1373,7 +1377,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_native_cohort_budgets_are_bounded_without_private_fields(self):
         cohort = {"workspaceId": "a" * 36, "agentId": "b" * 36, "dispatchCount": 18, "dispatchLimit": 18, "nativeIdentity": "LocalSystem", "runtime": "candidate-cli", "privateState": "sentinel"}
-        value = {"suite": "enterprise-adcs-real", "nativeLocalRulePairs": local_pairs_proof(), "nativeForeignSpkiCandidate": foreign_spki_proof(), "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
+        value = {"suite": "enterprise-adcs-real", "nativeLocalRulePairs": local_pairs_proof(), "nativePendingKeySurvivor": pending_key_survivor_proof(), "nativeForeignSpkiCandidate": foreign_spki_proof(), "primaryNativePreflightDispatchCount": 18, "nativePreflightCohorts": [cohort], "nativeTemplateMutations": [], "nativeValidationExpiry": {"configuredTimeoutSeconds": 300, "defaultTimeoutSeconds": 86400, "storedWindowSeconds": 299, "monotonicObservedWaitSeconds": 301, "actualDeadline": "2026-10-14T12:00:00.000Z", "requestId": "17", "snapshotSha256": "a" * 64, "nativeAndCaClocks": "actual", "qualificationScope": "configured-five-minute-window-not-default-24-hour-elapsed"}}
         value["nativeIssuedCancellation"] = {"requestId": "17", "snapshotSha256": "a" * 64, "pollIntervalSeconds": 900, "schedulerClock": "default-real-now", "databaseDatesRewritten": False, "journalRewritten": False, "private": "sentinel"}
         value["nativeAdcsCapacity"] = {**adcs_capacity_proof(), "privateManagerCredential": "sentinel"}
         value["nativeBrowserJobApproval"] = {**browser_job_approval_proof(), "privateTrace": "sentinel"}
@@ -1533,6 +1537,12 @@ class CollectorTests(unittest.TestCase):
                 collector.sanitized_report(bad, {value["suite"]}, set())
         self.assertEqual(result[0][1]["nativeBrowserAdcs"], browser_adcs_proof())
         self.assertEqual(result[0][1]["nativeLocalRulePairs"], local_pairs_proof())
+        self.assertEqual(result[0][1]["nativePendingKeySurvivor"], pending_key_survivor_proof())
+        for key in pending_key_survivor_proof():
+            invalid = pending_key_survivor_proof()
+            del invalid[key]
+            with self.subTest(survivor_missing=key), self.assertRaises(ValueError):
+                collector.pending_key_survivor_fields(invalid)
         self.assertEqual(result[0][1]["nativeForeignSpkiCandidate"], foreign_spki_proof())
         for flag, fact in foreign_spki_proof().items():
             if fact is not True:

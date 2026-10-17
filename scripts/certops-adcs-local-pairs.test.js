@@ -29,3 +29,10 @@ test("empty local allowlist refuses the previously permitted pair and cannot be 
   for(const slot of matrix.slots.filter(row=>row.suite===suite))for(const file of helper.REQUIRED_SOURCES)assert.ok(slot.requiredSources.includes(file),file);
  }
 });
+
+function survivorProof(){return {"scope":"native-pending-key-policy-refusal-then-public-cancellation","store":"WebHosting","recovery":"public-cancel-then-terminal-cleanup","firstError":"Local policy refusal could not free the protected enrollment key; retry required","enrollmentId":"11111111-1111-1111-1111-111111111111","requestId":"17","failedJobId":"22222222-2222-2222-2222-222222222222","cleanupJobId":"33333333-3333-3333-3333-333333333333","fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","csrSpkiSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","caRequestCounts":[7,7,7],"automaticRetryQualified":false,"schedulerDefaultClockQualified":false,"actualOwnedPendingRequest":true,"actualOwnedCaLeafSameCsrSpki":true,"exactWebHostingAssociationAndProtectedKey":true,"nativeSurvivorReferenceObserved":true,"signedCleanupRefusedWhileReferenced":true,"pendingJournalAndKeyPreserved":true,"noAdditionalCaRequest":true,"exactPublicAssociationOnlyRemoved":true,"publicCancellationAcknowledged":true,"signedTerminalCleanupCompleted":true,"predecessorCustodyIisTlsPreserved":true,"configurationCredentialRestored":true,"ownedCaLeafRevoked":true,"ownershipGuardReleased":true};}
+test("native pending-key survivor proof cannot skip guards, invent retries or lose public identity",()=>{
+ assert.equal(helper.verifySurvivorProof(survivorProof()),true);
+ for(const flag of helper.survivorFlags)for(const wrong of [false,1,null,"true"]){assert.throws(()=>helper.verifySurvivorProof({...survivorProof(),[flag]:wrong}));}
+ for(const change of [{automaticRetryQualified:true},{schedulerDefaultClockQualified:true},{store:"My"},{recovery:"automatic-retry"},{caRequestCounts:[7,7,8]},{firstError:"ignored"},{requestId:"0"},{privateKey:"withheld"}])assert.throws(()=>helper.verifySurvivorProof({...survivorProof(),...change}));
+});

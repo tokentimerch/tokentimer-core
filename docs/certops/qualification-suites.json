@@ -345,7 +345,8 @@
       "adcs-real-ocsp-authoritative-historical-revoked-status": "real-host",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
       "adcs-real-native-success-result-outbox-scm-restart": "real-host",
-      "adcs-real-local-rule-empty-allowlist-refused": "real-host"
+      "adcs-real-local-rule-empty-allowlist-refused": "real-host",
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -707,7 +708,8 @@
       "adcs-real-ocsp-authoritative-historical-revoked-status": "real-host",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
       "adcs-real-native-success-result-outbox-scm-restart": "real-host",
-      "adcs-real-local-rule-empty-allowlist-refused": "real-host"
+      "adcs-real-local-rule-empty-allowlist-refused": "real-host",
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -2578,7 +2580,8 @@
       "adcs-real-ocsp-authoritative-historical-revoked-status",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
       "adcs-real-native-success-result-outbox-scm-restart",
-      "adcs-real-local-rule-empty-allowlist-refused"
+      "adcs-real-local-rule-empty-allowlist-refused",
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2940,7 +2943,8 @@
       "adcs-real-ocsp-authoritative-historical-revoked-status",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
       "adcs-real-native-success-result-outbox-scm-restart",
-      "adcs-real-local-rule-empty-allowlist-refused"
+      "adcs-real-local-rule-empty-allowlist-refused",
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",
