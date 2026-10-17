@@ -897,7 +897,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if(aliveGraceOnly&&!journeyFailure&&errors.length===0){aliveGraceResult.facts.exactOwnedCleanupCompleted=true;require("./helpers/certops-windows-alive-grace-proof").verifyProof(aliveGraceResult.facts);fs.writeFileSync(aliveGraceFactsPath,JSON.stringify(aliveGraceResult.facts),{flag:"wx"});}
     if(bindFailureOnly&&!journeyFailure&&errors.length===0){bindFailure.verifyProof(bindFailureResult.proof);fs.writeFileSync(bindFailureFactsPath,JSON.stringify(bindFailureResult.proof),{flag:"wx"});}
     if(failedRollbackOnly&&!journeyFailure&&errors.length===0){failedRollback.verifyProof(failedRollbackResult.proof);fs.writeFileSync(failedRollbackFactsPath,JSON.stringify(failedRollbackResult.proof),{flag:"wx"});}
-    if (!failedRollbackOnly && !aliveGraceOnly && !stoppedOfflineOnly && !historicalSupportingOnly && !journeyFailure && errors.length === 0) {
+    if (!bindFailureOnly && !failedRollbackOnly && !aliveGraceOnly && !stoppedOfflineOnly && !historicalSupportingOnly && !journeyFailure && errors.length === 0) {
       require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
       publicRetirement.verifyProof(publicRetirementProof);
       fs.writeFileSync(publicRetirementProofPath,JSON.stringify(publicRetirementProof),{flag:"wx"});
