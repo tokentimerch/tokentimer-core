@@ -84,4 +84,148 @@ function createClaimObserver() {
     },
   };
 }
-module.exports = { observeClaimResponse, createClaimObserver };
+async function startClaimGateway(upstreamUrl) {
+  const http = require("node:http");
+  const target = new URL(upstreamUrl);
+  assert.ok(
+    target.protocol === "http:" &&
+      target.hostname === "127.0.0.1" &&
+      target.pathname === "/" &&
+      !target.search &&
+      !target.hash &&
+      !target.username &&
+      !target.password,
+  );
+  const observer = createClaimObserver(),
+    sockets = new Set(),
+    requests = new Set();
+  let failure,
+    closed = false;
+  const track = (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  };
+  const server = http.createServer((request, response) => {
+    const exchange = setTimeout(() => {
+      failure = Error("Original signing exchange deadline exceeded");
+      request.destroy();
+      response.destroy();
+    }, 30000);
+    response.once("finish", () => clearTimeout(exchange));
+    response.once("close", () => clearTimeout(exchange));
+    if (
+      request.method !== "POST" ||
+      !/^\/api\/v1\/certops\/agent\/(?:register|heartbeat|jobs\/(?:claim|results|[a-f0-9-]{36}\/(?:lease|logs)))$/.test(
+        request.url,
+      )
+    ) {
+      response.writeHead(404).end();
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size <= 1048576) chunks.push(chunk);
+    });
+    request.once("error", () => response.destroy());
+    request.once("end", () => {
+      if (size > 1048576) {
+        response.writeHead(413).end();
+        return;
+      }
+      const forwarded = http.request(
+        {
+          hostname: target.hostname,
+          port: target.port,
+          path: request.url,
+          method: "POST",
+          headers: {
+            ...request.headers,
+            host: target.host,
+            connection: "close",
+          },
+        },
+        (upstream) => {
+          const data = [];
+          let length = 0;
+          upstream.on("data", (chunk) => {
+            length += chunk.length;
+            if (length <= 1048576) data.push(chunk);
+            else upstream.destroy();
+          });
+          upstream.once("error", () => {
+            failure = Error("Original signing response transport failed");
+            response.destroy();
+          });
+          upstream.once("end", () => {
+            try {
+              assert.ok(length <= 1048576);
+              const bytes = Buffer.concat(data);
+              if (
+                request.url.endsWith("/jobs/claim") &&
+                upstream.statusCode === 200
+              )
+                observer.observe(bytes);
+              response.writeHead(upstream.statusCode, {
+                ...upstream.headers,
+                connection: "close",
+              });
+              response.end(bytes);
+            } catch {
+              failure = Error("Original signing response observation failed");
+              response.destroy();
+            }
+          });
+        },
+      );
+      requests.add(forwarded);
+      forwarded.once("close", () => requests.delete(forwarded));
+      forwarded.once("socket", track);
+      forwarded.once("error", () => {
+        failure = Error("Original signing upstream failed");
+        response.destroy();
+      });
+      forwarded.setTimeout(30000, () => forwarded.destroy());
+      forwarded.end(Buffer.concat(chunks));
+    });
+  });
+  server.on("connection", track);
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return {
+    agentUrl: `http://127.0.0.1:${server.address().port}`,
+    signingKeyFor(id) {
+      if (failure) throw failure;
+      return observer.signingKeyFor(id);
+    },
+    async close() {
+      if (closed) return;
+      const drained = [...sockets].map(
+        (socket) => new Promise((resolve) => socket.once("close", resolve)),
+      );
+      const completion = new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      for (const request of requests) request.destroy();
+      for (const socket of sockets) socket.destroy();
+      await Promise.all([completion, ...drained]);
+      assert.equal(sockets.size, 0);
+      assert.equal(requests.size, 0);
+      closed = true;
+    },
+    assertClean() {
+      assert.equal(closed, true);
+      assert.equal(sockets.size, 0);
+      assert.equal(requests.size, 0);
+      if (failure) throw failure;
+    },
+  };
+}
+module.exports = {
+  observeClaimResponse,
+  createClaimObserver,
+  startClaimGateway,
+};

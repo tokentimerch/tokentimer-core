@@ -201,6 +201,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-live-enroll-acl").verifyProof(artifact.report.nativeLiveEnrollAcl);
           require("../tests/e2e/helpers/certops-adcs-http-leaf-crl").verifyProof(artifact.report.nativeHttpOnlyLeafCrl);
           require("../tests/e2e/helpers/certops-adcs-ocsp-proof").verifyProof(artifact.report.nativeOcspResponder);
+          require("../tests/e2e/helpers/certops-adcs-ocsp-revoked").verifyCrossProof(artifact.report.nativeOcspRevoked, artifact.report.nativeOcspResponder);
           require("../tests/e2e/helpers/certops-adcs-result-outbox").verifyProof(artifact.report.nativeAdcsResultOutbox);
           require("../tests/e2e/helpers/certops-adcs-capacity").verifyProof(artifact.report.nativeAdcsCapacity);
           require("../tests/e2e/helpers/certops-adcs-browser-cancel").verifyCrossProof(artifact.report.nativeBrowserCancel, artifact.report.nativeAdcsCapacity);
@@ -250,6 +251,24 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const p=artifact.report.nativeDaemonCoordinatorRollback,n=artifact.report.qualificationEnvironment;require("./certops-daemon-coordinator-rollback").verifyProof(p);
           const served=artifact.report.nativeDaemonServedLeafMismatch;require("./certops-daemon-served-leaf-mismatch").verifyProof(served);if(served.service!==p.service || JSON.stringify(served.fingerprints)!==JSON.stringify(p.fingerprints))throw new Error("Native served-leaf mismatch original fixture binding required");
           if(p.service+"-host"!==slot.suite || artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || n.distributionId!=="ubuntu" || !["22.04","24.04"].includes(n.distributionVersion) || n.executionSurface!=="host")throw new Error("Native consuming-daemon rollback environment required");
+        }
+        if (slot.suite === "linux-public-signed-trust-lifecycle") {
+          const h=require("./certops-linux-signed-trust-proof");h.verifyProof(artifact.report[h.FIELD]);
+          const n=artifact.report.qualificationEnvironment;
+          if(artifact.report.platform!=="linux"||artifact.report.architecture!=="x64"||n.osFamily!=="linux"||n.distribution!=="ubuntu"||n.osVersion!=="24.04"||n.measurement!=="native"||n.executionSurface!=="disposable-vm")throw new Error("Native Ubuntu24 signed trust evidence required");
+        }
+        if (slot.suite === "native-certificate-signing-rotation") {
+          require("../tests/e2e/helpers/certops-acme-certificate-signing").verifyProof(artifact.report.nativeCertificateSigningRotation);
+          const n = artifact.report.qualificationEnvironment;
+          if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || n.osFamily !== "linux" || n.distributionId !== "ubuntu" || n.distributionVersion !== "24.04" || n.distribution !== "ubuntu" || n.osVersion !== "24.04" || n.executionSurface !== "host" || n.measurement !== "native") throw new Error("Ubuntu24 certificate signing rotation evidence required");
+        }
+        if (slot.suite === "windows-installed-bind-failure-rollback") require("../tests/e2e/helpers/certops-windows-installed-bind-failure").verifyProof(artifact.report.nativeInstalledBindFailure);
+        if (slot.suite === "windows-installed-interruption-recovery") require("../tests/e2e/helpers/certops-windows-installed-interruption").verifyProof(artifact.report.nativeInstalledInterruption);
+        if (slot.suite === "native-adcs-issuer-reassignment") {
+          const proof = artifact.report.nativeIssuerReassignment;
+          require("../tests/e2e/helpers/certops-native-issuer-reassignment").verifyProof(proof);
+          const n = artifact.report.qualificationEnvironment;
+          if (proof.nativeCell !== "pending" || artifact.report.nativeCell === "qualified" || n.osFamily !== "windows" || n.identity !== "LocalSystem" || n.measurement !== "native") throw new Error("Native issuer reassignment stays pending until a disposable forest runs");
         }
         if (slot.suite === "linux-trust-host") {
           const h=require("./certops-linux-trust-independent-roots"),p=artifact.report.nativeIndependentTrustRoots,n=artifact.report.qualificationEnvironment;h.verifyProof(p);
@@ -303,7 +322,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-acme-key-reuse").verifyProof(native[0].nativeAcmeKeyReuse);
           require("./certops-acme-stage-report").verifyForScope(native[0].nativeAcmeStageFaults,slot.suite);
           require("./certops-acme-background-report").verifyForScope(native[0].nativeAcmeBackgroundRenewals,native[0].nativeAcmeKeyReuse,slot.suite);
-          if(slot.suite==='real-agent-acme-filesystem'){const bulk=require('./certops-acme-bulk-report');bulk.verifyForScope(native[0].nativeAcmeBulkRenewal,slot.suite,native[0].qualificationEnvironment);bulk.verifyCrossJourney(native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeKeyReuse,native[0].nativeAcmeBackgroundRenewals);require("../tests/e2e/helpers/certops-acme-native-adoption").verifyAgainstBulk(native[0].nativeAcmeRenewalSetup,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-certificate-outbox").verifyAgainstJourney(native[0].nativeAcmeCertificateOutbox,native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeRenewalSetup);require("../tests/e2e/helpers/certops-acme-disabled-profile").verifyAgainstBulk(native[0].nativeAcmeDisabledProfile,native[0].nativeAcmeBulkRenewal);}
+          if(slot.suite==='real-agent-acme-filesystem'){const bulk=require('./certops-acme-bulk-report');bulk.verifyForScope(native[0].nativeAcmeBulkRenewal,slot.suite,native[0].qualificationEnvironment);bulk.verifyCrossJourney(native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeKeyReuse,native[0].nativeAcmeBackgroundRenewals);require("../tests/e2e/helpers/certops-acme-native-adoption").verifyAgainstBulk(native[0].nativeAcmeRenewalSetup,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-certificate-outbox").verifyAgainstJourney(native[0].nativeAcmeCertificateOutbox,native[0].nativeAcmeBulkRenewal,native[0].nativeAcmeRenewalSetup);require("../tests/e2e/helpers/certops-acme-disabled-profile").verifyAgainstBulk(native[0].nativeAcmeDisabledProfile,native[0].nativeAcmeBulkRenewal);require("../tests/e2e/helpers/certops-acme-renewal-alert").verifyAgainstOutbox(native[0].nativeAcmeRenewalAlert,native[0].nativeAcmeCertificateOutbox);}
           if (native[0].nativeAcmeKeyReuse.client !== (slot.suite.includes("acmesh") ? "acme.sh" : "certbot")) throw new Error("ACME key reuse client scope mismatch");
         }
         if (slot.suite.startsWith("real-agent-windows-acme-iis/")) {

@@ -1,6 +1,8 @@
 "use strict";
 /* Public response inspection for the planned real Microsoft Online Responder
- * fixture. This is NOT a responder, an HTTP interception or a chain verdict.
+ * fixture. Revoked, good, and unknown are parsed here; authoritative revoked
+ * status is a separate proof. Native lab execution is still pending.
+ * This is NOT a responder, an HTTP interception or a chain verdict.
  * Node crypto uses OpenSSL for independent signature verification over the
  * exact received bytes. The caller must also obtain the actual CryptoAPI chain
  * verdict and bind the signer to the owned native responder configuration.
@@ -353,7 +355,7 @@ function verifyResponse(
     serialNumber,
     leaf.serialNumber.replace(/^0+/, "").toUpperCase(),
   );
-  let status;
+  let status, revocationTime;
   if (answer[1].tag === 0x80 || answer[1].tag === 0x82) {
     assert.equal(answer[1].value.length, 0);
     status = answer[1].tag === 0x80 ? "good" : "unknown";
@@ -362,7 +364,8 @@ function verifyResponse(
     const revoked = children({ tag: 0x30, value: answer[1].value });
     assert.ok(revoked.length === 1 || revoked.length === 2);
     assert.equal(revoked[0].tag, 0x18);
-    assert.ok(timestamp(revoked[0]) <= now);
+    revocationTime = timestamp(revoked[0]);
+    assert.ok(revocationTime <= producedAt && revocationTime <= now);
     if (revoked[1]) {
       const reason = explicit(revoked[1], 0xa0);
       assert.equal(reason.tag, 0x0a);
@@ -389,6 +392,9 @@ function verifyResponse(
   if (fields[3]) noncriticalExtensions(fields[3], 0xa1);
   return {
     status,
+    ...(revocationTime !== undefined
+      ? { revocationTime: new Date(revocationTime).toISOString() }
+      : {}),
     serialNumber,
     producedAt: new Date(producedAt).toISOString(),
     thisUpdate: new Date(thisUpdate).toISOString(),

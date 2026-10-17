@@ -6,7 +6,9 @@ const assert = require("node:assert/strict"), fs = require("node:fs"), path = re
 function discover(root = path.resolve(__dirname, "..")) {
   const files = fs.readdirSync(path.join(root, "scripts"), { withFileTypes: true }).filter(entry => entry.isFile() && /^certops-[a-z0-9-]+-collector\.test\.py$/.test(entry.name)).map(entry => `scripts/${entry.name}`).sort();
   assert.ok(files.includes("scripts/certops-release-collector.test.py"), "Original release collector regressions are mandatory");
-  assert.ok(files.length <= 32, "Collector regression discovery exceeds reviewed bound");
+  // Reserve modest inventory headroom for the signed trust/renewal lifecycle
+  // collectors; the shared execution deadline remains unchanged.
+  assert.ok(files.length <= 40, "Collector regression discovery exceeds reviewed bound");
   return files;
 }
 function main({ root = path.resolve(__dirname, ".."), run = spawnSync, now = Date.now } = {}) {

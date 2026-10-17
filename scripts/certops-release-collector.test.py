@@ -48,6 +48,33 @@ def ocsp_evidence():
         **{key: True for key in OCSP_FLAGS}, **{key: False for key in OCSP_FALSE_FLAGS},
     }
 
+
+def revoked_ocsp_evidence():
+    import certops_adcs_ocsp_revoked_proof as proof
+    base = ocsp_evidence()
+    return {
+        "scope": proof.SCOPE,
+        "historicalEnrollmentId": base["enrollmentIds"][0],
+        "currentEnrollmentId": base["enrollmentIds"][1],
+        "historicalRequestId": base["requestIds"][0],
+        "currentRequestId": base["requestIds"][1],
+        "originalCrlSha256": base["publicCrlSha256"],
+        "revokedCrlSha256": "8" * 64,
+        "originalCrlNumber": "0",
+        "revokedCrlNumber": "1",
+        "historicalFingerprint": base["leafFingerprints"][0],
+        "currentFingerprint": base["leafFingerprints"][1],
+        "historicalSerial": "A2",
+        "revocationTime": "2026-10-15T10:00:00.000Z",
+        "responseSha256": "9" * 64,
+        "signerFingerprint": base["signerFingerprint"],
+        "issuerKeySha256": base["issuerKeySha256"],
+        "nativeVerdict": "revoked",
+        "caRequestCounts": [base["caRequestCounts"][-1], base["caRequestCounts"][-1]],
+        **{key: True for key in proof.FLAGS},
+        **{key: False for key in proof.FALSE_FLAGS},
+    }
+
 sys.dont_write_bytecode = True
 
 spec = importlib.util.spec_from_file_location("collector", Path(__file__).with_name("certops-release-collector.py"))
@@ -787,11 +814,14 @@ class CollectorTests(unittest.TestCase):
                 baseline["nativeAcmeRenewalSetup"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-native-adoption-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeBulkRenewal"]) + ")))"], cwd=collector.ROOT))
                 baseline["nativeAcmeCertificateOutbox"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-certificate-outbox-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeBulkRenewal"]) + ")))"], cwd=collector.ROOT))
                 baseline["nativeAcmeDisabledProfile"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-disabled-profile-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeBulkRenewal"]) + ")))"], cwd=collector.ROOT))
+                baseline["nativeAcmeRenewalAlert"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/acme-renewal-alert-proof.cjs').proof(" + json.dumps(baseline["nativeAcmeCertificateOutbox"]) + ")))"], cwd=collector.ROOT))
                 baseline["qualificationEnvironment"] = {"measurement":"native","osFamily":"linux","distributionId":"ubuntu","distributionVersion":"24.04","executionSurface":"host"}
             def project(value):
                 return collector.sanitized_report([{**baseline, "scope": scope, "name": main, "type": "test:pass", "nativeAcmeKeyReuse": value}], set(), {scope})
             result = project({**proof, "rawKey": "private-sentinel", "windowsQualified": True, "workerLoopQualified": True})
             self.assertEqual(result[0]["nativeAcmeKeyReuse"], proof)
+            if scope == "real-agent-acme-filesystem":
+                self.assertEqual(result[0]["nativeAcmeRenewalAlert"], baseline["nativeAcmeRenewalAlert"])
             for forbidden in ("private-sentinel", "windowsQualified", "workerLoopQualified"):
                 self.assertNotIn(forbidden, json.dumps(result))
             for field in fields:
@@ -1360,6 +1390,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeLiveEnrollAcl"] = {**live_enroll_acl_proof(), "privateDacl": "sentinel"}
         value["nativeHttpOnlyLeafCrl"] = {**http_leaf_crl_evidence(), "privatePublication": "sentinel"}
         value["nativeOcspResponder"] = ocsp_evidence()
+        value["nativeOcspRevoked"] = revoked_ocsp_evidence()
         value["nativeAdcsResultOutbox"] = {**adcs_result_outbox_evidence(), "privateCredential": "discard"}
         value["nativeUncertainOperatorAmbiguity"]["privateKey"] = "sentinel"
         value["nativeBrowserAdcs"] = browser_adcs_proof()
@@ -1448,6 +1479,7 @@ class CollectorTests(unittest.TestCase):
                 collector.extract_reports(self.archive("adcs.json", invalid), {"enterprise-adcs-real"}, set())
         self.assertEqual(result[0][1]["nativeHttpOnlyLeafCrl"], http_leaf_crl_evidence())
         self.assertEqual(result[0][1]["nativeOcspResponder"], ocsp_evidence())
+        self.assertEqual(result[0][1]["nativeOcspRevoked"], collector.ocsp_revoked_proof.fields(revoked_ocsp_evidence(), ocsp_evidence()))
         self.assertEqual(result[0][1]["nativeAdcsResultOutbox"], adcs_result_outbox_evidence())
         for key in (None, *adcs_result_outbox_evidence()):
             bad = json.loads(json.dumps(value))
@@ -1469,6 +1501,14 @@ class CollectorTests(unittest.TestCase):
             else:
                 del bad["nativeOcspResponder"][missing]
             with self.subTest(missing_ocsp=missing), self.assertRaises(ValueError):
+                collector.sanitized_report(bad, {value["suite"]}, set())
+        for missing in (None, *collector.ocsp_revoked_proof.FIELDS):
+            bad = json.loads(json.dumps(value))
+            if missing is None:
+                del bad["nativeOcspRevoked"]
+            else:
+                del bad["nativeOcspRevoked"][missing]
+            with self.subTest(missing_ocsp_revoked=missing), self.assertRaises(ValueError):
                 collector.sanitized_report(bad, {value["suite"]}, set())
         for key in (None, *http_leaf_crl_evidence()):
             bad = json.loads(json.dumps(value))

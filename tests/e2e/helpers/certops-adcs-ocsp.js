@@ -2,7 +2,9 @@
 /* Actual Microsoft responder on the existing disposable CA. No native action
  * runs merely by importing this module. The native endpoint fault is an
  * independent CryptoAPI probe, plus an actual signed-agent deferred leaf and
- * same-leaf continuation. Neither path substitutes a native chain verdict. */
+ * same-leaf continuation. Neither path substitutes a native chain verdict.
+ * Authoritative revoked status is a separate proof. Native lab execution of
+ * that cell is still pending, and a missing disposable lab fails closed. */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -35,6 +37,7 @@ const {
 const { verifyCrl } = require("./certops-adcs-http-leaf-crl-der");
 const response = require("./certops-adcs-ocsp-response");
 const proofContract = require("./certops-adcs-ocsp-proof");
+const historicalRevoked = require("./certops-adcs-ocsp-revoked");
 const deferredJourney = require("./certops-adcs-ocsp-deferred");
 const {
   inspectMachineKeySurvivors,
@@ -53,6 +56,10 @@ const REQUIRED_SOURCES = Object.freeze([
   "tests/e2e/helpers/certops-adcs-ocsp.js",
   "tests/e2e/helpers/certops-adcs-ocsp-proof.js",
   "tests/e2e/helpers/certops-adcs-ocsp-response.js",
+  "tests/e2e/helpers/certops-adcs-ocsp-revoked.js",
+  "infra/certops-adcs/ocsp-revoked-fixture.ps1",
+  "packages/agent/src/windows-discovery/index.js",
+  "scripts/certops_adcs_ocsp_revoked_proof.py",
   "tests/e2e/helpers/certops-adcs-ocsp-deferred.js",
   "tests/e2e/helpers/certops-adcs-deferred-continuation.js",
   "tests/e2e/helpers/certops-adcs-deferred-identity.js",
@@ -166,6 +173,7 @@ async function qualifyOcsp(c) {
     "infra/certops-adcs/ocsp-owned-key.ps1",
     "infra/certops-adcs/ocsp-responder-fixture.ps1",
     "infra/certops-adcs/ocsp-iis-owned.ps1",
+    "infra/certops-adcs/ocsp-revoked-fixture.ps1",
     "infra/certops-adcs/ocsp-native-survivors.ps1",
     "tests/e2e/helpers/certops-windows-contained-process.ps1",
     "tests/e2e/helpers/certops-windows-owned-process.ps1",
@@ -398,7 +406,7 @@ async function qualifyOcsp(c) {
   const custody = () => custodyFor(leaf, accepted.enrollmentId);
   const binding = () =>
     ps(
-      `Import-Module WebAdministration;$b=@(Get-WebBinding -Name '${current.site}' -Protocol https|Where-Object bindingInformation -eq '*:${current.port}:${current.item.domain}');$s=@(Get-ChildItem -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslSniBindingInfo'|Where-Object {[string]$_.GetValue('HostnamePort') -ieq '${current.item.domain}:${current.port}'});if($b.Count -ne 1 -or $s.Count -ne 1 -or [int]$b[0].sslFlags -ne 1 -or [string]$s[0].GetValue('SslCertStoreName') -ine 'My' -or [BitConverter]::ToString([byte[]]$s[0].GetValue('SslCertHash')).Replace('-','') -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}'){throw 'Owned OCSP native SNI binding changed'};@{coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;settings=@($s[0].GetValueNames()|Sort-Object|ForEach-Object {@{name=$_;kind=$s[0].GetValueKind($_).ToString();value=$s[0].GetValue($_)}})}|ConvertTo-Json -Depth 8 -Compress`,
+      `Import-Module WebAdministration;$b=@(Get-WebBinding -Name '${current.site}' -Protocol https|Where-Object bindingInformation -eq '*:${current.port}:${current.item.domain}');$s=@(Get-ChildItem -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslSniBindingInfo'|Where-Object {[string]$_.GetValue('HostnamePort') -ieq '${current.item.domain}:${current.port}'});if($b.Count -ne 1 -or $s.Count -ne 1 -or [int]$b[0].sslFlags -ne 1 -or [string]$b[0].certificateStoreName -ine 'My' -or ([BitConverter]::ToString([byte[]]$b[0].certificateHash).Replace('-','')) -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}' -or [string]$s[0].GetValue('SslCertStoreName') -ine 'My' -or [BitConverter]::ToString([byte[]]$s[0].GetValue('SslCertHash')).Replace('-','') -cne '${leaf.fingerprint.replace(/:/g, "").toUpperCase()}'){throw 'Owned OCSP native SNI binding changed'};@{coordinates=[string]$b[0].bindingInformation;flags=[int]$b[0].sslFlags;iisHash=[BitConverter]::ToString([byte[]]$b[0].certificateHash).Replace('-','');iisStore=[string]$b[0].certificateStoreName;settings=@($s[0].GetValueNames()|Sort-Object|ForEach-Object {@{name=$_;kind=$s[0].GetValueKind($_).ToString();value=$s[0].GetValue($_)}})}|ConvertTo-Json -Depth 8 -Compress`,
     );
   let deferredRecovery;
   async function renew(ocspOnly) {
@@ -457,7 +465,7 @@ async function qualifyOcsp(c) {
           );
           writeProbeArtifacts(deferredLeaf.raw);
           verifyFirewall();
-          await signedGood(deferredLeaf, false);
+          await signedStatus(deferredLeaf, false);
           assert.equal((await probe()).verdict, "revocation_unknown");
           const container = buildEnrollmentContainerName(accepted.enrollmentId);
           const challenge = crypto.randomBytes(32);
@@ -665,7 +673,11 @@ async function qualifyOcsp(c) {
     cacheRestored = true;
   }
   const responseDigests = [];
-  async function signedGood(certificate = generations[0].leaf, record = true) {
+  async function signedStatus(
+    certificate = generations[0].leaf,
+    record = true,
+    expectedStatus = "good",
+  ) {
     const request = response.createRequest(certificate.raw, caBytes);
     const answer = await fetch("http://10.64.0.4/ocsp", {
       method: "POST",
@@ -703,9 +715,13 @@ async function qualifyOcsp(c) {
       signerBytes: signer,
       expectedCaKeySha256: current.authority.keySha256,
     });
-    assert.equal(observed.status, "good");
-    if (record) responseDigests.push(observed.responseSha256);
+    if (expectedStatus !== null) assert.equal(observed.status, expectedStatus);
+    if (record) {
+      assert.equal(observed.status, "good");
+      responseDigests.push(observed.responseSha256);
+    }
     await operation("Observe", payload);
+    return observed;
   }
   function probe() {
     sameOwned(helperPath, helperFile, 6291456);
@@ -856,14 +872,14 @@ async function qualifyOcsp(c) {
             "Native OCSP binding changed",
           );
         };
-        await signedGood();
+        await signedStatus();
         assert.equal((await probe()).verdict, "valid");
         installFirewall();
-        await signedGood();
+        await signedStatus();
         assert.equal((await probe()).verdict, "revocation_unknown");
         await unchanged();
         removeFirewall();
-        await signedGood();
+        await signedStatus();
         assert.equal((await probe()).verdict, "valid");
         await unchanged();
       },
@@ -878,6 +894,73 @@ async function qualifyOcsp(c) {
       proofContract.REQUIRED_SCENARIOS[2],
       async () => {
         await renew(false);
+        const currentCustody = custody(),
+          currentBinding = binding();
+        let revokedResult;
+        await gate.scenario(
+          historicalRevoked.SCENARIO,
+          async () => {
+            revokedResult = await historicalRevoked.qualifyHistoricalRevoked({
+              historical: generations[0],
+              current: generations[1],
+              issuerDer: caBytes,
+              signerDer: signer,
+              issuerKeySha256: current.authority.keySha256,
+              originalCrl: crl,
+              ps,
+              operation,
+              checkpoint,
+              assertCurrent: async () => {
+                assert.equal(
+                  (await peer()).fingerprint256,
+                  generations[1].leaf.fingerprint256,
+                );
+                assert.ok(
+                  isDeepStrictEqual(custody(), currentCustody),
+                  "Current replacement native key changed during historical revocation",
+                );
+                assert.ok(
+                  binding() === currentBinding,
+                  "Current replacement IIS/HTTP.sys changed during historical revocation",
+                );
+              },
+              fetchRevoked: async (verifiedCrl) => {
+                payload = {
+                  ...payload,
+                  crlDerBase64: verifiedCrl.toString("base64"),
+                };
+                return await c.until(async () => {
+                  const observed = await signedStatus(
+                    generations[0].leaf,
+                    false,
+                    null,
+                  );
+                  return observed.status === "revoked" ? observed : null;
+                }, 60000);
+              },
+              probeRevoked: async (certificate) => {
+                writeProbeArtifacts(certificate.raw);
+                ps(
+                  "& certutil.exe -urlcache 'http://10.64.0.4/ocsp' delete *> $null;$code=([long]$LASTEXITCODE -band 0xffffffffL);if($code -notin @(0L,0x80092004L,0x80070002L)){throw 'Exact owned OCSP URL cache eviction failed'}",
+                );
+                return await c.until(async () => {
+                  const result = await probe();
+                  if (result.verdict === "revoked") return result;
+                  assert.ok(
+                    ["valid", "revocation_unknown"].includes(result.verdict),
+                    "Unrelated native chain failure during revoked probe",
+                  );
+                  return null;
+                }, 60000);
+              },
+            });
+          },
+          {
+            evidenceLevel: "real-host",
+            oracle:
+              "exact unserved historical native CA leaf revoked, independently signed fresh CRL/provider refresh and delegated OCSP plus CryptoAPI revoked, unchanged successor TLS",
+          },
+        );
         restoreCache();
         await cleanup();
         assert.equal(
@@ -919,6 +1002,18 @@ async function qualifyOcsp(c) {
             proofContract.FALSE_FLAGS.map((flag) => [flag, false]),
           ),
         });
+        gate.report.nativeOcspRevoked = historicalRevoked.verifyCrossProof(
+          {
+            ...revokedResult.facts,
+            ...Object.fromEntries(
+              historicalRevoked.FLAGS.map((flag) => [flag, true]),
+            ),
+            ...Object.fromEntries(
+              historicalRevoked.FALSE_FLAGS.map((flag) => [flag, false]),
+            ),
+          },
+          finalProof,
+        );
       },
       {
         evidenceLevel: "real-host",

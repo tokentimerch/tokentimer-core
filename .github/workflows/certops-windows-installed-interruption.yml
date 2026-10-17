@@ -1,0 +1,22 @@
+# Manual script proof for deterministic interruption recovery.
+# This is host-integration evidence. It is not power-loss durability and it is not a real reboot.
+# Dispatch does not stop a service, kill a process, or qualify a native host.
+name: "CertOps / Installed Windows interruption recovery script proof"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  script-proof:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '24'
+      - name: Validate interruption recovery guards
+        run: node --test scripts/certops-windows-installed-interruption.test.js

@@ -287,6 +287,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativeHttpOnlyLeafCrl: require("./fixtures/certops-adcs-http-leaf-crl.cjs").proof(),
     nativeAdcsResultOutbox: require("./fixtures/certops-adcs-result-outbox.cjs").proof(),
     nativeOcspResponder: require("./fixtures/certops-adcs-ocsp.cjs").proof(),
+    nativeOcspRevoked: require("./fixtures/certops-adcs-ocsp-revoked.cjs").proof(),
     nativeBrowserAdminBoundary: {"scope":"public-manager-viewer-adcs-admin-boundary-not-mounted-admin-withdrawal","enrollmentId":"11111111-1111-1111-1111-111111111111","forbiddenMutations":4,"roleChanges":2,"adminDemotions":0,"mountedAdminWithdrawalQualified":false,"distinctOwnedNonownerActors":true,"noGlobalAdminBypassAssumed":true,"publicManagerViewerManagerTransitions":true,"managerAndViewerUiDenied":true,"bothRolesReconcileAndAbandonForbidden":true,"publicOwnerAdminPatchDemotionRefused":true,"exactOwnerAdminUnchanged":true,"actualUncertainEnrollmentAndJobsUnchanged":true,"nativeCaAndUnacceptedKeyUnchanged":true,"servingNativeCustodyAndTrustedTlsUnchanged":true,"targetCertOpsAuditUnchanged":true,"exactMembershipAudits":true,"managerMembershipRestored":true,"browserAndTrustDrained":true},
     nativeBrowserReconcile: browserReconcileProof(),
     nativeIssuedSanBoundary: issuedSanProof(),
@@ -325,6 +326,9 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   for(const patch of [{nativeValidUnknownValid:false},{caRequestCounts:[39,40,42,43]},{installedAgentFaultRecoveryQualified:false},{authoritativeRevokedStatusQualified:true},{privateReceipt:"sentinel"}]){const wrong=structuredClone(value);Object.assign(wrong.report.nativeOcspResponder,patch);assert.ok(verifyMatrix([wrong],options).length);}
   for(const patch of [{requestId:42},{continuationJobId:"44444444-4444-4444-8444-444444444444"},{originalJobId:"33333333-3333-4333-8333-333333333333"},{originalClaimId:"77777777-7777-4777-8777-777777777777"},{rawContainer:"private"}]){const wrong=structuredClone(value);Object.assign(wrong.report.nativeOcspResponder.deferredRecovery,patch);assert.ok(verifyMatrix([wrong],options).length);}
   const absentOcsp=structuredClone(value);delete absentOcsp.report.nativeOcspResponder;assert.ok(verifyMatrix([absentOcsp],options).length);
+  const revoked=require("./fixtures/certops-adcs-ocsp-revoked.cjs").proof();
+  for(const key of Object.keys(revoked)){const missing=structuredClone(value);delete missing.report.nativeOcspRevoked[key];assert.ok(verifyMatrix([missing],options).length,`revoked OCSP missing ${key}`);}
+  const absentRevoked=structuredClone(value);delete absentRevoked.report.nativeOcspRevoked;assert.ok(verifyMatrix([absentRevoked],options).length);
   const outbox=require("./fixtures/certops-adcs-result-outbox.cjs").proof();
   const absentOutbox=structuredClone(value);delete absentOutbox.report.nativeAdcsResultOutbox;assert.ok(verifyMatrix([absentOutbox],options).length);
   for(const key of Object.keys(outbox)){const missing=structuredClone(value);delete missing.report.nativeAdcsResultOutbox[key];assert.ok(verifyMatrix([missing],options).length);}
@@ -791,11 +795,12 @@ test("Linux ACME key reuse requires exact client-bound native proof and current 
     main.nativeAcmeKeyReuse=acmeReuseProof(client);
     main.nativeAcmeStageFaults=require("./test-support/acme-stage-proof.cjs").proof(client);
     main.nativeAcmeBackgroundRenewals=require("./test-support/acme-background-proof.cjs").proof(client,main.nativeAcmeKeyReuse);
-    if(slot.suite==="real-agent-acme-filesystem"){main.nativeAcmeBulkRenewal=require("./test-support/acme-bulk-proof.cjs").proof(main.nativeAcmeKeyReuse);main.nativeAcmeRenewalSetup=require("./test-support/acme-native-adoption-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeCertificateOutbox=require("./test-support/acme-certificate-outbox-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeDisabledProfile=require("./test-support/acme-disabled-profile-proof.cjs").proof(main.nativeAcmeBulkRenewal);}
+    if(slot.suite==="real-agent-acme-filesystem"){main.nativeAcmeBulkRenewal=require("./test-support/acme-bulk-proof.cjs").proof(main.nativeAcmeKeyReuse);main.nativeAcmeRenewalSetup=require("./test-support/acme-native-adoption-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeCertificateOutbox=require("./test-support/acme-certificate-outbox-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeDisabledProfile=require("./test-support/acme-disabled-profile-proof.cjs").proof(main.nativeAcmeBulkRenewal);main.nativeAcmeRenewalAlert=require("./test-support/acme-renewal-alert-proof.cjs").proof(main.nativeAcmeCertificateOutbox);}
     const value={kind:"stack",suite:slot.suite,environment:{...slot.environment,measurement:"native"},events};
     const options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
     assert.deepEqual(verifyMatrix([value],options),[]);
     const reject=mutate=>{const bad=structuredClone(value);mutate(bad.events.find(event=>event.name===main.name),bad);assert.ok(verifyMatrix([bad],options).length,slot.suite);};
+    if(slot.suite==="real-agent-acme-filesystem") reject(event=>{delete event.nativeAcmeRenewalAlert;});
     for(const field of helper.fields){for(const invalid of [false,1,null,"true"])reject(event=>{event.nativeAcmeKeyReuse[field]=invalid;});reject(event=>{delete event.nativeAcmeKeyReuse[field];});}
     for(const change of [{scope:"windows-native-reuse"},{scope:"background-worker-loop"},{client:client==="certbot"?"acme.sh":"certbot"},{fingerprints:["a".repeat(64),"a".repeat(64),"b".repeat(64)]},{serials:["AA","AA","BB"]},{jobIds:[main.nativeAcmeKeyReuse.jobIds[0],main.nativeAcmeKeyReuse.jobIds[0].toUpperCase()]},{sourceProfileId:"foreign"},{sourceProfileFingerprint:"bad"},{spkiFingerprint:"bad"},{windowsQualified:true},{workerLoopQualified:true}])reject(event=>Object.assign(event.nativeAcmeKeyReuse,change));
     reject(event=>{delete event.nativeAcmeKeyReuse;});
@@ -892,4 +897,74 @@ test("WebHosting hosted cells require independent store, elapsed and borrowed-ke
    const bad=structuredClone(value);mutate(bad.report);assert.ok(verifyMatrix([bad],{candidateSha,specification:{schemaVersion:1,slots:[slot]}}).length);
   }
  }
+});
+
+test("certificate signing rotation requires the owned non-forced cell", () => {
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "linux-native-certificate-signing-rotation");
+  const proof = require("./fixtures/certops-acme-certificate-signing.cjs").fixture();
+  const value = suiteArtifact(slot.suite, slot.source, { platform: "linux", architecture: "x64", nativeCertificateSigningRotation: proof });
+  value.environment = { ...slot.environment };
+  value.report.qualificationEnvironment = { ...slot.environment, distribution: "ubuntu", osVersion: "24.04", measurement: "native" };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  const missing = structuredClone(value); delete missing.report.nativeCertificateSigningRotation;
+  assert.ok(verifyMatrix([missing], options).length);
+  const forced = structuredClone(value); forced.report.nativeCertificateSigningRotation.forcedCompletionQualified = true;
+  assert.ok(verifyMatrix([forced], options).length);
+});
+
+test("installed bind-failure and interruption proofs stay local and fail closed", () => {
+  const bind = require("../tests/e2e/helpers/certops-windows-installed-bind-failure");
+  const recovery = require("../tests/e2e/helpers/certops-windows-installed-interruption");
+  const run = "ab".repeat(16);
+  const owned = bind.createRunManifest({ runId: run, root: `C:\\qualification\\tt-bindfail-${run}`, predecessorThumbprint: "AB".repeat(20), siblingThumbprint: "CD".repeat(20), appIds: ["{11111111-1111-1111-1111-111111111111}", "{22222222-2222-2222-2222-222222222222}"] });
+  const bindProof = bind.simulateScriptContract(owned, { bindings: [{ selector: "ipport=0.0.0.0:443", endpoint: "0.0.0.0:443", thumbprint: "EE".repeat(20), store: "MY" }], sites: [{ name: "Default Web Site" }] }).proof;
+  const interruptionRun = "cd".repeat(16);
+  const recorded = recovery.recordPoint({ kind: "ledger", runId: interruptionRun, sequence: 7, payload: Buffer.from("ledger-row"), mode: "service-stop", root: `C:\\qualification\\tt-int-${interruptionRun}` });
+  const interruptionProof = recovery.recover({ point: recorded.point, bytes: recorded.bytes, commands: recovery.buildInterruptionPlan(recorded.point) }).proof;
+  const cases = [
+    ["windows-installed-bind-failure", "nativeInstalledBindFailure", bindProof],
+    ["windows-installed-interruption-recovery", "nativeInstalledInterruption", interruptionProof],
+  ];
+  for (const [id, field, proof] of cases) {
+    const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === id);
+    const value = suiteArtifact(slot.suite, slot.source, { [field]: proof });
+    value.environment = { ...slot.environment };
+    value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+    value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+    const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+    assert.deepEqual(verifyMatrix([value], options), []);
+    const missing = structuredClone(value); delete missing.report[field];
+    assert.ok(verifyMatrix([missing], options).length);
+  }
+  const interruption = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "windows-installed-interruption-recovery");
+  const durable = suiteArtifact(interruption.suite, interruption.source, { nativeInstalledInterruption: { ...interruptionProof, powerLossDurabilityQualified: true } });
+  durable.environment = { ...interruption.environment };
+  durable.report.qualificationEnvironment = { ...interruption.environment, measurement: "native" };
+  durable.report.fixtureSources = interruption.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  assert.ok(verifyMatrix([durable], { candidateSha, specification: { schemaVersion: 1, slots: [interruption] } }).length);
+});
+
+test("native issuer reassignment stays pending without a disposable forest", () => {
+  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "windows-native-issuer-reassignment");
+  const helper = require("../tests/e2e/helpers/certops-native-issuer-reassignment");
+  const proof = {
+    scope: helper.SCOPE, renewalProtocol: "production-scheduler-sweep-after-public-issuer-switch", schedulerInvocation: "qualification-invoked-production-default-sweep", workerIntervalQualified: false, nativeCell: "pending",
+    originIssuerId: "11111111-1111-4111-8111-111111111111", destinationIssuerId: "22222222-2222-4222-8222-222222222222", originCaKeySha256: "a".repeat(64), destinationCaKeySha256: "b".repeat(64),
+    profileId: "33333333-3333-4333-8333-333333333333", certificateId: "44444444-4444-4444-8444-444444444444", requestIds: ["17", "18"], fingerprints: ["c".repeat(64), "d".repeat(64)], spkiFingerprints: ["e".repeat(64), "f".repeat(64)],
+    enrollmentIds: ["55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"], jobIds: ["77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888"],
+    containerNames: ["tokentimer-enr-55555555-5555-4555-8555-555555555555", "tokentimer-enr-66666666-6666-4666-8666-666666666666"],
+    ...Object.fromEntries(helper.FLAGS.map(flag => [flag, true])),
+  };
+  const value = suiteArtifact(slot.suite, slot.source, { nativeIssuerReassignment: proof, nativeCell: "pending" });
+  value.environment = { ...slot.environment };
+  value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
+  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
+  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
+  assert.deepEqual(verifyMatrix([value], options), []);
+  const qualified = structuredClone(value); qualified.report.nativeCell = "qualified";
+  assert.ok(verifyMatrix([qualified], options).length);
+  const missing = structuredClone(value); delete missing.report.nativeIssuerReassignment;
+  assert.ok(verifyMatrix([missing], options).length);
 });

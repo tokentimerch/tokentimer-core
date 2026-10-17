@@ -1,4 +1,6 @@
 "use strict";
+// Closed signed-good OCSP availability report. Authoritative revoked status
+// is a separate proof and stays false here. Native lab execution is still pending.
 const assert = require("node:assert/strict");
 const SCOPE =
   "real-installed-adcs-native-microsoft-ocsp-good-unavailable-recovered";
@@ -7,6 +9,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-ocsp-only-leaf-native-endpoint-recovery",
   "adcs-real-ocsp-original-publication-renewal-and-drain",
   "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
+  "adcs-real-ocsp-authoritative-historical-revoked-status",
 ]);
 const FLAGS = Object.freeze([
   "originalCaAndRoleAbsenceBound",

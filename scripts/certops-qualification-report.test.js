@@ -104,3 +104,13 @@ test("API runner binds reports to the current selected source file", () => {
   assert.equal(verifySource({ fixtureSource: { file: "another-source.js", sha256 } }, file), false);
   assert.equal(verifySource({}, file), false);
 });
+test("public signed Ubuntu trust report cannot omit a mandatory scenario id", () => {
+  const f = require("./test-support/linux-signed-trust-artifact.cjs");
+  const h = require("./certops-linux-signed-trust-proof");
+  const report = structuredClone(f.artifact().report);
+  const missing = h.SCENARIOS[0];
+  report.scenarios = report.scenarios.filter((scenario) => scenario.id !== missing);
+  report.missingScenarios = [];
+  const errors = verifyReport(report, undefined, { expectedSha: f.CANDIDATE });
+  assert.ok(errors.includes(`Missing required scenario: ${missing}`));
+});

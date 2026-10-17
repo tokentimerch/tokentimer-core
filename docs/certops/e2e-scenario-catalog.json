@@ -360,7 +360,7 @@
         "native-signing-rotation"
       ],
       "implementation": "tests/e2e/certops-signing-rotation-native-e2e.test.js",
-      "remainingCoverage": "Nine strict scenarios passed focused real Linux Node 24 two-agent registration, operator CLI begin/status/complete, incomplete-fleet refusal, actual heartbeat pin acknowledgements and restart/new-signed-job execution on a separate disposable API/PostgreSQL stack. Windows service/SYSTEM pin adoption, in-flight certificate jobs and hosted release qualification remain."
+      "remainingCoverage": "Nine strict scenarios passed focused real Linux Node 24 two-agent registration, operator CLI begin/status/complete, incomplete-fleet refusal, actual heartbeat pin acknowledgements and restart/new-signed-job execution on a separate disposable API/PostgreSQL stack. Windows service/SYSTEM pin adoption and hosted release qualification remain. One owned in-flight certificate renewal across a non-forced signing-key rotation is the separate partial contract acme.certificate-signing-rotation. Native execution of that cell remains pending."
     },
     {
       "id": "execution.replay-clock",
@@ -626,7 +626,31 @@
         "windows-2025"
       ],
       "implementation": "packages/agent/scripts/host/windows-host.test.js; packages/agent/scripts/host/iis-public-only-fixture.js",
-      "remainingCoverage": "Owned missing-store certificate triggers actual binding failure/rollback with TLS oracle. Mandatory hosted Server2022/2025 source additionally imports only an owned public certificate after its genuine original-key deletion, independently requires HasPrivateKey=false and native CNG key absence, records actual BIND_FAILED or VERIFY_FAILED refusal with successful rollback, and checks predecessor/sibling native bindings plus authenticated TLS before exact certificate-only cleanup. The native execution remains pending; no installed signed-job bind-failure or failed-rollback composition is claimed."
+      "remainingCoverage": "Owned missing-store certificate triggers actual binding failure/rollback with TLS oracle. Mandatory hosted Server2022/2025 source additionally imports only an owned public certificate after its genuine original-key deletion, independently requires HasPrivateKey=false and native CNG key absence, records actual BIND_FAILED or VERIFY_FAILED refusal with successful rollback, and checks predecessor/sibling native bindings plus authenticated TLS before exact certificate-only cleanup. The native execution remains pending. The separate script contract windows-iis.installed-public-bind-failure checks owned selectors and cleanup guards. It does not execute BIND_FAILED, and it does not close this row or the failed-rollback row."
+    },
+    {
+      "id": "windows-iis.installed-public-bind-failure",
+      "outcome": "An owned public binding injection rolls back to the predecessor and leaves the sibling untouched.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "tests/e2e/helpers/certops-windows-installed-bind-failure.js",
+      "remainingCoverage": "Local script evidence checks parsers, unique owned sites and bindings, and cleanup that refuses a blanket netsh reset. The proof records evidenceLevel script and nativeExecutionQualified false. A missing IIS or http.sys host fails closed. Real BIND_FAILED injection and predecessor rollback on Server 2022 and Server 2025 remain pending. This row does not qualify verify-failure or failed rollback."
+    },
+    {
+      "id": "windows-installed.deterministic-interruption-recovery",
+      "outcome": "A recorded ledger or CNG point recovers by starting the same owned target after a service stop or process kill, and the in-use key stays.",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "requiredEnvironments": [
+        "windows-2022",
+        "windows-2025"
+      ],
+      "implementation": "tests/e2e/helpers/certops-windows-installed-interruption.js",
+      "remainingCoverage": "Local evidence is host-integration: a service stop or process kill at a recorded point, then startup of that same owned target. powerLossDurabilityQualified and realRebootQualified stay false. An in-use key is never deleted. A missing host fails closed. An actual stop or kill on a Windows host remains pending. This is not power-loss durability and it is not a reboot."
     },
     {
       "id": "windows-iis.verify-failure",
@@ -930,6 +954,17 @@
       "remainingCoverage": "Mandatory Linux source preserves positive SPKI rotation controls and adds public-profile keyRotation=false manual/default-SQL-NOW renewal controls for certbot/acme.sh, with unchanged private custody/SPKI, distinct CA serials/leaves, advancing expiry and trusted TLS. Execution of the new reuse controls and algorithm cross-products remains pending. Windows os-store-managed ACME does not support key reuse. API/schema admission now refuses explicit false and omitted inventory policy defaults to true; legacy signed real/dry-run execution refuses explicit false before native key or CA allocation. Mandatory public PATCH refusal source preserves the existing profile, job inventory, native certificate/CNG custody, binding and trusted TLS in all ten installed Windows cells. Native execution remains pending; this is public admission refusal, not installed execution of an invalid signed job or CNG reuse."
     },
     {
+      "id": "acme.certificate-signing-rotation",
+      "outcome": "One owned certbot renewal stays held across a non-forced signing-key rotation, then both the original key and the new key produce CA leaves.",
+      "status": "partial",
+      "evidenceLevel": "e2e",
+      "requiredEnvironments": [
+        "linux-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/helpers/certops-acme-certificate-signing.js",
+      "remainingCoverage": "The manual Ubuntu 24.04 cell requires certificate-inflight-old-key-retirement-and-new-key-renewal on an empty owned database. Local fixtures refuse a shared fleet, a forced completion, and a reused SPKI when rotation is requested. Native execution remains pending. Noop signing-pin adoption is a separate contract."
+    },
+    {
       "id": "acme.zone-provider",
       "outcome": "Longest matching zone/provider mapping, boundary matching and policy-denied zones/providers are exercised through the real hook.",
       "status": "partial",
@@ -1167,10 +1202,11 @@
       "status": "partial",
       "evidenceLevel": "integration",
       "requiredEnvironments": [
-        "profile-issuer-switch-api"
+        "profile-issuer-switch-api",
+        "native-adcs-issuer-reassignment"
       ],
       "implementation": "tests/e2e/certops-profile-issuer-switch-e2e.test.js",
-      "remainingCoverage": "Six focused real API/PostgreSQL cases passed confirmed AD CS issuer reassignment preserving immutable execution policy, atomic unconfirmed/foreign/incomplete-ACME refusal, attributable audit and no-op/no-job side-effect fences. Confirmed issuer rows are explicit policy prerequisites, not CA validation evidence. Actual ACME-to-ADCS-to-ACME renewable profiles, native issuance after switching and failure rollback remain."
+      "remainingCoverage": "Six focused real API/PostgreSQL cases passed confirmed AD CS issuer reassignment preserving immutable execution policy, atomic unconfirmed/foreign/incomplete-ACME refusal, attributable audit and no-op/no-job side-effect fences. Confirmed issuer rows are explicit policy prerequisites, not CA validation evidence. Actual ACME-to-ADCS-to-ACME renewable profiles, native issuance after switching and failure rollback remain. The native cell stays pending: a confirmed public switch, distinct CA keys, and one production scheduler renewal have not run on a disposable forest. A missing forest fails closed and cannot mark the cell qualified."
     },
     {
       "id": "renewal.renewal-alerts",
@@ -1181,7 +1217,18 @@
         "renewal-alert-worker-api"
       ],
       "implementation": "tests/e2e/certops-renewal-alert-worker-e2e.test.js",
-      "remainingCoverage": "Eight focused real API/PostgreSQL/protocol/production-worker cases passed renewal failure -> durable outbox -> alert queue -> actual SMTP receipt independently captured by owned MailHog, terminal replay deduplication and first-issue/human-rejection/dry-run exclusions. Initial agent-local admission metadata is an explicitly seeded prerequisite for genuine local key/cert fixture; no native renewal failure or custody proof is claimed. Native deployment uncertainty, cancellations, additional recipient/channel policies and hosted full CI remain."
+      "remainingCoverage": "Eight focused real API/PostgreSQL/protocol/production-worker cases passed renewal failure -> durable outbox -> alert queue -> actual SMTP receipt independently captured by owned MailHog, terminal replay deduplication and first-issue/human-rejection/dry-run exclusions. Initial agent-local admission metadata is an explicitly seeded prerequisite for genuine local key/cert fixture. A separate controlled new-order proxy refusal is specified for the production outbox and a production delivery worker; live certbot execution and native custody remain pending. Native deployment uncertainty, cancellations, additional recipient/channel policies and hosted full CI remain."
+    },
+    {
+      "id": "acme.renewal-failure-smtp",
+      "outcome": "A controlled ACME new-order refusal reaches one new MailHog receipt only through the production outbox and a production delivery worker.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "linux-disposable-api-postgres-pebble"
+      ],
+      "implementation": "tests/e2e/helpers/certops-acme-renewal-alert.js",
+      "remainingCoverage": "Local checks require NODE_ENV=production, one matching SMTP receipt, and refusal of a test-mode simulated success. Live certbot execution remains pending. A missing lab fails closed. This does not qualify native CA custody."
     },
     {
       "id": "adcs.release-gate",
@@ -1338,6 +1385,17 @@
       ],
       "implementation": "tests/e2e/certops-adcs-real-e2e.test.js",
       "remainingCoverage": "Native source covers fresh-enrollment manual renewal, stored-profile initiation, default SQL-NOW selection and pending-profile continuation. Two qualification-invoked production default sweeps require distinct native CA requests, serial/SPKI/CNG identities, trusted IIS cutovers, claim-bound evidence and preserved predecessor custody. Actual six-way public capacity contention, a refused sixth request and admission after genuine native completion are also source implemented. Separate background source starts the unmodified production runner at its real default 60-second interval, requires two native generations, immutable profile/management lineage, global fixture isolation and graceful IPC-requested shutdown with retained native-job drainage. Native execution remains pending; this does not qualify native operating-system signal delivery or elapsed expiry cleanup. ADR0014 requires a new key and CSR for every new enrollment; signed CMC renewal requests are unsupported."
+    },
+    {
+      "id": "adcs.ocsp-revoked-status",
+      "outcome": "An authoritative OCSP revoked response is proven for a historical unserved leaf without treating signed-good availability as revocation proof.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "enterprise-domain-native-adcs"
+      ],
+      "implementation": "tests/e2e/helpers/certops-adcs-ocsp-revoked.js",
+      "remainingCoverage": "Local fixture and collector checks cover a delegated revoked response, CRL reason, and refusal of good or unknown verdicts. Native lab execution remains pending. A missing lab fails closed."
     },
     {
       "id": "adcs.control-plane-path",
@@ -1762,6 +1820,17 @@
       "remainingCoverage": "Mandatory native process source asserts a genuinely missing reload executable gives explicit failure with trusted live TLS unchanged. Native execution, missing OpenSSL/DNS/native-helper/privilege cases across all adapters remain pending."
     },
     {
+      "id": "trust.public-signed-lifecycle",
+      "outcome": "A public signed Ubuntu trust job installs a root and intermediate, revokes them selectively, and cleans owned material.",
+      "status": "partial",
+      "evidenceLevel": "real-host",
+      "requiredEnvironments": [
+        "ubuntu-24.04-vm"
+      ],
+      "implementation": "scripts/certops-linux-signed-trust.js",
+      "remainingCoverage": "The manual Ubuntu 24.04 contract requires linux-signed-trust-root-install, linux-signed-trust-intermediate-install, linux-signed-trust-selective-revoke, linux-signed-trust-root-revoke, and linux-signed-trust-cleanup. Local fixtures check the closed report. Native execution remains pending. Windows Root/CA and Debian/RHEL variants are outside this contract."
+    },
+    {
       "id": "trust.root-intermediate",
       "outcome": "Signed distribute-trust installs root/intermediate into the correct Windows Root/CA or supported Linux store and reports independent observed trust.",
       "status": "partial",
@@ -1772,7 +1841,7 @@
         "almalinux-9.6-container"
       ],
       "implementation": "scripts/certops-linux-trust.js",
-      "remainingCoverage": "Direct native executor source covers root/intermediate distribution and independent derived system-bundle chain verification on Ubuntu VMs and Alma container. Host execution is pending; signed/API service dispatch and Windows CA store qualification remain."
+      "remainingCoverage": "Direct native executor source covers root/intermediate distribution and derived system trust on Ubuntu and AlmaLinux. A separate Ubuntu24 source now composes genuine administrator public admissions, four signed current claims and authenticated results, native receipt/installations and default OS leaf trust through root/intermediate install and selective revoke. That public signed contract is trust.public-signed-lifecycle. Native execution remains pending; other signed platforms and installed-service composition are not implied."
     },
     {
       "id": "trust.platform-refresh",
@@ -1811,7 +1880,7 @@
         "almalinux-9.6-container"
       ],
       "implementation": "scripts/certops-linux-trust.js",
-      "remainingCoverage": "Native source removes receipt-owned anchor and independently rejects its leaf while retaining pre-existing trust. Required host execution, cross-signed bundles and full service jobs remain."
+      "remainingCoverage": "Native source removes receipt-owned anchors while preserving unrelated trust. A separate Ubuntu24 public signed lifecycle source removes an intermediate while preserving its root source/receipt identities and direct-leaf trust, then removes the root and independently rejects both leaves. Native execution, cross-signed bundles and additional signed platforms remain pending."
     },
     {
       "id": "trust.invalid-anchor",

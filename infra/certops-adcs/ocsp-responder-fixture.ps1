@@ -3,6 +3,8 @@ Native Microsoft Online Responder admission for the disposable issuing CA.
 Importing this file defines functions only. The enclosing fixture must persist
 the returned baseline in its restrictive, identity-bound receipt BEFORE any
 role, directory, template, publication, service or key mutation.
+Historical revoked-status phases are hooks for the separate proof. Native lab
+execution is still pending. This file does not qualify revoked status.
 
 This deliberately refuses an existing responder or IIS installation. It does
 not adopt a shared native service and does not offer broad feature teardown.
@@ -529,7 +531,7 @@ function Read-OwnedOcspOwnershipReceipt([string]$RunId,[string]$Token,[string]$E
  return @{path=$receipt;directory=$directory;bytes=$bytes;ownership=$proof}
 }
 
-function Write-OwnedOcspPhase($Owner,[ValidateSet('roles-installed','responder-installed','template-intent','template-created','template-published','signer-intent','signer-key-created','signer-issued','signer-accept-intent','signer-accepted','configuration-intent','configured','publication-intent','publication-applied','publication-restored','template-restored','configuration-removed','responder-stop-intent','responder-stopped','iis-captured','iis-stopped','signer-removed')][string]$Phase,$Facts) {
+function Write-OwnedOcspPhase($Owner,[ValidateSet('roles-installed','responder-installed','template-intent','template-created','template-published','signer-intent','signer-key-created','signer-issued','signer-accept-intent','signer-accepted','configuration-intent','configured','publication-intent','publication-applied','publication-restored','template-restored','configuration-removed','responder-stop-intent','responder-stopped','iis-captured','iis-stopped','signer-removed','historical-revoke-intent','historical-revoked','revocation-refresh-intent','revocation-refreshed')][string]$Phase,$Facts) {
  # Every phase is immutable and exclusive. A failed/uncertain native operation
  # cannot be silently repeated by overwriting the evidence of its first try.
  Assert-OwnedOcspDirectory $Owner
@@ -552,7 +554,7 @@ function Write-OwnedOcspPhase($Owner,[ValidateSet('roles-installed','responder-i
  return @{path=$path;bytes=$bytes;phase=$value}
 }
 
-function Read-OwnedOcspPhase($Owner,[ValidateSet('roles-installed','responder-installed','template-intent','template-created','template-published','signer-intent','signer-key-created','signer-issued','signer-accept-intent','signer-accepted','configuration-intent','configured','publication-intent','publication-applied','publication-restored','template-restored','configuration-removed','responder-stop-intent','responder-stopped','iis-captured','iis-stopped','signer-removed')][string]$Phase,[string[]]$FactFields) {
+function Read-OwnedOcspPhase($Owner,[ValidateSet('roles-installed','responder-installed','template-intent','template-created','template-published','signer-intent','signer-key-created','signer-issued','signer-accept-intent','signer-accepted','configuration-intent','configured','publication-intent','publication-applied','publication-restored','template-restored','configuration-removed','responder-stop-intent','responder-stopped','iis-captured','iis-stopped','signer-removed','historical-revoke-intent','historical-revoked','revocation-refresh-intent','revocation-refreshed')][string]$Phase,[string[]]$FactFields) {
  Assert-OwnedOcspDirectory $Owner
  Initialize-OcspReceiptReader
  if([Convert]::ToBase64String([TTQualificationOcspReceipt]::Read($Owner.path)) -cne [Convert]::ToBase64String($Owner.bytes)) {

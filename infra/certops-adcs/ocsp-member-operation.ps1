@@ -3,6 +3,8 @@ Fixed member-to-owned-CA broker. The caller contains this PowerShell process in
 its retained native Job before execution. Officer credentials stay in the
 private inherited environment and a transient PSCredential, never arguments,
 outputs, phase receipts or artifacts. Each call uses a fresh remote session.
+RevokeHistorical and RefreshHistoricalRevocation belong to the separate
+revoked-status proof. Native lab execution is still pending.
 #>
 param(
  [Parameter(Mandatory)][string]$InputPath,
@@ -62,12 +64,13 @@ while(!(Test-Path -LiteralPath $OwnedGoPath)) {
 if([Text.Encoding]::ASCII.GetString((Read-BrokerBytes $OwnedGoPath 64)) -cne $request.token) {
  throw 'Owned OCSP launch challenge mismatch'
 }
-$actions=@('Prepare','InstallRoles','CreateTemplate','PublishTemplate','RequestSigner','AcceptSigner','ReadCrl','Configure','CaptureIis','ApplyPublication','RestorePublication','Observe','RemoveConfiguration','StopResponder','StopIis','RemoveSigner','RestoreTemplate')
+$actions=@('Prepare','InstallRoles','CreateTemplate','PublishTemplate','RequestSigner','AcceptSigner','ReadCrl','Configure','CaptureIis','ApplyPublication','RestorePublication','Observe','RemoveConfiguration','StopResponder','StopIis','RemoveSigner','RestoreTemplate','RevokeHistorical','RefreshHistoricalRevocation')
 if($request.action -cnotin $actions) { throw 'Fixed OCSP operation required' }
 $sourceNames=@(
  'infra/certops-adcs/ocsp-owned-key.ps1',
  'infra/certops-adcs/ocsp-responder-fixture.ps1',
  'infra/certops-adcs/ocsp-iis-owned.ps1',
+ 'infra/certops-adcs/ocsp-revoked-fixture.ps1',
  'infra/certops-adcs/ocsp-native-survivors.ps1',
  'tests/e2e/helpers/certops-windows-contained-process.ps1',
  'tests/e2e/helpers/certops-windows-owned-process.ps1',
@@ -112,7 +115,7 @@ try {
   $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
   if($env:COMPUTERNAME -ine 'tt-ca' -or
      (Get-CimInstance Win32_ComputerSystem).Domain -ine 'lab.certops.test') { throw 'Exact original CA host required' }
-  foreach($relative in @('infra/certops-adcs/ocsp-owned-key.ps1','infra/certops-adcs/ocsp-responder-fixture.ps1','infra/certops-adcs/ocsp-iis-owned.ps1')) {
+  foreach($relative in @('infra/certops-adcs/ocsp-owned-key.ps1','infra/certops-adcs/ocsp-responder-fixture.ps1','infra/certops-adcs/ocsp-iis-owned.ps1','infra/certops-adcs/ocsp-revoked-fixture.ps1')) {
    # Bytes have already been bound to the candidate digest before remoting.
    # These modules contain definitions only; the closed switch below is the
    # sole remote operation entrypoint.
@@ -123,11 +126,15 @@ try {
    'Configure' { @('crlDerBase64') }
    'Observe' { @('caDerBase64','signerDerBase64','crlDerBase64') }
    'RemoveConfiguration' { @('caDerBase64','signerDerBase64','crlDerBase64') }
+   'RevokeHistorical' { @('historicalRequestId','currentRequestId','historicalDerBase64','currentDerBase64','caDerBase64','signerDerBase64','crlDerBase64') }
+   'RefreshHistoricalRevocation' { @('caDerBase64','signerDerBase64','originalCrlDerBase64','crlDerBase64') }
    default { @() }
   }
   Assert-OcspClosedObject $Request.payload @($expectedFields)
   foreach($field in @($expectedFields)) {
-   if($field -ceq 'certificateSha256') {
+   if($field -cin @('historicalRequestId','currentRequestId')) {
+    if(($Request.payload.$field -isnot [int] -and $Request.payload.$field -isnot [long]) -or $Request.payload.$field -lt 1 -or $Request.payload.$field -gt 4294967295) { throw 'Exact native historical/current RequestId required' }
+   } elseif($field -ceq 'certificateSha256') {
     if($Request.payload.$field -cnotmatch '^[a-f0-9]{64}$'){throw 'Exact verified signer digest required'}
    } elseif($Request.payload.$field -isnot [string] -or $Request.payload.$field.Length -gt 32768 -or
             $Request.payload.$field -cnotmatch '^[A-Za-z0-9+/]+={0,2}$') { throw 'Bounded public DER required' }
@@ -172,6 +179,8 @@ try {
      return @{crlDerBase64=[Convert]::ToBase64String($crl)}
     }
     'Configure' { return Set-OwnedOcspConfiguration $PinnedOwner ([Convert]::FromBase64String($Request.payload.crlDerBase64)) }
+    'RevokeHistorical' { return Invoke-OwnedOcspHistoricalRevocation $PinnedOwner $Request.payload.historicalRequestId ([Convert]::FromBase64String($Request.payload.historicalDerBase64)) $Request.payload.currentRequestId ([Convert]::FromBase64String($Request.payload.currentDerBase64)) ([Convert]::FromBase64String($Request.payload.caDerBase64)) ([Convert]::FromBase64String($Request.payload.signerDerBase64)) ([Convert]::FromBase64String($Request.payload.crlDerBase64)) }
+    'RefreshHistoricalRevocation' { return Set-OwnedOcspRevokedProvider $PinnedOwner ([Convert]::FromBase64String($Request.payload.caDerBase64)) ([Convert]::FromBase64String($Request.payload.signerDerBase64)) ([Convert]::FromBase64String($Request.payload.originalCrlDerBase64)) ([Convert]::FromBase64String($Request.payload.crlDerBase64)) }
     'CaptureIis' { return Capture-OwnedOcspIis $PinnedOwner }
     'ApplyPublication' { return Set-OwnedOcspOnlyPublication $PinnedOwner }
     'RestorePublication' { return Restore-OwnedOcspPublication $PinnedOwner }

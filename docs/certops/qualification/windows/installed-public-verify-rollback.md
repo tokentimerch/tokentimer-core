@@ -46,6 +46,7 @@ The proof explicitly excludes bind-failure qualification, failed rollback and
 expiry reclamation. This is one supported My-store SNI target on the existing
 hosted Windows fixture; it does not add explicit IPv6, centralized certificate
 store, arbitrary service identity or multi-target product capabilities.
+Installed public bind-failure injection and rollback is the separate case in installed-bind-failure.md.
 
 A durable nonce guard and an in-memory ownership registry precede all native
 mutations. Unexpected job state, changed endpoint/site/root identity or lost

@@ -13,6 +13,9 @@ test("collector discovery includes original suite, restricts file names and prop
     assert.equal(calls.length, 2); assert.equal(calls[0].options.timeout, 180000); assert.equal(calls[0].options.cwd, root); assert.deepEqual(calls[1].args, [expected[1]]);
     for (const result of [{ status: 1 }, { status: null, error: new Error("controlled timeout") }, { status: null, signal: "SIGTERM" }]) assert.throws(() => runner.main({ root, run: () => result }));
     let clockCalls = 0; assert.throws(() => runner.main({ root, now: () => clockCalls++ ? 180001 : 0, run: () => { throw new Error("Must not run after deadline"); } }));
+    for(let index=0;index<39;index++){const name=`certops-bound-${index}-collector.test.py`;names.push(name);fs.writeFileSync(path.join(directory,name),"# inert bounded inventory\n");}
+    assert.throws(()=>runner.discover(root),/exceeds reviewed bound/);
+    for(const name of names.filter(value=>value.startsWith("certops-bound-")))fs.rmSync(path.join(directory,name));
     fs.rmSync(path.join(directory, "certops-release-collector.test.py")); assert.throws(() => runner.discover(root), /Original release collector/);
   } finally {
     assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));

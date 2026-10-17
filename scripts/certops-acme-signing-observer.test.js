@@ -47,3 +47,46 @@ test("bounded read-only observer refuses ambiguous, malformed and foreign protoc
     assert.throws(() => h.observeClaimResponse(value));
   assert.deepEqual(h.observeClaimResponse(bytes([])), []);
 });
+
+test("actual loopback observer forwards original response bytes and drains its owned HTTP sockets", async () => {
+  const http = require("node:http");
+  const original = bytes([envelope()]);
+  let received;
+  const upstream = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.once("end", () => {
+      received = Buffer.concat(chunks);
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": original.length,
+        connection: "close",
+      });
+      response.end(original);
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  let gateway;
+  try {
+    gateway = await h.startClaimGateway(
+      `http://127.0.0.1:${upstream.address().port}`,
+    );
+    const input = Buffer.from('{"unmodified":"software-public-transport"}');
+    const result = await fetch(
+      `${gateway.agentUrl}/api/v1/certops/agent/jobs/claim`,
+      { method: "POST", body: input },
+    );
+    assert.equal(result.status, 200);
+    assert.ok(Buffer.from(await result.arrayBuffer()).equals(original));
+    assert.ok(received.equals(input));
+    assert.equal(gateway.signingKeyFor(id), "certops-test-old");
+    assert.equal((await fetch(`${gateway.agentUrl}/foreign`)).status, 404);
+    await gateway.close();
+    gateway.assertClean();
+  } finally {
+    if (gateway) await gateway.close();
+    await new Promise((resolve, reject) =>
+      upstream.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});

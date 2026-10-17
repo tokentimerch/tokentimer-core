@@ -27,6 +27,8 @@ import certops_retention_cadence_collection as retention_cadence_collection
 import certops_linux_backup_dac_proof as linux_backup_dac_proof
 import certops_filesystem_concurrent_proof as filesystem_concurrent_proof
 import certops_linux_trust_independent_proof as linux_trust_independent_proof
+import certops_linux_signed_trust_proof as linux_signed_trust_proof
+import certops_acme_certificate_signing_proof as certificate_signing_proof
 import certops_daemon_coordinator_proof as daemon_coordinator_proof
 import certops_daemon_served_leaf_proof as daemon_served_leaf_proof
 import certops_acme_stage_proof as acme_stage_proof
@@ -35,11 +37,13 @@ import certops_acme_bulk_proof as acme_bulk_proof
 import certops_acme_native_adoption_proof as acme_native_adoption_proof
 import certops_acme_certificate_outbox_proof as acme_certificate_outbox_proof
 import certops_acme_disabled_profile_proof as acme_disabled_profile_proof
+import certops_acme_renewal_alert_proof as acme_renewal_alert_proof
 import certops_adcs_live_enroll_acl_proof as live_enroll_acl_proof
 import certops_adcs_result_outbox_proof as adcs_result_outbox_proof
 import certops_adcs_http_crl_proof as http_crl_proof
 import certops_adcs_http_leaf_crl_proof as http_leaf_crl_proof
 import certops_adcs_ocsp_proof as ocsp_proof
+import certops_adcs_ocsp_revoked_proof as ocsp_revoked_proof
 import certops_acme_native_console_proof as acme_native_console_proof
 import certops_dns_resolver_views_proof as dns_resolver_views_proof
 import certops_acme_browser_lifecycle_proof as acme_browser_lifecycle_proof
@@ -1573,6 +1577,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result["nativeLiveEnrollAcl"] = live_enroll_acl_proof.fields(value.get("nativeLiveEnrollAcl"))
             result["nativeHttpOnlyLeafCrl"] = http_leaf_crl_proof.fields(value.get("nativeHttpOnlyLeafCrl"))
             result["nativeOcspResponder"] = ocsp_proof.fields(value.get("nativeOcspResponder"))
+            result["nativeOcspRevoked"] = ocsp_revoked_proof.fields(value.get("nativeOcspRevoked"), value.get("nativeOcspResponder"))
             result["nativeAdcsResultOutbox"] = adcs_result_outbox_proof.fields(value.get("nativeAdcsResultOutbox"))
             result["nativeIssuedSanBoundary"] = issued_san_fields(value.get("nativeIssuedSanBoundary"))
             result["nativeBrowserAbandon"] = browser_abandon_fields(value.get("nativeBrowserAbandon"))
@@ -1868,6 +1873,10 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
         if value.get("suite") in daemon_coordinator_proof.SUITES:
             result.update(daemon_coordinator_proof.project_report(value))
             result.update(daemon_served_leaf_proof.project_report(value))
+        if value.get("suite") == linux_signed_trust_proof.SUITE:
+            result.update(linux_signed_trust_proof.project_report(value))
+        if value.get("suite") == certificate_signing_proof.SUITE:
+            result.update(certificate_signing_proof.project_report(value))
         if value.get("suite") == linux_trust_independent_proof.SUITE:
             result.update(linux_trust_independent_proof.project_report(value))
         if value.get("suite") == filesystem_concurrent_proof.SUITE:
@@ -1967,6 +1976,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                  **acme_native_adoption_proof.fields(event),
                  **acme_certificate_outbox_proof.fields(event),
                  **acme_disabled_profile_proof.fields(event),
+                 **acme_renewal_alert_proof.fields(event),
                  **installed_handoff_fields(event),
                  **windows_key_reuse_refusal_fields(event),
                  **installed_iis_refusal_fields(event),

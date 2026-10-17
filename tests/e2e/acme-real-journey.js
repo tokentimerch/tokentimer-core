@@ -418,6 +418,14 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
         fs.writeFileSync(path.join(repoRoot,disabled.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
       });
     }
+    if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
+      const alerts=require('./helpers/certops-acme-renewal-alert');
+      fs.rmSync(path.join(repoRoot,alerts.SIDECAR),{force:true});
+      await runScenario(alerts.SCENARIO,async()=>{
+        const proof=await alerts.qualify({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,workDir,repoRoot,acmeKind,proxy:gateway,ownedJobIds,waitUntil,servedFingerprint,verifyDnsCleanup});
+        fs.writeFileSync(path.join(repoRoot,alerts.SIDECAR),JSON.stringify(proof),{flag:'wx',mode:0o600});
+      });
+    }
     await require("./helpers/certops-acme-lease-loss")({pool,workspaceId,agentId,agent,publicSession,certificateId,certPath,keyPath,barrierDirectory,ownedJobIds,ownedLeaseResources,waitUntil,verifyDnsCleanup,servedFingerprint});
     if (eabSecret) {
       const stored = await pool.query("SELECT metadata,redacted_output FROM certificate_evidence WHERE workspace_id=$1", [workspaceId]);
@@ -453,6 +461,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
       if(proof){const sidecar=path.join(repoRoot,"qualification-results/native-file-discovery-proof.json");fs.writeFileSync(sidecar,JSON.stringify(proof),{flag:"wx",mode:0o600});}
     }});
     await cleanup(()=>{if(resultGateway)require("./helpers/certops-acme-certificate-outbox").assertCleanupSafe(workDir);});
+    await cleanup(()=>require("./helpers/certops-acme-renewal-alert").assertCleanupSafe(workDir));
     await cleanup(()=>{if(ownedProfileResources.length)require("./helpers/certops-acme-disabled-profile").assertCleanupSafe(workDir);});
     for(const resource of ownedProfileResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false);assert.equal(resource.hasOwnershipReceipt(),false,"Preserve unknown disabled-profile state");});
     for(const resource of ownedRestartResources)await cleanup(()=>{assert.equal(resource.hasLiveResource(),false);assert.equal(resource.hasOwnershipReceipt(),false,"Preserve unconfirmed original agent restart");});

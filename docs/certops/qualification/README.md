@@ -31,6 +31,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Public certificate import and private container refusal](api/public-import-qualification.md)
 - [Certificate-producing integration source qualification](api/integration-source-qualification.md)
 - [Public renewal issuer switch policy](api/issuer-switch-qualification.md)
+- [Native AD CS issuer reassignment](adcs/native-issuer-reassignment.md): confirmed public switch, then one production scheduler renewal. Manual dispatch only. A missing forest fails closed and the native cell stays pending.
 - [Multi-target filesystem deployment qualification](api/multi-target-deployment-qualification.md)
 - [Queued renewal profile snapshot qualification](api/queued-profile-snapshot-qualification.md)
 - [Renewal outbox and SMTP qualification](api/renewal-alert-qualification.md)
@@ -97,6 +98,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Hierarchy HTTP intermediate CRL fault and native recovery](adcs/http-intermediate-crl-fault.md)
 - [HTTP-only leaf CRL endpoint availability and restored-publication renewal](adcs/http-only-leaf-crl.md): real installed renewals and independent native chain probes; signed-agent fault continuation and OCSP remain separate.
 - [Native Microsoft OCSP responder](adcs/native-ocsp-responder.md): existing disposable CA, delegated signer, OCSP-only renewal, independent signed-good/native endpoint probes and guarded active-resource drainage; native execution remains pending.
+- [Authoritative OCSP revoked status](adcs/native-ocsp-revoked-status.md): historical unserved leaf, delegated revoked response, and separation from the signed-good availability proof; native execution remains pending.
 - [AD CS native result outbox and SCM restart](adcs/native-result-outbox-restart.md): real installation before result-delivery failure, actual durable retry timing, retained original process drainage and same-claim delivery after restart; native execution remains pending.
 - [Manual hierarchy Windows and display-language environments](adcs/hierarchy-environments.md)
 - [Experimental accepted-certificate crash recovery before IIS cutover](adcs/accepted-install-recovery-experiment.md)
@@ -123,6 +125,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Published Linux package upgrade and preserved service state](linux/linux-published-upgrade-qualification.md)
 - [Native nonroot filesystem backup permission refusal](linux/filesystem-backup-dac.md)
 - [Native Linux trust-store qualification](linux/linux-trust-qualification.md)
+- [Public signed Linux root/intermediate trust lifecycle](linux/public-signed-trust-lifecycle-design.md): Ubuntu 24.04 manual dispatch only; native execution remains pending.
 - [Native Linux agent fault qualification](linux/native-agent-qualification.md)
 - [Native Linux consuming-server certificate reload qualification](linux/nginx-qualification.md)
 
@@ -135,6 +138,7 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Native ACME browser issue and renewal lifecycle](linux/acme-browser-job-lifecycle.md)
 - [Unprivileged native file discovery refusals](linux/native-file-discovery-refusals.md)
 - [Real agent/API/ACME filesystem qualification](dns-acme/real-acme-qualification.md)
+- [Certificate execution across signing-key rotation](linux/certificate-signing-rotation.md): one owned Ubuntu certbot renewal, manual dispatch only; native execution remains pending.
 - [ACME stage transport refusal](dns-acme/stage-transport-refusal.md)
 - [Actual native ACME browser console](linux/acme-native-browser-console.md)
 
@@ -185,6 +189,8 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 - [Native orphan reconciliation and open enrollment protection](windows/native-orphan-journal-protection.md): supporting CNG/journal controls with explicit installed-service, CA and age-policy exclusions.
 
 - [Installed public IIS refusal](windows/installed-public-iis-refusal.md): real public deploy admission, installed-agent signed refusal, claim-bound failure audit and two protected CNG/IIS/TLS endpoints. All ten hosted Windows/key-profile cells remain unexecuted.
+- [Installed public bind-failure script contract](windows/installed-bind-failure.md): owned selectors, predecessor rollback, and cleanup that refuses a blanket netsh reset. Script evidence only. Native BIND_FAILED injection remains pending.
+- [Installed interruption recovery](windows/installed-interruption-recovery.md): a recorded service stop or process kill, then startup of the same owned target. Host-integration evidence. This is not power-loss durability and it is not a reboot. The in-use key stays.
 
 - [IPv6 SNI shadow and rollback](windows/ipv6-sni-shadow-rollback.md): concrete IPv6 native failure/recovery with a separate preserved IPv4 sibling; native execution pending.
 

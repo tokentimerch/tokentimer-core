@@ -341,6 +341,7 @@
       "adcs-real-ocsp-only-leaf-native-endpoint-recovery": "real-host",
       "adcs-real-ocsp-original-publication-renewal-and-drain": "real-host",
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation": "real-host",
+      "adcs-real-ocsp-authoritative-historical-revoked-status": "real-host",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
       "adcs-real-native-success-result-outbox-scm-restart": "real-host"
     },
@@ -699,6 +700,7 @@
       "adcs-real-ocsp-only-leaf-native-endpoint-recovery": "real-host",
       "adcs-real-ocsp-original-publication-renewal-and-drain": "real-host",
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation": "real-host",
+      "adcs-real-ocsp-authoritative-historical-revoked-status": "real-host",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
       "adcs-real-native-success-result-outbox-scm-restart": "real-host"
     },
@@ -1361,6 +1363,27 @@
     },
     "windows-installed-failed-rollback-renewal": {
       "windows-installed-public-renewal-failed-rollback": "real-host"
+    },
+    "linux-public-signed-trust-lifecycle": {
+      "linux-signed-trust-root-install": "real-host",
+      "linux-signed-trust-intermediate-install": "real-host",
+      "linux-signed-trust-selective-revoke": "real-host",
+      "linux-signed-trust-root-revoke": "real-host",
+      "linux-signed-trust-cleanup": "real-host"
+    },
+    "native-certificate-signing-rotation": {
+      "certificate-inflight-old-key-retirement-and-new-key-renewal": "e2e"
+    },
+    "windows-installed-bind-failure-rollback": {
+      "windows-installed-public-bind-failure": "integration"
+    },
+    "windows-installed-interruption-recovery": {
+      "windows-installed-deterministic-interruption": "integration"
+    },
+    "native-adcs-issuer-reassignment": {
+      "adcs-real-issuer-reassignment-confirmed-switch": "real-host",
+      "adcs-real-issuer-reassignment-renewal-migrates": "real-host",
+      "adcs-real-issuer-reassignment-cleanup": "real-host"
     }
   },
   "requiredCapabilities": {
@@ -1933,6 +1956,33 @@
       "iis",
       "api",
       "nativeAcme"
+    ],
+    "linux-public-signed-trust-lifecycle": [
+      "root-native-trust",
+      "real-api"
+    ],
+    "native-certificate-signing-rotation": [
+      "linux",
+      "api",
+      "postgres",
+      "nativeAcme",
+      "native-node-agent",
+      "rotation-cli"
+    ],
+    "windows-installed-bind-failure-rollback": [
+      "windows",
+      "elevated"
+    ],
+    "windows-installed-interruption-recovery": [
+      "windows",
+      "elevated"
+    ],
+    "native-adcs-issuer-reassignment": [
+      "windows",
+      "elevated",
+      "domain",
+      "api",
+      "qualifiedBuild"
     ]
   },
   "suites": {
@@ -2276,6 +2326,7 @@
       "adcs-real-ocsp-only-leaf-native-endpoint-recovery",
       "adcs-real-ocsp-original-publication-renewal-and-drain",
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
+      "adcs-real-ocsp-authoritative-historical-revoked-status",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
       "adcs-real-native-success-result-outbox-scm-restart"
     ],
@@ -2634,6 +2685,7 @@
       "adcs-real-ocsp-only-leaf-native-endpoint-recovery",
       "adcs-real-ocsp-original-publication-renewal-and-drain",
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
+      "adcs-real-ocsp-authoritative-historical-revoked-status",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
       "adcs-real-native-success-result-outbox-scm-restart"
     ],
@@ -3291,6 +3343,27 @@
     ],
     "windows-installed-failed-rollback-renewal": [
       "windows-installed-public-renewal-failed-rollback"
+    ],
+    "linux-public-signed-trust-lifecycle": [
+      "linux-signed-trust-root-install",
+      "linux-signed-trust-intermediate-install",
+      "linux-signed-trust-selective-revoke",
+      "linux-signed-trust-root-revoke",
+      "linux-signed-trust-cleanup"
+    ],
+    "native-certificate-signing-rotation": [
+      "certificate-inflight-old-key-retirement-and-new-key-renewal"
+    ],
+    "windows-installed-bind-failure-rollback": [
+      "windows-installed-public-bind-failure"
+    ],
+    "windows-installed-interruption-recovery": [
+      "windows-installed-deterministic-interruption"
+    ],
+    "native-adcs-issuer-reassignment": [
+      "adcs-real-issuer-reassignment-confirmed-switch",
+      "adcs-real-issuer-reassignment-renewal-migrates",
+      "adcs-real-issuer-reassignment-cleanup"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3402,6 +3475,11 @@
     "distribution-agent-lab": "e2e",
     "windows-installed-stop-offline-renewal": "real-host",
     "windows-installed-alive-grace-renewal": "real-host",
-    "windows-installed-failed-rollback-renewal": "real-host"
+    "windows-installed-failed-rollback-renewal": "real-host",
+    "linux-public-signed-trust-lifecycle": "real-host",
+    "native-certificate-signing-rotation": "e2e",
+    "windows-installed-bind-failure-rollback": "integration",
+    "windows-installed-interruption-recovery": "integration",
+    "native-adcs-issuer-reassignment": "real-host"
   }
 }

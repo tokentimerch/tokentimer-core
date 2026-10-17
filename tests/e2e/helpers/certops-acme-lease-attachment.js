@@ -118,6 +118,7 @@ function attach({
   barrierDirectory,
   ownedResources,
   waitUntil,
+  commandWrapper = path.join(__dirname, "certops-acme-command-barrier.js"),
 }) {
   assert.equal(process.platform, "linux");
   assert.equal(proof.token, token);
@@ -224,10 +225,13 @@ function attach({
   const argv = Buffer.from(manifest.argvHex, "hex")
     .toString("utf8")
     .split("\0");
-  assert.equal(
-    argv[1],
-    path.join(__dirname, "certops-acme-command-barrier.js"),
+  assert.ok(
+    ["certops-acme-command-barrier.js", "certops-acme-signing-command.js"].some(
+      (name) => commandWrapper === path.join(__dirname, name),
+    ),
+    "Fixed owned qualification command wrapper required",
   );
+  assert.equal(argv[1], commandWrapper);
   assert.equal(argv[2], root);
   assert.equal(agent.exitCode, null);
   assert.equal(agent.signalCode, null);
