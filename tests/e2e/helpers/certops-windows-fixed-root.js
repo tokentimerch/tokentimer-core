@@ -18,6 +18,7 @@ const requiredScenarios = ["windows-canonical-root-owned", "windows-canonical-un
 const fields = ["initialRootAbsent", "initialServiceAbsent", "ownershipRecordedBeforeInstall", "originalInstallerBytesUnchanged", "canonicalInstalledHostVerified", "localSystemServiceVerified", "authenticatedRegistration", "bootstrapRegistryScrubbed", "restartChangedServicePid", "freshHeartbeatAfterRestart", "candidateReapplicationSucceeded", "configurationCredentialAndPinPreserved", "freshHeartbeatAfterReapplication", "unmodifiedUninstallerSucceeded", "serviceAndAppRemoved", "uninstallPreservedState", "exactOwnedRootRemoved"];
 const requiredSources = ["tests/e2e/helpers/certops-windows-fixed-root.js", "tests/e2e/certops-agent-e2e.test.js", "packages/agent/scripts/install-agent.ps1", "packages/agent/scripts/pack-release.js", "packages/agent/scripts/build-windows-chain-helper.js", "packages/agent/scripts/build-windows-service-host.js", "scripts/certops-windows-fixed-root.js", "scripts/certops-windows-fixed-root-cleanup.js", ".github/workflows/certops-windows-fixed-root.yml", "tests/e2e/helpers/certops-windows-cli-second-rename.js", "tests/e2e/helpers/certops-windows-cli-oplock.js", "tests/e2e/helpers/certops-windows-cli-oplock-driver.ps1", "tests/e2e/helpers/certops-windows-cli-oplock-launcher.ps1", "packages/agent/src/windows-cert-store/index.js", "packages/agent/src/windows-key-survivors/index.js", "packages/agent/src/issuers/chain-helper.js"];
 function verifyProof(proof) {
+  if (proof && proof.scope === "unmodified-fixed-root-existing-install") return verifyLocalContract(proof);
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
   assert.deepEqual(Object.keys(proof).sort(), [...fields, "scope"].sort());
   assert.equal(proof.scope, "unmodified-candidate-cli-canonical-root-same-version-reapplication");
@@ -159,4 +160,246 @@ async function qualifyFixedRoot({ pool, baseUrl, workspaceId, createBootstrap, r
   if (primary || errors.length) throw new AggregateError([...(primary ? [primary] : []), ...errors], "Canonical root qualification or owned cleanup failed");
   return gate.report;
 }
-module.exports = { qualifyFixedRoot, verifyProof, assertCanonicalOwnership, requiredScenarios, requiredSources, fields, suite, canonicalRoot };
+const LOCAL_SCOPE = "unmodified-fixed-root-existing-install";
+const LOCAL_SCENARIO = "windows-fixed-root-existing-install-preserved";
+const LOCAL_EVIDENCE_LEVEL = "script";
+const LOCAL_SUITE_ID = "windows-fixed-root-unmodified-contract";
+const LOCAL_SUITE_LEVEL = "integration";
+const LOCAL_REPORT_FIELD = "unmodifiedFixedRoot";
+const FIXED_INSTALL_ROOT = canonicalRoot;
+const LOCAL_WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
+const LOCAL_REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-windows-fixed-root.js",
+  "scripts/certops-windows-fixed-root.js",
+  "scripts/certops-windows-fixed-root.test.js",
+  "docs/certops/windows/fixed-root.md",
+  LOCAL_WORKFLOW,
+]);
+const LOCAL_PROOF_KEYS = Object.freeze([
+  "scope",
+  "evidenceLevel",
+  "runId",
+  "existingRootPreserved",
+  "installerRewroteFixedRoot",
+  "nativeExecutionQualified",
+  "hostCapabilityAbsentIsPass",
+  "powerLossDurabilityQualified",
+  "realRebootQualified",
+  "inUseKeyDeleted",
+  "blanketNetshReset",
+]);
+const LOCAL_CLOSED = Object.freeze([
+  "nativeExecutionQualified",
+  "hostCapabilityAbsentIsPass",
+  "powerLossDurabilityQualified",
+  "realRebootQualified",
+  "inUseKeyDeleted",
+  "blanketNetshReset",
+]);
+const LOCAL_DENIED =
+  /reset|shutdown|reboot|restart-computer|stop-computer|delkey|0\.0\.0\.0|\[::\]/i;
+const LOCAL_WRITE =
+  /remove-item|copy-item|rename-item|new-item|set-content|mkdir|rmdir|del\b|erase\b/i;
+
+function localRunId(runId) {
+  assert.match(runId, /^[a-f0-9]{32}$/);
+}
+
+function localRoot(root, runId) {
+  const normalized = String(root).replaceAll("/", "\\").replace(/\\+$/, "");
+  assert.ok(normalized.includes(runId), "run root must contain the run id");
+  assert.ok(normalized.split("\\").length >= 3, "run root must be a nested directory");
+  assert.equal(/^C:\\Windows(\\|$)/i.test(normalized), false, "refusing a Windows directory");
+  assert.equal(/^C:\\inetpub\\wwwroot(\\|$)/i.test(normalized), false, "refusing the shared IIS content root");
+  assert.notEqual(normalized.toLowerCase(), FIXED_INSTALL_ROOT.toLowerCase());
+  assert.equal(normalized.toLowerCase().startsWith(`${FIXED_INSTALL_ROOT.toLowerCase()}\\`), false);
+  return normalized;
+}
+
+function createRunManifest({ runId, root }) {
+  localRunId(runId);
+  const normalized = localRoot(root, runId);
+  const port = 49152 + (Number.parseInt(runId.slice(0, 4), 16) % 8000);
+  const host = `p-${runId}.fixedroot.local`;
+  const name = `tt-root-${runId}`;
+  const manifest = {
+    runId,
+    root: normalized,
+    evidenceLevel: LOCAL_EVIDENCE_LEVEL,
+    nativeExecutionQualified: false,
+    existingRoot: FIXED_INSTALL_ROOT,
+    site: {
+      name,
+      physicalPath: `${normalized}\\${name}`,
+      binding: {
+        kind: "hostnameport",
+        host,
+        address: "127.0.0.1",
+        port,
+        selector: `hostnameport=${host}:${port}`,
+        store: "My",
+      },
+    },
+  };
+  assertLocalManifest(manifest);
+  return manifest;
+}
+
+function assertLocalManifest(manifest) {
+  assert.equal(manifest.evidenceLevel, LOCAL_EVIDENCE_LEVEL);
+  assert.equal(manifest.nativeExecutionQualified, false);
+  assert.equal(manifest.existingRoot, FIXED_INSTALL_ROOT);
+  localRunId(manifest.runId);
+  assert.equal(manifest.site.binding.address, "127.0.0.1");
+  assert.equal(
+    manifest.site.binding.selector,
+    `hostnameport=${manifest.site.binding.host}:${manifest.site.binding.port}`,
+  );
+  assert.ok(manifest.site.binding.host.includes(manifest.runId));
+  assert.equal(manifest.site.binding.selector.includes("0.0.0.0"), false);
+}
+
+function commandText(command) {
+  return [command.file, ...(command.args || [])].join(" ");
+}
+
+function assertPlanDoesNotRewrite(manifest, commands) {
+  assertLocalManifest(manifest);
+  assert.ok(Array.isArray(commands));
+  for (const command of commands) {
+    const joined = commandText(command);
+    assert.equal(LOCAL_DENIED.test(joined), false, "refusing blanket netsh reset");
+    const touchesFixed = joined.toLowerCase().includes(FIXED_INSTALL_ROOT.toLowerCase());
+    if (touchesFixed && LOCAL_WRITE.test(joined)) {
+      throw new Error("installer rewrote an existing fixed root");
+    }
+    if (command.file === "netsh.exe") {
+      assert.deepEqual(command.args.slice(0, 3), ["http", "delete", "sslcert"]);
+      assert.equal(command.args.length, 4);
+      assert.equal(command.args[3], manifest.site.binding.selector);
+    }
+  }
+}
+
+function buildRefusalPlan(manifest) {
+  assertLocalManifest(manifest);
+  const commands = [
+    { step: "probe-existing-root", file: "cmd.exe", args: ["/c", "dir", "/b", manifest.existingRoot] },
+    {
+      step: "refuse-rewrite",
+      file: "installer",
+      args: ["--refuse-existing-fixed-root", manifest.existingRoot],
+    },
+  ];
+  assertPlanDoesNotRewrite(manifest, commands);
+  return commands;
+}
+
+function preserveExistingFixedRoot(manifest, observed) {
+  assertLocalManifest(manifest);
+  if (!observed || observed.exists !== true || observed.root !== FIXED_INSTALL_ROOT) {
+    throw new Error("fixed root must already exist");
+  }
+  assert.equal(typeof observed.fileId, "string");
+  assert.ok(observed.fileId.length > 0);
+  const commands = buildRefusalPlan(manifest);
+  const proof = {
+    scope: LOCAL_SCOPE,
+    evidenceLevel: LOCAL_EVIDENCE_LEVEL,
+    runId: manifest.runId,
+    existingRootPreserved: true,
+    installerRewroteFixedRoot: false,
+    nativeExecutionQualified: false,
+    hostCapabilityAbsentIsPass: false,
+    powerLossDurabilityQualified: false,
+    realRebootQualified: false,
+    inUseKeyDeleted: false,
+    blanketNetshReset: false,
+  };
+  verifyLocalContract(proof);
+  return { proof, commands, passed: false, nativeQualified: false };
+}
+
+function assessLocalHost(probe) {
+  const required = ["windows", "existingFixedRoot", "installer"];
+  if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
+    return { available: false, missing: required, nativeQualified: false, passed: false };
+  }
+  const missing = required.filter((name) => probe[name] !== true);
+  return {
+    available: missing.length === 0,
+    missing,
+    nativeQualified: false,
+    passed: false,
+  };
+}
+
+function probeLocalHost() {
+  return { windows: process.platform === "win32", existingFixedRoot: false, installer: false };
+}
+
+function runLocal({ probe, execute, manifest, observed } = {}) {
+  const gate = assessLocalHost(probe);
+  if (!gate.available) {
+    return { passed: false, nativeQualified: false, reason: "host capability absent", missing: gate.missing };
+  }
+  if (execute !== true) {
+    return { passed: false, nativeQualified: false, reason: "host execution not requested" };
+  }
+  if (!manifest || !observed) {
+    return { passed: false, nativeQualified: false, reason: "existing fixed root observation absent" };
+  }
+  const result = preserveExistingFixedRoot(manifest, observed);
+  return {
+    passed: false,
+    nativeQualified: false,
+    planSafe: true,
+    proof: result.proof,
+    reason: "script contract does not claim native execution",
+  };
+}
+
+function verifyLocalContract(value) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value));
+  if (Object.prototype.hasOwnProperty.call(value, "crashDumpContainmentQualified")) {
+    assert.equal(value.crashDumpContainmentQualified, false);
+  }
+  const comparable = Object.keys(value).filter((key) => key !== "crashDumpContainmentQualified");
+  assert.deepEqual(comparable.sort(), [...LOCAL_PROOF_KEYS].sort());
+  assert.equal(value.scope, LOCAL_SCOPE);
+  assert.equal(value.evidenceLevel, LOCAL_EVIDENCE_LEVEL);
+  localRunId(value.runId);
+  assert.equal(value.existingRootPreserved, true);
+  assert.equal(value.installerRewroteFixedRoot, false);
+  for (const key of LOCAL_CLOSED) assert.equal(value[key], false, key);
+  return true;
+}
+
+module.exports = {
+  qualifyFixedRoot,
+  verifyProof,
+  assertCanonicalOwnership,
+  requiredScenarios,
+  requiredSources,
+  fields,
+  suite,
+  canonicalRoot,
+  LOCAL_SCOPE,
+  LOCAL_SCENARIO,
+  LOCAL_EVIDENCE_LEVEL,
+  LOCAL_SUITE_ID,
+  LOCAL_SUITE_LEVEL,
+  LOCAL_REPORT_FIELD,
+  LOCAL_REQUIRED_SOURCES,
+  LOCAL_PROOF_KEYS,
+  LOCAL_CLOSED,
+  FIXED_INSTALL_ROOT,
+  createRunManifest,
+  buildRefusalPlan,
+  assertPlanDoesNotRewrite,
+  preserveExistingFixedRoot,
+  assessLocalHost,
+  probeLocalHost,
+  runLocal,
+  verifyLocalContract,
+};

@@ -94,4 +94,232 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   const proof = { scope, client: acmeKind, ...Object.fromEntries(fields.map(field => [field, true])), fingerprints: leaves.map(leaf => sha(leaf.raw)), serials: leaves.map(leaf => leaf.serialNumber), spkiFingerprint: spki(leaves[0]), jobIds: jobs.map(job => job.id), sourceProfileId: stable.id, sourceProfileFingerprint: sha(JSON.stringify(stable)) };
   verifyProof(proof); return proof;
 }
-module.exports = { qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources };
+
+const SCOPE = "acme-client-path-and-key-reuse-variants";
+const SUITE = "acme-key-reuse-variants";
+const SUITE_LEVEL = "integration";
+const PROOF_LEVEL = "script";
+const REPORT_FILE = "acme-key-reuse.json";
+const REPORT_ENV = "CERTOPS_ACME_KEY_REUSE_REPORT";
+const SCENARIOS = Object.freeze([
+  "acme-client-path-outside-owned-directory",
+  "acme-second-order-reuses-spki",
+]);
+const CATALOG_IDS = Object.freeze([
+  "acme.key-policy",
+  "acme.linux-certbot",
+  "acme.linux-acmesh",
+]);
+const REQUIRED_SOURCES = Object.freeze([
+  "tests/e2e/helpers/certops-acme-key-reuse.js",
+  "scripts/certops-acme-key-reuse.js",
+  "scripts/certops-acme-key-reuse.test.js",
+  "docs/certops/cross/acme-key-reuse.md",
+  "scripts/_registration/cross-coverage.json",
+  ".github/workflows/certops-cross-coverage-variants.yml",
+]);
+const PROOF_KEYS = Object.freeze([
+  "scope",
+  "evidenceLevel",
+  "nativeExecutionQualified",
+  "sharedFleetQualified",
+  "liveCertbot",
+  "hostCapabilityAbsentIsPass",
+  "keyReuseRefused",
+  "outsidePathRefused",
+  "inUseKeyPreserved",
+  "inUseKeyDeleted",
+  "blanketNetshReset",
+]);
+
+function contained(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function refuseBlanketReset(command) {
+  if (/netsh/i.test(String(command)) && /reset/i.test(String(command))) {
+    throw Object.assign(new Error("blanket netsh reset refused"), {
+      code: "BLANKET_NETSH_RESET",
+    });
+  }
+}
+
+function assertClientPath(root, clientPath) {
+  const base = path.resolve(root);
+  if (!contained(base, clientPath)) {
+    throw Object.assign(new Error("client path outside owned directory"), {
+      code: "CLIENT_PATH",
+    });
+  }
+  const relative = path.relative(base, path.resolve(clientPath));
+  let current = base;
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    if (!fs.existsSync(current)) break;
+    if (!fs.lstatSync(current).isSymbolicLink()) continue;
+    const link = path.resolve(path.dirname(current), fs.readlinkSync(current));
+    if (!contained(base, link)) {
+      throw Object.assign(new Error("client path outside owned directory"), {
+        code: "CLIENT_PATH",
+      });
+    }
+    throw Object.assign(new Error("client path outside owned directory"), {
+      code: "CLIENT_PATH",
+    });
+  }
+}
+
+function createRun(root) {
+  assert.equal(typeof root, "string");
+  return {
+    root: path.resolve(root),
+    spkis: new Set(),
+    keys: new Map(),
+    sharedFleet: false,
+    nativeExecutionQualified: false,
+    sharedFleetQualified: false,
+    liveCertbot: "pending",
+  };
+}
+
+function registerKey(state, id, keyPath, bytes) {
+  assert.equal(state.keys.has(id), false);
+  assertClientPath(state.root, keyPath);
+  const body = Buffer.from(bytes);
+  fs.writeFileSync(keyPath, body);
+  state.keys.set(id, { path: keyPath, inUse: true, bytes: Buffer.from(body) });
+  return state.keys.get(id);
+}
+
+function submitOrder(state, order) {
+  assert.equal(state.nativeExecutionQualified, false);
+  assert.equal(state.sharedFleetQualified, false);
+  assert.equal(state.liveCertbot, "pending");
+  refuseBlanketReset(order.cleanupCommand || "");
+  if (state.sharedFleet === true || order.sharedFleet === true) {
+    throw Object.assign(new Error("shared fleet refused"), { code: "SHARED_FLEET" });
+  }
+  assertClientPath(state.root, order.clientPath);
+  assert.match(order.spki, /^[a-f0-9]{64}$/);
+  if (state.spkis.has(order.spki)) {
+    throw Object.assign(new Error("key-reuse gate failed"), { code: "KEY_REUSE" });
+  }
+  state.spkis.add(order.spki);
+  return {
+    accepted: true,
+    nativeExecutionQualified: false,
+    sharedFleetQualified: false,
+    liveCertbot: "pending",
+  };
+}
+
+function deleteKey(state, id) {
+  const key = state.keys.get(id);
+  assert.ok(key, "known key required");
+  assert.ok(fs.readFileSync(key.path).equals(key.bytes));
+  throw Object.assign(new Error("refusing to delete an in-use key"), {
+    code: "KEY_IN_USE",
+  });
+}
+
+function spkiOf(publicKey) {
+  return crypto
+    .createHash("sha256")
+    .update(publicKey.export({ type: "spki", format: "der" }))
+    .digest("hex");
+}
+
+function verifyVariantProof(proof) {
+  assert.deepEqual(Object.keys(proof).sort(), [...PROOF_KEYS].sort());
+  assert.equal(proof.scope, SCOPE);
+  assert.equal(proof.evidenceLevel, PROOF_LEVEL);
+  assert.equal(proof.nativeExecutionQualified, false);
+  assert.equal(proof.sharedFleetQualified, false);
+  assert.equal(proof.liveCertbot, "pending");
+  assert.equal(proof.hostCapabilityAbsentIsPass, false);
+  assert.equal(proof.keyReuseRefused, true);
+  assert.equal(proof.outsidePathRefused, true);
+  assert.equal(proof.inUseKeyPreserved, true);
+  assert.equal(proof.inUseKeyDeleted, false);
+  assert.equal(proof.blanketNetshReset, false);
+  return true;
+}
+
+function localProof(flags) {
+  const proof = {
+    scope: SCOPE,
+    evidenceLevel: PROOF_LEVEL,
+    nativeExecutionQualified: false,
+    sharedFleetQualified: false,
+    liveCertbot: "pending",
+    hostCapabilityAbsentIsPass: false,
+    keyReuseRefused: flags.keyReuseRefused === true,
+    outsidePathRefused: flags.outsidePathRefused === true,
+    inUseKeyPreserved: flags.inUseKeyPreserved === true,
+    inUseKeyDeleted: false,
+    blanketNetshReset: false,
+  };
+  verifyVariantProof(proof);
+  return proof;
+}
+
+function assessLab(env = process.env) {
+  const missing = [];
+  if (env.CERTOPS_ACME_KEY_REUSE_LAB !== "1") missing.push("CERTOPS_ACME_KEY_REUSE_LAB");
+  if (env.CERTOPS_REAL_ACME_CLIENT !== "certbot") missing.push("certbot");
+  return { ok: missing.length === 0, missing, liveCertbot: "pending" };
+}
+
+function closedReport(reason, env = process.env) {
+  const lab = assessLab(env);
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 1,
+    suite: SUITE,
+    strict: true,
+    status: "failed",
+    evidenceLevel: SUITE_LEVEL,
+    proofEvidenceLevel: PROOF_LEVEL,
+    qualified: false,
+    claimsQualification: false,
+    hostCapabilityAbsentIsPass: false,
+    nativeExecutionQualified: false,
+    sharedFleetQualified: false,
+    liveCertbot: "pending",
+    inUseKeyDeleted: false,
+    blanketNetshReset: false,
+    startedAt: now,
+    finishedAt: now,
+    requiredScenarios: [...SCENARIOS],
+    missingScenarios: [...SCENARIOS],
+    scenarios: [],
+    requiredSources: [...REQUIRED_SOURCES],
+    catalogIds: [...CATALOG_IDS],
+    promotesCatalogRows: false,
+    reason: lab.ok
+      ? "Live certbot execution is not claimed by this contract"
+      : String(reason || `lab absent: ${lab.missing.join(",")}`),
+    cleanup: { status: "failed", summary: "No certbot process was started" },
+  };
+}
+
+function writeReport(reportPath, report) {
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+}
+
+function run(options = {}) {
+  const env = options.env || process.env;
+  const report = closedReport(options.reason, env);
+  const reportPath = options.reportPath || env[REPORT_ENV] || path.join("qualification-results", REPORT_FILE);
+  if (options.write !== false) writeReport(reportPath, report);
+  return report;
+}
+
+const variants = {
+  SCOPE, SUITE, SUITE_LEVEL, PROOF_LEVEL, REPORT_FILE, REPORT_ENV, SCENARIOS, CATALOG_IDS, REQUIRED_SOURCES, PROOF_KEYS,
+  contained, refuseBlanketReset, assertClientPath, createRun, registerKey, submitOrder, deleteKey, spkiOf,
+  verifyProof: verifyVariantProof, localProof, assessLab, closedReport, writeReport, run,
+};
+module.exports = { qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };

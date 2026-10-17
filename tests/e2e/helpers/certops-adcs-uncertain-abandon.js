@@ -202,3 +202,5 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
 }
 function qualifyUncertainAbandon(context) { return qualifyUncertainScenario(context, "abandon"); }
 module.exports = { qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, REQUIRED_SOURCES };
+// Local fail-closed abandon contract. This file remains the forest journey.
+module.exports.localContract = require("../../../scripts/certops-adcs-uncertain-abandon");

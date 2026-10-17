@@ -1,0 +1,32 @@
+name: "CertOps / Cross coverage variants"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cross-coverage-variants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: "24"
+      - name: Write failed reports and refuse qualification
+        shell: bash
+        run: |
+          set +e
+          node scripts/certops-acme-key-reuse.js
+          node scripts/certops-dns-interruption.js
+          node scripts/certops-issuer-adoption-capacity.js
+          node scripts/certops-linux-reboot-upgrade.js
+          node scripts/certops-fs-symlink-rollback.js
+          node scripts/certops-trust-concurrency.js
+          node scripts/certops-k8s-rbac-outage.js
+          node scripts/certops-browser-audit-redaction.js
+          node -e 'const fs=require("node:fs"); const registration=JSON.parse(fs.readFileSync("scripts/_registration/cross-coverage.json","utf8")); if(registration.status!=="partial"||registration.promotesCatalogRows!==false||registration.claimsQualification!==false||registration.hostCapabilityAbsentIsPass!==false) process.exit(2); for (const suite of registration.suites) { if(!["integration","real-host","e2e"].includes(suite.evidenceLevel)) process.exit(2); if(!["script","host-integration"].includes(suite.proofEvidenceLevel)) process.exit(2); const report=JSON.parse(fs.readFileSync("qualification-results/"+suite.reportFile,"utf8")); if(report.status!=="failed"||report.qualified!==false||report.claimsQualification!==false||report.hostCapabilityAbsentIsPass!==false||report.evidenceLevel!==suite.evidenceLevel||report.blanketNetshReset!==false||report.inUseKeyDeleted!==false) process.exit(2); if((suite.id==="dns-interruption"||suite.id==="k8s-rbac-outage")&&(suite.status!=="pending"||suite.evidenceLevel!=="real-host")) process.exit(2); if(suite.id==="dns-interruption"&&report.liveDnsQualified!==false) process.exit(2); if(suite.id==="k8s-rbac-outage"&&report.kubernetesQualified!==false) process.exit(2); if(suite.id==="issuer-adoption-capacity"&&(report.nativeCell!=="pending"||report.nativeCellQualified!==false)) process.exit(2); if(suite.id==="linux-reboot-upgrade"&&report.realRebootQualified!==false) process.exit(2); if(suite.id==="acme-key-reuse-variants"&&(report.nativeExecutionQualified!==false||report.sharedFleetQualified!==false||report.liveCertbot!=="pending")) process.exit(2);} '
+          exit 1

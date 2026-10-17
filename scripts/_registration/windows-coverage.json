@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "promoteStatus": false,
+  "suiteLevels": ["integration", "real-host", "e2e"],
+  "proofEvidenceStrings": ["script", "host-integration"],
+  "workflow": ".github/workflows/certops-windows-coverage-variants.yml",
+  "workflowDispatchOnly": true,
+  "claimsQualification": false,
+  "contracts": [
+    {
+      "suffix": "fixed-root",
+      "suiteId": "windows-fixed-root-unmodified-contract",
+      "scenarioIds": ["windows-fixed-root-existing-install-preserved"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "reportField": "unmodifiedFixedRoot",
+      "helper": "tests/e2e/helpers/certops-windows-fixed-root.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root.test.js",
+        "docs/certops/windows/fixed-root.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-install.release-package", "windows-install.new-service"],
+      "remainingCoverageNote": "A local contract refuses rewriting an existing fixed root and records nativeExecutionQualified false. Status stays unchanged."
+    },
+    {
+      "suffix": "second-rename",
+      "suiteId": "windows-full-installer-second-rename-contract",
+      "scenarioIds": ["windows-full-installer-second-rename-failure"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "reportField": "fullInstallerSecondRename",
+      "helper": "tests/e2e/helpers/certops-windows-second-rename.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "scripts/certops-windows-second-rename.js",
+        "scripts/certops-windows-second-rename.test.js",
+        "docs/certops/windows/second-rename.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-install.upgrade-rollback"],
+      "remainingCoverageNote": "A local contract records a second rename failure that leaves the original name and does not delete the in-use binary or key. Status stays unchanged."
+    },
+    {
+      "suffix": "published-upgrade",
+      "suiteId": "windows-published-package-upgrade-contract",
+      "scenarioIds": ["windows-published-package-upgrade-refused"],
+      "evidenceLevel": "real-host",
+      "proofEvidenceLevel": "script",
+      "reportField": "publishedPackageUpgrade",
+      "helper": "tests/e2e/helpers/certops-windows-published-upgrade.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-published-upgrade.js",
+        "scripts/certops-windows-published-upgrade.js",
+        "scripts/certops-windows-published-upgrade.test.js",
+        "docs/certops/windows/published-upgrade.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-install.upgrade-rollback"],
+      "remainingCoverageNote": "Published predecessor archives lack service-host executables, so publishedPackageMigrationQualified stays false. The contract does not synthesize an upgrade. Status stays unchanged."
+    },
+    {
+      "suffix": "arm64-execution",
+      "suiteId": "windows-native-arm64-execution-contract",
+      "scenarioIds": ["windows-native-arm64-execution-refused"],
+      "evidenceLevel": "real-host",
+      "proofEvidenceLevel": "script",
+      "reportField": "nativeArm64Execution",
+      "helper": "tests/e2e/helpers/certops-windows-arm64-execution.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-arm64-execution.js",
+        "scripts/certops-windows-arm64-execution.js",
+        "scripts/certops-windows-arm64-execution.test.js",
+        "docs/certops/windows/arm64-execution.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-install.release-package"],
+      "remainingCoverageNote": "Native ARM64 execution fails closed unless architecture is arm64 and a real ARM64 host probe is present. nativeArm64ExecutionQualified stays false here. Status stays unchanged."
+    },
+    {
+      "suffix": "acl-path-env",
+      "suiteId": "windows-acl-path-env-contract",
+      "scenarioIds": ["windows-acl-path-env-refusals"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "reportField": "aclPathEnvironment",
+      "helper": "tests/e2e/helpers/certops-windows-acl-path-env.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-acl-path-env.js",
+        "scripts/certops-windows-acl-path-env.js",
+        "scripts/certops-windows-acl-path-env.test.js",
+        "docs/certops/windows/acl-path-env.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "windows-install.state-acl",
+        "windows-install.path-quoting",
+        "windows-install.system-environment"
+      ],
+      "remainingCoverageNote": "A local contract refuses weak ACLs, unquoted paths with spaces, and a missing SYSTEM environment. hostCapabilityAbsentIsPass stays false. Status stays unchanged."
+    },
+    {
+      "suffix": "operation-interruption",
+      "suiteId": "windows-operation-interruption-contract",
+      "scenarioIds": ["windows-operation-interruption-stages"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "host-integration",
+      "reportField": "operationInterruption",
+      "helper": "tests/e2e/helpers/certops-windows-operation-interruption.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-operation-interruption.js",
+        "scripts/certops-windows-operation-interruption.js",
+        "scripts/certops-windows-operation-interruption.test.js",
+        "docs/certops/windows/operation-interruption.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "windows-installed.deterministic-interruption-recovery",
+        "windows-install.crash-recovery"
+      ],
+      "remainingCoverageNote": "Service stop or process kill at key generation, submit, install, and bind restarts the same owned target and does not delete an in-use key. powerLossDurabilityQualified and realRebootQualified stay false. Status stays unchanged."
+    },
+    {
+      "suffix": "reregister-custody",
+      "suiteId": "windows-reregister-custody-contract",
+      "scenarioIds": ["windows-reregister-custody-preserved"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "host-integration",
+      "reportField": "reregisterCustody",
+      "helper": "tests/e2e/helpers/certops-windows-reregister-custody.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregister-custody.js",
+        "scripts/certops-windows-reregister-custody.js",
+        "scripts/certops-windows-reregister-custody.test.js",
+        "docs/certops/windows/reregister-custody.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-install.reregister"],
+      "remainingCoverageNote": "Re-registration keeps the same CNG key custody. Ambiguous custody fails closed and does not delete the in-use key. Status stays unchanged."
+    },
+    {
+      "suffix": "retention-boundaries",
+      "suiteId": "windows-retention-boundary-contract",
+      "scenarioIds": ["windows-retention-boundary-contract"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "reportField": "retentionBoundaries",
+      "helper": "tests/e2e/helpers/certops-windows-retention-boundaries.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-retention-boundaries.js",
+        "scripts/certops-windows-retention-boundaries.js",
+        "scripts/certops-windows-retention-boundaries.test.js",
+        "docs/certops/windows/retention-boundaries.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-retention.boundary-config", "windows-retention.interrupted-delete"],
+      "remainingCoverageNote": "A wait below 24 hours sets twentyFourHourElapsedQualified false and fails the qualification gate. Deadline and configuration boundaries do not claim the elapsed run. Status stays unchanged."
+    },
+    {
+      "suffix": "protected-recovery",
+      "suiteId": "windows-protected-recovery-contract",
+      "scenarioIds": ["windows-protected-journal-recovery-refused"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "reportField": "protectedKeyRecovery",
+      "helper": "tests/e2e/helpers/certops-windows-protected-recovery.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-protected-recovery.js",
+        "scripts/certops-windows-protected-recovery.js",
+        "scripts/certops-windows-protected-recovery.test.js",
+        "docs/certops/windows/protected-recovery.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "windows-retention.container-sweep",
+        "windows-retention.durable-ledger",
+        "execution.journal-corruption"
+      ],
+      "remainingCoverageNote": "Orphan journal, weak ACL, and unreadable journal fail closed and do not delete the protected key. Status stays unchanged."
+    },
+    {
+      "suffix": "crash-dump",
+      "suiteId": "windows-crash-dump-containment-contract",
+      "scenarioIds": ["windows-crash-dump-containment-unqualified"],
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "reportField": "crashDumpContainment",
+      "helper": "tests/e2e/helpers/certops-windows-crash-dump.js",
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-crash-dump.js",
+        "scripts/certops-windows-crash-dump.js",
+        "scripts/certops-windows-crash-dump.test.js",
+        "docs/certops/windows/crash-dump.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ],
+      "catalogIds": ["windows-install.crash-recovery"],
+      "remainingCoverageNote": "Crash-dump containment stays unqualified. A report that sets crashDumpContainmentQualified true is rejected. Status stays unchanged."
+    }
+  ]
+}

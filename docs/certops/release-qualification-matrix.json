@@ -9606,6 +9606,433 @@
         "packages/agent/src/issuers/adcs-enrollment.js",
         ".github/workflows/certops-native-issuer-reassignment.yml"
       ]
+    },
+    {
+      "id": "adcs-browser-enrollment",
+      "kind": "host",
+      "suite": "adcs-browser-enrollment",
+      "source": "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "scripts/certops-adcs-browser-enrollment.js",
+        "docs/certops/adcs/browser-enrollment.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "adcs-install-interruption",
+      "kind": "host",
+      "suite": "adcs-install-interruption",
+      "source": "tests/e2e/helpers/certops-adcs-install-interruption.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-install-interruption.js",
+        "scripts/certops-adcs-install-interruption.js",
+        "docs/certops/adcs/install-interruption.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "adcs-lost-submit",
+      "kind": "host",
+      "suite": "adcs-lost-submit",
+      "source": "tests/e2e/helpers/certops-adcs-lost-submit.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-lost-submit.js",
+        "scripts/certops-adcs-lost-submit.js",
+        "docs/certops/adcs/lost-submit.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "adcs-uncertain-abandon",
+      "kind": "host",
+      "suite": "adcs-uncertain-abandon",
+      "source": "scripts/certops-adcs-uncertain-abandon.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "scripts/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "docs/certops/adcs/uncertain-abandon.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "adcs-cmc-renewal",
+      "kind": "host",
+      "suite": "adcs-cmc-renewal",
+      "source": "tests/e2e/helpers/certops-adcs-cmc-renewal.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-cmc-renewal.js",
+        "scripts/certops-adcs-cmc-renewal.js",
+        "docs/certops/adcs/cmc-renewal.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "adcs-safety-variants",
+      "kind": "host",
+      "suite": "adcs-safety-variants",
+      "source": "tests/e2e/helpers/certops-adcs-safety-variants.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-safety-variants.js",
+        "scripts/certops-adcs-safety-variants.js",
+        "docs/certops/adcs/safety-variants.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml",
+        "tests/e2e/helpers/certops-adcs-ocsp-revoked.js"
+      ]
+    },
+    {
+      "id": "adcs-crash-experiments",
+      "kind": "host",
+      "suite": "adcs-crash-experiments",
+      "source": "tests/e2e/helpers/certops-adcs-crash-experiments.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-crash-experiments.js",
+        "scripts/certops-adcs-crash-experiments.js",
+        "docs/certops/adcs/crash-experiments.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "acme-key-reuse-variants",
+      "kind": "host",
+      "suite": "acme-key-reuse-variants",
+      "source": "tests/e2e/helpers/certops-acme-key-reuse.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "scripts/certops-acme-key-reuse.js",
+        "scripts/certops-acme-key-reuse.test.js",
+        "docs/certops/cross/acme-key-reuse.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "dns-interruption",
+      "kind": "host",
+      "suite": "dns-interruption",
+      "source": "tests/e2e/helpers/certops-dns-interruption.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-dns-interruption.js",
+        "scripts/certops-dns-interruption.js",
+        "scripts/certops-dns-interruption.test.js",
+        "docs/certops/cross/dns-interruption.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "issuer-adoption-capacity",
+      "kind": "host",
+      "suite": "issuer-adoption-capacity",
+      "source": "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
+        "scripts/certops-issuer-adoption-capacity.js",
+        "scripts/certops-issuer-adoption-capacity.test.js",
+        "docs/certops/cross/issuer-adoption-capacity.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "linux-reboot-upgrade",
+      "kind": "host",
+      "suite": "linux-reboot-upgrade",
+      "source": "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
+        "scripts/certops-linux-reboot-upgrade.js",
+        "scripts/certops-linux-reboot-upgrade.test.js",
+        "docs/certops/cross/linux-reboot-upgrade.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "fs-symlink-rollback",
+      "kind": "host",
+      "suite": "fs-symlink-rollback",
+      "source": "tests/e2e/helpers/certops-fs-symlink-rollback.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-fs-symlink-rollback.js",
+        "scripts/certops-fs-symlink-rollback.js",
+        "scripts/certops-fs-symlink-rollback.test.js",
+        "docs/certops/cross/fs-symlink-rollback.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "trust-concurrency",
+      "kind": "host",
+      "suite": "trust-concurrency",
+      "source": "tests/e2e/helpers/certops-trust-concurrency.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-trust-concurrency.js",
+        "scripts/certops-trust-concurrency.js",
+        "scripts/certops-trust-concurrency.test.js",
+        "docs/certops/cross/trust-concurrency.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "k8s-rbac-outage",
+      "kind": "host",
+      "suite": "k8s-rbac-outage",
+      "source": "tests/e2e/helpers/certops-k8s-rbac-outage.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-k8s-rbac-outage.js",
+        "scripts/certops-k8s-rbac-outage.js",
+        "scripts/certops-k8s-rbac-outage.test.js",
+        "docs/certops/cross/k8s-rbac-outage.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "browser-audit-redaction",
+      "kind": "host",
+      "suite": "browser-audit-redaction",
+      "source": "tests/e2e/helpers/certops-browser-audit-redaction.js",
+      "environment": {
+        "osFamily": "linux",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-browser-audit-redaction.js",
+        "scripts/certops-browser-audit-redaction.js",
+        "scripts/certops-browser-audit-redaction.test.js",
+        "docs/certops/cross/browser-audit-redaction.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-fixed-root-unmodified-contract",
+      "kind": "host",
+      "suite": "windows-fixed-root-unmodified-contract",
+      "source": "tests/e2e/helpers/certops-windows-fixed-root.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root.js",
+        "scripts/certops-windows-fixed-root.test.js",
+        "docs/certops/windows/fixed-root.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-full-installer-second-rename-contract",
+      "kind": "host",
+      "suite": "windows-full-installer-second-rename-contract",
+      "source": "tests/e2e/helpers/certops-windows-second-rename.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-second-rename.js",
+        "scripts/certops-windows-second-rename.js",
+        "scripts/certops-windows-second-rename.test.js",
+        "docs/certops/windows/second-rename.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-published-package-upgrade-contract",
+      "kind": "host",
+      "suite": "windows-published-package-upgrade-contract",
+      "source": "tests/e2e/helpers/certops-windows-published-upgrade.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-published-upgrade.js",
+        "scripts/certops-windows-published-upgrade.js",
+        "scripts/certops-windows-published-upgrade.test.js",
+        "docs/certops/windows/published-upgrade.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-native-arm64-execution-contract",
+      "kind": "host",
+      "suite": "windows-native-arm64-execution-contract",
+      "source": "tests/e2e/helpers/certops-windows-arm64-execution.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-arm64-execution.js",
+        "scripts/certops-windows-arm64-execution.js",
+        "scripts/certops-windows-arm64-execution.test.js",
+        "docs/certops/windows/arm64-execution.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-acl-path-env-contract",
+      "kind": "host",
+      "suite": "windows-acl-path-env-contract",
+      "source": "tests/e2e/helpers/certops-windows-acl-path-env.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-acl-path-env.js",
+        "scripts/certops-windows-acl-path-env.js",
+        "scripts/certops-windows-acl-path-env.test.js",
+        "docs/certops/windows/acl-path-env.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-operation-interruption-contract",
+      "kind": "host",
+      "suite": "windows-operation-interruption-contract",
+      "source": "tests/e2e/helpers/certops-windows-operation-interruption.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-operation-interruption.js",
+        "scripts/certops-windows-operation-interruption.js",
+        "scripts/certops-windows-operation-interruption.test.js",
+        "docs/certops/windows/operation-interruption.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-reregister-custody-contract",
+      "kind": "host",
+      "suite": "windows-reregister-custody-contract",
+      "source": "tests/e2e/helpers/certops-windows-reregister-custody.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-reregister-custody.js",
+        "scripts/certops-windows-reregister-custody.js",
+        "scripts/certops-windows-reregister-custody.test.js",
+        "docs/certops/windows/reregister-custody.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-retention-boundary-contract",
+      "kind": "host",
+      "suite": "windows-retention-boundary-contract",
+      "source": "tests/e2e/helpers/certops-windows-retention-boundaries.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-retention-boundaries.js",
+        "scripts/certops-windows-retention-boundaries.js",
+        "scripts/certops-windows-retention-boundaries.test.js",
+        "docs/certops/windows/retention-boundaries.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-protected-recovery-contract",
+      "kind": "host",
+      "suite": "windows-protected-recovery-contract",
+      "source": "tests/e2e/helpers/certops-windows-protected-recovery.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-protected-recovery.js",
+        "scripts/certops-windows-protected-recovery.js",
+        "scripts/certops-windows-protected-recovery.test.js",
+        "docs/certops/windows/protected-recovery.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
+    },
+    {
+      "id": "windows-crash-dump-containment-contract",
+      "kind": "host",
+      "suite": "windows-crash-dump-containment-contract",
+      "source": "tests/e2e/helpers/certops-windows-crash-dump.js",
+      "environment": {
+        "osFamily": "windows",
+        "executionSurface": "script-contract"
+      },
+      "requiredSources": [
+        "tests/e2e/helpers/certops-windows-crash-dump.js",
+        "scripts/certops-windows-crash-dump.js",
+        "scripts/certops-windows-crash-dump.test.js",
+        "docs/certops/windows/crash-dump.md",
+        ".github/workflows/certops-windows-coverage-variants.yml"
+      ]
     }
   ],
   "qualificationProfiles": {

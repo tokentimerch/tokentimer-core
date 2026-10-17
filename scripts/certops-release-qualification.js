@@ -270,6 +270,67 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const n = artifact.report.qualificationEnvironment;
           if (proof.nativeCell !== "pending" || artifact.report.nativeCell === "qualified" || n.osFamily !== "windows" || n.identity !== "LocalSystem" || n.measurement !== "native") throw new Error("Native issuer reassignment stays pending until a disposable forest runs");
         }
+        const adcsLocalContracts = {
+          "adcs-browser-enrollment": ["../tests/e2e/helpers/certops-adcs-browser-enrollment", "nativeAdcsBrowserEnrollment"],
+          "adcs-install-interruption": ["../tests/e2e/helpers/certops-adcs-install-interruption", "nativeAdcsInstallInterruption"],
+          "adcs-lost-submit": ["../tests/e2e/helpers/certops-adcs-lost-submit", "nativeAdcsLostSubmit"],
+          "adcs-uncertain-abandon": ["./certops-adcs-uncertain-abandon", "nativeAdcsUncertainAbandon"],
+          "adcs-cmc-renewal": ["../tests/e2e/helpers/certops-adcs-cmc-renewal", "nativeAdcsCmcRenewal"],
+          "adcs-safety-variants": ["../tests/e2e/helpers/certops-adcs-safety-variants", "nativeAdcsSafetyVariants"],
+          "adcs-crash-experiments": ["../tests/e2e/helpers/certops-adcs-crash-experiments", "nativeAdcsCrashExperiments"],
+        };
+        if (adcsLocalContracts[slot.suite]) {
+          const [modulePath, field] = adcsLocalContracts[slot.suite];
+          const proof = artifact.report[field];
+          require(modulePath).verifyProof(proof);
+          if (proof.disposableForestRan !== false || proof.nativeExecutionQualified !== false || proof.hostCapabilityAbsentIsPass !== false) throw new Error("AD CS local contract stays unqualified without a disposable forest");
+          if (slot.suite === "adcs-crash-experiments" && proof.releaseQualificationSatisfied !== false) throw new Error("AD CS crash experiments cannot satisfy release qualification");
+        }
+        const crossLocalContracts = {
+          "acme-key-reuse-variants": ["../tests/e2e/helpers/certops-acme-key-reuse", "nativeAcmeKeyReuseVariants", "variants"],
+          "dns-interruption": ["../tests/e2e/helpers/certops-dns-interruption", "nativeDnsInterruption"],
+          "issuer-adoption-capacity": ["../tests/e2e/helpers/certops-issuer-adoption-capacity", "nativeIssuerAdoptionCapacity"],
+          "linux-reboot-upgrade": ["../tests/e2e/helpers/certops-linux-reboot-upgrade", "nativeLinuxRebootUpgrade"],
+          "fs-symlink-rollback": ["../tests/e2e/helpers/certops-fs-symlink-rollback", "nativeFsSymlinkRollback"],
+          "trust-concurrency": ["../tests/e2e/helpers/certops-trust-concurrency", "nativeTrustConcurrency"],
+          "k8s-rbac-outage": ["../tests/e2e/helpers/certops-k8s-rbac-outage", "nativeK8sRbacOutage"],
+          "browser-audit-redaction": ["../tests/e2e/helpers/certops-browser-audit-redaction", "nativeBrowserAuditRedaction"],
+        };
+        if (crossLocalContracts[slot.suite]) {
+          const [modulePath, field, exportName] = crossLocalContracts[slot.suite];
+          const loaded = require(modulePath);
+          const verifier = exportName ? loaded[exportName] : loaded;
+          const proof = artifact.report[field];
+          verifier.verifyProof(proof);
+          if (proof.hostCapabilityAbsentIsPass !== false) throw new Error("Cross-platform local contract cannot pass on a missing host");
+          if (slot.suite === "dns-interruption" && proof.liveDnsQualified !== false) throw new Error("Live DNS stays unqualified");
+          if (slot.suite === "k8s-rbac-outage" && (proof.kubernetesQualified !== false || proof.talkedToCluster !== false)) throw new Error("Kubernetes coverage stays unqualified without a cluster");
+          if (slot.suite === "issuer-adoption-capacity" && proof.nativeCell !== "pending") throw new Error("Issuer adoption stays pending");
+          if (slot.suite === "linux-reboot-upgrade" && proof.realRebootQualified !== false) throw new Error("Linux reboot stays unqualified");
+          if (slot.suite === "acme-key-reuse-variants" && (proof.nativeExecutionQualified !== false || proof.sharedFleetQualified !== false || proof.liveCertbot !== "pending")) throw new Error("ACME key reuse stays a local contract");
+        }
+        const windowsLocalContracts = {
+          "windows-fixed-root-unmodified-contract": ["../tests/e2e/helpers/certops-windows-fixed-root", "unmodifiedFixedRoot", "verifyLocalContract"],
+          "windows-full-installer-second-rename-contract": ["../tests/e2e/helpers/certops-windows-second-rename", "fullInstallerSecondRename", "verifyLocalContract"],
+          "windows-published-package-upgrade-contract": ["../tests/e2e/helpers/certops-windows-published-upgrade", "publishedPackageUpgrade"],
+          "windows-native-arm64-execution-contract": ["../tests/e2e/helpers/certops-windows-arm64-execution", "nativeArm64Execution"],
+          "windows-acl-path-env-contract": ["../tests/e2e/helpers/certops-windows-acl-path-env", "aclPathEnvironment"],
+          "windows-operation-interruption-contract": ["../tests/e2e/helpers/certops-windows-operation-interruption", "operationInterruption"],
+          "windows-reregister-custody-contract": ["../tests/e2e/helpers/certops-windows-reregister-custody", "reregisterCustody"],
+          "windows-retention-boundary-contract": ["../tests/e2e/helpers/certops-windows-retention-boundaries", "retentionBoundaries"],
+          "windows-protected-recovery-contract": ["../tests/e2e/helpers/certops-windows-protected-recovery", "protectedKeyRecovery"],
+          "windows-crash-dump-containment-contract": ["../tests/e2e/helpers/certops-windows-crash-dump", "crashDumpContainment"],
+        };
+        if (windowsLocalContracts[slot.suite]) {
+          const [modulePath, field, exportName] = windowsLocalContracts[slot.suite];
+          const loaded = require(modulePath);
+          const proof = artifact.report[field];
+          (exportName ? loaded[exportName] : loaded.verifyProof)(proof);
+          if (proof.nativeExecutionQualified !== false || proof.hostCapabilityAbsentIsPass !== false || proof.powerLossDurabilityQualified === true || proof.realRebootQualified === true || proof.inUseKeyDeleted === true || proof.crashDumpContainmentQualified === true) throw new Error("Windows local contract stays unqualified");
+          if (slot.suite === "windows-retention-boundary-contract" && proof.twentyFourHourElapsedQualified !== false) throw new Error("Retention elapsed qualification cannot be shortened");
+          if (slot.suite === "windows-native-arm64-execution-contract" && proof.nativeArm64ExecutionQualified !== false) throw new Error("Native ARM64 execution stays unqualified");
+          if (slot.suite === "windows-published-package-upgrade-contract" && proof.publishedPackageMigrationQualified !== false) throw new Error("Published package migration stays blocked");
+        }
         if (slot.suite === "linux-trust-host") {
           const h=require("./certops-linux-trust-independent-roots"),p=artifact.report.nativeIndependentTrustRoots,n=artifact.report.qualificationEnvironment;h.verifyProof(p);
           if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || !((p.family==="debian" && n.distribution==="ubuntu" && ["22.04","24.04"].includes(n.osVersion) && n.executionSurface==="disposable-vm")||(p.family==="rhel" && n.distribution==="almalinux" && n.osVersion==="9.6" && n.executionSurface==="disposable-container")))throw new Error("Native independent trust platform required");

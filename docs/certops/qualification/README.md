@@ -32,6 +32,8 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Certificate-producing integration source qualification](api/integration-source-qualification.md)
 - [Public renewal issuer switch policy](api/issuer-switch-qualification.md)
 - [Native AD CS issuer reassignment](adcs/native-issuer-reassignment.md): confirmed public switch, then one production scheduler renewal. Manual dispatch only. A missing forest fails closed and the native cell stays pending.
+- [AD CS browser enrollment contract](adcs/browser-enrollment.md), [installation interruption](adcs/install-interruption.md), [lost submit](adcs/lost-submit.md), [uncertain abandon](adcs/uncertain-abandon.md), [CMC renewal](adcs/cmc-renewal.md), [safety variants](adcs/safety-variants.md), and [crash experiments](adcs/crash-experiments.md): local contracts only. A missing forest fails closed. Crash experiments cannot satisfy release qualification.
+- [Cross-platform local contracts](cross/acme-key-reuse.md): ACME path and key reuse, DNS interruption, issuer adoption capacity, Linux upgrade rollback, filesystem symlink rollback, trust-store concurrency, Kubernetes RBAC, and browser audit redaction. A missing lab fails closed. Live DNS, a reboot, and a Kubernetes cluster stay unqualified.
 - [Multi-target filesystem deployment qualification](api/multi-target-deployment-qualification.md)
 - [Queued renewal profile snapshot qualification](api/queued-profile-snapshot-qualification.md)
 - [Renewal outbox and SMTP qualification](api/renewal-alert-qualification.md)
@@ -190,6 +192,7 @@ The separate [default24h AD CS release contract](adcs/default24h-release-contrac
 
 - [Installed public IIS refusal](windows/installed-public-iis-refusal.md): real public deploy admission, installed-agent signed refusal, claim-bound failure audit and two protected CNG/IIS/TLS endpoints. All ten hosted Windows/key-profile cells remain unexecuted.
 - [Installed public bind-failure script contract](windows/installed-bind-failure.md): owned selectors, predecessor rollback, and cleanup that refuses a blanket netsh reset. Script evidence only. Native BIND_FAILED injection remains pending.
+- [Windows coverage contracts](windows/fixed-root.md): unmodified fixed root, second rename, published-package upgrade, ARM64 execution, ACL and path failures, operation interruption, custody re-registration, retention boundaries, protected-key recovery, and crash-dump containment. Each fails closed. A 24-hour run, native ARM64, published-package migration, and crash-dump containment stay unqualified.
 - [Installed interruption recovery](windows/installed-interruption-recovery.md): a recorded service stop or process kill, then startup of the same owned target. Host-integration evidence. This is not power-loss durability and it is not a reboot. The in-use key stays.
 
 - [IPv6 SNI shadow and rollback](windows/ipv6-sni-shadow-rollback.md): concrete IPv6 native failure/recovery with a separate preserved IPv4 sibling; native execution pending.

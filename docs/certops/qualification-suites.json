@@ -1384,6 +1384,110 @@
       "adcs-real-issuer-reassignment-confirmed-switch": "real-host",
       "adcs-real-issuer-reassignment-renewal-migrates": "real-host",
       "adcs-real-issuer-reassignment-cleanup": "real-host"
+    },
+    "adcs-browser-enrollment": {
+      "adcs-browser-preflight": "integration",
+      "adcs-browser-confirmation-before-submit": "integration",
+      "adcs-browser-enrollment": "integration"
+    },
+    "adcs-install-interruption": {
+      "adcs-install-interruption-role-install": "integration",
+      "adcs-install-interruption-ca-config": "integration",
+      "adcs-install-interruption-template-publish": "integration",
+      "adcs-install-interruption-acl-grant": "integration",
+      "adcs-install-interruption-iis-enroll-site": "integration"
+    },
+    "adcs-lost-submit": {
+      "adcs-lost-submit-clean-miss": "integration",
+      "adcs-lost-submit-ambiguous": "integration",
+      "adcs-lost-submit-owned-candidate": "integration"
+    },
+    "adcs-uncertain-abandon": {
+      "adcs-uncertain-abandon-accepted": "integration"
+    },
+    "adcs-cmc-renewal": {
+      "adcs-cmc-signed-renewal": "integration",
+      "adcs-cmc-repeated-unattended-renewal": "integration"
+    },
+    "adcs-safety-variants": {
+      "adcs-safety-template-mismatch": "integration",
+      "adcs-safety-allowlist-miss": "integration",
+      "adcs-safety-disallowed-algorithm": "integration",
+      "adcs-safety-foreign-request": "integration",
+      "adcs-safety-revocation-ocsp-disagreement": "integration"
+    },
+    "adcs-crash-experiments": {
+      "adcs-crash-response-loss": "integration",
+      "adcs-crash-journal-phase": "integration",
+      "adcs-crash-key-generation": "integration"
+    },
+    "acme-key-reuse-variants": {
+      "acme-client-path-outside-owned-directory": "integration",
+      "acme-second-order-reuses-spki": "integration"
+    },
+    "dns-interruption": {
+      "dns-propagation-not-claimed": "real-host",
+      "dns-cancel-owned-record-only": "real-host",
+      "dns-interrupted-cleanup-preserves-unrelated": "real-host"
+    },
+    "issuer-adoption-capacity": {
+      "issuer-capacity-exhausted": "integration",
+      "issuer-foreign-adoption-refused": "integration"
+    },
+    "linux-reboot-upgrade": {
+      "linux-reboot-not-claimed": "integration",
+      "linux-upgrade-rollback-restores-unit": "integration",
+      "linux-systemd-host-absent": "integration"
+    },
+    "fs-symlink-rollback": {
+      "fs-symlink-escape-refused": "integration",
+      "fs-permission-denied-closed": "integration",
+      "fs-rollback-restores-bytes": "integration"
+    },
+    "trust-concurrency": {
+      "trust-two-writers-single-commit": "integration",
+      "trust-partial-write-recovery": "integration"
+    },
+    "k8s-rbac-outage": {
+      "k8s-api-timeout-closed": "real-host",
+      "k8s-missed-watch-closed": "real-host",
+      "k8s-missing-rbac-closed": "real-host"
+    },
+    "browser-audit-redaction": {
+      "browser-diagnostic-redaction": "integration",
+      "browser-completed-console-anonymous-replay": "integration",
+      "browser-accessibility-fixture-labels": "integration",
+      "browser-missing-browser-closed": "integration"
+    },
+    "windows-fixed-root-unmodified-contract": {
+      "windows-fixed-root-existing-install-preserved": "integration"
+    },
+    "windows-full-installer-second-rename-contract": {
+      "windows-full-installer-second-rename-failure": "integration"
+    },
+    "windows-published-package-upgrade-contract": {
+      "windows-published-package-upgrade-refused": "real-host"
+    },
+    "windows-native-arm64-execution-contract": {
+      "windows-native-arm64-execution-refused": "real-host"
+    },
+    "windows-acl-path-env-contract": {
+      "windows-acl-path-env-refusals": "integration"
+    },
+    "windows-operation-interruption-contract": {
+      "windows-operation-interruption-stages": "integration"
+    },
+    "windows-reregister-custody-contract": {
+      "windows-reregister-custody-preserved": "integration"
+    },
+    "windows-retention-boundary-contract": {
+      "windows-retention-boundary-contract": "integration"
+    },
+    "windows-protected-recovery-contract": {
+      "windows-protected-journal-recovery-refused": "integration"
+    },
+    "windows-crash-dump-containment-contract": {
+      "windows-crash-dump-containment-unqualified": "integration"
     }
   },
   "requiredCapabilities": {
@@ -1983,6 +2087,118 @@
       "domain",
       "api",
       "qualifiedBuild"
+    ],
+    "adcs-browser-enrollment": [
+      "windows",
+      "domain",
+      "api",
+      "browser",
+      "qualifiedBuild"
+    ],
+    "adcs-install-interruption": [
+      "windows",
+      "domain",
+      "api",
+      "qualifiedBuild"
+    ],
+    "adcs-lost-submit": [
+      "windows",
+      "domain",
+      "api",
+      "qualifiedBuild"
+    ],
+    "adcs-uncertain-abandon": [
+      "windows",
+      "domain",
+      "api",
+      "qualifiedBuild"
+    ],
+    "adcs-cmc-renewal": [
+      "windows",
+      "domain",
+      "api",
+      "qualifiedBuild"
+    ],
+    "adcs-safety-variants": [
+      "windows",
+      "domain",
+      "api",
+      "qualifiedBuild"
+    ],
+    "adcs-crash-experiments": [
+      "windows",
+      "domain",
+      "api",
+      "qualifiedBuild"
+    ],
+    "acme-key-reuse-variants": [
+      "linux",
+      "api"
+    ],
+    "dns-interruption": [
+      "linux",
+      "dns"
+    ],
+    "issuer-adoption-capacity": [
+      "windows",
+      "api"
+    ],
+    "linux-reboot-upgrade": [
+      "linux"
+    ],
+    "fs-symlink-rollback": [
+      "linux"
+    ],
+    "trust-concurrency": [
+      "linux"
+    ],
+    "k8s-rbac-outage": [
+      "linux",
+      "kubernetes"
+    ],
+    "browser-audit-redaction": [
+      "browser",
+      "api"
+    ],
+    "windows-fixed-root-unmodified-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-full-installer-second-rename-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-published-package-upgrade-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-native-arm64-execution-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-acl-path-env-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-operation-interruption-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-reregister-custody-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-retention-boundary-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-protected-recovery-contract": [
+      "windows",
+      "elevated"
+    ],
+    "windows-crash-dump-containment-contract": [
+      "windows",
+      "elevated"
     ]
   },
   "suites": {
@@ -3364,6 +3580,110 @@
       "adcs-real-issuer-reassignment-confirmed-switch",
       "adcs-real-issuer-reassignment-renewal-migrates",
       "adcs-real-issuer-reassignment-cleanup"
+    ],
+    "adcs-browser-enrollment": [
+      "adcs-browser-preflight",
+      "adcs-browser-confirmation-before-submit",
+      "adcs-browser-enrollment"
+    ],
+    "adcs-install-interruption": [
+      "adcs-install-interruption-role-install",
+      "adcs-install-interruption-ca-config",
+      "adcs-install-interruption-template-publish",
+      "adcs-install-interruption-acl-grant",
+      "adcs-install-interruption-iis-enroll-site"
+    ],
+    "adcs-lost-submit": [
+      "adcs-lost-submit-clean-miss",
+      "adcs-lost-submit-ambiguous",
+      "adcs-lost-submit-owned-candidate"
+    ],
+    "adcs-uncertain-abandon": [
+      "adcs-uncertain-abandon-accepted"
+    ],
+    "adcs-cmc-renewal": [
+      "adcs-cmc-signed-renewal",
+      "adcs-cmc-repeated-unattended-renewal"
+    ],
+    "adcs-safety-variants": [
+      "adcs-safety-template-mismatch",
+      "adcs-safety-allowlist-miss",
+      "adcs-safety-disallowed-algorithm",
+      "adcs-safety-foreign-request",
+      "adcs-safety-revocation-ocsp-disagreement"
+    ],
+    "adcs-crash-experiments": [
+      "adcs-crash-response-loss",
+      "adcs-crash-journal-phase",
+      "adcs-crash-key-generation"
+    ],
+    "acme-key-reuse-variants": [
+      "acme-client-path-outside-owned-directory",
+      "acme-second-order-reuses-spki"
+    ],
+    "dns-interruption": [
+      "dns-propagation-not-claimed",
+      "dns-cancel-owned-record-only",
+      "dns-interrupted-cleanup-preserves-unrelated"
+    ],
+    "issuer-adoption-capacity": [
+      "issuer-capacity-exhausted",
+      "issuer-foreign-adoption-refused"
+    ],
+    "linux-reboot-upgrade": [
+      "linux-reboot-not-claimed",
+      "linux-upgrade-rollback-restores-unit",
+      "linux-systemd-host-absent"
+    ],
+    "fs-symlink-rollback": [
+      "fs-symlink-escape-refused",
+      "fs-permission-denied-closed",
+      "fs-rollback-restores-bytes"
+    ],
+    "trust-concurrency": [
+      "trust-two-writers-single-commit",
+      "trust-partial-write-recovery"
+    ],
+    "k8s-rbac-outage": [
+      "k8s-api-timeout-closed",
+      "k8s-missed-watch-closed",
+      "k8s-missing-rbac-closed"
+    ],
+    "browser-audit-redaction": [
+      "browser-diagnostic-redaction",
+      "browser-completed-console-anonymous-replay",
+      "browser-accessibility-fixture-labels",
+      "browser-missing-browser-closed"
+    ],
+    "windows-fixed-root-unmodified-contract": [
+      "windows-fixed-root-existing-install-preserved"
+    ],
+    "windows-full-installer-second-rename-contract": [
+      "windows-full-installer-second-rename-failure"
+    ],
+    "windows-published-package-upgrade-contract": [
+      "windows-published-package-upgrade-refused"
+    ],
+    "windows-native-arm64-execution-contract": [
+      "windows-native-arm64-execution-refused"
+    ],
+    "windows-acl-path-env-contract": [
+      "windows-acl-path-env-refusals"
+    ],
+    "windows-operation-interruption-contract": [
+      "windows-operation-interruption-stages"
+    ],
+    "windows-reregister-custody-contract": [
+      "windows-reregister-custody-preserved"
+    ],
+    "windows-retention-boundary-contract": [
+      "windows-retention-boundary-contract"
+    ],
+    "windows-protected-recovery-contract": [
+      "windows-protected-journal-recovery-refused"
+    ],
+    "windows-crash-dump-containment-contract": [
+      "windows-crash-dump-containment-unqualified"
     ]
   },
   "suiteEvidenceLevels": {
@@ -3480,6 +3800,31 @@
     "native-certificate-signing-rotation": "e2e",
     "windows-installed-bind-failure-rollback": "integration",
     "windows-installed-interruption-recovery": "integration",
-    "native-adcs-issuer-reassignment": "real-host"
+    "native-adcs-issuer-reassignment": "real-host",
+    "adcs-browser-enrollment": "integration",
+    "adcs-install-interruption": "integration",
+    "adcs-lost-submit": "integration",
+    "adcs-uncertain-abandon": "integration",
+    "adcs-cmc-renewal": "integration",
+    "adcs-safety-variants": "integration",
+    "adcs-crash-experiments": "integration",
+    "acme-key-reuse-variants": "integration",
+    "dns-interruption": "real-host",
+    "issuer-adoption-capacity": "integration",
+    "linux-reboot-upgrade": "integration",
+    "fs-symlink-rollback": "integration",
+    "trust-concurrency": "integration",
+    "k8s-rbac-outage": "real-host",
+    "browser-audit-redaction": "integration",
+    "windows-fixed-root-unmodified-contract": "integration",
+    "windows-full-installer-second-rename-contract": "integration",
+    "windows-published-package-upgrade-contract": "real-host",
+    "windows-native-arm64-execution-contract": "real-host",
+    "windows-acl-path-env-contract": "integration",
+    "windows-operation-interruption-contract": "integration",
+    "windows-reregister-custody-contract": "integration",
+    "windows-retention-boundary-contract": "integration",
+    "windows-protected-recovery-contract": "integration",
+    "windows-crash-dump-containment-contract": "integration"
   }
 }

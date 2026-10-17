@@ -1,7 +1,8 @@
 "use strict";
 /** Supporting proof and destructive-cleanup boundaries; no service, registry,
  * certificate store or canonical directory is touched by these tests. */
-const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path");
+const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const fixture = require("../tests/e2e/helpers/certops-windows-fixed-root");
 test("full CLI rollback preservation requires process creation/executable/service path, not PID alone", () => {
   const { assertServiceStable } = require("../tests/e2e/helpers/certops-windows-cli-second-rename");
@@ -35,4 +36,83 @@ test("canonical lane remains manual, fresh hosted and independently cleaned", ()
   assert.match(source, /node scripts\/certops-windows-fixed-root-cleanup.js/);
   const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === fixture.suite);
   assert.equal(slots.length, 2); for (const slot of slots) assert.deepEqual(slot.requiredSources, fixture.requiredSources);
+});
+
+const LOCAL_RUN = "ab".repeat(16);
+
+function localManifest() {
+  return fixture.createRunManifest({
+    runId: LOCAL_RUN,
+    root: `C:\\qualification\\tt-root-${LOCAL_RUN}`,
+  });
+}
+
+test("an existing fixed root is preserved and the installer does not rewrite it", () => {
+  const owned = localManifest();
+  assert.equal(owned.existingRoot, fixture.FIXED_INSTALL_ROOT);
+  assert.equal(owned.nativeExecutionQualified, false);
+  assert.notEqual(owned.root.toLowerCase(), fixture.FIXED_INSTALL_ROOT.toLowerCase());
+  const observed = { exists: true, root: fixture.FIXED_INSTALL_ROOT, fileId: "42" };
+  const result = fixture.preserveExistingFixedRoot(owned, observed);
+  fixture.verifyProof(result.proof);
+  assert.equal(result.proof.existingRootPreserved, true);
+  assert.equal(result.proof.installerRewroteFixedRoot, false);
+  assert.equal(result.proof.evidenceLevel, "script");
+  assert.equal(result.passed, false);
+  assert.throws(() => fixture.preserveExistingFixedRoot(owned, { exists: false, root: fixture.FIXED_INSTALL_ROOT, fileId: "42" }));
+  assert.throws(() => fixture.createRunManifest({ runId: LOCAL_RUN, root: fixture.FIXED_INSTALL_ROOT }));
+  assert.throws(() =>
+    fixture.assertPlanDoesNotRewrite(owned, [
+      { file: "powershell.exe", args: ["Remove-Item", "-LiteralPath", fixture.FIXED_INSTALL_ROOT, "-Recurse"] },
+    ]),
+  );
+  assert.throws(() =>
+    fixture.assertPlanDoesNotRewrite(owned, [
+      { file: "netsh.exe", args: ["int", "ip", "reset"] },
+    ]),
+  );
+  for (const flag of fixture.LOCAL_CLOSED) {
+    assert.throws(() => fixture.verifyProof({ ...result.proof, [flag]: true }), flag);
+  }
+  fixture.verifyProof({ ...result.proof, crashDumpContainmentQualified: false });
+  assert.throws(() => fixture.verifyProof({ ...result.proof, crashDumpContainmentQualified: true }));
+  const repo = path.resolve(__dirname, "..");
+  for (const rel of fixture.LOCAL_REQUIRED_SOURCES) {
+    assert.equal(fs.existsSync(path.join(repo, rel)), true, rel);
+  }
+});
+
+test("local fixed-root entry fails closed without claiming native execution", () => {
+  const script = path.resolve(__dirname, "certops-windows-fixed-root.js");
+  const absent = spawnSync(process.execPath, [script, "--local-contract"], { encoding: "utf8" });
+  assert.equal(absent.status, 1);
+  const absentBody = JSON.parse(absent.stdout);
+  assert.equal(absentBody.passed, false);
+  assert.equal(absentBody.nativeQualified, false);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-fixed-root-"));
+  try {
+    const body = {
+      runId: LOCAL_RUN,
+      root: `C:\\qualification\\tt-root-${LOCAL_RUN}`,
+      observed: { exists: true, root: fixture.FIXED_INSTALL_ROOT, fileId: "42" },
+    };
+    const file = path.join(dir, "manifest.json");
+    fs.writeFileSync(file, JSON.stringify(body));
+    const checked = spawnSync(process.execPath, [script, "--local-contract", file], { encoding: "utf8" });
+    assert.equal(checked.status, 0);
+    const checkedBody = JSON.parse(checked.stdout);
+    assert.equal(checkedBody.passed, false);
+    assert.equal(checkedBody.nativeQualified, false);
+    fixture.verifyProof(checkedBody.proof);
+    body.extraCommands = [{ file: "netsh.exe", args: ["http", "delete", "sslcert", "ipport=0.0.0.0:443"] }];
+    fs.writeFileSync(file, JSON.stringify(body));
+    const refused = spawnSync(process.execPath, [script, "--local-contract", file], { encoding: "utf8" });
+    assert.equal(refused.status, 1);
+    assert.equal(JSON.parse(refused.stdout).passed, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const entry = require("./certops-windows-fixed-root");
+  assert.equal(entry.runLocal({ probe: {} }).passed, false);
+  assert.equal(entry.runLocal({ probe: {} }).nativeQualified, false);
 });

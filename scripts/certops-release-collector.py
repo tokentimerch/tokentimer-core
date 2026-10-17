@@ -1842,6 +1842,24 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 if type(cohort.get("dispatchCount")) is not int or not 1 <= cohort["dispatchCount"] <= 18 or cohort.get("dispatchLimit") != 18 or cohort.get("nativeIdentity") != "LocalSystem" or cohort.get("runtime") != "candidate-cli":
                     raise ValueError("Invalid native preflight cohort budget")
                 result["nativePreflightCohorts"].append({key: cohort[key] for key in ("workspaceId", "agentId", "dispatchCount", "dispatchLimit", "nativeIdentity", "runtime")})
+        if value.get("suite") == "windows-installed-interruption-recovery":
+            proof = value.get("nativeInstalledInterruption")
+            scope = "installed-deterministic-interruption-recovery"
+            present = ("startupRecovery",)
+            absent = ("inUseKeyDeleted", "powerLossDurabilityQualified", "realRebootQualified", "nativeExecutionQualified", "hostCapabilityAbsentIsPass")
+            if (not isinstance(proof, dict)
+                    or set(proof) != {"scope", "evidenceLevel", "pointKind", "interruptionMode", "recordedSequence", *present, *absent}
+                    or proof.get("scope") != scope or proof.get("evidenceLevel") != "host-integration"
+                    or proof.get("pointKind") not in ("ledger", "cng")
+                    or proof.get("interruptionMode") not in ("service-stop", "process-kill")
+                    or type(proof.get("recordedSequence")) is not int or not 1 <= proof["recordedSequence"] <= 1000000
+                    or any(proof.get(field) is not True for field in present)
+                    or any(proof.get(field) is not False for field in absent)):
+                raise ValueError("Incomplete installed interruption startup-recovery evidence")
+            result["nativeInstalledInterruption"] = {
+                "scope": scope, "evidenceLevel": "host-integration", "pointKind": proof["pointKind"],
+                "interruptionMode": proof["interruptionMode"], "recordedSequence": proof["recordedSequence"],
+                **dict.fromkeys(present, True), **dict.fromkeys(absent, False)}
         if "fixtureSources" in value:
             result["fixtureSources"] = supporting_sources(value["fixtureSources"])
         if value.get("suite") == "linux-systemd-writepath":

@@ -1,0 +1,312 @@
+{
+  "schemaVersion": 1,
+  "id": "cross-coverage-variants",
+  "status": "partial",
+  "promotesCatalogRows": false,
+  "claimsQualification": false,
+  "hostCapabilityAbsentIsPass": false,
+  "allowedSuiteLevels": ["integration", "real-host", "e2e"],
+  "allowedProofEvidenceLevels": ["script", "host-integration"],
+  "workflow": ".github/workflows/certops-cross-coverage-variants.yml",
+  "workflowTriggers": ["workflow_dispatch"],
+  "suites": [
+    {
+      "id": "acme-key-reuse-variants",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "acme-key-reuse.json",
+      "scenarios": [
+        "acme-client-path-outside-owned-directory",
+        "acme-second-order-reuses-spki"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "nativeExecutionQualified",
+        "sharedFleetQualified",
+        "liveCertbot",
+        "hostCapabilityAbsentIsPass",
+        "inUseKeyDeleted",
+        "blanketNetshReset",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-acme-key-reuse.js",
+        "scripts/certops-acme-key-reuse.js",
+        "scripts/certops-acme-key-reuse.test.js",
+        "docs/certops/cross/acme-key-reuse.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "acme.key-policy",
+        "acme.linux-certbot",
+        "acme.linux-acmesh"
+      ]
+    },
+    {
+      "id": "dns-interruption",
+      "status": "pending",
+      "evidenceLevel": "real-host",
+      "proofEvidenceLevel": "script",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "dns-interruption.json",
+      "scenarios": [
+        "dns-propagation-not-claimed",
+        "dns-cancel-owned-record-only",
+        "dns-interrupted-cleanup-preserves-unrelated"
+      ],
+      "reportFields": [
+        "status",
+        "suiteStatus",
+        "evidenceLevel",
+        "liveDnsQualified",
+        "propagationClaimed",
+        "hostCapabilityAbsentIsPass",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-dns-interruption.js",
+        "scripts/certops-dns-interruption.js",
+        "scripts/certops-dns-interruption.test.js",
+        "docs/certops/cross/dns-interruption.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "acme.propagation",
+        "acme.provider-cleanup",
+        "acme.txt-coexist"
+      ]
+    },
+    {
+      "id": "issuer-adoption-capacity",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "separateSuite": "native-adcs-issuer-reassignment",
+      "reportFile": "issuer-adoption-capacity.json",
+      "scenarios": [
+        "issuer-capacity-exhausted",
+        "issuer-foreign-adoption-refused"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "nativeCell",
+        "nativeCellQualified",
+        "hostCapabilityAbsentIsPass",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
+        "scripts/certops-issuer-adoption-capacity.js",
+        "scripts/certops-issuer-adoption-capacity.test.js",
+        "docs/certops/cross/issuer-adoption-capacity.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "renewal.ca-capacity",
+        "renewal.issuer-switch"
+      ]
+    },
+    {
+      "id": "linux-reboot-upgrade",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "host-integration",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "linux-reboot-upgrade.json",
+      "scenarios": [
+        "linux-reboot-not-claimed",
+        "linux-upgrade-rollback-restores-unit",
+        "linux-systemd-host-absent"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "realRebootQualified",
+        "rebootClaimed",
+        "hostCapabilityAbsentIsPass",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
+        "scripts/certops-linux-reboot-upgrade.js",
+        "scripts/certops-linux-reboot-upgrade.test.js",
+        "docs/certops/cross/linux-reboot-upgrade.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "linux-install.systemd-registration",
+        "linux-install.restart-recovery",
+        "linux-install.uninstall",
+        "deploy.os-service",
+        "deploy.no-systemd"
+      ]
+    },
+    {
+      "id": "fs-symlink-rollback",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "host-integration",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "fs-symlink-rollback.json",
+      "scenarios": [
+        "fs-symlink-escape-refused",
+        "fs-permission-denied-closed",
+        "fs-rollback-restores-bytes"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "followedSymlink",
+        "hostCapabilityAbsentIsPass",
+        "inUseKeyDeleted",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-fs-symlink-rollback.js",
+        "scripts/certops-fs-symlink-rollback.js",
+        "scripts/certops-fs-symlink-rollback.test.js",
+        "docs/certops/cross/fs-symlink-rollback.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "deploy.path-containment",
+        "deploy.atomic-backups",
+        "deploy.leaf-chain-key",
+        "linux-install.state-permissions"
+      ]
+    },
+    {
+      "id": "trust-concurrency",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "host-integration",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "trust-concurrency.json",
+      "scenarios": [
+        "trust-two-writers-single-commit",
+        "trust-partial-write-recovery"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "publicSignedTrustSeparate",
+        "publicSignedTrustQualified",
+        "hostCapabilityAbsentIsPass",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-trust-concurrency.js",
+        "scripts/certops-trust-concurrency.js",
+        "scripts/certops-trust-concurrency.test.js",
+        "docs/certops/cross/trust-concurrency.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "trust.bundle-concurrency",
+        "trust.restart-recovery"
+      ],
+      "separateCatalogIds": [
+        "trust.public-signed-lifecycle"
+      ]
+    },
+    {
+      "id": "k8s-rbac-outage",
+      "status": "pending",
+      "evidenceLevel": "real-host",
+      "proofEvidenceLevel": "script",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "k8s-rbac-outage.json",
+      "scenarios": [
+        "k8s-api-timeout-closed",
+        "k8s-missed-watch-closed",
+        "k8s-missing-rbac-closed"
+      ],
+      "reportFields": [
+        "status",
+        "suiteStatus",
+        "evidenceLevel",
+        "kubernetesQualified",
+        "talkedToCluster",
+        "hostCapabilityAbsentIsPass",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-k8s-rbac-outage.js",
+        "scripts/certops-k8s-rbac-outage.js",
+        "scripts/certops-k8s-rbac-outage.test.js",
+        "docs/certops/cross/k8s-rbac-outage.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "controller.restart-watch",
+        "controller.rbac-boundary",
+        "controller.observe"
+      ]
+    },
+    {
+      "id": "browser-audit-redaction",
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "proofEvidenceLevel": "script",
+      "qualified": false,
+      "hostCapabilityAbsentIsPass": false,
+      "reportFile": "browser-audit-redaction.json",
+      "scenarios": [
+        "browser-diagnostic-redaction",
+        "browser-completed-console-anonymous-replay",
+        "browser-accessibility-fixture-labels",
+        "browser-missing-browser-closed"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "browserQualified",
+        "liveBrowser",
+        "hostCapabilityAbsentIsPass",
+        "qualified",
+        "claimsQualification"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-browser-audit-redaction.js",
+        "scripts/certops-browser-audit-redaction.js",
+        "scripts/certops-browser-audit-redaction.test.js",
+        "docs/certops/cross/browser-audit-redaction.md",
+        "scripts/_registration/cross-coverage.json",
+        ".github/workflows/certops-cross-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        "experience.browser-lifecycle",
+        "experience.ui-layout",
+        "experience.log-access",
+        "experience.log-secret-sentinel",
+        "experience.audit-target"
+      ]
+    }
+  ]
+}
