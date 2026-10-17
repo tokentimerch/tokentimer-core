@@ -9,6 +9,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const tls = require("node:tls");
+const { once } = require("node:events");
 const { spawnSync } = require("node:child_process");
 const deploy = require("../packages/agent/src/deploy");
 const policy = require("../packages/agent/src/policy");
@@ -17,7 +19,21 @@ const { createHostGate } = require("../packages/agent/scripts/host-gate");
 const concurrent = require("./certops-filesystem-concurrent");
 const backupAlias = require("./certops-filesystem-backup-alias");
 const backupRetention = require("./certops-filesystem-backup-retention");
-const scenarios = ["filesystem-first-deploy", "filesystem-process-replay", "filesystem-rotation-backups", "filesystem-path-containment", "filesystem-input-refusals", "filesystem-backup-finalize", "filesystem-cleanup", concurrent.SCENARIO, backupAlias.SCENARIO, backupRetention.SCENARIO];
+const { runDeployReloadVerify } = require("../packages/agent/src");
+const ROLLBACK_SCENARIO = "filesystem-production-paired-rollback";
+const ROLLBACK_SCOPE = "native-filesystem-production-coordinator-served-leaf-mismatch-paired-rollback";
+const ROLLBACK_FLAGS = ["actualCandidatePairObserved", "trustedPredecessorServedThroughout", "productionVerifyMismatchObserved", "productionRollbackObserved", "predecessorPairBytesRestoredAndChainPreserved", "privateStagingPreserved", "ownedListenerAndConnectionsDrained"];
+const ROLLBACK_SOURCES = [...backupRetention.REQUIRED_SOURCES, "packages/agent/src/index.js", "packages/agent/src/reload/index.js", "packages/agent/src/evidence/index.js", "packages/agent/vendor/log-scrub/secret-material.js"];
+function verifyRollbackProof(value) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value));
+  assert.deepEqual(Object.keys(value).sort(), ["schemaVersion", "scope", "fingerprints", ...ROLLBACK_FLAGS].sort());
+  assert.equal(value.schemaVersion, 1); assert.equal(value.scope, ROLLBACK_SCOPE);
+  assert.ok(Array.isArray(value.fingerprints) && value.fingerprints.length === 2 && value.fingerprints.every(item => typeof item === "string" && /^[a-f0-9]{64}$/.test(item)));
+  assert.notEqual(value.fingerprints[0], value.fingerprints[1]);
+  for (const flag of ROLLBACK_FLAGS) assert.equal(value[flag], true, flag);
+  return true;
+}
+const scenarios = ["filesystem-first-deploy", "filesystem-process-replay", "filesystem-rotation-backups", "filesystem-path-containment", "filesystem-input-refusals", "filesystem-backup-finalize", "filesystem-cleanup", concurrent.SCENARIO, backupAlias.SCENARIO, backupRetention.SCENARIO, ROLLBACK_SCENARIO];
 function guard() {
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
@@ -35,13 +51,124 @@ async function replay(file) {
   const result = await deploy.deployCertificateAndKey({ ...input, checkPath: checkPathFor(input.root) });
   assert.equal(result.skipped, true, "Fresh process must observe idempotence from actual files");
 }
+async function qualifyPairedRollback({ root, target, predecessor, candidate, independentlyObserve, onCleanupSafety = () => {} }) {
+  const sha = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  // Keep the real listener on the predecessor while the production coordinator
+  // writes the candidate. A genuine served-leaf mismatch must restore disk bytes.
+  const original = [target.certPath, target.keyPath, target.chainPath].map(sha);
+  const staging = [predecessor, candidate].map(material => sha(material.privateKeyPath));
+  const observePair = material => {
+    assert.equal(verify.computeCertificateFingerprint(fs.readFileSync(target.certPath, "utf8")), verify.computeCertificateFingerprint(material.certificatePem));
+    assert.equal(sha(target.keyPath), sha(material.privateKeyPath));
+    const leaf = new crypto.X509Certificate(fs.readFileSync(target.certPath));
+    assert.equal(leaf.checkPrivateKey(crypto.createPrivateKey(fs.readFileSync(target.keyPath))), true);
+    assert.equal(fs.readFileSync(target.chainPath, "utf8"), predecessor.chainPem);
+    // The coordinator rotates only the pair; the separate chain stays at its
+    // predecessor bytes even when the candidate carries a different CA bundle.
+    independentlyObserve({ ...material, chainPem: predecessor.chainPem });
+  };
+  const fingerprints = [predecessor, candidate].map(material => verify.computeCertificateFingerprint(material.certificatePem));
+  assert.notEqual(fingerprints[0], fingerprints[1]);
+  const sockets = new Set(), closes = [];
+  const retain = socket => {
+    sockets.add(socket);
+    closes.push(new Promise(resolve => socket.once("close", () => { sockets.delete(socket); resolve(); })));
+    socket.on("error", () => {});
+    socket.setTimeout(10000, () => socket.destroy());
+    return socket;
+  };
+  let serverFailed = false;
+  const server = tls.createServer({ cert: predecessor.certificatePem, key: fs.readFileSync(predecessor.privateKeyPath) }, socket => socket.end());
+  server.on("connection", retain);
+  server.on("error", () => { serverFailed = true; });
+  const rootIdentity = fs.lstatSync(root, { bigint: true });
+  assert.ok(rootIdentity.isDirectory() && !rootIdentity.isSymbolicLink());
+  onCleanupSafety(false);
+  let proof;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = server.address().port;
+    const trustedFingerprint = async () => {
+      const socket = retain(tls.connect({ host: "127.0.0.1", port, servername: target.reference, ca: predecessor.chainPem, rejectUnauthorized: true }));
+      try {
+        await once(socket, "secureConnect");
+        assert.equal(socket.authorized, true);
+        return crypto.createHash("sha256").update(socket.getPeerCertificate().raw).digest("hex");
+      } finally {
+        const closed = once(socket, "close");
+        socket.destroy();
+        await closed;
+      }
+    };
+    assert.equal(await trustedFingerprint(), fingerprints[0]);
+    const observed = [];
+    let observerFailed = false;
+    const client = { async reportEvidence(body) {
+      try {
+        for (const item of body.evidenceItems) {
+          const fields = Object.fromEntries((item.metadata || []).map(entry => [entry.name, entry.value]));
+          if (item.eventType === "deployment.updated" && fields.step === "deploy") {
+            assert.equal(fields.idempotentSkip, false);
+            observePair(candidate);
+            observed.push("deploy");
+          } else if (item.eventType === "validation.failed" && fields.step === "verify") {
+            observePair(candidate);
+            observed.push("verify-mismatch");
+          } else if (item.eventType === "deployment.updated" && fields.step === "rollback") {
+            assert.equal(fields.failedStep, "verify");
+            assert.equal(fields.restored, true);
+            observePair(predecessor);
+            assert.deepEqual([target.certPath, target.keyPath, target.chainPath].map(sha), original);
+            observed.push("rollback");
+          } else continue;
+          assert.equal(await trustedFingerprint(), fingerprints[0]);
+        }
+      } catch { observerFailed = true; }
+    } };
+    const result = await runDeployReloadVerify({
+      job: { action: "deploy", mode: "real", target: { type: "domain", reference: target.reference }, backupDir: target.backupDir, verifyHost: "127.0.0.1", verifyPort: port },
+      jobId: crypto.randomUUID(), client,
+      policyEngine: policy.createPolicyEngine(policy.loadPolicyConfig({ allowedPaths: [root], allowedVerifyHosts: ["127.0.0.1"] })),
+      certificatePem: candidate.certificatePem, certPath: target.certPath, keyPath: target.keyPath,
+      stagedKeyPath: candidate.privateKeyPath, keyRotated: true, retainPrivateKeyStaging: true, requestedSans: [target.reference],
+    });
+    assert.equal(observerFailed, false, "Independent rollback observer failed");
+    assert.equal(result.status, "failed");
+    assert.equal(result.deployResult.deployed, true);
+    assert.match(result.errorMessage, /verify step failed: live endpoint does not serve the deployed certificate/);
+    assert.deepEqual(observed, ["deploy", "verify-mismatch", "rollback"]);
+    observePair(predecessor);
+    assert.deepEqual([target.certPath, target.keyPath, target.chainPath].map(sha), original);
+    assert.deepEqual([predecessor, candidate].map(material => sha(material.privateKeyPath)), staging);
+    proof = { schemaVersion: 1, scope: ROLLBACK_SCOPE, fingerprints, actualCandidatePairObserved: true, trustedPredecessorServedThroughout: true, productionVerifyMismatchObserved: true, productionRollbackObserved: true, predecessorPairBytesRestoredAndChainPreserved: true, privateStagingPreserved: true };
+  } finally {
+    // Await every retained connection and the listener before deleting key files.
+    const closed = new Promise((resolve, reject) => server.close(error => error && error.code !== "ERR_SERVER_NOT_RUNNING" ? reject(error) : resolve()));
+    for (const socket of sockets) socket.destroy();
+    let drainTimer;
+    try {
+      await Promise.race([Promise.all([closed, ...closes]), new Promise((_, reject) => { drainTimer = setTimeout(() => reject(new Error("Owned TLS listener/socket drain was not proven")), 10000); })]);
+    } finally { clearTimeout(drainTimer); }
+    assert.equal(sockets.size, 0);
+    assert.equal(server.listening, false);
+    const now = fs.lstatSync(root, { bigint: true });
+    assert.ok(now.isDirectory() && !now.isSymbolicLink());
+    assert.equal(now.dev, rootIdentity.dev); assert.equal(now.ino, rootIdentity.ino);
+    onCleanupSafety(true);
+  }
+  assert.equal(serverFailed, false);
+  proof.ownedListenerAndConnectionsDrained = true;
+  verifyRollbackProof(proof);
+  return proof;
+}
 async function main() {
   guard();
   const temporaryRoot = fs.realpathSync.native(os.tmpdir());
   const root = concurrent.canonicalDirectory(fs.mkdtempSync(path.join(temporaryRoot, "certops-filesystem-")));
   const outside = concurrent.canonicalDirectory(fs.mkdtempSync(path.join(temporaryRoot, "certops-outside-")));
   const gate = createHostGate({ suite: "filesystem-host", strict: true, requiredCapabilities: ["native-filesystem", "openssl-key-oracle"], fixtureSource: { file: "scripts/certops-filesystem-host.js", sha256: crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: () => ({ "native-filesystem": { available: fs.statSync(root).isDirectory() }, "openssl-key-oracle": { available: native("openssl", ["version"]).status === 0 } }) });
-  gate.report.fixtureSources = backupRetention.REQUIRED_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
+  gate.report.fixtureSources = ROLLBACK_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
   if (process.platform === "linux") {
     const release = fs.readFileSync("/etc/os-release", "utf8");
     gate.report.qualificationEnvironment.distributionVersion = release.match(/^VERSION_ID="?([^"\n]+)/m)?.[1];
@@ -83,6 +210,7 @@ async function main() {
       assert.equal(observed.stdout.trim(), "restricted");
     }
   }
+  let rollbackCleanupSafe = true;
   let failure, ready = false, cleanup = "failed", rotated;
   try {
     await gate.preflight(); ready = true;
@@ -123,6 +251,9 @@ async function main() {
       for (const file of Object.values(rotated.backupPaths)) assert.equal(fs.existsSync(file), false);
       independentlyObserve(second);
     });
+    await gate.scenario(ROLLBACK_SCENARIO, async () => {
+      gate.report.nativeFilesystemPairedRollback = await qualifyPairedRollback({ root, target, predecessor: second, candidate: first, independentlyObserve, onCleanupSafety: safe => { rollbackCleanupSafe = safe; } });
+    }, { oracle: "Actual production deployment writes a distinct certificate/key pair, refuses an independently trusted stale served leaf, and restores the exact predecessor bytes through production rollback" });
     await gate.scenario(concurrent.SCENARIO, async () => {
       const third = fixture("third");
       gate.report.nativeFilesystemConcurrency = await concurrent.qualifyConcurrentRotation({workDir:root,materials:[first,second,third],independentlyCheckKeyPermissions});
@@ -136,6 +267,7 @@ async function main() {
   } catch (error) { failure = error; }
   finally {
     const clean = () => {
+      assert.equal(rollbackCleanupSafe, true, "Preserve filesystem fixture until owned TLS resources drain");
       concurrent.assertCleanupSafe(root);
       backupAlias.assertCleanupSafe(root);
       backupRetention.assertCleanupSafe(root);
@@ -154,5 +286,5 @@ async function main() {
   }
   if (failure) throw failure;
 }
-module.exports = { main, scenarios };
+module.exports = { main, scenarios, qualifyPairedRollback, verifyRollbackProof, ROLLBACK_SCENARIO, ROLLBACK_SCOPE, ROLLBACK_FLAGS, ROLLBACK_SOURCES };
 if (require.main === module) (process.argv[2] === "--replay" ? replay(process.argv[3]) : main()).catch(() => { console.error("Native filesystem qualification failed; inspect sanitized named report"); process.exitCode = 1; });

@@ -75,7 +75,7 @@ function artifact(version = "24.04") {
     })),
     fixtureSource: source("scripts/certops-filesystem-host.js"),
     fixtureSources:
-      require("../certops-filesystem-backup-retention").REQUIRED_SOURCES.map(
+      require("../certops-filesystem-host").ROLLBACK_SOURCES.map(
         source,
       ),
     nativeFilesystemBackupRetention: {
@@ -93,6 +93,12 @@ function artifact(version = "24.04") {
       ),
     },
     nativeFilesystemConcurrency: nativeProof(),
+    nativeFilesystemPairedRollback: {
+      schemaVersion: 1,
+      scope: require("../certops-filesystem-host").ROLLBACK_SCOPE,
+      fingerprints: ["a", "b"].map(c => c.repeat(64)),
+      ...Object.fromEntries(require("../certops-filesystem-host").ROLLBACK_FLAGS.map(flag => [flag, true])),
+    },
     nativeFilesystemBackupAlias: {
       schemaVersion: 1,
       scope: "native-filesystem-explicit-backup-directory-alias-refusal",
@@ -116,7 +122,7 @@ function slot(version = "24.04") {
     suite: SUITE,
     source: "scripts/certops-filesystem-host.js",
     requiredSources: [
-      ...require("../certops-filesystem-backup-retention").REQUIRED_SOURCES,
+      ...require("../certops-filesystem-host").ROLLBACK_SOURCES,
     ],
     environment: {
       osFamily: "linux",

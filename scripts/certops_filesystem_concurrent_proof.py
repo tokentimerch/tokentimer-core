@@ -13,6 +13,18 @@ FLAGS = "actualBaselineDeployed bothSubmittedBeforeAwait bothNativeMutationsComp
 FIELDS = {"schemaVersion", "scope", "processScope", "contenderCount", "completedMutations", "backupNamespaces", "fingerprints", "spkiFingerprints", "completionOrder", "backupPredecessors", "servedBeforeFingerprint", "servedAfterFingerprint", *FLAGS}
 RETENTION_FIELD = "nativeFilesystemBackupRetention"
 RETENTION_FLAGS = ["twoActualInitialDeployments","twoActualIndependentRotations","sameBasenamesAndBackupDirectory","olderOwnedGenerationPruned","currentRollbackGenerationPreserved","otherDestinationBackupsPreserved","legacyAndOperatorFilesPreserved","outsideSentinelPreserved","threePredecessorPairsVerified","finalCertificateKeyAndChainVerified","nativePrivateKeyPermissionsVerified","privateStagingPreserved","ownedCleanupCompleted"]
+ROLLBACK_FIELD = "nativeFilesystemPairedRollback"
+ROLLBACK_FLAGS = "actualCandidatePairObserved trustedPredecessorServedThroughout productionVerifyMismatchObserved productionRollbackObserved predecessorPairBytesRestoredAndChainPreserved privateStagingPreserved ownedListenerAndConnectionsDrained".split()
+
+
+def verify_rollback(value):
+    require(isinstance(value, dict) and set(value) == {"schemaVersion", "scope", "fingerprints", *ROLLBACK_FLAGS})
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1)
+    require(value["scope"] == "native-filesystem-production-coordinator-served-leaf-mismatch-paired-rollback")
+    rows = value["fingerprints"]
+    require(isinstance(rows, list) and len(rows) == 2 and all(isinstance(row, str) and re.fullmatch(r"[a-f0-9]{64}", row) for row in rows) and len(set(rows)) == 2)
+    for flag in ROLLBACK_FLAGS:
+        require(value[flag] is True)
 
 def verify_retention(value):
     require(isinstance(value, dict) and set(value) == {"schemaVersion", "scope", "retentionCount", "targetCount", "actualRotations", "fingerprints", *RETENTION_FLAGS})
@@ -87,4 +99,5 @@ def project_report(value):
     verify_proof(value.get(FIELD))
     verify_alias(value.get(ALIAS_FIELD), value.get("platform"))
     verify_retention(value.get(RETENTION_FIELD))
-    return {FIELD: copy.deepcopy(value[FIELD]), ALIAS_FIELD: copy.deepcopy(value[ALIAS_FIELD]), RETENTION_FIELD: copy.deepcopy(value[RETENTION_FIELD])}
+    verify_rollback(value.get(ROLLBACK_FIELD))
+    return {field: copy.deepcopy(value[field]) for field in (FIELD, ALIAS_FIELD, RETENTION_FIELD, ROLLBACK_FIELD)}

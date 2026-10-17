@@ -353,6 +353,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || !((p.family==="debian" && n.distribution==="ubuntu" && ["22.04","24.04"].includes(n.osVersion) && n.executionSurface==="disposable-vm")||(p.family==="rhel" && n.distribution==="almalinux" && n.osVersion==="9.6" && n.executionSurface==="disposable-container")))throw new Error("Native independent trust platform required");
         }
         if (slot.suite === "filesystem-host") {
+          require("./certops-filesystem-host").verifyRollbackProof(artifact.report.nativeFilesystemPairedRollback);
           require("./certops-filesystem-concurrent").verifyProof(artifact.report.nativeFilesystemConcurrency);
           require("./certops-filesystem-backup-alias").verifyProof(artifact.report.nativeFilesystemBackupAlias);
           require("./certops-filesystem-backup-retention").verifyProof(artifact.report.nativeFilesystemBackupRetention);

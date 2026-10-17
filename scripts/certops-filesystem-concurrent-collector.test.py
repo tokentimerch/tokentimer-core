@@ -27,7 +27,7 @@ class PairedFilesystemProof(unittest.TestCase):
         value = copy.deepcopy(self.original)
         value["privateLocalFiles"] = "must-not-survive"
         projected = proof.project_report(value)
-        self.assertEqual(projected, {proof.FIELD: value[proof.FIELD], proof.ALIAS_FIELD: value[proof.ALIAS_FIELD], proof.RETENTION_FIELD: value[proof.RETENTION_FIELD]})
+        self.assertEqual(projected, {field: value[field] for field in (proof.FIELD, proof.ALIAS_FIELD, proof.RETENTION_FIELD, proof.ROLLBACK_FIELD)})
         self.assertNotIn("must-not-survive", json.dumps(projected))
         value["platform"] = "win32"
         value[proof.ALIAS_FIELD]["aliasKind"] = "junction"
@@ -40,7 +40,8 @@ class PairedFilesystemProof(unittest.TestCase):
         value["privateLocalFiles"] = "must-not-survive"
         result = collector.sanitized_report(value, {proof.SUITE}, set())
         self.assertEqual(result[proof.FIELD], value[proof.FIELD])
-        self.assertEqual(len(result["fixtureSources"]), 10)
+        self.assertEqual(len(result["fixtureSources"]), 14)
+        self.assertEqual(result[proof.ROLLBACK_FIELD], value[proof.ROLLBACK_FIELD])
         self.assertNotIn("must-not-survive", json.dumps(result))
         for mutate in (lambda v: v.pop(proof.FIELD), lambda v: v[proof.FIELD].update(nativeListenerClosed=False), lambda v: v[proof.FIELD].update(privateKey="secret")):
             wrong = copy.deepcopy(value)
@@ -99,11 +100,34 @@ class PairedFilesystemProof(unittest.TestCase):
             value.update(change)
             with self.assertRaises(ValueError):
                 proof.project_report(value)
+
         for change in ({"executionSurface": "container"}, {"measurement": "declared"}, {"distributionVersion": "20.04"}):
             value = copy.deepcopy(self.original)
             value["qualificationEnvironment"].update(change)
             with self.assertRaises(ValueError):
                 proof.project_report(value)
+
+    def test_paired_rollback_projection_refuses_missing_native_facts_and_private_material(self):
+        for flag in proof.ROLLBACK_FLAGS:
+            for wrong in (False, 1, None, "true"):
+                value = copy.deepcopy(self.original)
+                value[proof.ROLLBACK_FIELD][flag] = wrong
+                with self.subTest(flag=flag, wrong=wrong), self.assertRaises(ValueError):
+                    collector.sanitized_report(value, {proof.SUITE}, set())
+            value = copy.deepcopy(self.original)
+            value[proof.ROLLBACK_FIELD].pop(flag)
+            with self.assertRaises(ValueError):
+                proof.project_report(value)
+        for change in ({"schemaVersion": True}, {"scope": "local-contract"}, {"fingerprints": ["a" * 64, "a" * 64]}, {"privateKey": "withheld"}):
+            value = copy.deepcopy(self.original)
+            value[proof.ROLLBACK_FIELD].update(change)
+            with self.assertRaises(ValueError):
+                collector.sanitized_report(value, {proof.SUITE}, set())
+        value = copy.deepcopy(self.original)
+        value.pop(proof.ROLLBACK_FIELD)
+        with self.assertRaises(ValueError):
+            proof.project_report(value)
+
 
 
 if __name__ == "__main__":

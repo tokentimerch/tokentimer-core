@@ -135,3 +135,25 @@ test("native retention count cannot omit scoped pruning or sibling/private prese
     assert.ok(errors(v).length);
   }
 });
+
+test("every filesystem release slot requires actual paired rollback evidence and causal source identity", () => {
+  const h = require("./certops-filesystem-host");
+  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(row => row.suite === fixture.SUITE);
+  for (const slot of slots) assert.deepEqual(slot.requiredSources, h.ROLLBACK_SOURCES);
+  assert.ok(fixture.IDS.includes(h.ROLLBACK_SCENARIO));
+  for (const flag of h.ROLLBACK_FLAGS) {
+    const value = fixture.artifact(); delete value.report.nativeFilesystemPairedRollback[flag];
+    assert.ok(errors(value).length);
+    for (const wrong of [false, 1, "true", null]) {
+      const changed = fixture.artifact(); changed.report.nativeFilesystemPairedRollback[flag] = wrong;
+      assert.ok(errors(changed).length);
+    }
+  }
+  for (const mutate of [value => delete value.report.nativeFilesystemPairedRollback, value => { value.report.nativeFilesystemPairedRollback.fingerprints.fill("a".repeat(64)); }, value => { value.report.scenarios.find(row => row.id === h.ROLLBACK_SCENARIO).status = "skipped"; }, value => { value.report.nativeFilesystemPairedRollback.privateKey = "withheld"; }]) {
+    const value = fixture.artifact(); mutate(value); assert.ok(errors(value).length);
+  }
+  for (const source of h.ROLLBACK_SOURCES) {
+    const value = fixture.artifact(); value.report.fixtureSources.find(row => row.file === source).sha256 = "b".repeat(64);
+    assert.ok(errors(value).length);
+  }
+});

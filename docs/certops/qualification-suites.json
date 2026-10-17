@@ -482,7 +482,8 @@
       "filesystem-cleanup": "real-host",
       "filesystem-concurrent-paired-rotation": "real-host",
       "filesystem-backup-directory-alias-refusal": "real-host",
-      "filesystem-backup-retention-destination-isolation": "real-host"
+      "filesystem-backup-retention-destination-isolation": "real-host",
+      "filesystem-production-paired-rollback": "real-host"
     },
     "csr-observation-api": {
       "csr-observation-public-target": "e2e",
@@ -2686,7 +2687,8 @@
       "filesystem-cleanup",
       "filesystem-concurrent-paired-rotation",
       "filesystem-backup-directory-alias-refusal",
-      "filesystem-backup-retention-destination-isolation"
+      "filesystem-backup-retention-destination-isolation",
+      "filesystem-production-paired-rollback"
     ],
     "csr-observation-api": [
       "csr-observation-public-target",
