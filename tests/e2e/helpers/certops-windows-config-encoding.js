@@ -210,9 +210,11 @@ function verifyProcessCount(value) {
   return value === "0";
 }
 async function qualifyStartupConfiguration(c, mode = "encoding") {
-  assert.ok(["encoding", "policy", "credential", "pin"].includes(mode));
+  assert.ok(["encoding", "policy", "credential", "pin", "weak-acl"].includes(mode));
+  const aclMode=mode==="weak-acl";
+  const acl=aclMode?require("./certops-windows-installed-weak-acl"):null;
   const policyMode = mode === "policy",
-    credentialMode = mode === "credential",
+    credentialMode = mode === "credential" || aclMode,
     pinMode = mode === "pin";
   const pin = pinMode ? require("./certops-windows-signing-pin-refusal") : null;
   const credential = credentialMode
@@ -283,7 +285,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
     ),
     fileId = id(file),
     original = fs.readFileSync(file),
-    cases = pinMode
+    cases = aclMode ? [{id:"weak-credential-dacl",content:original,expectedError:"tokentimer-agent platform: refusing to use credential file: its ACL grants access to S-1-1-0"}] : pinMode
       ? pin.pinCases(original)
       : credentialMode
         ? credential.credentialCases(original)
@@ -369,6 +371,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
   assert.ok(originalAgent.uptime_seconds !== null);
   const same = async (repaired = false) => {
     installed.assertOwnedRoot(receipt);
+    if(aclMode&&!repaired)assert.ok(isDeepStrictEqual(await agents(),originalAgent),"Weak ACL refusal must not authenticate a heartbeat");
     assert.equal(id(file), fileId);
     assert.ok(
       isDeepStrictEqual(native(), originalNative),
@@ -410,7 +413,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
   const backupId = id(backup);
   const originalFd = fs.openSync(
     file,
-    fs.constants.O_RDWR | (fs.constants.O_NOFOLLOW || 0),
+    (aclMode?fs.constants.O_RDONLY:fs.constants.O_RDWR) | (fs.constants.O_NOFOLLOW || 0),
   );
   assert.equal(
     `${fs.fstatSync(originalFd, { bigint: true }).dev}:${fs.fstatSync(originalFd, { bigint: true }).ino}`,
@@ -419,7 +422,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
   let lastWritten = original,
     fdClosed = false;
   try {
-    for (const row of cases) {
+    const runCase=async row=>{
       assert.ok(
         isDeepStrictEqual(stopped(), originalService),
         "Stopped service identity changed",
@@ -431,7 +434,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
       );
       const logSize = fs.existsSync(log) ? fs.statSync(log).size : 0;
       assert.ok(logSize <= 4194304, "Bounded startup log required");
-      writeOwnedConfig(originalFd, file, fileId, lastWritten, row.content);
+      if(!aclMode)writeOwnedConfig(originalFd, file, fileId, lastWritten, row.content);
       lastWritten = row.content;
       assert.equal(id(file), fileId);
       const result = spawnSync("sc.exe", ["start", "TokenTimerAgent"], {
@@ -472,11 +475,15 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
         fs.readFileSync(file).equals(row.content),
         "Failed startup rewrote invalid configuration",
       );
-    }
+    };
+    if(aclMode){
+      const restored=await require("../../../packages/agent/scripts/host/credential-weak-acl-fixture").withInstalledCredential({workDir:receipt.root,configDir,onWeak:()=>runCase(cases[0])});
+      assert.deepEqual(restored,{originalHandleRestored:true,exactCredentialBytesPreserved:true,actualWeakAclReadRefused:true});
+    }else for(const row of cases)await runCase(row);
     assert.ok(isDeepStrictEqual(stopped(), originalService));
     assert.equal(id(file), fileId);
     assert.ok(fs.readFileSync(file).equals(lastWritten));
-    writeOwnedConfig(originalFd, file, fileId, lastWritten, original);
+    if(!aclMode)writeOwnedConfig(originalFd, file, fileId, lastWritten, original);
     lastWritten = original;
     assert.equal(id(file), fileId);
     assert.ok(fs.readFileSync(file).equals(original));
@@ -528,7 +535,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
     assert.ok(fs.readFileSync(guard).equals(guardBytes));
     fs.unlinkSync(guard);
     active.delete(owner(receipt.root));
-    const proof = pinMode
+    const proof = aclMode ? {scope:acl.SCOPE,untrustedSid:"S-1-1-0",readMask:1,startupFailureCount:1,inFlightMutationQualified:false,...Object.fromEntries(acl.FLAGS.map(flag=>[flag,true]))} : pinMode
       ? {
           scope: pin.SCOPE,
           pins: [...pin.CASES],
@@ -559,7 +566,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
               startupFailureCount: 3,
               ...Object.fromEntries(FLAGS.map((flag) => [flag, true])),
             };
-    (pinMode
+    (aclMode ? acl.verifyProof : pinMode
       ? pin.verifyProof
       : credentialMode
         ? credential.verifyProof
@@ -576,7 +583,7 @@ async function qualifyStartupConfiguration(c, mode = "encoding") {
         id(file) === fileId &&
         fs.readFileSync(file).equals(lastWritten)
       ) {
-        writeOwnedConfig(originalFd, file, fileId, lastWritten, original);
+        if(!aclMode)writeOwnedConfig(originalFd, file, fileId, lastWritten, original);
         assert.equal(id(file), fileId);
       }
     } catch {}
@@ -593,6 +600,7 @@ const qualifyCredentialRefusal = (c) =>
   qualifyStartupConfiguration(c, "credential");
 const qualifySigningPinRefusal = (c) => qualifyStartupConfiguration(c, "pin");
 module.exports = {
+  qualifyWeakCredentialAcl:c=>qualifyStartupConfiguration(c,"weak-acl"),
   qualifySigningPinRefusal,
   qualifyCredentialRefusal,
   qualifyRetentionConfig,

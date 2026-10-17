@@ -1,6 +1,8 @@
 "use strict";
 /** Supporting real Windows ACL admission. The credential is a public synthetic
- * control with no API authority. This neither starts SCM nor touches CNG/CA. */
+ * control by default. An owned disposable installed journey may supply its
+ * synthetic workspace credential and run startup checks while the DACL is held.
+ * This holder never starts SCM or touches CNG/CA itself. */
 const assert = require("node:assert/strict"),
   fs = require("node:fs"),
   path = require("node:path"),
@@ -210,7 +212,7 @@ function holderEnvironment(source = process.env) {
     ),
   );
 }
-function qualify({ gate, workDir }) {
+function qualify({ gate, workDir, installedCredential }) {
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_WINDOWS_DISPOSABLE_HOST, "1");
   return gate.scenario(
@@ -222,19 +224,22 @@ function qualify({ gate, workDir }) {
         ),
         directoryId = identity(directory);
       platform.applyRestrictivePermissions(directory, { kind: "directory" });
-      const credential = "ttagent_publiccontrol_publicfixturevalue123456789";
-      config.writeCredential(directory, credential);
+      if(installedCredential){assert.equal(path.resolve(installedCredential.configDir),path.join(path.resolve(workDir),"state"));assert.equal(typeof installedCredential.onWeak,"function");}
+      const credentialDirectory=installedCredential?installedCredential.configDir:directory;
+      const credential = installedCredential?config.readCredential(credentialDirectory):"ttagent_publiccontrol_publicfixturevalue123456789";
+      if(!installedCredential)config.writeCredential(directory, credential);
       assert.ok(
-        config.readCredential(directory) === credential,
+        config.readCredential(credentialDirectory) === credential,
         "Actual public control credential unreadable",
       );
-      const file = path.join(directory, "credential"),
+      const file = path.join(credentialDirectory, "credential"),
         fileId = identity(file),
         original = read(file),
         originalDacl = platform.readWindowsSddl(file),
         nonce = crypto.randomBytes(32).toString("hex"),
         context = {
           schemaVersion: 1,
+          targetKind:installedCredential?"installed-owned-credential":"public-control",
           nonce,
           target: file,
           volume: fileId.split(":")[0],
@@ -339,22 +344,25 @@ function qualify({ gate, workDir }) {
           readMask: 1,
         });
         assert.throws(
-          () => config.readCredential(directory),
+          () => config.readCredential(credentialDirectory),
           (error) =>
             error.message.includes(
               "refusing to use credential file: its ACL grants access to",
             ) && error.message.includes("S-1-1-0"),
         );
+        if(installedCredential)await installedCredential.onWeak();
       } catch (error) {
         failure = error;
       } finally {
         if (ready) {
           try {
             owner.check();
-            fs.writeFileSync(context.release, nonce, {
-              flag: "wx",
-              mode: 0o600,
-            });
+            const releaseTemporary=context.release+".writing";
+            fs.writeFileSync(releaseTemporary,nonce,{flag:"wx",mode:0o600});
+            const releaseRecord=readRecord(releaseTemporary);
+            fs.linkSync(releaseTemporary,context.release);
+            assertOriginal(releaseTemporary,releaseRecord);
+            fs.unlinkSync(releaseTemporary);
             snapshots.set(context.release, readRecord(context.release));
             await until(() => {
               if (!fs.existsSync(context.restored)) return false;
@@ -419,11 +427,11 @@ function qualify({ gate, workDir }) {
       assert.equal(restored.originalDacl, ready.originalDacl);
       assert.equal(platform.readWindowsSddl(file), ready.originalDacl);
       assert.ok(
-        config.readCredential(directory) === credential,
+        config.readCredential(credentialDirectory) === credential,
         "Actual production reader did not recover",
       );
       const names = [
-        "credential",
+        ...(!installedCredential?["credential"]:[]),
         "context.json",
         "ready.json",
         "release",
@@ -432,14 +440,16 @@ function qualify({ gate, workDir }) {
       assert.ok(
         isDeepStrictEqual(fs.readdirSync(directory).sort(), [...names].sort()),
       );
-      assert.equal(snapshots.size, names.length);
+      assert.equal(snapshots.size, names.length+(installedCredential?1:0));
       for (const [file, snapshot] of snapshots) {
         owner.check();
+        if(installedCredential&&file===path.join(credentialDirectory,"credential")){assertOriginal(file,snapshot);continue;}
         removeOriginal(file, snapshot);
       }
       assert.equal(identity(directory), directoryId);
       fs.rmdirSync(directory);
       owner.release();
+      if(installedCredential)return {originalHandleRestored:true,exactCredentialBytesPreserved:true,actualWeakAclReadRefused:true};
       const proof = verifyProof({
         scope: SCOPE,
         installedServiceStartupQualified: false,
@@ -482,4 +492,5 @@ module.exports = {
   nativeAclScript,
   holderEnvironment,
   qualify,
+  withInstalledCredential:({workDir,configDir,onWeak})=>qualify({workDir,installedCredential:{configDir,onWeak},gate:{scenario:(_id,run)=>run(),report:{}}}),
 };

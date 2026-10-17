@@ -359,7 +359,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -457,7 +460,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -555,7 +561,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -653,7 +662,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -751,7 +763,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -928,7 +943,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -1026,7 +1044,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -1124,7 +1145,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -1222,7 +1246,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {
@@ -1320,7 +1347,10 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "tests/e2e/helpers/certops-windows-installed-weak-acl.js",
+        "packages/agent/scripts/host/credential-weak-acl-fixture.js",
+        "packages/agent/scripts/host/credential-weak-acl-hold.ps1"
       ]
     },
     {

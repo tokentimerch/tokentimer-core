@@ -12,11 +12,16 @@ try {
  $sha=[Security.Cryptography.SHA256]::Create()
  try{if([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() -cne $ContextSha256){throw 'Context digest mismatch'}}finally{$sha.Dispose()}
  $c=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)|ConvertFrom-Json
- $fields=@('schemaVersion','nonce','target','volume','inode','originalDacl','ready','release','restored')
+ $fields=@('schemaVersion','targetKind','nonce','target','volume','inode','originalDacl','ready','release','restored')
  if(@($c.PSObject.Properties).Count -ne $fields.Count -or @($c.PSObject.Properties|Where-Object {$_.Name -cnotin $fields}).Count -or $c.schemaVersion -ne 1 -or $c.nonce -cnotmatch '^[a-f0-9]{64}$' -or $c.volume -cnotmatch '^[1-9][0-9]{0,9}$' -or $c.inode -cnotmatch '^[1-9][0-9]{0,24}$'){throw 'Closed owned ACL context required'}
  if($c.originalDacl -isnot [string] -or $c.originalDacl.Length -lt 1 -or $c.originalDacl.Length -gt 4096){throw 'Bounded original DACL required'}
  $directory=[IO.Path]::GetFullPath((Split-Path $ContextPath))
- foreach($name in @('target','ready','release','restored')){if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($c.$name)) -cne $directory){throw 'Context path escape'}}
+ foreach($name in @('ready','release','restored')){if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($c.$name)) -cne $directory){throw 'Context path escape'}}
+ if($c.targetKind -ceq 'public-control') {if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($c.target)) -cne $directory){throw 'Public target path escape'}}
+ elseif($c.targetKind -ceq 'installed-owned-credential') {
+  $expectedTarget=Join-Path (Split-Path -Parent $directory) 'state\credential'
+  if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-18' -or [IO.Path]::GetFullPath($c.target) -cne [IO.Path]::GetFullPath($expectedTarget)){throw 'Installed owned SYSTEM credential required'}
+ } else {throw 'Unknown credential target kind'}
  foreach($name in @('ready','release','restored')){if(Test-Path -LiteralPath $c.$name){throw 'Never adopt an existing ACL protocol file'}}
  Add-Type -TypeDefinition @'
 using System;

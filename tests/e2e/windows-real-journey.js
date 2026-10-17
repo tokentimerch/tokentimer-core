@@ -140,6 +140,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   let signingPinRefusalProof;
   const signingPinRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-signing-pin-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
   assert.equal(fs.existsSync(signingPinRefusalProofPath),false,"Refuse stale signing-pin startup proof");
+  const weakAcl=require("./helpers/certops-windows-installed-weak-acl");let weakAclProof;
+  const weakAclProofPath=path.join(repoRoot,"qualification-results",`windows-installed-weak-acl-${process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048"}.json`);
+  assert.equal(fs.existsSync(weakAclProofPath),false,"Refuse stale installed weak ACL proof");
   let credentialRefusalProof;
   const credentialRefusalProofPath=path.join(repoRoot,"qualification-results",`windows-credential-refusal-${process.env.CERTOPS_WINDOWS_KEY_PROFILE || "rsa-2048"}.json`);
   assert.equal(fs.existsSync(credentialRefusalProofPath),false,"Refuse stale installed credential refusal proof");
@@ -655,6 +658,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     command("sc.exe",["stop","TokenTimerAgent"]);
     await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
     credentialRefusalProof = await runNamedScenario(credentialRefusal.SCENARIO, () => credentialRefusal.qualifyCredentialRefusal({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
+    command("sc.exe",["stop","TokenTimerAgent"]);
+    await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
+    weakAclProof=await runNamedScenario(weakAcl.SCENARIO,()=>weakAcl.qualify({receipt:installedPathReceipt,configDir,ps,pool,workspaceId,agentId,thumbprint,domain,port,roots}));
     if(!stoppedOfflineOnly){
       command("sc.exe",["stop","TokenTimerAgent"]);
       await waitUntil(()=>/STOPPED/.test(command("sc.exe",["query","TokenTimerAgent"])));
@@ -815,6 +821,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     if(stopObserverErrors.length)throw new AggregateError(stopObserverErrors,"Read-only stop observers must close before nativecleanup");
     verifyRollback.assertCleanupSafe(workDir);
     if(bindFailureOnly)require("./helpers/certops-windows-bind-interposer").assertCleanupSafe(workDir);
+    require("../../packages/agent/scripts/host/credential-weak-acl-fixture").assertCleanupSafe(workDir);
     if(stoppedOffline)stoppedOffline.assertCleanupSafe(workDir);
     publicRetirement.assertCleanupSafe(workDir);
     configEncoding.assertCleanupSafe(workDir);
@@ -901,6 +908,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
       publicRetirement.verifyProof(publicRetirementProof);
       fs.writeFileSync(publicRetirementProofPath,JSON.stringify(publicRetirementProof),{flag:"wx"});
+      weakAcl.verifyProof(weakAclProof);fs.writeFileSync(weakAclProofPath,JSON.stringify(weakAclProof),{flag:"wx"});
       credentialRefusal.verifyProof(credentialRefusalProof);
       signingPinRefusal.verifyProof(signingPinRefusalProof);
       fs.writeFileSync(signingPinRefusalProofPath,JSON.stringify(signingPinRefusalProof),{flag:"wx"});

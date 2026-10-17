@@ -918,6 +918,17 @@ def credential_refusal_fields(event):
     return {"nativeInstalledCredentialRefusal":{**expected,**dict.fromkeys(flags,True)}}
 
 
+def installed_weak_acl_fields(event):
+    if (not isinstance(event.get("scope"),str) or not event["scope"].startswith("real-agent-windows-acme-iis/") or event.get("type")!="test:pass" or event.get("name")!="real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"):
+        return {}
+    proof=event.get("nativeInstalledWeakCredentialAcl")
+    flags="actualNativeWeakReadableCredential exactProductionAclRefusal failedStartupProcessesDrained noAuthenticatedHeartbeatDuringRefusal noAgentOrJobMutation exactOriginalCredentialBytesAndDaclRestored nativeCngIisAndTrustedTlsPreserved freshRepairedSystemHeartbeat ownedGuardCleared".split()
+    fixed=dict(scope="installed-system-weak-credential-dacl-refusal-and-exact-recovery",untrustedSid="S-1-1-0",readMask=1,startupFailureCount=1,inFlightMutationQualified=False)
+    if (not isinstance(proof,dict) or set(proof)!={*fixed,*flags} or any(proof.get(k)!=v or type(proof.get(k)) is not type(v) for k,v in fixed.items()) or any(proof.get(k) is not True for k in flags)):
+        raise ValueError("Exact installed weak credential ACL refusal and repair required")
+    return {"nativeInstalledWeakCredentialAcl":{**fixed,**dict.fromkeys(flags,True)}}
+
+
 def config_encoding_fields(event):
     """Unsupported encodings require actual installed refusals and recovery."""
     if (not isinstance(event.get("scope"), str) or not event["scope"].startswith("real-agent-windows-acme-iis/")
@@ -1994,7 +2005,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                  **installed_paths_fields(event),
                  **installed_verify_rollback_fields(event), **multi_target_admission_fields(event), **active_service_controls_fields(event), **service_controls_fields(event),
                  **config_encoding_fields(event),
-                 **signing_pin_refusal_fields(event), **credential_refusal_fields(event),
+                 **signing_pin_refusal_fields(event), **credential_refusal_fields(event), **installed_weak_acl_fields(event),
                  **retention_config_fields(event),
                  **public_retirement_fields(event),
                  **({"windowsPublicIssuance": windows_public_issuance(event["windowsPublicIssuance"])} if "windowsPublicIssuance" in event and isinstance(event.get("scope"), str) and event["scope"].startswith("real-agent-windows-acme-iis/") else {}),
