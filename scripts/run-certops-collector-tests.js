@@ -3,12 +3,13 @@
  * The original trust/archive suite is mandatory; no native fixture is executed.
  * A shared three-minute deadline bounds all children and failures propagate. */
 const assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), { spawnSync } = require("node:child_process");
+const MAX_COLLECTOR_MODULES = 64;
 function discover(root = path.resolve(__dirname, "..")) {
   const files = fs.readdirSync(path.join(root, "scripts"), { withFileTypes: true }).filter(entry => entry.isFile() && /^certops-[a-z0-9-]+-collector\.test\.py$/.test(entry.name)).map(entry => `scripts/${entry.name}`).sort();
   assert.ok(files.includes("scripts/certops-release-collector.test.py"), "Original release collector regressions are mandatory");
-  // Reserve modest inventory headroom for the signed trust/renewal lifecycle
-  // collectors; the shared execution deadline remains unchanged.
-  assert.ok(files.length <= 40, "Collector regression discovery exceeds reviewed bound");
+  // Reserve expansion room for new lifecycle collectors while retaining the
+  // same three-minute deadline across all child processes.
+  assert.ok(files.length <= MAX_COLLECTOR_MODULES, "Collector regression discovery exceeds reviewed bound");
   return files;
 }
 function main({ root = path.resolve(__dirname, ".."), run = spawnSync, now = Date.now } = {}) {
@@ -21,4 +22,4 @@ function main({ root = path.resolve(__dirname, ".."), run = spawnSync, now = Dat
   return files;
 }
 if (require.main === module) { try { main(); } catch { console.error("Collector regression discovery/execution failed"); process.exitCode = 1; } }
-module.exports = { discover, main };
+module.exports = { discover, main, MAX_COLLECTOR_MODULES };
