@@ -169,17 +169,17 @@ test("native browser sources exist and optional bootstrap scripts preserve owned
   assert.ok(trust.includes("$store.Remove($entry)"));
 });
 
-test("comprehensive browser integration is mandatory while elapsed and retention preparations remain isolated", () => {
+test("comprehensive browser integration is mandatory outside isolated issuer, elapsed and retention profiles", () => {
   const root=path.resolve(__dirname,"..");
   const producer=fs.readFileSync(path.join(root,"tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
-  assert.ok(producer.includes('if(!elapsedPending)assert.equal(process.env.CERTOPS_ADCS_BROWSER,"1"'));
+  assert.ok(producer.includes('if(!elapsedPending && !issuerSwitch)assert.equal(process.env.CERTOPS_ADCS_BROWSER,"1"'));
   assert.ok(producer.includes('assert.ok(++primaryPreflightCount<=18'));
   assert.ok(producer.includes('assert.equal(ownedBrowserPreflightJobIds.length,2)'));
   assert.ok(producer.includes("operation='adcs-preflight' AND id=ANY($2::uuid[])"));
   assert.ok(producer.includes('resource.hasLiveChild()||resource.hasOwnershipReceipt()'));
   const provision=fs.readFileSync(path.join(root,"infra/certops-adcs/provision-lab.ps1"),"utf8");
-  assert.ok(provision.includes("if($PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent'"));
-  assert.match(provision, /if\(\$PendingElapsedQualification -ne '1' -and \$Retention24hPrepare -ne '1' -and \$AdcsTtl24hPrepare -ne '1' -and \$RetentionCadencePrepare -ne '1'\)\{\s+Refresh-LabAuthentication/);
+  assert.ok(provision.includes("if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent'"));
+  assert.match(provision, /if\(\$IssuerReassignment -ne '1' -and \$PendingElapsedQualification -ne '1' -and \$Retention24hPrepare -ne '1' -and \$AdcsTtl24hPrepare -ne '1' -and \$RetentionCadencePrepare -ne '1'\)\{\s+Refresh-LabAuthentication/);
   assert.ok(provision.includes("if($RetentionCadencePrepare -eq '1'){"));
   assert.ok(provision.includes("run-retention-cadence-prepare.ps1"));
   assert.ok(provision.includes("if($Retention24hPrepare -eq '1'){"));
@@ -188,7 +188,7 @@ test("comprehensive browser integration is mandatory while elapsed and retention
   assert.ok(provision.includes("run-ttl24h-prepare.ps1"));
   assert.ok(provision.includes("'CERTOPS_STAGE=adcs-ttl24h-prepared'"));
   const guest=fs.readFileSync(path.join(root,"infra/certops-adcs/run-windows-tests.ps1"),"utf8");
-  assert.ok(guest.includes("$env:CERTOPS_ADCS_BROWSER=if($PendingElapsedQualification -eq '1' -or $Retention24hPrepare -eq '1'){$null}else{'1'}"));
+  assert.ok(guest.includes("$env:CERTOPS_ADCS_BROWSER=if($IssuerReassignment -eq '1' -or $PendingElapsedQualification -eq '1' -or $Retention24hPrepare -eq '1'){$null}else{'1'}"));
   assert.ok(guest.includes("scripts/certops-retention24h-bootstrap.ps1"));
   assert.ok(guest.includes("}else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }"));
 });

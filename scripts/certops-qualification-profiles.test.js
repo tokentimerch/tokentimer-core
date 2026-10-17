@@ -126,9 +126,10 @@ function workflows() {
       ]),
   );
 }
-test("all fifteen Azure workflows opt in and only manual workflows can provision", () => {
+test("all reviewed Azure workflows opt in and only manual workflows can provision", () => {
   const files = workflows();
-  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 15);
+  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 16);
+  assert.ok(azure.PROVISION.includes("certops-native-issuer-reassignment.yml"));
   for (const [name, workflow] of Object.entries(files))
     assert.deepEqual(azure.validate(name, workflow), [], name);
   for (const name of azure.PROVISION) {
