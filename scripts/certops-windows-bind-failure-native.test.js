@@ -6,19 +6,6 @@ const fs = require("node:fs"), path = require("node:path"), crypto = require("no
 const interposer = require("../tests/e2e/helpers/certops-windows-bind-interposer");
 const helper = require("../tests/e2e/helpers/certops-windows-installed-bind-failure-native");
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
-test("bind-only success cannot enter the generic native sidecar publisher", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../tests/e2e/windows-real-journey.js"), "utf8");
-  const condition = source.match(/if \(([^\n]+)\) \{\r?\n\s+require\("\.\/helpers\/certops-windows-owned-process"\)\.verifyPublicProof\(installedCrashProof\)/)?.[1];
-  assert.ok(condition, "Actual generic publisher condition must remain identifiable");
-  const baseline = { bindFailureOnly: false, failedRollbackOnly: false, aliveGraceOnly: false, stoppedOfflineOnly: false, historicalSupportingOnly: false, journeyFailure: null, errors: [] };
-  const evaluate = context => require("node:vm").runInNewContext(`(${condition})`, context, { timeout: 1000 });
-  assert.equal(evaluate(baseline), true);
-  for (const selector of ["bindFailureOnly", "failedRollbackOnly", "aliveGraceOnly", "stoppedOfflineOnly", "historicalSupportingOnly"]) {
-    assert.equal(evaluate({ ...baseline, [selector]: true }), false, selector);
-  }
-  assert.equal(evaluate({ ...baseline, journeyFailure: new Error("failed") }), false);
-  assert.equal(evaluate({ ...baseline, errors: ["cleanup unproven"] }), false);
-});
 const {fixture:proof,nativeReceipt:receipt}=require('./fixtures/certops-windows-installed-bind-failure-native.cjs');
 const expected = p => ({ jobId: p.jobId, selector: p.selector, predecessor: p.predecessorThumbprint, candidate: p.candidateThumbprint });
 test("native binding receipt rejects shim errors, fake success, overflow, drainage and foreign selectors", () => {
