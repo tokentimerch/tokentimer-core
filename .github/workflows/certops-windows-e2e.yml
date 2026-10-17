@@ -107,7 +107,7 @@ jobs:
           go install github.com/letsencrypt/pebble/v2/cmd/pebble-challtestsrv@v2.8.0
           if ($LASTEXITCODE) { throw 'Pebble challenge server build failed' }
           $env:GOBIN | Out-File -FilePath $env:GITHUB_PATH -Append
-          'C:\Program Files\Git\usr\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+          'C:\Program Files\Git\mingw64\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
           $acmeDir = Join-Path $env:RUNNER_TEMP 'acme-sh'
           git clone --depth 1 --branch 3.1.2 https://github.com/acmesh-official/acme.sh.git $acmeDir
           if ($LASTEXITCODE) { throw 'Pinned acme.sh checkout failed' }

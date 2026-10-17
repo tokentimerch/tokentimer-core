@@ -26,7 +26,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $opensslDir = 'C:\Program Files\Git\usr\bin'
+          $opensslDir = 'C:\Program Files\Git\mingw64\bin'
           if (-not (Test-Path -LiteralPath (Join-Path $opensslDir 'openssl.exe'))) { throw 'Required native OpenSSL missing' }
           $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Execute native deployment and independent filesystem oracles

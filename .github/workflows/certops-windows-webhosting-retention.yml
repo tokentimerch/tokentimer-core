@@ -38,7 +38,7 @@ jobs:
       - name: Expose hosted Git OpenSSL
         shell: pwsh
         run: |
-          $directory = @('C:\Program Files\Git\usr\bin','C:\Program Files\Git\mingw64\bin') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'openssl.exe') } | Select-Object -First 1
+          $directory = @('C:\Program Files\Git\mingw64\bin') | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'openssl.exe') } | Select-Object -First 1
           if (-not $directory) { throw 'Hosted OpenSSL prerequisite missing' }
           $directory | Out-File -LiteralPath $env:GITHUB_PATH -Append -Encoding utf8
           & (Join-Path $directory 'openssl.exe') version

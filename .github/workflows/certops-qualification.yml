@@ -225,7 +225,7 @@ jobs:
       - name: Expose shipped Git OpenSSL and fail if missing
         shell: pwsh
         run: |
-          $opensslDirectories = @('C:\Program Files\Git\usr\bin', 'C:\Program Files\Git\mingw64\bin')
+          $opensslDirectories = @('C:\Program Files\Git\mingw64\bin')
           $directory = $opensslDirectories | Where-Object { Test-Path (Join-Path $_ 'openssl.exe') } | Select-Object -First 1
           if (-not $directory) { throw 'OpenSSL prerequisite missing from hosted Git installation' }
           $directory | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
