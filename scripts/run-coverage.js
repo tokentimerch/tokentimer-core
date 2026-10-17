@@ -61,24 +61,26 @@ function remapContainerCoverage(content, pathMap = containerCoverageDirs.flatMap
   return content;
 }
 
-function mergeContainerCoverage() {
+function mergeContainerCoverage({ directories = containerCoverageDirs, destination = v8Dir } = {}) {
   let merged = 0;
-  for (const { dir, pathMap } of containerCoverageDirs) {
+  for (const { dir } of directories) {
     if (!fs.existsSync(dir)) continue;
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
     for (const file of files) {
       const src = path.join(dir, file);
-      const content = remapContainerCoverage(fs.readFileSync(src, "utf8"), pathMap);
-      const dest = path.join(v8Dir, `container-${path.basename(dir)}-${file}`);
+      // Workers can import API helpers, so every raw file needs all mappings.
+      const content = remapContainerCoverage(fs.readFileSync(src, "utf8"));
+      const dest = path.join(destination, `container-${path.basename(dir)}-${file}`);
       fs.writeFileSync(dest, content, "utf8");
       merged++;
     }
   }
   if (merged > 0) {
     console.log(
-      `==> Merged ${merged} container coverage file(s) into ${v8Dir}`,
+      `==> Merged ${merged} container coverage file(s) into ${destination}`,
     );
   }
+  return merged;
 }
 
 function main() {
@@ -110,4 +112,4 @@ function main() {
 }
 
 if (require.main === module) process.exit(main());
-module.exports = { remapContainerCoverage };
+module.exports = { remapContainerCoverage, mergeContainerCoverage };
