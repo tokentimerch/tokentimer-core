@@ -9,6 +9,7 @@ const test = require("node:test"),
   { spawnSync } = require("node:child_process");
 const helper = require("../../../../tests/e2e/helpers/certops-windows-contained-process");
 const pause = () => new Promise((resolve) => setTimeout(resolve, 50));
+// skip-reason: no-host - requires native Windows file-sharing semantics.
 test("closed gate publication prevents Windows reader sharing failures and refuses clobber", {skip:process.platform!=="win32"},()=>{
   const root=fs.mkdtempSync(path.resolve(__dirname,"../../../../.build/gate-publication-"));
   const rootId=fs.lstatSync(root,{bigint:true}).ino;

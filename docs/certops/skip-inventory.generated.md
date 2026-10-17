@@ -7,11 +7,12 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 131
+Total skips found: 132
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
-| `packages/agent/scripts/host/windows-contained-process.test.js` | 55 | real owned JobObject preserves suspended identity and drains an actual descendant | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/scripts/host/windows-contained-process.test.js` | 13 | closed gate publication prevents Windows reader sharing failures and refuses clobber | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/scripts/host/windows-contained-process.test.js` | 77 | real owned JobObject preserves suspended identity and drains an actual descendant | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/scripts/host/windows-host.test.js` | 56 | Windows real-host discovery and service-host qualification | dynamic (this.skip() / t.skip()) | `no-host` |
 | `packages/agent/scripts/host/windows-installed-paths-filesystem.test.js` | 14 | actual installer filesystem branches preserve literal brackets and wildcard siblings | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |

@@ -119,9 +119,22 @@
   },
   "sites": [
     {
+      "id": "15cbbffb8d4b35c15603",
+      "file": "packages/agent/scripts/host/windows-contained-process.test.js",
+      "line": 13,
+      "name": "closed gate publication prevents Windows reader sharing failures and refuses clobber",
+      "kind": "test(..., { skip }) option-object",
+      "reason": "no-host",
+      "environment": "windows-native-process-containment",
+      "workflow": ".github/workflows/certops-windows-e2e.yml",
+      "workflowStatus": "file-selected-not-qualified",
+      "executionStatus": "not-qualified",
+      "classificationStatus": "candidate-needs-review"
+    },
+    {
       "id": "5ab9b5ab6871aa7ef958",
       "file": "packages/agent/scripts/host/windows-contained-process.test.js",
-      "line": 55,
+      "line": 77,
       "name": "real owned JobObject preserves suspended identity and drains an actual descendant",
       "kind": "test(..., { skip }) option-object",
       "reason": "no-host",
