@@ -3,7 +3,8 @@
  * The successor enrollment must be frozen to the destination CA. Manual renew
  * stays refused. No due time, CA response, journal, or qualified cell is invented.
  * The parent owns the forest, store receipts, and final native cleanup.
- * The manual workflow only writes a failed report when that forest is absent.
+ * The helper CLI fails closed; the manual workflow provisions its explicit
+ * two-CA profile and invokes this producer through the installed-agent harness.
  */
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -17,6 +18,10 @@ const REQUIRED_SCENARIOS = Object.freeze([
   "adcs-real-issuer-reassignment-confirmed-switch",
   "adcs-real-issuer-reassignment-renewal-migrates",
   "adcs-real-issuer-reassignment-cleanup",
+]);
+const NATIVE_REQUIRED_SCENARIOS = Object.freeze([
+  "adcs-real-installed-native-language", "adcs-real-agent-registration-system",
+  ...REQUIRED_SCENARIOS, "adcs-real-owned-cleanup",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
   SOURCE,
@@ -33,6 +38,13 @@ const REQUIRED_SOURCES = Object.freeze([
   "packages/agent/src/windows-cert-store/index.js",
   "packages/agent/src/issuers/adcs-enrollment.js",
   ".github/workflows/certops-native-issuer-reassignment.yml",
+  "tests/e2e/certops-adcs-real-e2e.test.js",
+  "infra/certops-adcs/main.bicep",
+  "infra/certops-adcs/issuer-destination.ps1",
+  "infra/certops-adcs/provision-lab.ps1",
+  "infra/certops-adcs/run-windows-tests.ps1",
+  "infra/certops-adcs/read-report.ps1",
+  "tests/e2e/helpers/certops-adcs-webhosting-renewal.js",
 ]);
 const FLAGS = Object.freeze([
   "twoFreshConfirmedIssuers", "distinctConfirmedCaKeys", "originNativeInstallation",
@@ -64,13 +76,13 @@ function assessLab(env = process.env, platform = process.platform) {
   if (typeof destination !== "string" || !destination.includes("\\") || destination === origin) missing.push("CERTOPS_ADCS_DESTINATION_CA_CONFIG");
   return { ok: missing.length === 0, missing };
 }
-function verifyProof(value) {
-  assert.deepEqual(Object.keys(value).sort(), ["scope", "renewalProtocol", "schedulerInvocation", "workerIntervalQualified", "nativeCell", "originIssuerId", "destinationIssuerId", "originCaKeySha256", "destinationCaKeySha256", "profileId", "certificateId", "requestIds", "fingerprints", "spkiFingerprints", "enrollmentIds", "jobIds", "containerNames", ...FLAGS].sort());
+function verifyProof(value, { requireNative = false } = {}) {
+  assert.deepEqual(Object.keys(value).sort(), ["scope", "renewalProtocol", "schedulerInvocation", "workerIntervalQualified", "nativeCell", "originIssuerId", "destinationIssuerId", "originCaKeySha256", "destinationCaKeySha256", "profileId", "certificateId", "requestIds", "fingerprints", "spkiFingerprints", "enrollmentIds", "jobIds", "containerNames", ...FLAGS, ...(requireNative ? ["nativeRequests"] : [])].sort());
   assert.equal(value.scope, SCOPE);
   assert.equal(value.renewalProtocol, "production-scheduler-sweep-after-public-issuer-switch");
   assert.equal(value.schedulerInvocation, "qualification-invoked-production-default-sweep");
   assert.equal(value.workerIntervalQualified, false);
-  assert.equal(value.nativeCell, "pending");
+  assert.equal(value.nativeCell, requireNative ? "qualified" : "pending");
   for (const flag of FLAGS) assert.equal(value[flag], true, flag);
   for (const field of ["originIssuerId", "destinationIssuerId", "profileId", "certificateId"]) assert.match(value[field], UUID, field);
   assert.notEqual(value.originIssuerId, value.destinationIssuerId);
@@ -79,12 +91,29 @@ function verifyProof(value) {
   assert.notEqual(value.originCaKeySha256, value.destinationCaKeySha256);
   for (const [field, pattern] of [["requestIds", /^[1-9][0-9]{0,9}$/], ["fingerprints", /^[a-f0-9]{64}$/], ["spkiFingerprints", /^[a-f0-9]{64}$/], ["enrollmentIds", UUID], ["jobIds", UUID], ["containerNames", /^tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/]]) {
     assert.ok(Array.isArray(value[field]) && value[field].length === 2, field);
-    assert.equal(new Set(value[field]).size, 2, field);
+    // RequestId is local to a CA database: distinct issuer keys make two
+    // identical numeric IDs distinct requests. Other identities remain global.
+    if (field !== "requestIds") assert.equal(new Set(value[field]).size, 2, field);
     for (const item of value[field]) assert.match(item, pattern, field);
   }
   assert.ok(value.requestIds.every(id => Number(id) <= 0xffffffff));
+  if (requireNative) {
+    assert.ok(Array.isArray(value.nativeRequests) && value.nativeRequests.length === 2);
+    const configs = ["tt-ca.lab.certops.test\\TTQualificationRoot", "tt-ca-switch.lab.certops.test\\TTQualificationDestination"];
+    for (let i = 0; i < 2; i++) {
+      const request = value.nativeRequests[i];
+      assert.deepEqual(Object.keys(request).sort(), ["caConfig", "caKeySha256", "requestId", "disposition", "subjectRequestCount", "fingerprintSha256"].sort());
+      assert.equal(request.caConfig, configs[i]);
+      assert.equal(request.caKeySha256, i === 0 ? value.originCaKeySha256 : value.destinationCaKeySha256);
+      assert.equal(request.requestId, value.requestIds[i]);
+      assert.equal(request.disposition, 20);
+      assert.equal(request.subjectRequestCount, 1);
+      assert.equal(request.fingerprintSha256, value.fingerprints[i]);
+    }
+  }
   return true;
 }
+function verifyNativeProof(value) { return verifyProof(value, { requireNative: true }); }
 function buildClosedReport(reason) {
   const now = new Date().toISOString();
   const candidate = process.env.GITHUB_SHA;
@@ -275,7 +304,7 @@ async function qualifyNativeIssuerReassignment(context) {
       socket.once("error", reject);
       socket.setTimeout(10000, () => socket.destroy(new Error("Issuer reassignment trusted TLS observation timed out")));
     });
-    const nativeRequest = leaf => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, "infra/certops-adcs/owned-issued-request.ps1"), "-CommonName", subject, "-FingerprintSha256", leaf.fingerprint]));
+    const nativeRequest = (leaf, issuingCaConfig) => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, "infra/certops-adcs/owned-issued-request.ps1"), "-CommonName", subject, "-FingerprintSha256", leaf.fingerprint, "-CaConfig", issuingCaConfig]));
     const custody = (leaf, enrollmentId, jobId) => {
       assert.match(leaf.thumb, /^[A-F0-9]{40}$/);
       const value = JSON.parse(ps(`$c=Get-Item 'Cert:\\LocalMachine\\My\\${leaf.thumb}';$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);@{container=$k.Key.KeyName;policy=[int]$k.Key.ExportPolicy;provider=$k.Key.Provider.Provider;machine=$k.Key.IsMachineKey;bits=$k.KeySize;der=[Convert]::ToBase64String($c.RawData)}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`));
@@ -303,7 +332,7 @@ async function qualifyNativeIssuerReassignment(context) {
     const originLeaf = await peer(origin.authority);
     assert.equal(originLeaf.certificate.verify(authorityCert(origin.authority).publicKey), true);
     assert.equal(originLeaf.certificate.verify(authorityCert(destination.authority).publicKey), false);
-    const originRequest = nativeRequest(originLeaf);
+    const originRequest = nativeRequest(originLeaf, caConfig);
     const originCustody = custody(originLeaf, originEnrollmentId, originJobId);
     binding(originLeaf);
     ownedThumbprints.add(originLeaf.thumb);
@@ -378,12 +407,11 @@ async function qualifyNativeIssuerReassignment(context) {
       cleanup.thumbprints.push(successor.thumb);
       assert.equal(successor.certificate.verify(authorityCert(destination.authority).publicKey), true);
       assert.equal(successor.certificate.verify(authorityCert(origin.authority).publicKey), false);
-      const request = nativeRequest(successor);
+      const request = nativeRequest(successor, destinationCaConfig);
       const native = custody(successor, enrollment.id, job.id);
       const journal = readEnrollmentJournal(configDir, enrollment.id);
       assert.equal(request.disposition, 20);
-      assert.equal(request.subjectRequestCount, originRequest.subjectRequestCount + 1);
-      assert.notEqual(String(request.requestId), String(originRequest.requestId));
+      assert.equal(request.subjectRequestCount, 1, "Destination CA must have exactly one request for the owned subject");
       verifyNativeRequestId(request.requestId, journal.journal.requestId);
       assert.equal(journal.kind, "valid");
       assert.equal(journal.journal.state, "installed");
@@ -438,10 +466,18 @@ async function qualifyNativeIssuerReassignment(context) {
       jobIds: [installed.originJobId, installed.renewalJobId],
       containerNames: [installed.originCustody.value.container, installed.successorCustody.value.container],
     });
-    verifyProof(proof);
+    proof.nativeCell = "qualified";
+    proof.nativeRequests = [installed.originRequest, installed.successorRequest].map((request, i) => ({
+      caConfig: i === 0 ? caConfig : destinationCaConfig,
+      caKeySha256: i === 0 ? installed.origin.caKeySha256 : installed.destination.caKeySha256,
+      requestId: String(request.requestId), disposition: request.disposition,
+      subjectRequestCount: request.subjectRequestCount,
+      fingerprintSha256: i === 0 ? installed.originLeaf.fingerprint : installed.successor.fingerprint,
+    }));
+    verifyNativeProof(proof);
     gate.report.nativeIssuerReassignment = proof;
-    gate.report.nativeCell = "pending";
-  }, { evidenceLevel: "real-host", oracle: "Predecessor key and store custody remain registered to the parent while the profile stays on the destination issuer. This run does not qualify the native cell." });
+    gate.report.nativeCell = "qualified";
+  }, { evidenceLevel: "real-host", oracle: "Independently observed requests on both owned CAs, successor TLS and retained predecessor custody are bound to the same real issuer-switch journey; parent cleanup must still pass." });
   return proof;
 
   function custodyOf(leaf) {
@@ -455,6 +491,6 @@ async function qualifyNativeIssuerReassignment(context) {
 }
 if (require.main === module) process.exitCode = dispatch();
 module.exports = {
-  qualifyNativeIssuerReassignment, verifyProof, assessLab, dispatch, buildClosedReport,
+  NATIVE_REQUIRED_SCENARIOS, qualifyNativeIssuerReassignment, verifyProof, verifyNativeProof, assessLab, dispatch, buildClosedReport,
   REQUIRED_SCENARIOS, REQUIRED_SOURCES, REQUIRED_CAPABILITIES, FLAGS, SCOPE, SUITE, SOURCE, domain,
 };

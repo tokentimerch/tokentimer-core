@@ -4,20 +4,21 @@ independently bind observed IIS TLS DER to a genuine request; no issuance or dat
 invented.
 #>
 param(
-  [Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName,
-  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$FingerprintSha256
+  [Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-(?:[a-z0-9]+|issuer-switch)\.example\.test$')][string]$CommonName,
+  [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$FingerprintSha256,
+  [ValidateSet('tt-ca.lab.certops.test\TTQualificationRoot','tt-ca-switch.lab.certops.test\TTQualificationDestination')][string]$CaConfig='tt-ca.lab.certops.test\TTQualificationRoot'
 )
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Issued request observation requires the isolated qualification forest'}
 if(-not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Isolated officer credential absent'}
 $credential=[PSCredential]::new('TTQUAL\tt-lab-admin',(ConvertTo-SecureString $env:CERTOPS_ADCS_OFFICER_PASSWORD -AsPlainText -Force))
-Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $CommonName,$FingerprintSha256 -ScriptBlock {
-  param([string]$CommonName,[string]$FingerprintSha256)
+Invoke-Command -ComputerName ($CaConfig.Split('\')[0]) -Credential $credential -ArgumentList $CommonName,$FingerprintSha256,$CaConfig -ScriptBlock {
+  param([string]$CommonName,[string]$FingerprintSha256,[string]$CaConfig)
   $ErrorActionPreference='Stop'
   $view=New-Object -ComObject CertificateAuthority.View
   $hash=[Security.Cryptography.SHA256]::Create()
   try {
-    $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
+    $null=$view.OpenConnection($CaConfig)
     $names=@('RequestID','CommonName','RequesterName','Disposition','RawCertificate')
     $view.SetResultColumnCount($names.Count)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}

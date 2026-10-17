@@ -9,7 +9,7 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 const { verifyReport } = require("./certops-qualification-report");
 const {
-  verifyProof, assessLab, dispatch, buildClosedReport, qualifyNativeIssuerReassignment,
+  verifyProof, verifyNativeProof, assessLab, dispatch, buildClosedReport, qualifyNativeIssuerReassignment,
   FLAGS, SCOPE, REQUIRED_SOURCES, REQUIRED_SCENARIOS, domain,
 } = require("../tests/e2e/helpers/certops-native-issuer-reassignment");
 
@@ -72,8 +72,11 @@ test("native issuer reassignment proof stays pending and refuses a synthetic or 
   assert.throws(() => verifyProof(extra));
 });
 
-test("origin and destination requests, leaves, enrollments, jobs, and containers must be distinct", () => {
-  for (const field of ["requestIds", "fingerprints", "spkiFingerprints", "enrollmentIds", "jobIds", "containerNames"]) {
+test("CA-local request IDs may coincide while global custody identities stay distinct", () => {
+  const sameNumericId = proof();
+  sameNumericId.requestIds = ["17", "17"];
+  assert.equal(verifyProof(sameNumericId), true);
+  for (const field of ["fingerprints", "spkiFingerprints", "enrollmentIds", "jobIds", "containerNames"]) {
     for (const value of [[proof()[field][0], proof()[field][0]], [proof()[field][0]], [], [null, proof()[field][1]]]) {
       const bad = proof();
       bad[field] = value;
@@ -85,6 +88,45 @@ test("origin and destination requests, leaves, enrollments, jobs, and containers
     bad.requestIds[0] = id;
     assert.throws(() => verifyProof(bad));
   }
+});
+test("native qualification requires exact observations on two independent CA databases", () => {
+  const candidate = proof();
+  candidate.nativeCell = "qualified";
+  candidate.requestIds = ["17", "17"];
+  assert.throws(() => verifyNativeProof(candidate));
+  candidate.nativeRequests = [
+    "tt-ca.lab.certops.test\\TTQualificationRoot",
+    "tt-ca-switch.lab.certops.test\\TTQualificationDestination",
+  ].map((caConfig, i) => ({ caConfig, caKeySha256: i === 0 ? candidate.originCaKeySha256 : candidate.destinationCaKeySha256,
+    requestId: candidate.requestIds[i], disposition: 20, subjectRequestCount: 1, fingerprintSha256: candidate.fingerprints[i] }));
+  assert.equal(verifyNativeProof(candidate), true);
+  assert.throws(() => verifyProof(candidate));
+  assert.throws(() => verifyNativeProof(proof()));
+  for (const patch of [
+    { caConfig: candidate.nativeRequests[0].caConfig }, { caKeySha256: candidate.originCaKeySha256 },
+    { requestId: "18" }, { disposition: 9 }, { subjectRequestCount: 2 },
+    { fingerprintSha256: candidate.fingerprints[0] },
+  ]) {
+    const invalid = structuredClone(candidate);
+    Object.assign(invalid.nativeRequests[1], patch);
+    assert.throws(() => verifyNativeProof(invalid));
+  }
+  for (const field of Object.keys(candidate.nativeRequests[0])) {
+    const invalid = structuredClone(candidate);
+    delete invalid.nativeRequests[0][field];
+    assert.throws(() => verifyNativeProof(invalid));
+  }
+});
+test("issuer-switch cleanup registry refuses capacity and foreign certificate namespaces", () => {
+  const helper = require("../tests/e2e/helpers/certops-adcs-webhosting-renewal");
+  const receipts = [];
+  const receipt = helper.registerIssuerSwitchStoreCertificate(receipts, {
+    domain: "certops-adcs-0123456789-issuer-switch.example.test", certificateId: uuid("1"),
+  });
+  assert.deepEqual(helper.issuerSwitchCleanupPlan(receipt, [], () => null), []);
+  assert.throws(() => helper.capacityCleanupPlan(receipt, [], () => null));
+  assert.throws(() => helper.issuerSwitchCleanupPlan({ ...receipt, domain: "certops-adcs-0123456789-capacity0.example.test" }, [], () => null));
+  assert.throws(() => helper.registerIssuerSwitchStoreCertificate(receipts, { domain: receipt.domain, certificateId: uuid("2") }));
 });
 
 test("the owned subject is exact and critical sources are present", () => {
@@ -170,16 +212,18 @@ test("dispatch writes a failed report for both a missing forest and lab markers"
   }
 });
 
-test("the manual workflow is dispatch-only, read-only, and outside Azure provisioning", () => {
-  const yaml = createRequire(require.resolve(path.join(root, "node_modules/mocha/package.json")))("js-yaml");
+test("the domain-only workflow is manual, protected and destroys its optional fourth VM", () => {
+  const yaml = createRequire(require.resolve("mocha/package.json"))("js-yaml");
   const name = "certops-native-issuer-reassignment.yml";
   const file = path.join(root, ".github/workflows", name);
   const text = fs.readFileSync(file, "utf8");
   assert.equal(text.includes("\r"), false);
   assert.equal(text.includes("pull_request"), false);
   assert.equal(text.includes("\npush:"), false);
-  assert.equal(text.includes("AZURE_"), false);
-  assert.equal(text.includes("provision-lab"), false);
+  assert.match(text, /IssuerReassignment 1/);
+  assert.match(text, /CERTOPS_ADCS_LAB_ENABLED/);
+  assert.match(text, /environment: certops-adcs-lab/);
+  assert.match(text, /if: always\(\)\s+shell: pwsh\s+run: \.\/infra\/certops-adcs\/remove-owned-lab\.ps1/);
   assert.equal(text.includes("azure/login"), false);
   const workflow = yaml.load(text);
   assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);

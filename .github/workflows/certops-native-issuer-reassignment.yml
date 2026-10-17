@@ -1,15 +1,22 @@
+# Explicit domain-only campaign: a second enterprise CA is an optional fourth
+# disposable VM. Ordinary Windows and default AD CS runs do not create it.
 name: "CertOps / Native AD CS issuer reassignment"
 on:
   workflow_dispatch:
 permissions:
   contents: read
+  id-token: write
 jobs:
   native-issuer-reassignment:
-    if: github.ref == 'refs/heads/main'
-    runs-on: windows-2022
-    timeout-minutes: 20
+    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: certops-adcs-lab
+    timeout-minutes: 150
     env:
-      CERTOPS_NATIVE_ISSUER_REASSIGNMENT_REPORT: qualification-results/native-issuer-reassignment.json
+      LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -17,16 +24,27 @@ jobs:
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: "24"
-      - name: Refuse qualification without an attached disposable forest
+      - name: Authenticate dedicated disposable lab identity
         shell: pwsh
-        run: node tests/e2e/helpers/certops-native-issuer-reassignment.js
-      - name: Require a completed strict native report
+        run: ./infra/certops-adcs/login-oidc.ps1
+      - name: Execute genuine two-CA installed-agent issuer switch
+        shell: pwsh
+        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours 4 -WindowsVersion 2022 -Language en-US -IssuerReassignment 1
+      - name: Require native issuer-scoped evidence and completed cleanup
+        run: node -e "const r=require('./qualification-results/native-issuer-reassignment.json');const h=require('./tests/e2e/helpers/certops-native-issuer-reassignment');const {verifyReport}=require('./scripts/certops-qualification-report');if(r.nativeCell!=='qualified'||r.cleanup?.status!=='passed'||verifyReport(r).length)throw Error('Native issuer reassignment report incomplete');h.verifyNativeProof(r.nativeIssuerReassignment)"
+      - name: Destroy every owned temporary resource
         if: always()
         shell: pwsh
-        run: node -e "const r=require('./qualification-results/native-issuer-reassignment.json');const {verifyReport}=require('./scripts/certops-qualification-report');const {verifyProof}=require('./tests/e2e/helpers/certops-native-issuer-reassignment');if(r.status!=='passed'||r.cleanup?.status!=='passed'||r.nativeCell==='qualified')throw Error('Native issuer reassignment is not qualified');verifyProof(r.nativeIssuerReassignment);if(verifyReport(r).length)throw Error('Strict qualification report rejected')"
-      - if: always()
+        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP
+      - name: Preserve bounded public execution evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: certops-native-issuer-reassignment
-          path: qualification-results/native-issuer-reassignment.json
+          path: |
+            qualification-results/native-issuer-reassignment.json
+            qualification-results/enterprise-adcs-infrastructure.json
+            qualification-results/enterprise-adcs-transfer-issuer-switch.json
+            qualification-results/enterprise-adcs-cleanup.json
           if-no-files-found: error
+          retention-days: 7

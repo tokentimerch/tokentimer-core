@@ -151,6 +151,18 @@ function capacityCleanupPlan(receipt, entries, readRecord) {
 function backgroundCleanupPlan(receipt, entries, readRecord) {
   return storeCleanupPlan(receipt, entries, readRecord, "My", /^certops-adcs-[a-f0-9]{10}-rsa2048\.example\.test$/);
 }
+// Separate namespace and registry: issuer switching never broadens capacity
+// selectors or authorizes removing another fixture's certificate.
+function issuerSwitchCleanupPlan(receipt, entries, readRecord) {
+  return storeCleanupPlan(receipt, entries, readRecord, "My", /^certops-adcs-[a-f0-9]{10}-issuer-switch\.example\.test$/);
+}
+function registerIssuerSwitchStoreCertificate(registry, { domain, certificateId }) {
+  const receipt = { store: "My", domain, certificateId, enrollmentIds: [], thumbprints: [] };
+  issuerSwitchCleanupPlan(receipt, [], () => null);
+  assert.ok(Array.isArray(registry) && registry.length === 0);
+  registry.push(receipt);
+  return receipt;
+}
 function registerBackgroundStoreCertificate(registry, {domain, certificateId, enrollmentIds}) {
   const receipt = {store:"My",domain,certificateId,enrollmentIds:[...enrollmentIds],thumbprints:[]};
   backgroundCleanupPlan(receipt,[],()=>null);
@@ -271,7 +283,7 @@ function assertDrainAbsent(drain, current) {
   return true;
 }
 function cleanupRegisteredStore({ receipts, configDir, ps, drain }, capacity) {
-  const validate = capacity === "background" ? backgroundCleanupPlan : capacity ? capacityCleanupPlan : cleanupPlan;
+  const validate = capacity === "issuer-switch" ? issuerSwitchCleanupPlan : capacity === "background" ? backgroundCleanupPlan : capacity ? capacityCleanupPlan : cleanupPlan;
   const store = capacity ? "My" : "WebHosting",
     otherStore = capacity ? "WebHosting" : "My";
   if (!receipts.length) return;
@@ -614,6 +626,9 @@ module.exports = {
   assertRegisteredCleanupComplete,
   registerCapacityStoreCertificate,
   cleanupCapacity,
+  issuerSwitchCleanupPlan,
+  registerIssuerSwitchStoreCertificate,
+  cleanupIssuerSwitch: context => cleanupRegisteredStore(context,"issuer-switch"),
   backgroundCleanupPlan,
   refreshBackgroundEnrollmentOwnership,
   registerBackgroundStoreCertificate,

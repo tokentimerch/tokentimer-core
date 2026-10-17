@@ -17,6 +17,8 @@ param adminUsername string = 'ttqualification'
 param windowsVersion string = '2022'
 @description('Add an isolated offline-root host only for genuine two-tier qualification.')
 param hierarchy bool = false
+@description('Optional second enterprise CA for the isolated issuer-switch campaign only.')
+param issuerSwitch bool = false
 var windowsSkus = { '2019': '2019-datacenter-gensecond', '2022': '2022-datacenter-g2', '2025': '2025-datacenter-g2' }
 
 var ownership = {
@@ -28,7 +30,7 @@ var nodes = concat([
   { name: 'domain-ca', ip: '10.64.0.4', os: 'Windows' }
   { name: 'windows-agent', ip: '10.64.0.5', os: 'Windows' }
   { name: 'control-plane', ip: '10.64.0.6', os: 'Linux' }
-], hierarchy ? [{ name: 'offline-root', ip: '10.64.0.7', os: 'Windows' }] : [])
+], hierarchy ? [{ name: 'offline-root', ip: '10.64.0.7', os: 'Windows' }] : [], issuerSwitch ? [{ name: 'destination-ca', ip: '10.64.0.8', os: 'Windows' }] : [])
 
 resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: 'qualification-private'
@@ -87,7 +89,7 @@ resource machines 'Microsoft.Compute/virtualMachines@2024-07-01' = [for (node, i
       osDisk: { createOption: 'FromImage', managedDisk: { storageAccountType: 'StandardSSD_LRS' }, deleteOption: 'Delete' }
     }
     osProfile: {
-      computerName: node.os == 'Windows' ? (index == 0 ? 'tt-ca' : (index == 1 ? 'tt-agent' : 'tt-root')) : 'tt-control'
+      computerName: node.os == 'Windows' ? (index == 0 ? 'tt-ca' : (index == 1 ? 'tt-agent' : (node.name == 'destination-ca' ? 'tt-ca-switch' : 'tt-root'))) : 'tt-control'
       adminUsername: adminUsername
       adminPassword: adminPassword
       windowsConfiguration: node.os == 'Windows' ? { provisionVMAgent: true, enableAutomaticUpdates: true } : null
