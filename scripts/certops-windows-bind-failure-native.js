@@ -38,7 +38,7 @@ async function main() {
   assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE, "rsa-2048");
   assert.ok(
     !process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE,
-    "Stop/offline scope requires only current candidate",
+    "Bind-failure scope requires only current candidate",
   );
   const root = path.resolve(__dirname, "..");
   const output = path.join(root, "qualification-results");

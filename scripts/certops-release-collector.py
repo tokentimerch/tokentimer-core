@@ -52,6 +52,7 @@ import certops_windows_stop_offline_proof as windows_stop_offline_proof
 import certops_windows_alive_grace_proof as windows_alive_grace_proof
 import certops_windows_failed_rollback_proof as windows_failed_rollback_proof
 import certops_native_issuer_reassignment_proof as issuer_reassignment_proof
+import certops_windows_bind_failure_native_proof as windows_bind_failure_native_proof
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = {
@@ -61,6 +62,7 @@ WORKFLOWS = {
         "certops-kubernetes-http01-qualification.yml",
         "certops-windows-e2e.yml", "certops-linux-systemd.yml", "certops-linux-published-upgrade.yml",
         "certops-windows-arm64-cng.yml", "certops-windows-arm64-scm.yml", "certops-windows-arm64-agent.yml",
+        "certops-windows-installed-bind-failure.yml",
         "certops-windows-fixed-root.yml", "certops-windows-webhosting-retention.yml", "certops-windows-stop-offline.yml", "certops-windows-alive-grace.yml",
         "certops-native-agent-qualification.yml", "certops-native-issuer-reassignment.yml",
         "certops-scheduler-capacity-qualification.yml",
@@ -673,6 +675,11 @@ def browser_abandon_fields(proof):
 def verify_alive_grace_workflow(report, workflow):
     if isinstance(report, dict) and report.get("suite") == "windows-installed-alive-grace-renewal" and workflow != ".github/workflows/certops-windows-alive-grace.yml":
         raise ValueError("Alive/default-grace report requires its dedicated native workflow")
+
+
+def verify_bind_failure_native_workflow(report, workflow):
+    if isinstance(report, dict) and report.get("suite") == "windows-installed-bind-failure-rollback" and workflow != ".github/workflows/certops-windows-installed-bind-failure.yml":
+        raise ValueError("Installed native bind-failure report requires its dedicated workflow")
 
 
 def verify_failed_rollback_workflow(report, workflow):
@@ -1365,6 +1372,8 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             result.update(nativeCell="qualified", platform="win32", architecture="x64")
         if value.get("suite") == "windows-installed-alive-grace-renewal":
             result["nativeWindowsAliveGrace"] = windows_alive_grace_proof.fields(value)
+        if value.get("suite") == "windows-installed-bind-failure-rollback":
+            result["nativeInstalledBindFailure"] = windows_bind_failure_native_proof.fields(value)
         if value.get("suite") == "windows-installed-failed-rollback-renewal":
             result["nativeInstalledFailedRollback"] = windows_failed_rollback_proof.fields(value)
         if value.get("suite") == "windows-installed-stop-offline-renewal":
@@ -2282,6 +2291,7 @@ def main(arguments=()):
                 for suffix, report in reports:
                     verify_webhosting_retention_workflow(report, run.get("path"))
                     verify_alive_grace_workflow(report, run.get("path"))
+                    verify_bind_failure_native_workflow(report, run.get("path"))
                     verify_failed_rollback_workflow(report, run.get("path"))
                     verify_stopped_offline_workflow(report, run.get("path"))
                     acme_native_console_proof.verify_workflow(report, run.get("path"))

@@ -1376,7 +1376,7 @@
       "certificate-inflight-old-key-retirement-and-new-key-renewal": "e2e"
     },
     "windows-installed-bind-failure-rollback": {
-      "windows-installed-public-bind-failure": "integration"
+      "windows-installed-public-renewal-bind-rollback": "real-host"
     },
     "windows-installed-interruption-recovery": {
       "windows-installed-deterministic-interruption": "integration"
@@ -2079,7 +2079,10 @@
     ],
     "windows-installed-bind-failure-rollback": [
       "windows",
-      "elevated"
+      "system",
+      "iis",
+      "api",
+      "nativeAcme"
     ],
     "windows-installed-interruption-recovery": [
       "windows",
@@ -3576,7 +3579,7 @@
       "certificate-inflight-old-key-retirement-and-new-key-renewal"
     ],
     "windows-installed-bind-failure-rollback": [
-      "windows-installed-public-bind-failure"
+      "windows-installed-public-renewal-bind-rollback"
     ],
     "windows-installed-interruption-recovery": [
       "windows-installed-deterministic-interruption"
@@ -3806,7 +3809,7 @@
     "windows-installed-failed-rollback-renewal": "real-host",
     "linux-public-signed-trust-lifecycle": "real-host",
     "native-certificate-signing-rotation": "e2e",
-    "windows-installed-bind-failure-rollback": "integration",
+    "windows-installed-bind-failure-rollback": "real-host",
     "windows-installed-interruption-recovery": "integration",
     "native-adcs-issuer-reassignment": "real-host",
     "adcs-browser-enrollment": "integration",

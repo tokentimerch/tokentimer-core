@@ -11,6 +11,8 @@ $matches=[regex]::Matches($source,"Add-Type\s+-TypeDefinition\s+@'\r?\n([\s\S]*?
 if($matches.Count-ne 1){throw 'One reviewed native retained-job type required'}
 $combined=$matches[0].Groups[1].Value+"`n"+[IO.File]::ReadAllText((Join-Path $helper 'certops-windows-bind-interposer.cs'))
 Add-Type -TypeDefinition $combined -ReferencedAssemblies System.dll,System.Core.dll,System.Security.dll,System.Web.Extensions.dll
+if(![ContainedNativeJob].GetConstructor([type[]]@([string],[string],[string]))){throw 'Original retained-process constructor ABI missing'}
+if(![ContainedNativeJob].GetConstructor([type[]]@([string],[string],[string],[string],[string]))){throw 'Fixture capture constructor ABI missing'}
 if(![CertOpsBindInterposer]::SameNativePath('C:\WINDOWS\System32\netsh.exe','c:\windows\system32\netsh.exe')){throw 'Native path casing must preserve the original binary'}
 if([CertOpsBindInterposer]::SameNativePath('C:\WINDOWS\System32\netsh.exe','C:\foreign\netsh.exe')){throw 'Foreign native path accepted'}
 if([CertOpsBindInterposer]::ParseNativeError("SSL Certificate add failed, Error: 183`r`n")-ne 183){throw 'Actual native error parsing failed'}

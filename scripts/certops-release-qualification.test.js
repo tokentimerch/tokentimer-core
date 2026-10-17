@@ -934,7 +934,7 @@ test("installed bind-failure and interruption proofs stay local and fail closed"
     value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
     value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
     const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
-    assert.match(verifyMatrix([value], options).join("\n"), /Local-contract-only suite/);
+    assert.ok(verifyMatrix([value], options).length, "Supporting script proofs cannot qualify a native suite");
     const missing = structuredClone(value); delete missing.report[field];
     assert.ok(verifyMatrix([missing], options).length);
   }

@@ -6,10 +6,7 @@ const fs = require("node:fs"), path = require("node:path"), crypto = require("no
 const interposer = require("../tests/e2e/helpers/certops-windows-bind-interposer");
 const helper = require("../tests/e2e/helpers/certops-windows-installed-bind-failure-native");
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
-function receipt() {
-  const originalArgv = ["http", "add", "sslcert", "hostnameport=owned.example.test:443", "certhash=" + "B".repeat(40), "appid={11111111-1111-4111-8111-111111111111}", "certstorename=My"];
-  return { jobId: "11111111-1111-4111-8111-111111111111", selector: "owned.example.test:443", candidateThumbprint: "B".repeat(40), predecessorThumbprint: "A".repeat(40), candidateFingerprintSha256: "b".repeat(64), predecessorFingerprintSha256: "a".repeat(64), seedExitCode: 0, forwardedExitCode: 1, nativeErrorCode: 183, originalArgv, originalArgvSha256: sha(JSON.stringify(originalArgv)), systemNetshSha256: "c".repeat(64), nativeChildrenDrained: true, captureOverflow: false, drainFailure: false, certificateStoreModified: false };
-}
+const {fixture:proof,nativeReceipt:receipt}=require('./fixtures/certops-windows-installed-bind-failure-native.cjs');
 const expected = p => ({ jobId: p.jobId, selector: p.selector, predecessor: p.predecessorThumbprint, candidate: p.candidateThumbprint });
 test("native binding receipt rejects shim errors, fake success, overflow, drainage and foreign selectors", () => {
   const p = receipt(); assert.equal(interposer.verifyNativeReceipt(p, expected(p)), true);
@@ -18,9 +15,6 @@ test("native binding receipt rejects shim errors, fake success, overflow, draina
   for (const change of [{ jobId: "-".repeat(36) }, { selector: "*:443" }, { selector: "owned.example.test:99999" }, { predecessorThumbprint: "not-a-thumbprint" }]) { const bad = { ...p, ...change }; assert.throws(() => interposer.verifyNativeReceipt(bad, expected(bad))); }
   for (const argv of [p.originalArgv.filter(arg => !arg.startsWith("appid=")), [...p.originalArgv, p.originalArgv.find(arg => arg.startsWith("appid="))]]) assert.throws(() => interposer.verifyNativeReceipt({ ...p, originalArgv: argv, originalArgvSha256: sha(JSON.stringify(argv)) }, expected(p)));
 });
-function proof() {
-  return { scope: helper.SCOPE, certificateId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", jobIds: [receipt().jobId, "22222222-2222-4222-8222-222222222222"], claimIds: ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"], fingerprints: ["a".repeat(64), "b".repeat(64), "d".repeat(64)], spkiFingerprints: ["e".repeat(64), "f".repeat(64), "1".repeat(64)], failedJobStatus: "failed", failureCode: "BIND_FAILED", rolledBack: true, retryJobStatus: "succeeded", bindFailureQualified: true, rollbackFailureQualified: false, expiryCleanupQualified: false, transientNewBindingObservationQualified: false, appIdPreservationQualified: false, nativeInterposer: receipt(), serviceEnvironmentRestored: true, ...Object.fromEntries(helper.FLAGS.map(flag => [flag, true])) };
-}
 test("native bind proof requires current-job native fault, actual rollback and restored service environment", () => {
   assert.equal(helper.verifyProof(proof()), true);
   for (const key of Object.keys(proof())) { const bad = proof(); delete bad[key]; assert.throws(() => helper.verifyProof(bad), key); }

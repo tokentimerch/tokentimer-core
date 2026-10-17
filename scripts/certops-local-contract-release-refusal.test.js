@@ -42,7 +42,6 @@ const ids = [
   ...require("./_registration/adcs-coverage.json").suites.map(item => item.id),
   ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
-  "windows-installed-bind-failure-rollback",
   "windows-installed-interruption-recovery",
 ];
 for (const suite of ids) test(`passed envelope cannot qualify local contract ${suite}`, () => {

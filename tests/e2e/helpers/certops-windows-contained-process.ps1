@@ -76,7 +76,8 @@ public sealed class ContainedNativeJob : IDisposable  {
     public static void AssertAbi() {
         if(IntPtr.Size!=8 || Marshal.SizeOf(typeof(Startup))!=104 || Marshal.SizeOf(typeof(ProcessInfo))!=24 || Marshal.SizeOf(typeof(Accounting))!=48 || Marshal.SizeOf(typeof(ExtendedLimit))!=144 || Marshal.SizeOf(typeof(BasicLimit))!=64 || Marshal.SizeOf(typeof(SecurityAttributes))!=24 || Marshal.OffsetOf(typeof(Startup),"input").ToInt64()!=80 || Marshal.OffsetOf(typeof(ProcessInfo),"processId").ToInt64()!=16 || Marshal.OffsetOf(typeof(Accounting),"ActiveProcesses").ToInt64()!=40 || Marshal.OffsetOf(typeof(ExtendedLimit),"ProcessMemoryLimit").ToInt64()!=112)throw new Exception("Unsupported native process-job ABI");
     }
-    public ContainedNativeJob(string executable,string commandLine,string directory,string outputPath=null,string errorPath=null) {
+    public ContainedNativeJob(string executable,string commandLine,string directory) : this(executable,commandLine,directory,null,null) {}
+    public ContainedNativeJob(string executable,string commandLine,string directory,string outputPath,string errorPath) {
         AssertAbi();
         job=CreateJobObject(IntPtr.Zero,null);
         Require(job!=IntPtr.Zero);
