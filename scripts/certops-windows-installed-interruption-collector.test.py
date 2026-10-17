@@ -40,22 +40,22 @@ def project(proof):
 
 
 class InstalledInterruptionProjection(unittest.TestCase):
-    def test_projects_a_closed_startup_recovery_proof(self):
-        projected = project(PROOF)["nativeInstalledInterruption"]
-        self.assertEqual(projected, PROOF)
+    def test_valid_local_startup_contract_cannot_replace_native_recovery(self):
         subprocess.run(
             [
                 "node",
                 "-e",
                 "let s='';process.stdin.on('data',b=>s+=b);process.stdin.on('end',()=>require('./tests/e2e/helpers/certops-windows-installed-interruption').verifyProof(JSON.parse(s)));",
             ],
-            input=json.dumps(projected),
+            input=json.dumps(PROOF),
             text=True,
             cwd=ROOT,
             check=True,
             capture_output=True,
             timeout=20,
         )
+        with self.assertRaisesRegex(ValueError, "Actual narrow native interruption proof required"):
+            project(PROOF)
 
     def test_refuses_power_loss_reboot_and_native_claims(self):
         for field in (
