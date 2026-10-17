@@ -45,6 +45,8 @@ async function main() {
   fs.mkdirSync(output, { recursive: true });
   const factsFile = path.join(output, "windows-stop-offline-native-facts.json");
   const reportPath = path.join(output, "windows-installed-stop-offline.json");
+  const interruptionPath = path.join(output, "windows-installed-interruption-native.json");
+  assert.equal(fs.existsSync(interruptionPath), false, "Refuse stale interruption report");
   assert.equal(fs.existsSync(factsFile), false, "Refuse stale native facts");
   assert.equal(
     fs.existsSync(reportPath),
@@ -141,6 +143,9 @@ async function main() {
         "Actual installed fixture and API/database cleanup completed before native facts publication",
     },
   });
+  const interruption = require("../tests/e2e/helpers/certops-windows-interruption-native");
+  const derived = interruption.createReport(gate.report);
+  fs.writeFileSync(interruptionPath, `${JSON.stringify(derived, null, 2)}\n`, {flag:"wx"});
 }
 if (require.main === module)
   main().catch((error) => {

@@ -2,6 +2,8 @@
 /** Explicit causal source inventory for the separate manual stopped/offline lane.
  * Hashes guard source drift; they do not establish native execution. */
 module.exports = Object.freeze([
+  "tests/e2e/helpers/certops-windows-interruption-native.js",
+  "scripts/certops_windows_interruption_native_proof.py",
   "packages/contracts/certops/agent-protocol.schema.json",
   ...[
     "apps/api/routes/certops-agent.js",

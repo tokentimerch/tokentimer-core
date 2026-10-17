@@ -15,6 +15,15 @@ collector = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(collector)
 
 class StopOfflineProjection(unittest.TestCase):
+    def test_derived_native_interruption_is_narrow_and_refuses_promoted_claims(self):
+        report = json.loads(subprocess.check_output(["node", "-e", "const f=require('./scripts/test-support/windows-stop-offline.cjs');process.stdout.write(JSON.stringify(require('./tests/e2e/helpers/certops-windows-interruption-native').createReport(f.artifact().report,{candidateSha:f.candidateSha})))"], cwd=ROOT, text=True, timeout=20))
+        self.assertEqual(collector.windows_interruption_native_proof.fields(report), report["nativeInstalledInterruption"])
+        for patch in ({"originalOperationAutomaticallyRecovered": True}, {"observedStage": "bind"}, {"interruptionMode": "process-kill"}):
+            invalid=copy.deepcopy(report);invalid["nativeInstalledInterruption"].update(patch)
+            with self.assertRaises(ValueError):collector.windows_interruption_native_proof.fields(invalid)
+        invalid=copy.deepcopy(report);invalid["nativeInstalledInterruption"]["nativeStoppedOffline"]["allCapturedDescendantsExited"]=False
+        with self.assertRaises(ValueError):collector.windows_interruption_native_proof.fields(invalid)
+
     @classmethod
     def setUpClass(cls):
         cls.base = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/test-support/windows-stop-offline.cjs').artifact().report))"], cwd=ROOT, text=True, timeout=20))

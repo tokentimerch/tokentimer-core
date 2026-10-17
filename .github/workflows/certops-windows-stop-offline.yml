@@ -135,5 +135,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: windows-installed-stop-offline-${{ matrix.windows_server }}
-          path: qualification-results/windows-installed-stop-offline.json
+          path: |
+            qualification-results/windows-installed-stop-offline.json
+            qualification-results/windows-installed-interruption-native.json
           if-no-files-found: error

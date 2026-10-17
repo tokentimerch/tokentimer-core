@@ -20,7 +20,6 @@ const localContractSuites = new Set([
   ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => id !== "adcs-browser-enrollment"),
   ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
   ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
-  "windows-installed-interruption-recovery",
 ]);
 function catalogCoverage(specification = catalog) {
   const errors = require("./certops-qualification-catalog").validateCatalog(specification);
@@ -156,7 +155,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (slot.suite === "windows-host") require("../packages/agent/scripts/host/cng-key-usage-proof").verifyProof(artifact.report.nativeKeyUsage);
         if (slot.suite === "windows-installed-alive-grace-renewal") require("../tests/e2e/helpers/certops-windows-alive-grace-proof").verifyProof(artifact.report.nativeWindowsAliveGrace);
         if (slot.suite === "windows-installed-failed-rollback-renewal") require("../tests/e2e/helpers/certops-windows-installed-failed-rollback").verifyProof(artifact.report.nativeInstalledFailedRollback);
-        if (["windows-installed-stop-offline-renewal","windows-installed-alive-grace-renewal","windows-installed-failed-rollback-renewal","windows-installed-bind-failure-rollback"].includes(slot.suite)) {
+        if (["windows-installed-stop-offline-renewal","windows-installed-alive-grace-renewal","windows-installed-failed-rollback-renewal","windows-installed-bind-failure-rollback","windows-installed-interruption-recovery"].includes(slot.suite)) {
           if(slot.suite === "windows-installed-stop-offline-renewal") require("../tests/e2e/helpers/certops-windows-stop-offline-proof").verifyProof(artifact.report.nativeWindowsStoppedOffline);
           const env=artifact.report.qualificationEnvironment;
           if(artifact.report.cleanup?.status!=="passed" || artifact.report.platform!=="win32" || artifact.report.architecture!=="x64" || env.osFamily!=="windows" || !["2022","2025"].includes(env.osVersion) || ![2,3].includes(env.productType) || env.identity!=="LocalSystem" || env.nativeLanguage!=="en-US" || env.measurement!=="native" || env.architecture!=="x64") throw new Error("Actual SYSTEM Server stopped/offline native environment and cleanup required");
@@ -279,7 +278,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           if (artifact.report.platform !== "linux" || artifact.report.architecture !== "x64" || n.osFamily !== "linux" || n.distributionId !== "ubuntu" || n.distributionVersion !== "24.04" || n.distribution !== "ubuntu" || n.osVersion !== "24.04" || n.executionSurface !== "host" || n.measurement !== "native") throw new Error("Ubuntu24 certificate signing rotation evidence required");
         }
         if (slot.suite === "windows-installed-bind-failure-rollback") require("../tests/e2e/helpers/certops-windows-installed-bind-failure-native").verifyProof(artifact.report.nativeInstalledBindFailure);
-        if (slot.suite === "windows-installed-interruption-recovery") require("../tests/e2e/helpers/certops-windows-installed-interruption").verifyProof(artifact.report.nativeInstalledInterruption);
+        if (slot.suite === "windows-installed-interruption-recovery") require("../tests/e2e/helpers/certops-windows-interruption-native").verifyProof(artifact.report.nativeInstalledInterruption);
         if (slot.suite === "native-adcs-issuer-reassignment") {
           const proof = artifact.report.nativeIssuerReassignment;
           require("../tests/e2e/helpers/certops-native-issuer-reassignment").verifyNativeProof(proof);

@@ -1379,7 +1379,7 @@
       "windows-installed-public-renewal-bind-rollback": "real-host"
     },
     "windows-installed-interruption-recovery": {
-      "windows-installed-deterministic-interruption": "integration"
+      "windows-installed-active-stop-default-offline-recovery": "real-host"
     },
     "native-adcs-issuer-reassignment": {
       "adcs-real-installed-native-language": "real-host",
@@ -2092,7 +2092,10 @@
     ],
     "windows-installed-interruption-recovery": [
       "windows",
-      "elevated"
+      "system",
+      "iis",
+      "api",
+      "nativeAcme"
     ],
     "native-adcs-issuer-reassignment": [
       "windows",
@@ -3590,7 +3593,7 @@
       "windows-installed-public-renewal-bind-rollback"
     ],
     "windows-installed-interruption-recovery": [
-      "windows-installed-deterministic-interruption"
+      "windows-installed-active-stop-default-offline-recovery"
     ],
     "native-adcs-issuer-reassignment": [
       "adcs-real-installed-native-language",
@@ -3824,7 +3827,7 @@
     "linux-public-signed-trust-lifecycle": "real-host",
     "native-certificate-signing-rotation": "e2e",
     "windows-installed-bind-failure-rollback": "real-host",
-    "windows-installed-interruption-recovery": "integration",
+    "windows-installed-interruption-recovery": "real-host",
     "native-adcs-issuer-reassignment": "real-host",
     "adcs-browser-enrollment": "real-host",
     "adcs-install-interruption": "integration",
