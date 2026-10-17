@@ -301,6 +301,7 @@ function Wait-Gate([string]$name) {
 }
 $ownerManifest=$null;$launchManifest=$null;$parent=$null;$job=$null;$closed=$false
 $rootPid=$null;$rootCode=$null;$launched=$false;$executableLock=$null
+$failureStage="owner";$diagnosticOwned=$false
 try {
  Assert-Ancestry $ProtocolDirectory
  foreach($directory in @($ProtocolDirectory,(Split-Path -Parent $ProtocolDirectory))) {
@@ -319,32 +320,43 @@ try {
  $parent=[ContainedParent]::new($OwnerProcessId)
  $retainedOwner=Get-CimInstance Win32_Process -Filter "ProcessId=$OwnerProcessId"
  if(!$parent.Alive -or !$retainedOwner -or $retainedOwner.CreationDate -ne $owner.CreationDate -or (Sid $retainedOwner) -cne $sid){throw 'Owner exited or changed'}
+$diagnosticOwned=$true;$failureStage='wait-run'
  Publish 'ready.json' @{token=$Token;wrapperPid=$PID;ownerPid=$OwnerProcessId;creationTime=$self.CreationDate.ToUniversalTime().ToString('o');ownerCreationTime=$owner.CreationDate.ToUniversalTime().ToString('o');sid=$sid}
  if(Wait-Gate 'run') {
+  $failureStage='launch-manifest'
   $launchManifest=Open-Manifest 'launch.json';$launch=$launchManifest.value
   Assert-Fields $launch @('token','executable','args','commandLine','cwd')
   if($launch.token -cne $Token -or $launch.executable -cne $context.executable -or $launch.cwd -cne $context.cwd -or $launch.args -isnot [Array] -or $launch.args.Count -gt 64){throw 'Launch context refused'}
   foreach($value in @($launch.executable,$launch.cwd,$launch.commandLine)+@($launch.args)){if($value -isnot [string] -or $value.Length -gt 32767 -or $value -match '[\x00-\x1f]'){throw 'Launch value refused'}}
+  $failureStage='executable-lock'
   $executableLock=[IO.File]::Open($launch.executable,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
   $executable=Get-Item -LiteralPath $launch.executable -Force
   $directory=Get-Item -LiteralPath $launch.cwd -Force
   if($executable.PSIsContainer -or !$directory.PSIsContainer -or ($executable.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Get-FileHash -LiteralPath $launch.executable -Algorithm SHA256).Hash.ToLowerInvariant() -cne $context.executableSha256){throw 'Launch filesystem identity refused'}
+  $failureStage='command-render'
   if([ContainedNativeJob]::Render($launch.executable,[string[]]$launch.args) -cne $launch.commandLine){throw 'Command rendering refused'}
+  $failureStage='launch-ancestry'
   Assert-Ancestry $launch.executable
   Assert-Ancestry $launch.cwd
   if(!$parent.Alive -or (Gate 'stop')){throw 'Owner stopped before native launch'}
+  $failureStage='native-create'
   $job=[ContainedNativeJob]::new($launch.executable,$launch.commandLine,$launch.cwd)
   $rootPid=$job.ProcessId;$launched=$true
+  $failureStage='suspended-identity'
   $child=Get-CimInstance Win32_Process -Filter "ProcessId=$rootPid"
   $native=[ContainedNativeIdentity]::Observe([int]$rootPid)
   if(!$child -or $child.ParentProcessId -ne $PID -or $native.pid -ne $rootPid -or $native.executablePath -ine $launch.executable -or $native.sid -cne $sid -or $native.creationTime.Substring(0,26) -cne $child.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.ffffff')){throw 'Suspended native handle identity refused'}
+  $failureStage='publish-started'
   Publish 'started.json' @{token=$Token;wrapperPid=$PID;ownerPid=$OwnerProcessId;pid=$rootPid;parentPid=$PID;creationTime=$native.creationTime;executablePath=$native.executablePath;commandLine=$launch.commandLine;commandLineOrigin='sealed-createprocess-input';sid=$native.sid;nativeSuspended=$true;jobAssignedBeforeResume=$true}
+  $failureStage='wait-resume'
   if((Wait-Gate 'resume') -and $parent.Alive -and !(Gate 'stop')) {
+  $failureStage='native-resume'
    $job.Resume()
    Publish 'running.json' @{token=$Token;pid=$rootPid;jobAssignedBeforeResume=$true}
    $deadline=[DateTime]::UtcNow.AddMilliseconds([double]$context.maxLifetimeMs)
    while(!$job.RootExited -and $parent.Alive -and !(Gate 'stop') -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 20}
   }
+  $failureStage='native-drain'
   $rootCode=$job.Drain()
   $job.CloseVerified();$job=$null
  }
@@ -354,6 +366,17 @@ try {
  $parent.Dispose();$parent=$null
  Publish 'closed.json' @{token=$Token;wrapperPid=$PID;ownerPid=$OwnerProcessId;nativeRootPid=$rootPid;rootExitCode=$rootCode;launchOccurred=$launched;activeNativeProcesses=0;retainedJobDrained=$true;nativeRootExited=$true;nativeHandlesClosed=$true}
  $closed=$true
+} catch {
+ # Diagnostics never assert closure and contain no exception message or arguments.
+ if($diagnosticOwned){try{
+  $errorValue=$_.Exception
+  while($errorValue.InnerException){$errorValue=$errorValue.InnerException}
+  $nativeCode=$null
+  $cursor=$errorValue
+  while($cursor){if($cursor -is [ComponentModel.Win32Exception]){$nativeCode=[int]$cursor.NativeErrorCode;break};$cursor=$cursor.InnerException}
+  Publish 'failed.json' @{schemaVersion=1;token=$Token;wrapperPid=$PID;ownerPid=$OwnerProcessId;stage=$failureStage;exceptionType=$errorValue.GetType().FullName;hresult=[int]$errorValue.HResult;nativeErrorCode=$nativeCode}
+ }catch{}}
+ throw
 } finally {
  # Emergency disposal invokes kill-on-close, but deliberately publishes NO drain proof.
  if($job){$job.Dispose()}

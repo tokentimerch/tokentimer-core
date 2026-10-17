@@ -27,6 +27,38 @@ const NAMES = Object.freeze([
   "closed.json",
 ]);
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
+function publishGate(directory, name, token) {
+  assert.ok(["run", "resume", "stop"].includes(name));
+  assert.match(token, /^[a-f0-9]{32}$/);
+  const temporary = path.join(directory, `.gate-${crypto.randomBytes(16).toString("hex")}.tmp`);
+  const destination = path.join(directory, name);
+  const descriptor = fs.openSync(temporary, "wx", 0o600);
+  try {
+    fs.writeFileSync(descriptor, token);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const original = identity(temporary);
+  // link publishes an already closed inode and refuses an existing target.
+  // An unsupported filesystem fails closed; rename must not overwrite custody.
+  fs.linkSync(temporary, destination);
+  assert.equal(identity(destination), original);
+  assert.equal(identity(temporary), original);
+  assert.equal(fs.readFileSync(destination, "utf8"), token);
+  fs.unlinkSync(temporary);
+}
+function verifyFailure(p) {
+  exact(p, ["schemaVersion","token","wrapperPid","ownerPid","stage","exceptionType","hresult","nativeErrorCode"]);
+  assert.equal(p.schemaVersion, 1);
+  assert.match(p.token, /^[a-f0-9]{32}$/);
+  for (const key of ["wrapperPid","ownerPid"]) assert.ok(Number.isSafeInteger(p[key]) && p[key] > 4 && p[key] <= 0xffffffff);
+  assert.ok(["wait-run","launch-manifest","executable-lock","command-render","launch-ancestry","native-create","suspended-identity","publish-started","wait-resume","native-resume","native-drain"].includes(p.stage));
+  assert.match(p.exceptionType, /^(?:System\.)[A-Za-z0-9_.]{1,160}$/);
+  assert.ok(Number.isInteger(p.hresult) && p.hresult >= -2147483648 && p.hresult <= 2147483647);
+  assert.ok(p.nativeErrorCode === null || (Number.isInteger(p.nativeErrorCode) && p.nativeErrorCode >= 0 && p.nativeErrorCode <= 2147483647));
+  return true;
+}
 function exact(value, fields) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   assert.deepEqual(Object.keys(value).sort(), [...fields].sort());
@@ -314,7 +346,9 @@ async function startContainedNativeProcess({
       assert.equal(remember(name).toString("utf8"), token);
       return;
     }
-    write(name, token);
+    check();
+    publishGate(directory, name, token);
+    remember(name);
   };
   const wait = async (predicate, limit = 30000) => {
     const deadline = performance.now() + limit;
@@ -322,6 +356,14 @@ async function startContainedNativeProcess({
       check();
       const value = predicate();
       if (value) return value;
+      if (closed && fs.existsSync(path.join(directory, "failed.json"))) {
+        const failure = read("failed.json");
+        verifyFailure(failure);
+        assert.equal(failure.token, token);
+        assert.equal(failure.wrapperPid, ready.wrapperPid);
+        assert.equal(failure.ownerPid, process.pid);
+        throw new Error(`Contained native failure at ${failure.stage}: ${failure.exceptionType} (${failure.hresult}, native ${failure.nativeErrorCode})`);
+      }
       if (closed)
         throw new Error(
           "Contained wrapper closed before required native phase",
@@ -563,6 +605,8 @@ async function startContainedNativeProcess({
   }
 }
 module.exports = {
+  publishGate,
+  verifyFailure,
   startContainedNativeProcess,
   assertCleanupSafe,
   quoteArgument,
