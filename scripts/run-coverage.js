@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { pathToFileURL } = require("node:url");
 
 const repoRoot = path.resolve(__dirname, "..");
 const coverageRoot = path.join(repoRoot, ".coverage");
@@ -18,19 +19,19 @@ const collectOnly = process.argv.includes("--collect-only");
 const containerCoverageDirs = [
   {
     dir: path.join(coverageRoot, "v8-api"),
-    pathMap: [["file:///app/apps/api/", `file://${repoRoot}/apps/api/`]],
+    pathMap: [["file:///app/apps/api/", pathToFileURL(path.join(repoRoot, "apps", "api") + path.sep).href]],
   },
   {
     dir: path.join(coverageRoot, "v8-worker-delivery"),
-    pathMap: [["file:///app/apps/worker/", `file://${repoRoot}/apps/worker/`]],
+    pathMap: [["file:///app/apps/worker/", pathToFileURL(path.join(repoRoot, "apps", "worker") + path.sep).href]],
   },
   {
     dir: path.join(coverageRoot, "v8-worker-endpoint"),
-    pathMap: [["file:///app/apps/worker/", `file://${repoRoot}/apps/worker/`]],
+    pathMap: [["file:///app/apps/worker/", pathToFileURL(path.join(repoRoot, "apps", "worker") + path.sep).href]],
   },
   {
     dir: path.join(coverageRoot, "v8-worker-sync"),
-    pathMap: [["file:///app/apps/worker/", `file://${repoRoot}/apps/worker/`]],
+    pathMap: [["file:///app/apps/worker/", pathToFileURL(path.join(repoRoot, "apps", "worker") + path.sep).href]],
   },
 ];
 
@@ -53,6 +54,13 @@ function cleanCoverageDirs() {
   }
 }
 
+// V8 files are serialized JSON. A raw Windows path would insert unescaped
+// backslashes; canonical file URLs preserve JSON and c8's source identity.
+function remapContainerCoverage(content, pathMap = containerCoverageDirs.flatMap((entry) => entry.pathMap)) {
+  for (const [from, to] of pathMap) content = content.replaceAll(from, () => to);
+  return content;
+}
+
 function mergeContainerCoverage() {
   let merged = 0;
   for (const { dir, pathMap } of containerCoverageDirs) {
@@ -60,10 +68,7 @@ function mergeContainerCoverage() {
     const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
     for (const file of files) {
       const src = path.join(dir, file);
-      let content = fs.readFileSync(src, "utf8");
-      for (const [from, to] of pathMap) {
-        content = content.replaceAll(from, to);
-      }
+      const content = remapContainerCoverage(fs.readFileSync(src, "utf8"), pathMap);
       const dest = path.join(v8Dir, `container-${path.basename(dir)}-${file}`);
       fs.writeFileSync(dest, content, "utf8");
       merged++;
@@ -104,4 +109,5 @@ function main() {
   ]);
 }
 
-process.exit(main());
+if (require.main === module) process.exit(main());
+module.exports = { remapContainerCoverage };

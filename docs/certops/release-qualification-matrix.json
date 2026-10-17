@@ -3086,7 +3086,18 @@
         "scripts/certops_acme_disabled_profile_proof.py",
         "tests/e2e/helpers/certops-acme-renewal-alert.js",
         "scripts/certops-acme-renewal-alert-report.js",
-        "scripts/certops_acme_renewal_alert_proof.py"
+        "scripts/certops_acme_renewal_alert_proof.py",
+        "apps/api/services/certops/renewalFailureAlerts.js",
+        "apps/api/services/certops/renewalAlertPolicy.js",
+        "apps/api/src/shared/contactGroups.js",
+        "apps/api/src/shared/retiredCertificateAlerts.js",
+        "apps/api/src/shared/replaceAssetContactGroups.js",
+        "apps/worker/src/delivery-worker.js",
+        "apps/worker/src/notify/email.js",
+        "apps/worker/src/shared/contactGroups.js",
+        "apps/worker/src/shared/retiredCertificateAlerts.js",
+        "deploy/compose/docker-compose.test.yml",
+        "scripts/test-support/acme-renewal-alert-proof.cjs"
       ]
     },
     {
@@ -6657,7 +6668,18 @@
         "scripts/certops_acme_disabled_profile_proof.py",
         "tests/e2e/helpers/certops-acme-renewal-alert.js",
         "scripts/certops-acme-renewal-alert-report.js",
-        "scripts/certops_acme_renewal_alert_proof.py"
+        "scripts/certops_acme_renewal_alert_proof.py",
+        "apps/api/services/certops/renewalFailureAlerts.js",
+        "apps/api/services/certops/renewalAlertPolicy.js",
+        "apps/api/src/shared/contactGroups.js",
+        "apps/api/src/shared/retiredCertificateAlerts.js",
+        "apps/api/src/shared/replaceAssetContactGroups.js",
+        "apps/worker/src/delivery-worker.js",
+        "apps/worker/src/notify/email.js",
+        "apps/worker/src/shared/contactGroups.js",
+        "apps/worker/src/shared/retiredCertificateAlerts.js",
+        "deploy/compose/docker-compose.test.yml",
+        "scripts/test-support/acme-renewal-alert-proof.cjs"
       ],
       "environment": {
         "osFamily": "linux",
@@ -8290,7 +8312,18 @@
         "scripts/certops_acme_disabled_profile_proof.py",
         "tests/e2e/helpers/certops-acme-renewal-alert.js",
         "scripts/certops-acme-renewal-alert-report.js",
-        "scripts/certops_acme_renewal_alert_proof.py"
+        "scripts/certops_acme_renewal_alert_proof.py",
+        "apps/api/services/certops/renewalFailureAlerts.js",
+        "apps/api/services/certops/renewalAlertPolicy.js",
+        "apps/api/src/shared/contactGroups.js",
+        "apps/api/src/shared/retiredCertificateAlerts.js",
+        "apps/api/src/shared/replaceAssetContactGroups.js",
+        "apps/worker/src/delivery-worker.js",
+        "apps/worker/src/notify/email.js",
+        "apps/worker/src/shared/contactGroups.js",
+        "apps/worker/src/shared/retiredCertificateAlerts.js",
+        "deploy/compose/docker-compose.test.yml",
+        "scripts/test-support/acme-renewal-alert-proof.cjs"
       ],
       "environment": {
         "osFamily": "linux",

@@ -1,7 +1,7 @@
 """Closed evidence profiles; normal hosted collection never implies full qualification."""
 import json
 from pathlib import Path
-DOMAIN = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real"}
+DOMAIN = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-install-interruption", "adcs-lost-submit", "adcs-uncertain-abandon", "adcs-cmc-renewal", "adcs-safety-variants", "adcs-crash-experiments"}
 EXTENDED = {"enterprise-adcs-elapsed-pending-real", "windows-domain-adcs-retention24h", "windows-domain-adcs-default-ttl24h", "windows-domain-installed-retention-default-timer"}
 PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard-hosted": {"hosted"}, "adcs": {"domain-adcs"}, "extended-adcs": {"extended-domain-adcs"}}
 

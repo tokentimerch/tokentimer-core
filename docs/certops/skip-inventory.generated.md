@@ -50,7 +50,7 @@ Total skips found: 131
 | `packages/agent/src/keys/keys.test.js` | 209 | refuses to write through a symlink at the key path | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/keys/keys.test.js` | 499 | verifies the CSR with openssl when available | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/material-store/material-store.test.js` | 88 | real isolated Vault KV v2: pinned publication and idempotent CAS | test(..., { skip }) option-object | `no-host` |
-| `packages/agent/src/material-store/material-store.test.js` | 106 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `no-host` |
+| `packages/agent/src/material-store/material-store.test.js` | 130 | real Vault ACL separates issuer, consumer, scanner and customer prefixes | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 454 | refuses a group/other-readable file on POSIX | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/platform/platform.test.js` | 468 | enforces a real restricted ACL end to end on win32 | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/replay/replay.test.js` | 144 | writes the store file with 0600 permissions on non-win32 | it(..., { skip }) option-object | `no-host` |

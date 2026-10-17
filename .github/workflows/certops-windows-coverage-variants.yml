@@ -33,4 +33,13 @@ jobs:
           scripts/certops-windows-crash-dump.test.js
       - name: Write failed coverage report
         if: always()
-        run: node -e "const fs=require('node:fs'); fs.mkdirSync('qualification-results',{recursive:true}); const report={passed:false,qualified: false,nativeExecutionQualified:false,hostCapabilityAbsentIsPass:false,powerLossDurabilityQualified:false,realRebootQualified:false,inUseKeyDeleted:false,blanketNetshReset:false,crashDumpContainmentQualified:false,nativeArm64ExecutionQualified:false,publishedPackageMigrationQualified:false,twentyFourHourElapsedQualified:false}; fs.writeFileSync('qualification-results/windows-coverage-variants.json', JSON.stringify(report,null,2)+'\n'); process.stdout.write(JSON.stringify(report)+'\n'); process.exit(1);"
+        run: |
+          node -e "const fs=require('node:fs'); fs.mkdirSync('qualification-results',{recursive:true}); const report={passed:false,qualified: false,nativeExecutionQualified:false,hostCapabilityAbsentIsPass:false,powerLossDurabilityQualified:false,realRebootQualified:false,inUseKeyDeleted:false,blanketNetshReset:false,crashDumpContainmentQualified:false,nativeArm64ExecutionQualified:false,publishedPackageMigrationQualified:false,twentyFourHourElapsedQualified:false}; fs.writeFileSync('qualification-results/windows-coverage-variants.json', JSON.stringify(report,null,2)+'\n'); process.stdout.write(JSON.stringify(report)+'\n'); process.exit(1);"
+      - name: Preserve failed coverage evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-windows-coverage-variants-failed-evidence
+          retention-days: 7
+          if-no-files-found: error
+          path: qualification-results/windows-coverage-variants.json

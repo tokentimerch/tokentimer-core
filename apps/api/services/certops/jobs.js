@@ -1440,8 +1440,13 @@ async function resolveManagedCertificateJobDefaults({
   // through their job/enrollment transaction; later retirement cancels queued
   // jobs. Do not lock the source row: retirement intentionally skips busy caches.
   if (operation === "renew" &&
-      [row.status, row.identity_lifecycle_status].some(status =>
-        ["revoked", "decommissioned"].includes(status))) {
+      ["revoked", "decommissioned"].includes(row.identity_lifecycle_status)) {
+    // Keep the immutable lifecycle refusal ahead of custody/profile checks,
+    // even while the source status cache is stale or locked by observation.
+    throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
+  }
+  if (operation === "renew" &&
+      ["revoked", "decommissioned"].includes(row.status)) {
     throw serviceError("Retired certificates cannot be renewed", CERTOPS_CERTIFICATE_NOT_RENEWABLE);
   }
 

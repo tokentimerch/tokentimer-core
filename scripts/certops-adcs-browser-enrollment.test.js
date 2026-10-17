@@ -77,7 +77,10 @@ test("command entry writes a failed report and the workflow stays manual", () =>
   assert.doesNotMatch(workflow, /\npush:/);
   assert.match(workflow, /contents: read/);
   assert.match(workflow, /process\.exit\(1\)/);
-  assert.doesNotMatch(workflow, /upload-artifact|provision-lab|az deployment|bicep/);
+  assert.doesNotMatch(workflow, /provision-lab|az deployment|bicep|softprops\/action-gh-release/);
+  assert.match(workflow, /if: always\(\)\s+uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+  assert.match(workflow, /retention-days: 7\s+if-no-files-found: error/);
+  assert.match(workflow, /qualification-results\/adcs-browser-enrollment\.json/);
   const registration = fs.readFileSync(path.join(root, "scripts/_registration/adcs-coverage.json"), "utf8");
   assert.doesNotMatch(registration, /"implemented"/);
   const catalog = JSON.parse(registration);

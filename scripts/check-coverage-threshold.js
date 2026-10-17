@@ -17,23 +17,57 @@ function parseNum(flag, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function parseLcovTotals(text) {
+function parseLcovTotals(text, packageName, lcovPath) {
   const lines = String(text || "").split(/\r?\n/);
-  let lf = 0;
-  let lh = 0;
-  let brf = 0;
-  let brh = 0;
-  let fnf = 0;
-  let fnh = 0;
+  const totals = { lf: 0, lh: 0, brf: 0, brh: 0, fnf: 0, fnh: 0 };
+  let record = null;
+  let sources = 0;
+  const selected = (source) => {
+    const normalized = source.replaceAll("\\", "/");
+    if (packageName === "backend")
+      return /(?:^|\/)(?:apps\/(?:api|worker)|packages\/config)\//.test(normalized);
+    if (packageName === "frontend") {
+      // Vitest's dashboard-relative report uses SF:src/...; c8 reports may
+      // instead carry repository-relative or absolute source paths.
+      return /(?:^|\/)apps\/dashboard\//.test(normalized) ||
+        (normalized.startsWith("src/") &&
+          path.resolve(path.dirname(lcovPath)) ===
+            path.resolve(__dirname, "../apps/dashboard/coverage"));
+    }
+    return true;
+  };
   for (const line of lines) {
-    if (line.startsWith("LF:")) lf += Number(line.slice(3)) || 0;
-    else if (line.startsWith("LH:")) lh += Number(line.slice(3)) || 0;
-    else if (line.startsWith("BRF:")) brf += Number(line.slice(4)) || 0;
-    else if (line.startsWith("BRH:")) brh += Number(line.slice(4)) || 0;
-    else if (line.startsWith("FNF:")) fnf += Number(line.slice(4)) || 0;
-    else if (line.startsWith("FNH:")) fnh += Number(line.slice(4)) || 0;
+    if (line.startsWith("SF:")) {
+      if (record || !line.slice(3).trim()) throw new Error("invalid LCOV source record");
+      record = { source: line.slice(3) };
+    } else if (/^(?:LF|LH|BRF|BRH|FNF|FNH):/.test(line)) {
+      const match = /^(LF|LH|BRF|BRH|FNF|FNH):(\d+)$/.exec(line);
+      if (!match) throw new Error("invalid LCOV coverage count");
+      const [, field, raw] = match;
+      const key = field.toLowerCase();
+      if (!record || record[key] !== undefined ||
+          !Number.isSafeInteger(Number(raw))) throw new Error("invalid LCOV coverage count");
+      record[key] = Number(raw);
+    } else if (line === "end_of_record") {
+      if (!record || record.lf === undefined || record.lh === undefined)
+        throw new Error("LCOV record lacks instrumented line evidence");
+      for (const [found, hit] of [["lf", "lh"], ["brf", "brh"], ["fnf", "fnh"]]) {
+        if ((record[found] === undefined) !== (record[hit] === undefined))
+          throw new Error("incomplete LCOV coverage count pair");
+        if ((record[hit] ?? 0) > (record[found] ?? 0))
+          throw new Error("inconsistent LCOV coverage counts");
+      }
+      if (selected(record.source)) {
+        if (record.lf > 0) sources++;
+        for (const key of Object.keys(totals)) totals[key] += record[key] ?? 0;
+      }
+      record = null;
+    }
   }
-  return { lf, lh, brf, brh, fnf, fnh };
+  if (record) throw new Error("unterminated LCOV source record");
+  if (sources === 0 || totals.lf === 0)
+    throw new Error("no instrumented source lines for selected package");
+  return totals;
 }
 
 function pct(hit, found) {
@@ -86,7 +120,13 @@ function main() {
   }
 
   const content = fs.readFileSync(lcovPath, "utf8");
-  const totals = parseLcovTotals(content);
+  let totals;
+  try {
+    totals = parseLcovTotals(content, argValue("--package"), lcovPath);
+  } catch (error) {
+    console.error(`coverage-check: ${error.message}`);
+    process.exit(1);
+  }
   const linesPct = pct(totals.lh, totals.lf);
   const branchesPct = pct(totals.brh, totals.brf);
   const functionsPct = pct(totals.fnh, totals.fnf);

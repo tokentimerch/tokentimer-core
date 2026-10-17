@@ -20,6 +20,7 @@ test("actual streaming reporter emits every validated Linux native sidecar", asy
     "./certops-acme-certificate-outbox-report":
       event.nativeAcmeCertificateOutbox,
     "./certops-acme-disabled-profile-report": event.nativeAcmeDisabledProfile,
+    "./certops-acme-renewal-alert-report": event.nativeAcmeRenewalAlert,
   };
   const controlledFs = {
     ...fs,

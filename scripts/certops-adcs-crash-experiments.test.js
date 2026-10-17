@@ -34,7 +34,7 @@ test("crash experiment proofs are rejected for release qualification", () => {
   assert.equal(subject.assessLab(ready, "win32").hostCapabilityAbsentIsPass, false);
 });
 
-test("command entry writes a failed report and the workflow does not publish it", () => {
+test("command entry retains failed diagnostic evidence without publishing a release", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "adcs-crash-"));
   const reportPath = path.join(dir, "report.json");
   try {
@@ -58,7 +58,10 @@ test("command entry writes a failed report and the workflow does not publish it"
   assert.doesNotMatch(workflow, /\npush:/);
   assert.match(workflow, /contents: read/);
   assert.match(workflow, /process\.exit\(1\)/);
-  assert.doesNotMatch(workflow, /upload-artifact|softprops\/action-gh-release|provision-lab|bicep/);
+  assert.doesNotMatch(workflow, /softprops\/action-gh-release|provision-lab|bicep/);
+  assert.match(workflow, /if: always\(\)\s+uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+  assert.match(workflow, /retention-days: 7\s+if-no-files-found: error/);
+  assert.match(workflow, /qualification-results\/adcs-crash-experiments\.json/);
   const registration = JSON.parse(fs.readFileSync(path.join(root, "scripts/_registration/adcs-coverage.json"), "utf8"));
   assert.equal(registration.catalogStatus, "partial");
   assert.equal(registration.disposableForestRan, false);

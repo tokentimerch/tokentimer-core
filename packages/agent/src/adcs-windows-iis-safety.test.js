@@ -74,9 +74,19 @@ for (const phase of ["prepared", "keygen_intent", "keygen_intent-operator", "pre
     const executors=factory(stateDir);
     const handler=phase.startsWith("renew-") ? executors.executeWindowsIisAdcsRenewJob : executors.executeWindowsIisContinueEnrollmentJob;
     const result = await handler({ job, jobId: phase === "renew-foreign-job" ? "different-unit-job" : "safety-unit", client: {}, log: {},
-      executionContext: { execution: { keysDir: path.join(stateDir, "keys") }, adcsHelperPath: helper, adcsCaCertPath: caPath,
+      executionContext: { execution: { keysDir: path.join(stateDir, "keys") }, adcsHelperPath: helper, adcsCaCertPath: caPath, windowsKeySurvivorHelperPath: __filename,
         adcsEnrollmentRules: [{ caConfig: snapshot.caConfig, template: snapshot.template, dnsScopes:["example.com"],keyAlgorithms:["rsa","ecdsa"] }], adcsPreflightImpl: () => ({ preflightResult: facts("template") }),
-        windowsExecFileImpl(_file, args, _opts, callback) { calls.push(args); callback(null, "", ""); return { kill() {}, once() {}, pid: 1 }; } } });
+        windowsExecFileImpl(file, args, _opts, callback) {
+          calls.push(args);
+          // Deletion is permitted only after the actual adapter accepts a
+          // complete, unshared machine-store inventory. No native helper runs.
+          if (args[0] === "--key-survivors") {
+            assert.equal(file, __filename);
+            assert.deepEqual(args, ["--key-survivors", "--container", containerName]);
+            callback(null, JSON.stringify({ complete: true, shared: false, storesScanned: 3, certificatesScanned: 0, matches: 0 }), "");
+          } else callback(null, "", "");
+          return { kill() {}, once() {}, pid: 1 };
+        } } });
     if (phase === "renew-foreign-job") {
       assert.equal(result.status,"blocked");assert.match(result.errorMessage,/use continue-enrollment/);
       assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"prepared");assert.equal(calls.length,0);return;
@@ -97,7 +107,9 @@ for (const phase of ["prepared", "keygen_intent", "keygen_intent-operator", "pre
       assert.equal(refused.journal.preSubmitPhase, "keygen_intent");
       assert.equal(refused.journal.csrSpkiSha256, undefined); assert.equal(refused.journal.templateOid, undefined);
     }
-    assert.equal(calls.length, 1); assert.deepEqual(calls[0], ["-csp", "Microsoft Software Key Storage Provider", "-delkey", containerName]);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], ["--key-survivors", "--container", containerName]);
+    assert.deepEqual(calls[1], ["-csp", "Microsoft Software Key Storage Provider", "-delkey", containerName]);
   } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
 });
 
@@ -125,8 +137,8 @@ for(const boundary of ["pending-cleanup","pending-cleanup-failure","accepted-key
     await writeEnrollmentJournal(stateDir,enrollmentId,{state:"pending",attempt:1,containerName,snapshotSha256:job.enrollment.snapshotSha256,jobId:"local-policy-unit",csrSha256,csrSpkiSha256:"ab".repeat(32),templateOid,caConfig:snapshot.caConfig,template:snapshot.template,requestId:17});
     if(boundary==="accepted-key-protected"){recordIssuedContainer({stateDir,containerName,jobId:"prior-unit",certificateId:job.certificateId});assert.equal(markIssuedContainerAccepted({stateDir,containerName,acceptedThumbprint:"AA".repeat(20),store:"My"}),true);}
     const calls=[];
-    const result=await factory(stateDir).executeWindowsIisContinueEnrollmentJob({job,jobId:"local-policy-unit",client:{},log:{},executionContext:{execution:{keysDir:path.join(stateDir,"keys")},adcsEnrollmentRules:[{caConfig:snapshot.caConfig,template:snapshot.template,dnsScopes:["outside.test"],keyAlgorithms:["rsa"]}],adcsPreflightImpl(){throw new Error("Local refusal must precede CA contact");},windowsExecFileImpl(file,args,opts,callback){calls.push(args);if(boundary==="pending-cleanup-failure")callback(Object.assign(new Error("Denied fixture key deletion"),{code:5}),"","");else callback(null,args.includes("-key")?`${containerName}\n`:"","");return {kill(){},once(){},pid:1};}}});
-    if(boundary==="pending-cleanup"){assert.equal(result.status,"rejected");assert.equal(result.enrollmentResult.state,"refused");assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"refused");assert.equal(calls.length,2);assert.deepEqual(calls[1],["-csp","Microsoft Software Key Storage Provider","-delkey",containerName]);}
-    else{assert.equal(result.status,"failed");assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"pending");assert.equal(calls.length,boundary==="accepted-key-protected"?0:1);assert.match(result.errorMessage,boundary==="accepted-key-protected"?/already accepted/:/retry required/);}
+    const result=await factory(stateDir).executeWindowsIisContinueEnrollmentJob({job,jobId:"local-policy-unit",client:{},log:{},executionContext:{execution:{keysDir:path.join(stateDir,"keys")},windowsKeySurvivorHelperPath:__filename,adcsEnrollmentRules:[{caConfig:snapshot.caConfig,template:snapshot.template,dnsScopes:["outside.test"],keyAlgorithms:["rsa"]}],adcsPreflightImpl(){throw new Error("Local refusal must precede CA contact");},windowsExecFileImpl(file,args,opts,callback){calls.push(args);if(boundary==="pending-cleanup-failure"&&args.includes("-delkey"))callback(Object.assign(new Error("Denied fixture key deletion"),{code:5}),"","");else if(args[0]==="--key-survivors"){assert.equal(file,__filename);assert.deepEqual(args,["--key-survivors","--container",containerName]);callback(null,JSON.stringify({complete:true,shared:false,storesScanned:3,certificatesScanned:0,matches:0}),"");}else callback(null,args.includes("-key")?`${containerName}\n`:"","");return {kill(){},once(){},pid:1};}}});
+    if(boundary==="pending-cleanup"){assert.equal(result.status,"rejected");assert.equal(result.enrollmentResult.state,"refused");assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"refused");assert.equal(calls.length,3);assert.deepEqual(calls[0],["-csp","Microsoft Software Key Storage Provider","-key"]);assert.deepEqual(calls[1],["--key-survivors","--container",containerName]);assert.deepEqual(calls[2],["-csp","Microsoft Software Key Storage Provider","-delkey",containerName]);}
+    else{assert.equal(result.status,"failed");assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"pending");assert.equal(calls.length,boundary==="accepted-key-protected"?0:3);assert.match(result.errorMessage,boundary==="accepted-key-protected"?/already accepted/:/retry required/);}
   }finally{await fsp.rm(stateDir,{recursive:true,force:true});}
 });

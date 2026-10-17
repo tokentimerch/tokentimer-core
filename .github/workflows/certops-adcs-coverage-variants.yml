@@ -5,6 +5,7 @@ permissions:
   contents: read
 jobs:
   failed-coverage-report:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -16,3 +17,18 @@ jobs:
           node-version: "24"
       - name: Write failed coverage reports
         run: node -e "const files=['browser-enrollment','install-interruption','lost-submit','uncertain-abandon','cmc-renewal','safety-variants','crash-experiments']; for (const name of files) { const code=require('./scripts/certops-adcs-'+name).main(); if (code!==1) process.exit(1);} process.exit(1);"
+      - name: Preserve failed coverage evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: certops-adcs-coverage-variants-failed-evidence
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            qualification-results/adcs-browser-enrollment.json
+            qualification-results/adcs-install-interruption.json
+            qualification-results/adcs-lost-submit.json
+            qualification-results/adcs-uncertain-abandon.json
+            qualification-results/adcs-cmc-renewal.json
+            qualification-results/adcs-safety-variants.json
+            qualification-results/adcs-crash-experiments.json

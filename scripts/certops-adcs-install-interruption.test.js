@@ -91,6 +91,9 @@ test("command entry writes a failed report and does not claim a forest", () => {
   assert.match(workflow, /^on:\n {2}workflow_dispatch:\n/m);
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.doesNotMatch(workflow, /\npush:/);
-  assert.doesNotMatch(workflow, /upload-artifact|provision-lab|bicep/);
+  assert.doesNotMatch(workflow, /provision-lab|bicep|softprops\/action-gh-release/);
+  assert.match(workflow, /if: always\(\)\s+uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+  assert.match(workflow, /retention-days: 7\s+if-no-files-found: error/);
+  assert.match(workflow, /qualification-results\/adcs-install-interruption\.json/);
   for (const rel of subject.REQUIRED_SOURCES) assert.equal(fs.existsSync(path.join(root, rel)), true, rel);
 });

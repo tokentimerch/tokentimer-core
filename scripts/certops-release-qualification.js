@@ -13,6 +13,17 @@ const { verify: verifyStack } = require("./certops-stack-report");
 const { verify: verifyDatabase } = require("./certops-integration-report");
 const matrix = require("../docs/certops/release-qualification-matrix.json");
 const catalog = require("../docs/certops/e2e-scenario-catalog.json");
+// These registrations describe local contracts, with no native qualifying
+// producer. A passed outer envelope must never upgrade their simulated proofs.
+// A future native implementation must deliberately replace this eligibility gate.
+const localContractSuites = new Set([
+  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id),
+  ...require("./_registration/cross-coverage.json").suites.map(item => item.id),
+  ...require("./_registration/windows-coverage.json").contracts.map(item => item.suiteId),
+  "windows-installed-bind-failure-rollback",
+  "windows-installed-interruption-recovery",
+  "native-adcs-issuer-reassignment",
+]);
 function catalogCoverage(specification = catalog) {
   const errors = require("./certops-qualification-catalog").validateCatalog(specification);
   if (errors.length) throw new Error("Invalid committed scenario catalog");
@@ -91,6 +102,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
       if (slot.kind === "host") {
         if (artifact.report.suite !== slot.suite) throw new Error("Suite mismatch");
         if (verifyReport(artifact.report, undefined, { expectedSha: candidateSha }).length) throw new Error("Mandatory runtime evidence incomplete");
+        if (localContractSuites.has(slot.suite)) throw new Error("Local-contract-only suite has no native qualifying producer");
         if (slot.suite === "dns-provider-errors") require("./certops-dns-provider-errors-report").verifyDnsErrors(artifact.report);
         if(slot.suite==="linux-native-acme-browser-lifecycle"){
           require("../tests/e2e/helpers/certops-acme-browser-lifecycle").verifyProof(artifact.report.nativeAcmeBrowserLifecycle);
@@ -126,9 +138,15 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           if (native.candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Installed timer native environment, original candidate and cleanup required");
         }
         if (slot.suite === "windows-domain-adcs-retention24h") require("./certops-retention24h-proof").verifyProof(artifact.report.nativeRetention24h);
-        if (slot.suite === "windows-canonical-root-lifecycle") require("../tests/e2e/helpers/certops-windows-fixed-root").verifyProof(artifact.report.nativeCanonicalRoot);
+        if (slot.suite === "windows-canonical-root-lifecycle") {
+          if (artifact.report.nativeCanonicalRoot?.scope !== "unmodified-candidate-cli-canonical-root-same-version-reapplication") throw new Error("Native canonical-root lifecycle proof required; local contract cannot qualify");
+          require("../tests/e2e/helpers/certops-windows-fixed-root").verifyProof(artifact.report.nativeCanonicalRoot);
+        }
         if (slot.suite === "windows-installer-first-rename-refusal") require("../tests/e2e/helpers/certops-windows-rename-refusal").verifyProof(artifact.report.nativeRenameRefusal);
-        if (slot.suite === "windows-activation-second-rename") require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(artifact.report.nativeSecondRename);
+        if (slot.suite === "windows-activation-second-rename") {
+          if (artifact.report.nativeSecondRename?.scope !== "production-activation-functions-not-installer-cli") throw new Error("Native second-rename activation proof required; local contract cannot qualify");
+          require("../tests/e2e/helpers/certops-windows-second-rename").verifyProof(artifact.report.nativeSecondRename);
+        }
         if (slot.suite === "windows-installer-cli-second-rename") require("../tests/e2e/helpers/certops-windows-cli-second-rename").verifyProof(artifact.report.nativeCliSecondRename);
         if (slot.suite === "windows-arm64-installed-agent") require("./certops-arm64-installed-proof").verifyRuntimeReport(artifact.report);
         if (slot.suite === "windows-arm64-packaged-scm") require("./certops-arm64-scm-proof").verifyRuntimeReport(artifact.report);

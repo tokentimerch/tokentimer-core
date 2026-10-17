@@ -5,6 +5,14 @@ const assert = require("node:assert/strict");
 const DOMAIN = Object.freeze([
   "enterprise-adcs-real",
   "enterprise-adcs-hierarchy-real",
+  "native-adcs-issuer-reassignment",
+  "adcs-browser-enrollment",
+  "adcs-install-interruption",
+  "adcs-lost-submit",
+  "adcs-uncertain-abandon",
+  "adcs-cmc-renewal",
+  "adcs-safety-variants",
+  "adcs-crash-experiments",
 ]);
 const EXTENDED = Object.freeze([
   "enterprise-adcs-elapsed-pending-real",

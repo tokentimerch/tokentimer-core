@@ -2780,6 +2780,27 @@ describe("CertOps jobs service - managed certificate ownership guard", () => {
     );
   });
 
+  it("prioritizes immutable retirement during renew admission despite a stale source cache", async () => {
+    for (const status of ["revoked", "decommissioned"]) {
+      for (const cachedStatus of ["active", status]) {
+        const client = createOwnershipMemoryClient({ certificates: [{
+          workspace_id: WORKSPACE_A,
+          id: AGENT_LOCAL_CERT_ID,
+          key_mode: "agent-local",
+          status: cachedStatus,
+          identity_lifecycle_status: status,
+          profile_status: "disabled",
+        }] });
+        await assert.rejects(createCertificateJob({
+          client, workspaceId: WORKSPACE_A, operation: "renew",
+          subjectType: "managed_certificate", subjectId: AGENT_LOCAL_CERT_ID,
+          payload: {}, mode: "dry_run",
+        }), { code: "CERTOPS_CERTIFICATE_RETIRED" });
+        assert.equal(client.jobs.length, 0);
+      }
+    }
+  });
+
   it("allows a renew job for a managed_certificate with agent-local key custody and no discovery agent", async () => {
     const client = createOwnershipMemoryClient({
       certificates: [
