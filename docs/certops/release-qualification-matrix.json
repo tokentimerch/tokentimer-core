@@ -3417,7 +3417,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-linux-trust-receipt-conflict.js"
       ]
     },
     {
@@ -3442,7 +3443,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-linux-trust-receipt-conflict.js"
       ]
     },
     {
@@ -3467,7 +3469,8 @@
         "packages/agent/src/platform/index.js",
         "packages/agent/src/platform/durability.js",
         "packages/agent/vendor/log-scrub/secret-material.js",
-        "packages/agent/scripts/host-gate.js"
+        "packages/agent/scripts/host-gate.js",
+        "scripts/certops-linux-trust-receipt-conflict.js"
       ]
     },
     {

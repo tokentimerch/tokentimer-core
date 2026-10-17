@@ -25,7 +25,8 @@ class IndependentTrustProjection(unittest.TestCase):
             value["privateLocalFiles"] = "must-not-survive"
             actual = collector.sanitized_report(value, {proof.SUITE}, set())
             self.assertEqual(actual[proof.FIELD], value[proof.FIELD])
-            self.assertEqual(len(actual["fixtureSources"]), 11)
+            self.assertEqual(len(actual["fixtureSources"]), 12)
+            self.assertEqual(actual[proof.CONFLICT_FIELD], value[proof.CONFLICT_FIELD])
             self.assertNotIn("must-not-survive", json.dumps(actual))
 
     def test_each_native_observation_is_required_and_private_inner_fields_refuse(self):
@@ -39,6 +40,24 @@ class IndependentTrustProjection(unittest.TestCase):
         for change in ({"family": "rhel"}, {"rawKey": "secret"}, {"derivedReferenceKind": "declared"}, {"rootFingerprints": ["a" * 64, "a" * 64]}):
             value = copy.deepcopy(original)
             value[proof.FIELD].update(change)
+            with self.assertRaises(ValueError):
+                proof.project_report(value)
+
+    def test_native_receipt_conflict_scope_facts_and_no_serialization_promotion(self):
+        original = report()
+        for flag in proof.CONFLICT_FLAGS:
+            for wrong in (False, 1, None, "true"):
+                value = copy.deepcopy(original)
+                value[proof.CONFLICT_FIELD][flag] = wrong
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(value, {proof.SUITE}, set())
+            value = copy.deepcopy(original)
+            value[proof.CONFLICT_FIELD].pop(flag)
+            with self.assertRaises(ValueError):
+                proof.project_report(value)
+        for change in ({"writerCount": True}, {"family": "rhel"}, {"serializationQualified": True}, {"partialWriteRecoveryQualified": True}, {"losingFailureCategory": None}, {"secondJobId": original[proof.CONFLICT_FIELD]["firstJobId"]}, {"rawKey": "withheld"}):
+            value = copy.deepcopy(original)
+            value[proof.CONFLICT_FIELD].update(change)
             with self.assertRaises(ValueError):
                 proof.project_report(value)
 

@@ -49,3 +49,13 @@ test("trust release rejects wrong native family, unclosed proof, skipped cases a
     assert.ok(errors(value).length);
   }
 });
+
+test("native receipt conflict recovery cannot imply serialized writers or partial-write recovery",()=>{
+  const helper=require("./certops-linux-trust-receipt-conflict");
+  for(const version of ["22.04","24.04","9.6"]){assert.deepEqual(errors(fixture.artifact(version),version),[]);for(const file of helper.REQUIRED_SOURCES)assert.ok(fixture.slot(version).requiredSources.includes(file));}
+  assert.ok(fixture.IDS.includes(helper.SCENARIO));
+  for(const flag of helper.FLAGS){for(const wrong of [false,1,"true",null]){const value=fixture.artifact();value.report.nativeTrustReceiptConflict[flag]=wrong;assert.ok(errors(value).length);}const missing=fixture.artifact();delete missing.report.nativeTrustReceiptConflict[flag];assert.ok(errors(missing).length);}
+  for(const change of [{serializationQualified:true},{partialWriteRecoveryQualified:true},{family:"rhel"},{writerCount:1},{losingFailureCategory:null},{rawKey:"withheld"}]){const value=fixture.artifact();Object.assign(value.report.nativeTrustReceiptConflict,change);assert.ok(errors(value).length);}
+  const absent=fixture.artifact();delete absent.report.nativeTrustReceiptConflict;assert.ok(errors(absent).length);
+  for(const file of helper.REQUIRED_SOURCES){const value=fixture.artifact();value.report.fixtureSources.find(row=>row.file===file).sha256="e".repeat(64);assert.ok(errors(value).length);}
+});

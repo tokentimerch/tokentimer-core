@@ -25,6 +25,7 @@ function nativeProof(version = "24.04") {
   };
 }
 
+function conflictProof(version="24.04"){const h=require("../certops-linux-trust-receipt-conflict");return {schemaVersion:1,scope:h.SCOPE,family:version==="9.6"?"rhel":"debian",writerCount:2,serializationQualified:false,partialWriteRecoveryQualified:false,detachedDescendantContainmentQualified:false,losingFailureCategory:"receipt_finalize_conflict",firstJobId:"11111111-1111-4111-8111-111111111111",secondJobId:"22222222-2222-4222-8222-222222222222",fingerprints:["a".repeat(64),"b".repeat(64)],...Object.fromEntries(h.FLAGS.map(name=>[name,true]))};}
 function artifact(version = "24.04") {
   const environment = {
     osFamily: "linux",
@@ -73,7 +74,8 @@ function artifact(version = "24.04") {
       finishedAt,
     })),
     fixtureSource: source("scripts/certops-linux-trust.js"),
-    fixtureSources: helper.REQUIRED_SOURCES.map(source),
+    fixtureSources: [...new Set([...helper.REQUIRED_SOURCES,...require("../certops-linux-trust-receipt-conflict").REQUIRED_SOURCES])].map(source),
+    nativeTrustReceiptConflict: conflictProof(version),
     nativeIndependentTrustRoots: nativeProof(version),
   };
   return { kind: "host", suite: SUITE, environment, report };
@@ -84,4 +86,4 @@ function slot(version = "24.04") {
   );
 }
 
-module.exports = { artifact, slot, nativeProof, SUITE, CANDIDATE, IDS, CAPS };
+module.exports = { artifact, slot, nativeProof, conflictProof, SUITE, CANDIDATE, IDS, CAPS };

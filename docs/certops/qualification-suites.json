@@ -472,7 +472,8 @@
       "linux-trust-cleanup": "real-host",
       "linux-trust-renewal-policy-refusal": "real-host",
       "linux-trust-receipt-finalize-recovery": "real-host",
-      "linux-trust-independent-root-selective-revoke": "real-host"
+      "linux-trust-independent-root-selective-revoke": "real-host",
+      "linux-trust-native-receipt-conflict-recovery": "real-host"
     },
     "filesystem-host": {
       "filesystem-first-deploy": "real-host",
@@ -2704,7 +2705,8 @@
       "linux-trust-cleanup",
       "linux-trust-renewal-policy-refusal",
       "linux-trust-receipt-finalize-recovery",
-      "linux-trust-independent-root-selective-revoke"
+      "linux-trust-independent-root-selective-revoke",
+      "linux-trust-native-receipt-conflict-recovery"
     ],
     "filesystem-host": [
       "filesystem-first-deploy",

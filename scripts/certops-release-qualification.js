@@ -356,6 +356,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           if (slot.suite === "windows-published-package-upgrade-contract" && proof.publishedPackageMigrationQualified !== false) throw new Error("Published package migration stays blocked");
         }
         if (slot.suite === "linux-trust-host") {
+          const conflict=artifact.report.nativeTrustReceiptConflict;require("./certops-linux-trust-receipt-conflict").verifyProof(conflict);
+          if(conflict.family!==artifact.report.nativeIndependentTrustRoots?.family)throw new Error("Native receipt conflict family differs from trust host");
           const h=require("./certops-linux-trust-independent-roots"),p=artifact.report.nativeIndependentTrustRoots,n=artifact.report.qualificationEnvironment;h.verifyProof(p);
           if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || n.osFamily!=="linux" || !((p.family==="debian" && n.distribution==="ubuntu" && ["22.04","24.04"].includes(n.osVersion) && n.executionSurface==="disposable-vm")||(p.family==="rhel" && n.distribution==="almalinux" && n.osVersion==="9.6" && n.executionSurface==="disposable-container")))throw new Error("Native independent trust platform required");
         }

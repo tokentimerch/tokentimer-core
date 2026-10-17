@@ -9,11 +9,12 @@ const { spawnSync } = require("node:child_process");
 const { X509Certificate, createHash, randomUUID } = require("node:crypto");
 const { receiptFinalizeRecovery } = require("./certops-linux-trust-receipt-fault");
 const independentRoots = require("./certops-linux-trust-independent-roots");
+const receiptConflict = require("./certops-linux-trust-receipt-conflict");
 const trust = require("../packages/agent/src/trust-store");
 const { executeTrustJob } = require("../packages/agent/src");
 const { loadPolicyConfig, createPolicyEngine } = require("../packages/agent/src/policy");
 const { createHostGate } = require("../packages/agent/scripts/host-gate");
-const scenarios = ["linux-trust-root-derived", "linux-trust-intermediate-derived", "linux-trust-restart-replay", "linux-trust-preexisting-protected", "linux-trust-invalid-anchor", "linux-trust-refresh-recovery", "linux-trust-corrupt-receipt", "linux-trust-owned-revoke", "linux-trust-cleanup", "linux-trust-renewal-policy-refusal", "linux-trust-receipt-finalize-recovery", independentRoots.SCENARIO];
+const scenarios = ["linux-trust-root-derived", "linux-trust-intermediate-derived", "linux-trust-restart-replay", "linux-trust-preexisting-protected", "linux-trust-invalid-anchor", "linux-trust-refresh-recovery", "linux-trust-corrupt-receipt", "linux-trust-owned-revoke", "linux-trust-cleanup", "linux-trust-renewal-policy-refusal", "linux-trust-receipt-finalize-recovery", independentRoots.SCENARIO, receiptConflict.SCENARIO];
 function native(file, args, expectedSuccess = true) {
   const result = spawnSync(file, args, { encoding: "utf8", timeout: 120000, maxBuffer: 2 * 1024 * 1024 });
   if (expectedSuccess) assert.equal(result.status, 0, `${path.basename(file)} failed; raw output withheld`);
@@ -56,7 +57,7 @@ async function main() {
   });
   const gate = createHostGate({ suite: "linux-trust-host", strict: true, requiredCapabilities: ["native-linux-trust-refresh", "openssl-chain-oracle"], fixtureSource: { file: "scripts/certops-linux-trust.js", sha256: createHash("sha256").update(fs.readFileSync(__filename)).digest("hex") }, probeCapabilities: async () => ({ "native-linux-trust-refresh": { available: fs.existsSync(anchorsDir) && refreshExecutable }, "openssl-chain-oracle": { available: native("openssl", ["version"]).status === 0 } }) });
   gate.report.qualificationEnvironment = { osFamily: "linux", osVersion: field("VERSION_ID"), distribution: field("ID"), measurement: "native", executionSurface: containerObserved ? "disposable-container" : "disposable-vm" };
-  gate.report.fixtureSources=independentRoots.REQUIRED_SOURCES.map(file=>({file,sha256:createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
+  gate.report.fixtureSources=[...new Set([...independentRoots.REQUIRED_SOURCES,...receiptConflict.REQUIRED_SOURCES])].map(file=>({file,sha256:createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"..",file))).digest("hex")}));
   function openssl(args) { return native("openssl", args); }
   function cert(name, issuer) {
     const key = path.join(workDir, `${name}.key`), csr = path.join(workDir, `${name}.csr`), pem = path.join(workDir, `${name}.crt`);
@@ -159,6 +160,9 @@ async function main() {
     await gate.scenario(independentRoots.SCENARIO, async () => {
       gate.report.nativeIndependentTrustRoots=await independentRoots.qualifyIndependentRoots({family,workDir,receiptDir,input,job,sourcePath,ownedPaths,ownedAnchors,native});
     }, {oracle:"Two real independent CA/leaf pairs have default native trust; selective owned revocation preserves sibling receipt, source and derived trust before final owned removal"});
+    await gate.scenario(receiptConflict.SCENARIO, async () => {
+      gate.report.nativeTrustReceiptConflict = await receiptConflict.qualifyReceiptConflict({family,workDir,receiptDir,certificate:cert("receipt-conflict-root"),protectedRoot:root,protectedLeaf:leaf,input,job,sourcePath,ownedPaths,ownedAnchors,native});
+    }, {oracle:"Two real writer processes with a fixture-wrapped genuine first native refresh produce a tagged losing receipt conflict; fresh default processes replay/revoke while unrelated root receipt/source/default leaf trust stay unchanged"});
     await gate.scenario(scenarios[7], async () => {
       for (const [certificate, type] of [[intermediate, "intermediate"], [root, "root"]]) {
         const result = await trust.revokeTrust(input(job(certificate, type, "revoke-trust")));
@@ -171,6 +175,7 @@ async function main() {
     try {
       const clean = async () => {
         independentRoots.assertCleanupSafe(workDir);
+        receiptConflict.assertCleanupSafe(workDir);
         const errors = [];
         for (const file of ownedPaths) { try { assert.equal(path.dirname(file), anchorsDir); fs.rmSync(file, { force: true }); } catch (error) { errors.push(error); } }
         try { update(); } catch (error) { errors.push(error); }
