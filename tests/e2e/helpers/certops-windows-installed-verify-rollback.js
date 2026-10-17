@@ -369,7 +369,7 @@ async function freePort() {
   return port;
 }
 
-async function qualifyInternal(c, rollbackFailure) {
+async function qualifyInternal(c, rollbackFailure, bindFailure = false) {
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_WINDOWS_DISPOSABLE_HOST, "1");
   const {
@@ -505,6 +505,8 @@ async function qualifyInternal(c, rollbackFailure) {
   assert.equal(siblingIis.thumb, originalThumb);
   assert.equal(sha((await peer(c, siblingPort)).raw), sha(originalLeaf.raw));
   const shadowAppId = crypto.randomUUID();
+  let shadowNative;
+  if (!bindFailure) {
   run("netsh.exe", [
     "http",
     "add",
@@ -514,7 +516,7 @@ async function qualifyInternal(c, rollbackFailure) {
     `appid={${shadowAppId}}`,
     "certstorename=My",
   ]);
-  const shadowNative = await endpoint(shadowSelector);
+  shadowNative = await endpoint(shadowSelector);
   assert.equal(shadowNative?.thumbprint, originalThumb);
   assert.equal(String(shadowNative.storeName).toLowerCase(), "my");
   assert.equal(
@@ -536,6 +538,7 @@ async function qualifyInternal(c, rollbackFailure) {
     "Actual native shadow conflict must be observable",
   );
   assert.equal(sha((await peer(c)).raw), sha(originalLeaf.raw));
+  }
   let predecessorHolder;
   if (rollbackFailure) {
     const holder = require("./certops-windows-predecessor-holder");
@@ -593,6 +596,7 @@ async function qualifyInternal(c, rollbackFailure) {
     return response.body.job.id;
   };
   const failedJobId = await submit();
+  if (bindFailure) c.nativeBindInterposer.admit(failedJobId);
   const failed = await waitUntil(async () => {
     const row = await job(failedJobId);
     return ["succeeded", "failed", "cancelled", "rejected"].includes(
@@ -619,7 +623,7 @@ async function qualifyInternal(c, rollbackFailure) {
     failed.error_message,
     rollbackFailure
       ? /IIS binding deploy failed \(VERIFY_FAILED\).*rolledBack: false/
-      : /IIS binding deploy failed \(VERIFY_FAILED\).*rolledBack: true/,
+      : bindFailure ? /IIS binding deploy failed \(BIND_FAILED\).*rolledBack: true/ : /IIS binding deploy failed \(VERIFY_FAILED\).*rolledBack: true/,
   );
   const failures = (
     await pool.query(
@@ -630,7 +634,7 @@ async function qualifyInternal(c, rollbackFailure) {
   assert.ok(
     failures.some(
       (row) =>
-        row.metadata.code === "VERIFY_FAILED" &&
+        row.metadata.code === (bindFailure ? "BIND_FAILED" : "VERIFY_FAILED") &&
         row.metadata.rolledBack === !rollbackFailure,
     ),
     "Actual current-claim verify failure/rollback evidence required",
@@ -648,6 +652,7 @@ async function qualifyInternal(c, rollbackFailure) {
     )
     .filter((record) => record.jobId === failedJobId);
   assert.equal(records.length, 1);
+  const nativeBindReceipt = bindFailure ? c.nativeBindInterposer.receipt(records[0].acceptedThumbprint) : null;
   validateIssued(
     records[0],
     failedJobId,
@@ -704,9 +709,11 @@ async function qualifyInternal(c, rollbackFailure) {
     ),
     "Original private custody changed during failed cutover",
   );
-  assertOwnedEndpoint(await endpoint(shadowSelector), shadowNative);
-  owned();
-  run("netsh.exe", ["http", "delete", "sslcert", shadowSelector]);
+  if (!bindFailure) {
+    assertOwnedEndpoint(await endpoint(shadowSelector), shadowNative);
+    owned();
+    run("netsh.exe", ["http", "delete", "sslcert", shadowSelector]);
+  }
   assert.equal(await endpoint(shadowSelector), undefined);
   if (rollbackFailure) assert.equal(await endpoint(hostSelector), undefined);
   else assert.equal(sha((await peer(c)).raw), sha(originalLeaf.raw));
@@ -863,8 +870,9 @@ async function qualifyInternal(c, rollbackFailure) {
   const failedContract = rollbackFailure
     ? require("./certops-windows-installed-failed-rollback")
     : null;
+  const bindContract = bindFailure ? require("./certops-windows-installed-bind-failure-native") : null;
   const proof = {
-    scope: failedContract ? failedContract.SCOPE : SCOPE,
+    scope: bindContract ? bindContract.SCOPE : failedContract ? failedContract.SCOPE : SCOPE,
     certificateId,
     jobIds: [failedJobId, retryJobId],
     claimIds: [claim, retry.claim_id],
@@ -879,10 +887,10 @@ async function qualifyInternal(c, rollbackFailure) {
       spki(latestLeaf),
     ],
     failedJobStatus: "failed",
-    failureCode: "VERIFY_FAILED",
+    failureCode: bindFailure ? "BIND_FAILED" : "VERIFY_FAILED",
     rolledBack: !rollbackFailure,
     retryJobStatus: "succeeded",
-    bindFailureQualified: false,
+    bindFailureQualified: bindFailure,
     rollbackFailureQualified: rollbackFailure,
     ...(rollbackFailure
       ? { originalOperationAutomaticallyRecovered: false }
@@ -890,13 +898,14 @@ async function qualifyInternal(c, rollbackFailure) {
     transientNewBindingObservationQualified: false,
     appIdPreservationQualified: false,
     ...Object.fromEntries(
-      (failedContract ? failedContract.FLAGS : FLAGS).map((name) => [
+      (bindContract ? bindContract.FLAGS : failedContract ? failedContract.FLAGS : FLAGS).map((name) => [
         name,
         true,
       ]),
     ),
   };
-  (failedContract ? failedContract.verifyProof : verifyProof)(proof);
+  if (bindFailure) { proof.nativeInterposer = nativeBindReceipt; proof.serviceEnvironmentRestored = false; }
+  else (failedContract ? failedContract.verifyProof : verifyProof)(proof);
   return { proof, latestLeaf, latestThumbprint };
 }
 function qualify(c) {
@@ -925,4 +934,5 @@ module.exports = {
   readOwned,
   qualify,
   qualifyFailedRollback,
+  qualifyBindFailure: c => qualifyInternal(c, false, true),
 };

@@ -76,7 +76,7 @@ public sealed class ContainedNativeJob : IDisposable  {
     public static void AssertAbi() {
         if(IntPtr.Size!=8 || Marshal.SizeOf(typeof(Startup))!=104 || Marshal.SizeOf(typeof(ProcessInfo))!=24 || Marshal.SizeOf(typeof(Accounting))!=48 || Marshal.SizeOf(typeof(ExtendedLimit))!=144 || Marshal.SizeOf(typeof(BasicLimit))!=64 || Marshal.SizeOf(typeof(SecurityAttributes))!=24 || Marshal.OffsetOf(typeof(Startup),"input").ToInt64()!=80 || Marshal.OffsetOf(typeof(ProcessInfo),"processId").ToInt64()!=16 || Marshal.OffsetOf(typeof(Accounting),"ActiveProcesses").ToInt64()!=40 || Marshal.OffsetOf(typeof(ExtendedLimit),"ProcessMemoryLimit").ToInt64()!=112)throw new Exception("Unsupported native process-job ABI");
     }
-    public ContainedNativeJob(string executable,string commandLine,string directory) {
+    public ContainedNativeJob(string executable,string commandLine,string directory,string outputPath=null,string errorPath=null) {
         AssertAbi();
         job=CreateJobObject(IntPtr.Zero,null);
         Require(job!=IntPtr.Zero);
@@ -96,10 +96,24 @@ public sealed class ContainedNativeJob : IDisposable  {
             startup.input=nullFile;
             startup.output=nullFile;
             startup.error=nullFile;
+            IntPtr outputFile=IntPtr.Zero,errorFile=IntPtr.Zero;
             try  {
+                // Optional fixture-only byte capture. The caller owns and pins
+                // the private directory, bounds output, and waits for the entire
+                // retained job before reading. Ordinary launches still use NUL.
+                if(outputPath!=null || errorPath!=null) {
+                    Require(outputPath!=null && errorPath!=null);
+                    outputFile=CreateFile(outputPath,0x40000000,1,ref attributes,1,0x80,IntPtr.Zero);
+                    Require(outputFile!=new IntPtr(-1));
+                    errorFile=CreateFile(errorPath,0x40000000,1,ref attributes,1,0x80,IntPtr.Zero);
+                    Require(errorFile!=new IntPtr(-1));
+                    startup.output=outputFile; startup.error=errorFile;
+                }
                 Require(CreateProcess(executable,new System.Text.StringBuilder(commandLine),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,directory,ref startup,out child));
             }
             finally  {
+                if(outputFile!=IntPtr.Zero && outputFile!=new IntPtr(-1))Require(CloseHandle(outputFile));
+                if(errorFile!=IntPtr.Zero && errorFile!=new IntPtr(-1))Require(CloseHandle(errorFile));
                 Require(CloseHandle(nullFile));
             }
             process=child.process;

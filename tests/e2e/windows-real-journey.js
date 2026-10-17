@@ -63,6 +63,8 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const stoppedOfflineOnly=process.env.CERTOPS_WINDOWS_STOP_OFFLINE_REQUIRED === "1";
   const aliveGraceOnly=process.env.CERTOPS_WINDOWS_ALIVE_GRACE_REQUIRED === "1";
   const failedRollbackOnly=process.env.CERTOPS_WINDOWS_FAILED_ROLLBACK_REQUIRED === "1";
+  const bindFailureOnly=process.env.CERTOPS_WINDOWS_BIND_FAILURE_REQUIRED === "1";
+  if(bindFailureOnly){assert.ok(!failedRollbackOnly&&!aliveGraceOnly&&!stoppedOfflineOnly&&!historicalSupportingOnly);assert.equal(process.env.CERTOPS_REPORT_SCOPE,"real-agent-windows-bind-failure/rsa-2048");assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE,"rsa-2048");}
   assert.ok(!failedRollbackOnly||(!aliveGraceOnly&&!stoppedOfflineOnly),"Distinct failed-rollback native scope required");
   if(failedRollbackOnly){assert.equal(process.env.CERTOPS_REPORT_SCOPE,"real-agent-windows-failed-rollback/rsa-2048");assert.equal(process.env.CERTOPS_WINDOWS_KEY_PROFILE||"rsa-2048","rsa-2048");assert.equal(historicalSupportingOnly,false);assert.ok(!process.env.CERTOPS_WINDOWS_HISTORICAL_PACKAGE);}
   assert.ok(!(stoppedOfflineOnly&&aliveGraceOnly),"Distinct extended native scopes required");
@@ -113,6 +115,9 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
   const multiTargetAdmission=require("./helpers/certops-windows-multi-target-admission-refusal");
   const verifyRollback=require("./helpers/certops-windows-installed-verify-rollback");
   const ownedVerifyRollback=[];let verifyRollbackProof;
+  const bindFailure=bindFailureOnly?require("./helpers/certops-windows-installed-bind-failure-native"):null;let bindFailureResult;
+  const bindFailureFactsPath=path.join(repoRoot,"qualification-results","windows-bind-failure-native-facts.json");
+  if(bindFailureOnly)assert.equal(fs.existsSync(bindFailureFactsPath),false,"Refuse stale native bind-failure facts");
   const failedRollback=failedRollbackOnly?require("./helpers/certops-windows-installed-failed-rollback"):null;let failedRollbackResult;
   const failedRollbackFactsPath=path.join(repoRoot,"qualification-results","windows-failed-rollback-native-facts.json");
   if(failedRollbackOnly)assert.equal(fs.existsSync(failedRollbackFactsPath),false,"Refuse stale failed-rollback nativefacts");
@@ -360,6 +365,10 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     publicIssuanceFacts.nativeJobSucceeded = true;
     publicIssuanceFacts.nativeCngIisTrustedTlsVerified = true;
     installedPathProof = await runNamedScenario(installedPaths.scenarioName, () => installedPaths.qualifyInstalledPaths({ receipt: installedPathReceipt, configDir, candidateRoot, ps, pool, workspaceId, jobId: job.id, agentId, publicIssuanceFacts }));
+    if(bindFailureOnly){
+      bindFailureResult=await runNamedScenario(bindFailure.SCENARIO,()=>bindFailure.qualify({receipt:installedPathReceipt,configDir,ps,run:command,pool,workspaceId,certificateId,agentId,publicSession,ownedJobs,ownedShadows:ownedVerifyRollback,waitUntil,thumbprint,domain,site,port,roots}));
+      deployedThumbprint=bindFailureResult.latestThumbprint;return;
+    }
     if(failedRollbackOnly){
       failedRollbackResult=await runNamedScenario(failedRollback.SCENARIO,()=>failedRollback.qualify({receipt:installedPathReceipt,configDir,ps,run:command,pool,workspaceId,certificateId,agentId,publicSession,ownedJobs,ownedShadows:ownedVerifyRollback,waitUntil,thumbprint,domain,site,port,roots}));
       deployedThumbprint=failedRollbackResult.latestThumbprint;return;
@@ -805,6 +814,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
     for(const resource of ownedStopObservers){try{await resource.waitForClose();}catch(error){stopObserverErrors.push(error);}}
     if(stopObserverErrors.length)throw new AggregateError(stopObserverErrors,"Read-only stop observers must close before nativecleanup");
     verifyRollback.assertCleanupSafe(workDir);
+    if(bindFailureOnly)require("./helpers/certops-windows-bind-interposer").assertCleanupSafe(workDir);
     if(stoppedOffline)stoppedOffline.assertCleanupSafe(workDir);
     publicRetirement.assertCleanupSafe(workDir);
     configEncoding.assertCleanupSafe(workDir);
@@ -885,6 +895,7 @@ module.exports = async function qualifyWindows({ pool, baseUrl, workspaceId, use
       fs.writeFileSync(stoppedOfflineFactsPath,JSON.stringify(stoppedOfflineResult.facts),{flag:"wx"});
     }
     if(aliveGraceOnly&&!journeyFailure&&errors.length===0){aliveGraceResult.facts.exactOwnedCleanupCompleted=true;require("./helpers/certops-windows-alive-grace-proof").verifyProof(aliveGraceResult.facts);fs.writeFileSync(aliveGraceFactsPath,JSON.stringify(aliveGraceResult.facts),{flag:"wx"});}
+    if(bindFailureOnly&&!journeyFailure&&errors.length===0){bindFailure.verifyProof(bindFailureResult.proof);fs.writeFileSync(bindFailureFactsPath,JSON.stringify(bindFailureResult.proof),{flag:"wx"});}
     if(failedRollbackOnly&&!journeyFailure&&errors.length===0){failedRollback.verifyProof(failedRollbackResult.proof);fs.writeFileSync(failedRollbackFactsPath,JSON.stringify(failedRollbackResult.proof),{flag:"wx"});}
     if (!failedRollbackOnly && !aliveGraceOnly && !stoppedOfflineOnly && !historicalSupportingOnly && !journeyFailure && errors.length === 0) {
       require("./helpers/certops-windows-owned-process").verifyPublicProof(installedCrashProof);fs.writeFileSync(crashProofPath,JSON.stringify(installedCrashProof),{flag:"wx"});
