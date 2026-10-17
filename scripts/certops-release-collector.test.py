@@ -195,7 +195,7 @@ def foreign_spki_proof():
 
 def local_pairs_proof():
     fields = ("actualSignedJobRefused", "claimBoundOutcome", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "originalNativeCustodyPreserved", "outgoingTrustedTlsPreserved", "configurationAndCredentialRestored")
-    return [{"caseId": case, **dict.fromkeys(fields, True)} for case in ("ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch")]
+    return [{"caseId": case, **dict.fromkeys(fields, True)} for case in ("ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch", "empty-allowlist")]
 
 
 def algorithm_proof():
@@ -1564,7 +1564,7 @@ class CollectorTests(unittest.TestCase):
             del bad["nativeLocalRulePairs"][0][flag]
             with self.assertRaises(ValueError):
                 collector.sanitized_report(bad, {value["suite"]}, set())
-        for rows in (None, [], [local_pairs_proof()[0]] * 3, [{**row, "caseId": "unknown"} for row in local_pairs_proof()]):
+        for rows in (None, [], [row for row in local_pairs_proof() if row["caseId"] != "empty-allowlist"], [local_pairs_proof()[0]] * 4, [{**row, "caseId": "unknown"} for row in local_pairs_proof()]):
             bad = json.loads(json.dumps(value))
             bad["nativeLocalRulePairs"] = rows
             with self.assertRaises(ValueError):

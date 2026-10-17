@@ -260,7 +260,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
     await require("./helpers/certops-adcs-native-reconcile").qualifyNativeReconciliation({gate,fixture,api,configDir,workDir,run,issuedFixtures,ps,command,tlsAuthority});
     await require("./helpers/certops-adcs-retrieve-boundaries").qualifyRetrieveBoundaries({gate,configDir,workDir,run,issuedFixtures,ps,command});
     await require("./helpers/certops-adcs-validity-boundaries").qualifyValidityBoundaries({gate,fixture,api,agentRowId,renewalFixture,configDir,preflight,until,ps,command,ownedEnrollmentIds,tlsAuthority,caConfig});
-    await require("./helpers/certops-adcs-local-rules").qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,configDir,run,preflight,command,ps,until,ownedEnrollmentIds,tlsAuthority});
+    await require("./helpers/certops-adcs-local-rules").qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,configDir,run,preflight,command,ps,until,ownedEnrollmentIds,tlsAuthority,workDir,ownedResultResources,ownedTlsProbes});
     await require("./helpers/certops-adcs-issued-cancellation").qualifyIssuedCancellation({gate,fixture,api,agentRowId,renewalFixture,configDir,preflight,command,ps,until,jobFinished,ownedEnrollmentIds,tlsAuthority,caConfig});
     if(hierarchy){
       await gate.scenario("adcs-hierarchy-offline-root-and-public-crl",async()=>{

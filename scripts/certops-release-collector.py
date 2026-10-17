@@ -1643,10 +1643,10 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                     raise ValueError("Invalid native other-enrollment SPKI")
                 bounded_foreign[key] = entries
             result["nativeForeignSpkiCandidate"] = bounded_foreign
-            pair_cases = {"ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch"}
+            pair_cases = {"ca-host-mismatch", "ca-authority-mismatch", "template-pair-mismatch", "empty-allowlist"}
             pair_flags = ("actualSignedJobRefused", "claimBoundOutcome", "noCaRequestAllocated", "noKeyGenerated", "noAcceptedLeafOrJournal", "originalNativeCustodyPreserved", "outgoingTrustedTlsPreserved", "configurationAndCredentialRestored")
             pairs = value.get("nativeLocalRulePairs")
-            if not isinstance(pairs, list) or len(pairs) != 3:
+            if not isinstance(pairs, list) or len(pairs) != len(pair_cases):
                 raise ValueError("Missing native exact CA/template rule boundaries")
             bounded_pairs, seen_pairs = [], set()
             for row in pairs:

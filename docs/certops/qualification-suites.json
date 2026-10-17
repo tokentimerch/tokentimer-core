@@ -344,7 +344,8 @@
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation": "real-host",
       "adcs-real-ocsp-authoritative-historical-revoked-status": "real-host",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
-      "adcs-real-native-success-result-outbox-scm-restart": "real-host"
+      "adcs-real-native-success-result-outbox-scm-restart": "real-host",
+      "adcs-real-local-rule-empty-allowlist-refused": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -704,7 +705,8 @@
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation": "real-host",
       "adcs-real-ocsp-authoritative-historical-revoked-status": "real-host",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
-      "adcs-real-native-success-result-outbox-scm-restart": "real-host"
+      "adcs-real-native-success-result-outbox-scm-restart": "real-host",
+      "adcs-real-local-rule-empty-allowlist-refused": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -2574,7 +2576,8 @@
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
       "adcs-real-ocsp-authoritative-historical-revoked-status",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
-      "adcs-real-native-success-result-outbox-scm-restart"
+      "adcs-real-native-success-result-outbox-scm-restart",
+      "adcs-real-local-rule-empty-allowlist-refused"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2934,7 +2937,8 @@
       "adcs-real-ocsp-deferred-same-leaf-signed-continuation",
       "adcs-real-ocsp-authoritative-historical-revoked-status",
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
-      "adcs-real-native-success-result-outbox-scm-restart"
+      "adcs-real-native-success-result-outbox-scm-restart",
+      "adcs-real-local-rule-empty-allowlist-refused"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

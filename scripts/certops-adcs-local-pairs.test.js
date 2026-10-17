@@ -7,13 +7,25 @@ const allowed={caConfig:"tt-ca.lab.certops.test\\TTQualificationRoot",template:"
 const request={authorizedDnsNames:["owned.example.test"],extraDnsNames:[],keyAlgorithm:"rsa"};
 test("each native pair fixture changes exactly its intended CA or template dimension",()=>{
  assert.ok(matchWholeEnrollmentRule([allowed],allowed.caConfig,allowed.template,request));
- for(const name of helper.pairCases){const rules=helper.pairRules(name,allowed);assert.equal(rules.length,1);assert.equal(matchWholeEnrollmentRule(rules,allowed.caConfig,allowed.template,request),null);assert.deepEqual(rules[0].dnsScopes,allowed.dnsScopes);assert.deepEqual(rules[0].keyAlgorithms,allowed.keyAlgorithms);
+ for(const name of helper.pairCases.filter(name=>name!=="empty-allowlist")){const rules=helper.pairRules(name,allowed);assert.equal(rules.length,1);assert.equal(matchWholeEnrollmentRule(rules,allowed.caConfig,allowed.template,request),null);assert.deepEqual(rules[0].dnsScopes,allowed.dnsScopes);assert.deepEqual(rules[0].keyAlgorithms,allowed.keyAlgorithms);
  const [host,authority]=rules[0].caConfig.split("\\"),[originalHost,originalAuthority]=allowed.caConfig.split("\\");
  assert.equal(host===originalHost,name!=="ca-host-mismatch");assert.equal(authority===originalAuthority,name!=="ca-authority-mismatch");assert.equal(rules[0].template===allowed.template,name!=="template-pair-mismatch");}
 });
-test("pair proof needs exactly all three native cases and every custody/restoration fact",()=>{
+test("pair proof needs exactly every native allowlist boundary and every custody/restoration fact",()=>{
  const proof=helper.pairCases.map(caseId=>({caseId,...Object.fromEntries(helper.pairFlags.map(field=>[field,true]))}));assert.equal(helper.verifyPairProof(proof),true);
  for(const field of helper.pairFlags)for(const invalid of [false,1,null,"true"]){const changed=structuredClone(proof);changed[0][field]=invalid;assert.throws(()=>helper.verifyPairProof(changed));}
  for(const field of helper.pairFlags){const changed=structuredClone(proof);delete changed[0][field];assert.throws(()=>helper.verifyPairProof(changed));}
  for(const changed of [proof.slice(1),[proof[0],proof[0],proof[2]],proof.map(row=>({...row,rawNativeKey:"private"}))])assert.throws(()=>helper.verifyPairProof(changed));
+});
+
+test("empty local allowlist refuses the previously permitted pair and cannot be omitted from native proof",()=>{
+ assert.deepEqual(helper.pairRules("empty-allowlist",allowed),[]);
+ assert.equal(matchWholeEnrollmentRule([],allowed.caConfig,allowed.template,request),null);
+ const proof=helper.pairCases.map(caseId=>({caseId,...Object.fromEntries(helper.pairFlags.map(field=>[field,true]))}));
+ assert.throws(()=>helper.verifyPairProof(proof.filter(row=>row.caseId!=="empty-allowlist")));
+ const contract=require("../docs/certops/qualification-suites.json"),matrix=require("../docs/certops/release-qualification-matrix.json");
+ for(const suite of ["enterprise-adcs-real","enterprise-adcs-hierarchy-real"]){
+  assert.ok(contract.suites[suite].includes("adcs-real-local-rule-empty-allowlist-refused"));
+  for(const slot of matrix.slots.filter(row=>row.suite===suite))for(const file of helper.REQUIRED_SOURCES)assert.ok(slot.requiredSources.includes(file),file);
+ }
 });
