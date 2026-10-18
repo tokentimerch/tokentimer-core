@@ -183,13 +183,16 @@ test("Windows tools bootstrap selects one Node and Go release from REST arrays",
   fs.writeFileSync(probe, String.raw`
 $ErrorActionPreference='Stop'
 $global:certopsDownloads=@()
+$global:certopsMetadata=0
 function Get-CimInstance { [pscustomobject]@{Domain='lab.certops.test'} }
 function Test-Path { $false }
 function New-Item { }
 function Expand-Archive { }
 function Get-FileHash { [pscustomobject]@{Hash=('a'*64)} }
 function Invoke-RestMethod {
-  param($Uri)
+  param($Uri,[switch]$UseBasicParsing,[int]$TimeoutSec)
+  if(-not $UseBasicParsing -or $TimeoutSec -ne 60 -or $ProgressPreference -ne 'SilentlyContinue'){throw 'Metadata requires bounded noninteractive transfer'}
+  $global:certopsMetadata++
   switch($Uri){
     'https://nodejs.org/dist/index.json' {
       Write-Output -NoEnumerate @([pscustomobject]@{version='v26.0.0';files=@('win-x64-zip')},[pscustomobject]@{version='v24.9.0';files=@('win-x64-zip')},[pscustomobject]@{version='v24.8.0';files=@('win-x64-zip')})
@@ -202,7 +205,8 @@ function Invoke-RestMethod {
   }
 }
 function Invoke-WebRequest {
-  param($Uri,$OutFile)
+  param($Uri,$OutFile,[switch]$UseBasicParsing,[int]$TimeoutSec)
+  if(-not $UseBasicParsing -or $TimeoutSec -ne 300 -or $ProgressPreference -ne 'SilentlyContinue'){throw 'Archives require bounded noninteractive transfer'}
   $global:certopsDownloads+= $Uri
   if($Uri -eq 'https://nodejs.org/dist/v24.9.0/node-v24.9.0-win-x64.zip'){return}
   if($Uri -eq 'https://go.dev/dl/go1.29.1.windows-amd64.zip'){throw 'TEST_SELECTION_COMPLETE'}
@@ -211,6 +215,7 @@ function Invoke-WebRequest {
 try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' }
 catch {
   if($_.Exception.Message -ne 'TEST_SELECTION_COMPLETE'){throw ('Guest release selection failed: '+$_.Exception.Message)}
+  if($global:certopsMetadata -ne 3){throw 'Expected exactly three bounded metadata requests'}
   if($global:certopsDownloads.Count -ne 2){throw 'Expected exactly two selected downloads'}
   Write-Output 'RELEASE_ARRAY_SELECTION_PASSED'
   exit 0

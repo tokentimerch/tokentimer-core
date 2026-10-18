@@ -7,31 +7,33 @@ param([Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$Candidat
   [Parameter(Mandatory)][string]$ApiPublicPemBase64,
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022')
 $ErrorActionPreference = 'Stop'
+# Keep transfer progress local to this noninteractive bootstrap.
+$script:ProgressPreference = 'SilentlyContinue'
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tool bootstrap requires isolated qualification domain member' }
 $root='C:\ttqualification'
 if (Test-Path $root) { throw 'Refusing existing qualification workspace' }
 New-Item -ItemType Directory -Path "$root\tools" -Force | Out-Null
 # Enumerate REST arrays before filtering; Windows PowerShell otherwise pipes the whole array.
-$nodeRelease=(Invoke-RestMethod 'https://nodejs.org/dist/index.json') | Where-Object { $_.version -match '^v24\.' -and $_.files -contains 'win-x64-zip' } | Select-Object -First 1
+$nodeRelease=(Invoke-RestMethod -UseBasicParsing -TimeoutSec 60 'https://nodejs.org/dist/index.json') | Where-Object { $_.version -match '^v24\.' -and $_.files -contains 'win-x64-zip' } | Select-Object -First 1
 if (-not $nodeRelease) { throw 'Supported Node 24 Windows archive unavailable' }
 $nodeName="node-$($nodeRelease.version)-win-x64.zip"
-$sums=Invoke-RestMethod "https://nodejs.org/dist/$($nodeRelease.version)/SHASUMS256.txt"
+$sums=Invoke-RestMethod -UseBasicParsing -TimeoutSec 60 "https://nodejs.org/dist/$($nodeRelease.version)/SHASUMS256.txt"
 $nodeHash=[regex]::Match($sums,"(?m)^([a-f0-9]{64})\s+$([regex]::Escape($nodeName))\r?$").Groups[1].Value
 if (-not $nodeHash) { throw 'Node archive checksum unavailable' }
-Invoke-WebRequest "https://nodejs.org/dist/$($nodeRelease.version)/$nodeName" -OutFile "$root\tools\node.zip"
+Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 "https://nodejs.org/dist/$($nodeRelease.version)/$nodeName" -OutFile "$root\tools\node.zip"
 if ((Get-FileHash "$root\tools\node.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $nodeHash) { throw 'Node checksum mismatch' }
 Expand-Archive "$root\tools\node.zip" "$root\tools"
 $nodeDirectory="$root\tools\node-$($nodeRelease.version)-win-x64"
-$goRelease=(Invoke-RestMethod 'https://go.dev/dl/?mode=json') | Where-Object stable | Select-Object -First 1
+$goRelease=(Invoke-RestMethod -UseBasicParsing -TimeoutSec 60 'https://go.dev/dl/?mode=json') | Where-Object stable | Select-Object -First 1
 $goFile=$goRelease.files | Where-Object { $_.os -eq 'windows' -and $_.arch -eq 'amd64' -and $_.kind -eq 'archive' } | Select-Object -First 1
 if (-not $goFile) { throw 'Stable Go Windows archive unavailable' }
-Invoke-WebRequest "https://go.dev/dl/$($goFile.filename)" -OutFile "$root\tools\go.zip"
+Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 "https://go.dev/dl/$($goFile.filename)" -OutFile "$root\tools\go.zip"
 if ((Get-FileHash "$root\tools\go.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $goFile.sha256) { throw 'Go checksum mismatch' }
 Expand-Archive "$root\tools\go.zip" "$root\tools"
 $env:PATH="$nodeDirectory;$root\tools\go\bin;$root\tools\pnpm;$env:PATH"
 & "$nodeDirectory\npm.cmd" install --global pnpm@11.13.0 --prefix "$root\tools\pnpm" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Pinned pnpm installation failed' }
-Invoke-WebRequest "https://github.com/tokentimerch/tokentimer-core/archive/$CandidateSha.zip" -OutFile "$root\candidate.zip"
+Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 "https://github.com/tokentimerch/tokentimer-core/archive/$CandidateSha.zip" -OutFile "$root\candidate.zip"
 Expand-Archive "$root\candidate.zip" "$root\source"
 $source="$root\source\tokentimer-core-$CandidateSha"
 if (-not (Test-Path "$source\package.json")) { throw 'Candidate archive layout did not match commit' }
