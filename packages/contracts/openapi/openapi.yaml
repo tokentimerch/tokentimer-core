@@ -8271,6 +8271,22 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: managedCertificateIds
+          in: query
+          description: Up to 200 comma-separated managed certificate UUIDs. Combined with identityIds using OR.
+          schema:
+            type: string
+        - name: identityIds
+          in: query
+          description: Up to 200 comma-separated immutable identity UUIDs. Detail reads include related historical publications.
+          schema:
+            type: string
+        - name: summaries
+          in: query
+          description: When true, IDs are required. Returns group IDs, managed certificate IDs, current identity IDs and active consumer counts/status only. Uses current active management periods and backend convergence, never historical job success. Details are fetched separately.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Public distribution metadata
@@ -8288,6 +8304,10 @@ paths:
       description: >-
         Workspace membership and CertOps manager authorization required. Writes require an active workspace.
         Cloud additionally applies paid-plan and frozen-workspace policy. Public metadata only.
+        Includes readable agent_name, deployment_profile_ref, binding_state, desired_version,
+        observed_version, freshness_seconds and stale alongside existing fields. Convergence requires
+        current authorization, an active management period and evidence for its current immutable identity;
+        a historically successful job is not current deployment proof.
       parameters:
         - name: id
           in: path

@@ -10,6 +10,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import CertificateIdentityDetailModal from '../../src/components/certops/CertificateIdentityDetailModal.jsx';
 
 const {
+  getCertificateMock,
   getIdentityMock,
   getManagedMock,
   listProfilesMock,
@@ -20,6 +21,7 @@ const {
   stopMock,
   readdMock,
 } = vi.hoisted(() => ({
+  getCertificateMock: vi.fn(),
   getIdentityMock: vi.fn(),
   getManagedMock: vi.fn(),
   listProfilesMock: vi.fn(),
@@ -32,6 +34,7 @@ const {
 }));
 
 vi.mock('../../src/components/certops/certopsApi.js', () => ({
+  getCertificate: getCertificateMock,
   getCertificateIdentity: getIdentityMock,
   getManagedCertificatesForToken: getManagedMock,
   listCertOpsRenewalProfiles: listProfilesMock,
@@ -58,6 +61,7 @@ vi.mock('../../src/components/certops/CertificateDetailsModal.jsx', () => ({
 }));
 
 beforeEach(() => {
+  getCertificateMock.mockReset();
   getIdentityMock.mockReset();
   getManagedMock.mockReset();
   getManagedMock.mockResolvedValue([]);
@@ -194,8 +198,22 @@ it('shows one linked token together with all certificate sources and locations',
   expect(
     screen.queryByRole('button', { name: 'View token details' })
   ).not.toBeInTheDocument();
+  expect(detailsModalMock.mock.lastCall[0].managedCertificateId).toBeNull();
+  fireEvent.change(
+    screen.getByRole('combobox', {
+      name: 'Management registration to inspect',
+    }),
+    { target: { value: 'cert-1' } }
+  );
+  await waitFor(() =>
+    expect(detailsModalMock.mock.lastCall[0].certOps.certificate.keyMode).toBe(
+      'external-unknown'
+    )
+  );
   expect(detailsModalMock).toHaveBeenLastCalledWith(
     expect.objectContaining({
+      managedCertificateId: 'cert-1',
+      identityId: 'identity-1',
       token: expect.objectContaining({ id: 7 }),
       titleOverride: 'shared.example.test',
       certOps: expect.objectContaining({
@@ -671,4 +689,66 @@ it('passes managed certificate id for job history when opened from a job deep li
       })
     );
   });
+});
+
+it('loads the explicitly selected registration without requiring a linked token', async () => {
+  const identity = {
+    identityId: 'no-token-identity',
+    tokenId: null,
+    fingerprintSha256: 'c'.repeat(64),
+    commonName: 'shared-no-token.example',
+    certificateSnapshot: { fingerprintSha256: 'c'.repeat(64) },
+    sources: [
+      {
+        managedCertificateId: 'source-a',
+        source: 'api',
+        currentIdentityId: 'no-token-identity',
+      },
+      {
+        managedCertificateId: 'source-b',
+        source: 'agent_filesystem',
+        currentIdentityId: 'no-token-identity',
+      },
+    ],
+    locations: [],
+  };
+  getIdentityMock.mockResolvedValue(identity);
+  getCertificateMock.mockResolvedValue({
+    certificate: {
+      id: 'source-b',
+      fingerprintSha256: 'c'.repeat(64),
+      renewal: { state: 'auto' },
+      keyMode: 'vault-managed',
+    },
+  });
+  render(
+    <ChakraProvider>
+      <CertificateIdentityDetailModal
+        workspaceId='workspace-1'
+        certificate={identity}
+        isOpen
+        onClose={vi.fn()}
+      />
+    </ChakraProvider>
+  );
+  fireEvent.change(
+    await screen.findByRole('combobox', {
+      name: 'Management registration to inspect',
+    }),
+    { target: { value: 'source-b' } }
+  );
+  await waitFor(() =>
+    expect(getCertificateMock).toHaveBeenCalledWith('workspace-1', 'source-b')
+  );
+  await waitFor(() =>
+    expect(detailsModalMock.mock.lastCall[0].certOps.certificate.keyMode).toBe(
+      'vault-managed'
+    )
+  );
+  expect(detailsModalMock.mock.lastCall[0]).toMatchObject({
+    managedCertificateId: 'source-b',
+    identityId: 'no-token-identity',
+    isViewer: true,
+  });
+  expect(getTokenMock).not.toHaveBeenCalled();
 });

@@ -44,6 +44,8 @@ import {
   certificateLifecycleDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './certops/certopsFormat';
+import DeploymentBadge from './certops/DeploymentBadge.jsx';
+import useDistributionSummaries from './certops/useDistributionSummaries.js';
 import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
@@ -655,6 +657,18 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
             {subtitle}
           </Text>
         ) : null}
+        {token.__distributedCertificateCount ? (
+          <Box mt={1}>
+            {token.__deploymentSummary ? (
+              <DeploymentBadge summary={token.__deploymentSummary} />
+            ) : (
+              <Text fontSize='xs'>
+                {token.__distributedCertificateCount} distributed certificates ·
+                Select in details
+              </Text>
+            )}
+          </Box>
+        ) : null}
         {managed ? (
           <Box mt={1}>
             <KeyLocalityBadge
@@ -1004,6 +1018,18 @@ function AssetInventoryMobileCard({
                   {nameSubtitle}
                 </Text>
               ) : null}
+              {token.__distributedCertificateCount ? (
+                <Box mt={1}>
+                  {token.__deploymentSummary ? (
+                    <DeploymentBadge summary={token.__deploymentSummary} />
+                  ) : (
+                    <Text fontSize='xs'>
+                      {token.__distributedCertificateCount} distributed
+                      certificates · Select in details
+                    </Text>
+                  )}
+                </Box>
+              ) : null}
               <Box mt={2}>
                 <HStack spacing={2} flexWrap='wrap'>
                   <StatusPill
@@ -1101,7 +1127,8 @@ function AssetInventoryMobileCard({
  * Asset inventory table with mode-specific columns (mixed + per-category).
  */
 export default function AssetInventoryTable({
-  tokens = [],
+  tokens: inputTokens = [],
+  workspaceId,
   selectedCategories,
   inventoryMode: inventoryModeProp,
   sort,
@@ -1139,6 +1166,31 @@ export default function AssetInventoryTable({
   fetchTokensForCategory,
   categoryLoading = {},
 }) {
+  const certificateLinks = inputTokens
+    .filter(t => t.category === 'cert')
+    .flatMap(
+      t => t.__managedCertificates || (t.__managedCert ? [t.__managedCert] : [])
+    )
+    .map(certificate => ({ id: certificate.id }));
+  const deployments = useDistributionSummaries(workspaceId, certificateLinks);
+  const tokens = inputTokens.map(token => {
+    if (token.category !== 'cert') return token;
+    const linked =
+      token.__managedCertificates ||
+      (token.__managedCert ? [token.__managedCert] : []);
+    const distributed = linked
+      .map(c =>
+        deployments.getSummary({ id: c.id, expectedIdentityId: c.identityId })
+      )
+      .filter(summary => summary && summary.status !== 'not_distributed');
+    return distributed.length
+      ? {
+          ...token,
+          __deploymentSummary: linked.length === 1 ? distributed[0] : null,
+          __distributedCertificateCount: distributed.length,
+        }
+      : token;
+  });
   const { colorMode } = useColorMode();
   const resolveVisual = useCallback(
     category => resolveCategoryVisual(category, colorMode === 'light'),

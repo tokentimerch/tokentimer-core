@@ -278,9 +278,13 @@ async function acceptDeploymentReceipt({ client, workspaceId, agentId, job, rece
   return { historicalOnly: !current, retirementConflict: !identityActive, stage };
 }
 
-async function consumerMatrix({ client, workspaceId, groupId }) {
-  groupId = normalizeDistributionId(groupId);
-  return (await client.query(`SELECT b.id AS binding_id,b.assigned_agent_id,b.required,b.verification_policy,
+async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
+  const ids = groupIds ? groupIds.map(normalizeDistributionId) : [normalizeDistributionId(groupId)];
+  return (await client.query(`SELECT b.id AS binding_id,b.group_id,b.assigned_agent_id,b.required,b.verification_policy,
+    b.state AS binding_state,b.deployment_profile_ref,b.freshness_seconds,
+    COALESCE(NULLIF(a.name,''),NULLIF(a.hostname,''),'Unnamed agent') AS agent_name,
+    desired.provider_version AS desired_version,observed.provider_version AS observed_version,
+    (s.observed_at IS NOT NULL AND s.observed_at<=clock_timestamp()-b.freshness_seconds*interval '1 second') AS stale,
     s.desired_material_version_id,s.desired_generation,s.accepted_generation,s.observed_material_version_id,
     s.observed_fingerprint_sha256,s.observed_valid_to,s.verification_method,s.observed_at,
     (s.accepted_generation=s.desired_generation AND s.observed_material_version_id=s.desired_material_version_id
@@ -289,16 +293,25 @@ async function consumerMatrix({ client, workspaceId, groupId }) {
         JOIN certops_distribution_rollouts rollout ON rollout.workspace_id=proof.workspace_id AND rollout.id=proof.rollout_id
         JOIN certops_material_versions material ON material.workspace_id=rollout.workspace_id AND material.id=rollout.material_version_id
         JOIN certops_certificate_identities identity ON identity.workspace_id=material.workspace_id AND identity.id=material.certificate_identity_id
+        JOIN certops_distribution_groups current_group ON current_group.workspace_id=proof.workspace_id AND current_group.id=proof.group_id
+        JOIN certops_management_periods period ON period.workspace_id=current_group.workspace_id AND period.id=current_group.management_period_id
+          AND period.managed_certificate_id=current_group.managed_certificate_id
         WHERE proof.workspace_id=b.workspace_id AND proof.binding_id=b.id AND rollout.generation=s.accepted_generation
           AND proof.authorization_revision=b.authorization_revision AND identity.lifecycle_status='active'
+          AND current_group.state='active' AND period.ended_at IS NULL
+          AND material.id=s.observed_material_version_id AND material.certificate_identity_id=period.current_identity_id
           AND proof.stage IN ('served_verified','trust_validated'))
       AND s.observed_at>clock_timestamp()-b.freshness_seconds*interval '1 second') AS converged,
     (SELECT jsonb_build_object('stage',d.stage,'failureCode',d.failure_code,'jobId',d.job_id)
       FROM certops_consumer_deployments d JOIN certops_distribution_rollouts r ON r.workspace_id=d.workspace_id AND r.id=d.rollout_id
       WHERE d.workspace_id=b.workspace_id AND d.binding_id=b.id ORDER BY r.generation DESC LIMIT 1) AS latest_deployment
     FROM certops_consumer_bindings b LEFT JOIN certops_consumer_current_state s
-    ON s.workspace_id=b.workspace_id AND s.binding_id=b.id WHERE b.workspace_id=$1 AND b.group_id=$2 ORDER BY b.id`,
-  [workspaceId, groupId])).rows;
+    ON s.workspace_id=b.workspace_id AND s.binding_id=b.id
+    LEFT JOIN certops_agents a ON a.workspace_id=b.workspace_id AND a.id=b.assigned_agent_id
+    LEFT JOIN certops_material_versions desired ON desired.workspace_id=s.workspace_id AND desired.id=s.desired_material_version_id
+    LEFT JOIN certops_material_versions observed ON observed.workspace_id=s.workspace_id AND observed.id=s.observed_material_version_id
+    WHERE b.workspace_id=$1 AND b.group_id=ANY($2::uuid[]) ORDER BY b.id`,
+  [workspaceId, ids])).rows;
 }
 
 module.exports = { validateDistributionContract, normalizeDistributionId, hashIntent, enqueueDistributionEvent, buildRolloutIntent, lockGroup, resolveDistributionJobDefaults, createGroupForSource, allocateMaterialVersion,

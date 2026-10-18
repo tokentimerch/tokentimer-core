@@ -4344,7 +4344,7 @@ router.post("/api/v1/workspaces/:id/certops/distribution-jobs/:jobId/retry", ...
   requireWorkspaceCertOpsActive,
   csrRoute((req) => distribution.retryDistributionJob({ workspaceId:req.workspace.id,jobId:req.params.jobId,actorUserId:req.user?.id })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups", ...csrReadGuards,
-  csrRoute(async (req) => ({ groups: (await pool.query(`SELECT * FROM certops_distribution_groups WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1000`,[req.workspace.id])).rows })));
+  csrRoute((req) => require("../services/certops/distributionRead").listDistributionGroups({ client:pool,workspaceId:req.workspace.id,query:req.query })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/consumers", ...csrReadGuards,
   csrRoute(async (req) => ({ consumers: await materialDistribution.consumerMatrix({ client:pool,workspaceId:req.workspace.id,groupId:req.params.groupId }) })));
 router.get("/api/v1/workspaces/:id/certops/distribution-groups/:groupId/versions", ...csrReadGuards,

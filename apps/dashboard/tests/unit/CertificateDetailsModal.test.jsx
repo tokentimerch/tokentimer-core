@@ -197,11 +197,8 @@ describe('CertificateDetailsModal', () => {
       managedCertificateId: 'cert-2',
       certOps: { certificate, certificateCount: 2 },
     });
-    expect(
-      screen.getByText(
-        '2 certificates reference this token. Showing the certificate for the selected source.'
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText('Managed certificate ID')).toBeInTheDocument();
+    expect(screen.queryByText(/most recently updated/)).not.toBeInTheDocument();
   });
 
   it('shows asset facts and an explicit CertOps link without blending another identity', () => {
@@ -218,12 +215,12 @@ describe('CertificateDetailsModal', () => {
       },
     });
     expect(
-      screen.getByText(
-        /This asset is linked to multiple certificate identities/
-      )
+      screen.getByText(/This asset is linked to multiple managed certificates/)
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'Choose a certificate in Certificate Management' })
+      screen.getByRole('link', {
+        name: 'Choose a certificate in Certificate Management',
+      })
     ).toHaveAttribute('href', '/certops/certificates?workspace=ws-shared');
     expect(screen.getByText('token-serial')).toBeInTheDocument();
     expect(screen.queryByText('unrelated-B-serial')).not.toBeInTheDocument();
@@ -231,6 +228,28 @@ describe('CertificateDetailsModal', () => {
     expect(
       screen.queryByText(/most recently updated active certificate/)
     ).not.toBeInTheDocument();
+  });
+
+  it('offers explicit certificate selection and keeps selected certificate facts separate from asset metadata', () => {
+    const selectCertificate = vi.fn();
+    renderModal({
+      certOps: {
+        certificate,
+        certificates: [
+          certificate,
+          { ...certificate, id: 'other', serialNumber: 'other-serial' },
+        ],
+        selectCertificate,
+      },
+    });
+    const selector = screen.getByRole('combobox', {
+      name: 'Certificate to inspect',
+    });
+    expect(selector).toHaveValue(certificate.id);
+    expect(screen.queryByText('token-serial')).not.toBeInTheDocument();
+    expect(screen.getAllByText('managed-serial').length).toBeGreaterThan(0);
+    fireEvent.change(selector, { target: { value: 'other' } });
+    expect(selectCertificate).toHaveBeenCalledWith('other');
   });
 
   it('presents certificate identity, lifecycle summary, and compact vertical content', () => {
