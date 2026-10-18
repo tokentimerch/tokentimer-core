@@ -62,11 +62,34 @@ for (const mode of ["abort", "timeout"]) test('exited launcher cannot orphan an 
 
 test("native command preserves quoted and empty arguments", {timeout:testBudget}, async () => {
   if (windows) {
+    const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-handles-")),driver=path.join(directory,"noninheritable.ps1");
+    // Model service hosts that do not mark their redirected handles inheritable.
+    // Compile the production owner first so this isolates CreateProcess handle
+    // inheritance from the separate CodeDOM compiler process.
+    fs.writeFileSync(driver,`$ErrorActionPreference='Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class HandleFixture {
+ [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int kind);
+ [DllImport("kernel32.dll",SetLastError=true)] public static extern bool SetHandleInformation(IntPtr handle,uint mask,uint flags);
+}
+'@
+$ast=[Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_COMMAND_WRAPPER,[ref]$null,[ref]$null)
+$compile=$ast.Find({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type'},$true)
+. ([scriptblock]::Create($compile.Extent.Text))
+foreach($kind in @(-10,-11,-12)) {
+ if(-not [HandleFixture]::SetHandleInformation([HandleFixture]::GetStdHandle($kind),1,0)){throw 'Could not set fixture handle inheritance'}
+}
+& $env:CERTOPS_COMMAND_WRAPPER
+exit $LASTEXITCODE
+`);
+    try { for(const script of [path.join(__dirname,"windows-command.ps1"),driver]) {
     // Keep stdin open after a complete frame. A ReadToEnd wrapper deadlocks here.
     await new Promise((resolve,reject)=>{
       const wrapper=cp.spawn(path.join(process.env.SystemRoot,"System32/WindowsPowerShell/v1.0/powershell.exe"),
-        ["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",path.join(__dirname,"windows-command.ps1")],
-        {windowsHide:true,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},stdio:["pipe","pipe","pipe"]});
+        ["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",script],
+        {windowsHide:true,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,CERTOPS_COMMAND_WRAPPER:path.join(__dirname,"windows-command.ps1")},stdio:["pipe","pipe","pipe"]});
       let output="",diagnostic="";
       const timer=setTimeout(()=>{wrapper.kill();reject(new Error("Windows wrapper did not finish the framed request within its deadline"));},commandBudget);
       wrapper.stdout.on("data",chunk=>{output+=chunk;});wrapper.stderr.on("data",chunk=>{diagnostic+=chunk;});
@@ -75,6 +98,10 @@ test("native command preserves quoted and empty arguments", {timeout:testBudget}
       wrapper.once("close",code=>{clearTimeout(timer);wrapper.stdin.destroy();try{assert.equal(code,0,diagnostic);assert.equal(output,"framed");resolve();}catch(error){reject(error);}});
       wrapper.stdin.write(JSON.stringify({executable:process.execPath,arguments:["-e","process.stdout.write('framed')"]})+"\n");
     });
+    }
+    const refused=await execWithoutShell(cp.execFile,[path.join(directory,"missing-client.exe"),"private-argument-needle"],commandBudget,{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot});
+    assert.ok(refused.execError);assert.match(refused.stderr,/failed at execute-client \(code [0-9]+\)/);assert.doesNotMatch(refused.stderr,/private-argument-needle|missing-client/);
+    } finally {fs.rmSync(directory,{recursive:true,force:true});}
   }
   const args=["", "café/测试", "space value", 'embedded"quote', "trailing space \\"];
   const result=await execWithoutShell(cp.execFile,[process.execPath,"-e","process.stdout.write(JSON.stringify(process.argv.slice(1)))",...args],commandBudget,{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot});
