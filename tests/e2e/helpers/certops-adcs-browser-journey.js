@@ -829,13 +829,21 @@ async function qualifyAdcsBrowserJourney(context) {
         stage = "browser-installed-visibility";
         await page.reload();
         await openDisclosure("certops-adcs-section");
-        await page.getByRole("checkbox", { name: /^Show finished/ }).check();
+        stage="browser-installed-finished-toggle";
+        const showFinished=page.getByRole("checkbox", { name: /^Show finished/ });
+        // Chakra visually hides its input. Click the visible associated label,
+        // just as an operator does, then verify the actual control state.
+        if(!await showFinished.isChecked())await showFinished.locator("xpath=ancestor::label[1]").click();
+        assert.equal(await showFinished.isChecked(),true);
+        stage="browser-installed-id-marker";
         const marker = page.getByText(enrollment.id.slice(0, 8), {
           exact: true,
         });
         await marker.waitFor();
+        stage="browser-installed-state-badge";
         const card = marker.locator("xpath=..");
         assert.ok((await card.innerText()).includes("Installed"));
+        stage="browser-installed-api-agreement";
         const list = await fixture.request(`${api}/enrollments?limit=100`);
         assert.equal(list.status, 200);
         assert.equal(
@@ -866,7 +874,8 @@ async function qualifyAdcsBrowserJourney(context) {
     const code = /^[A-Z0-9_]{1,64}$/.test(error?.code || "")
       ? error.code
       : "UNCLASSIFIED";
-    gate.report.nativeBrowserFailure = { stage, code };
+    const errorClass=["Error","AssertionError","TypeError","TimeoutError","RangeError"].includes(error?.constructor?.name)?error.constructor.name:"Error";
+    gate.report.nativeBrowserFailure = { stage, code, errorClass };
     if ([200, 201, 204].includes(error?.expected) && Number.isInteger(error?.actual) && error.actual >= 100 && error.actual <= 599) gate.report.nativeBrowserFailure.httpStatus = error.actual;
     primary = new Error(
       `Native AD CS browser journey failed at ${stage} (${code})`,

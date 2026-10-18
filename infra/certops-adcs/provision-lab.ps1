@@ -73,6 +73,8 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
     }
     $diagnostic=[regex]::Match($message,'(?m)^CERTOPS_TEMPLATE_FAILURE=(descriptor|remoting|definitions|directory|create-oid|create-template|commit-template|template-acl|publish-template|ca-hardening):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
+    $languageDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_LANGUAGE_FAILURE=(membership|asset-input|download|digest|package-install|temporary-cleanup|ui-language|system-locale|culture|system-settings-copy|resource-verification):[0-9]{1,5}:-?[0-9]{1,11}:(RuntimeException|WebException|InvalidOperationException|ArgumentException|COMException|IOException|UnauthorizedAccessException|ParameterBindingException|ActionPreferenceStopException|PSInvalidOperationException|Exception):(WebCmdletWebResponseException|WebCmdletIEDomNotSupportedException|DISMAPI_Error__Failed_To_Add_Package|DISMAPI_Error__Not_Applicable|NamedParameterNotFound|CommandNotFoundException|ParameterArgumentValidationError|PathNotFound|InvokeMethodOnNull|AddWindowsPackageError|Unclassified)\s*$')
+    if($languageDiagnostic.Success){Write-Output $languageDiagnostic.Value.Trim()}
     $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($memberDiagnostic.Success){Write-Output $memberDiagnostic.Value.Trim()}
     $verifyDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_VERIFY_FAILURE=(membership|secure-channel|ca-rpc|ca-export|ca-identity|root-trust):[0-9]{1,5}:-?[0-9]{1,11}\s*$')

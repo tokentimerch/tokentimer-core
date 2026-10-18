@@ -3,11 +3,12 @@ Guest SYSTEM test entry point called only by provision-lab.ps1 after domain/tool
 the exact candidate runtime and test-only controller keys, selects the dedicated report, and invokes
 the real API-agent/native harness. It clears the officer password after execution.
 #>
-param([ValidateSet('acceptance','focused')][string]$Scope='focused',[Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt)
+param([ValidateSet('acceptance','focused','experiment')][string]$Scope='focused',[Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt)
 $ErrorActionPreference = 'Stop'
 if($JournalPhaseExperiment -notin @('none','submitting','issued','installing') -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0'){throw 'Extended campaigns are deferred'}
 if($ResponseLossExperiment -eq '1' -and $JournalPhaseExperiment -ne 'none'){throw 'Only one fault experiment may own an execution'}
 if($Scope -eq 'acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Package acceptance must run without fault injection'}
+if($Scope -eq 'experiment' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -notin @('submitting','issued'))){throw 'Standalone experiments require exactly one supported journal phase'}
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
 $runtime=Get-Content 'C:\ttqualification\runtime.json' -Raw | ConvertFrom-Json
 $env:PATH=$runtime.path
@@ -49,7 +50,7 @@ $env:CERTOPS_ADCS_HIERARCHY=$HierarchyRole
 $env:CERTOPS_ADCS_HIERARCHY_ROOT_CERT=$RootCertificateBase64
 Set-Location $runtime.source
 try {
-  if($Scope -eq 'acceptance'){ & $runtime.node --test tests/e2e/certops-adcs-package-acceptance.test.js }else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }
+  if($Scope -eq 'experiment'){ & $runtime.node tests/e2e/certops-adcs-focused-experiment.cjs }elseif($Scope -eq 'acceptance'){ & $runtime.node --test tests/e2e/certops-adcs-package-acceptance.test.js }else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }
   $testExitCode=$LASTEXITCODE
 } finally {
   $env:CERTOPS_ADCS_OFFICER_PASSWORD=$null
@@ -59,4 +60,8 @@ if($Scope -eq 'acceptance'){
   & $runtime.node scripts/certops-agent-package.js verify-adcs 'C:\ttqualification\adcs-package-acceptance.json' $runtime.agentPackageReceipt $runtime.candidateSha
   if($LASTEXITCODE -ne 0){throw 'Package acceptance evidence is incomplete or mismatched'}
 }
-if($Scope -eq 'acceptance'){Write-Output 'CERTOPS_STAGE=operator-package-acceptance-passed'}else{Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'}
+if($Scope -eq 'experiment'){
+  & $runtime.node tests/e2e/certops-adcs-focused-experiment.cjs verify 'C:\ttqualification\focused-journal-experiment.json'
+  if($LASTEXITCODE -ne 0){throw 'Standalone experiment evidence is incomplete or mismatched'}
+  Write-Output 'CERTOPS_STAGE=focused-journal-experiment-passed-not-qualified'
+}elseif($Scope -eq 'acceptance'){Write-Output 'CERTOPS_STAGE=operator-package-acceptance-passed'}else{Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'}
