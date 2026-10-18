@@ -36,6 +36,12 @@ $env:CERTOPS_ADCS_BROWSER=if($IssuerReassignment -eq '1' -or $PendingElapsedQual
 $env:CERTOPS_ADCS_OFFICER_PASSWORD=$DomainPassword
 $env:CERTOPS_WINDOWS_LANGUAGE=$Language
 $env:GITHUB_ACTIONS='true'
+# SYSTEM's native secure temp API can differ from inherited TEMP. Keep Node
+# fixtures and PowerShell ownership checks on the same native directory.
+$nativeTemp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+if(-not (Test-Path -LiteralPath $nativeTemp -PathType Container)){throw 'Native qualification temporary directory missing'}
+$env:TEMP=$nativeTemp
+$env:TMP=$nativeTemp
 $env:CERTOPS_ADCS_RESPONSE_LOSS_EXPERIMENT=$ResponseLossExperiment
 if($JournalPhaseExperiment -ne 'none'){$env:CERTOPS_ADCS_JOURNAL_PHASE_EXPERIMENT=$JournalPhaseExperiment}else{$env:CERTOPS_ADCS_JOURNAL_PHASE_EXPERIMENT=$null}
 if($JournalPhaseExperiment -ne 'none'){$env:CERTOPS_JOB_LEASE_SECONDS='60';$env:CERTOPS_LEASE_HARD_GRACE_MS='60000'}else{$env:CERTOPS_JOB_LEASE_SECONDS=$null;$env:CERTOPS_LEASE_HARD_GRACE_MS=$null}

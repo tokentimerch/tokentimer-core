@@ -1,10 +1,11 @@
 <#
 Temporarily trust only the exact owned control-plane public certificate for
-Chromium under SYSTEM's CurrentUser Root store. A receipt records whether this
+Chromium in the disposable SYSTEM member's LocalMachine Root store. A receipt records whether this
 helper added it; removal checks exact DER and never removes pre-existing trust.
 #>
 param([Parameter(Mandatory)][ValidateSet('Add','Remove')][string]$Mode,[Parameter(Mandatory)][string]$Receipt)
 $ErrorActionPreference='Stop'
+if($env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne 'S-1-5-18'){throw 'Browser trust requires the disposable SYSTEM qualification host'}
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Trust fixture requires owned domain member'}
 $resolvedReceipt=[IO.Path]::GetFullPath($Receipt)
 $temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -16,7 +17,9 @@ try {
   if($public.Subject -ne 'CN=tt-control.lab.certops.test' -or $public.HasPrivateKey -or $public.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow){throw 'Unexpected public API trust certificate'}
   $thumb=$public.Thumbprint
   $encoded=[Convert]::ToBase64String($public.RawData)
-  $store=[Security.Cryptography.X509Certificates.X509Store]::new('Root','CurrentUser')
+  # CurrentUser Root rejects writes in this LocalSystem qualification context.
+  # Use only the owned disposable machine, binding cleanup to this exact store.
+  $store=[Security.Cryptography.X509Certificates.X509Store]::new('Root','LocalMachine')
   $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
   try {
     $existing=@($store.Certificates|Where-Object Thumbprint -eq $thumb)
@@ -25,12 +28,12 @@ try {
       if($existing.Count -gt 1){throw 'Ambiguous existing public trust certificate'}
       if($existing.Count -eq 1 -and [Convert]::ToBase64String($existing[0].RawData) -ne $encoded){throw 'Existing trust certificate mismatch'}
       # Publish ownership before mutation, so a later failure remains recoverable.
-      @{thumbprint=$thumb;publicDer=$encoded;added=($existing.Count -eq 0)} | ConvertTo-Json | Set-Content -LiteralPath $resolvedReceipt
+      @{thumbprint=$thumb;publicDer=$encoded;storeLocation='LocalMachine';added=($existing.Count -eq 0)} | ConvertTo-Json | Set-Content -LiteralPath $resolvedReceipt
       if($existing.Count -eq 0){$store.Add($public)}
       if(@($store.Certificates|Where-Object Thumbprint -eq $thumb).Count -ne 1){throw 'Public browser trust was not installed'}
     } else {
       $owned=Get-Content -LiteralPath $resolvedReceipt -Raw | ConvertFrom-Json
-      if($owned.thumbprint -ne $thumb -or $owned.publicDer -ne $encoded -or $owned.added -isnot [bool]){throw 'Owned trust receipt mismatch'}
+      if($owned.thumbprint -ne $thumb -or $owned.publicDer -ne $encoded -or $owned.storeLocation -cne 'LocalMachine' -or $owned.added -isnot [bool]){throw 'Owned trust receipt mismatch'}
       if($owned.added) {
         if($existing.Count -gt 1){throw 'Ambiguous owned trust cleanup'}
         foreach($entry in $existing){if([Convert]::ToBase64String($entry.RawData) -ne $encoded){throw 'Owned trust DER changed'};$store.Remove($entry)}

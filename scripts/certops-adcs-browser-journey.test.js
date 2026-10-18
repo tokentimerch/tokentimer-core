@@ -164,7 +164,10 @@ test("native browser sources exist and optional bootstrap scripts preserve owned
     path.resolve(__dirname, "../infra/certops-adcs/browser-api-trust.ps1"),
     "utf8",
   );
-  assert.ok(trust.includes("'Root','CurrentUser'"));
+  assert.ok(trust.includes("'Root','LocalMachine'"));
+  assert.ok(trust.includes("$env:CERTOPS_ADCS_DISPOSABLE_LAB -ne '1'"));
+  assert.ok(trust.includes("User.Value -ne 'S-1-5-18'"));
+  assert.ok(trust.includes("$owned.storeLocation -cne 'LocalMachine'"));
   assert.ok(trust.includes("if($owned.added)"));
   assert.ok(trust.includes("$store.Remove($entry)"));
 });
