@@ -397,7 +397,45 @@ function readLedgerRow(ledgerDir, oldThumbprint) {
   } catch (err) {
     throw buildError(`ledger row at ${rowPath} is not valid JSON: ${err.message}`);
   }
-  return validateLedgerRow(parsed);
+  const row = validateLedgerRow(parsed);
+  // A corrupted payload must not redirect cleanup away from the named row.
+  if (row.oldThumbprint !== normalizeThumbprint(oldThumbprint)) {
+    throw buildError("ledger row thumbprint does not match its filename", "LEDGER_IDENTITY_MISMATCH");
+  }
+  return row;
+}
+
+/**
+ * Resolve the currently bound descendant after repeated verified cutovers.
+ * A -> B remains immutable history when B -> C is recorded: the first row's
+ * replacement and retention clock must never be rewritten just to probe C.
+ * Only bounded, chronological, same-store, agent-owned ledger links without
+ * active recovery references may bridge an unbound replacement. Missing,
+ * malformed, cyclic or unrelated history keeps the predecessor deferred.
+ * Removed rows remain useful verified history; removing their certificate does
+ * not erase the cutover that led to the next replacement.
+ */
+function resolveBoundReplacement({ ledgerDir, row, isBound, nowMs = Date.now() }) {
+  const store = (row.store || "My").toUpperCase();
+  const visited = new Set([row.oldThumbprint]);
+  let thumbprint = row.replacementThumbprint;
+  let cutoverMs = Date.parse(row.verifiedCutoverAt);
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (visited.has(thumbprint)) return null;
+    if (isBound(thumbprint, store)) return thumbprint;
+    visited.add(thumbprint);
+    let next;
+    try { next = readLedgerRow(ledgerDir, thumbprint); } catch { return null; }
+    if (!next || next.oldThumbprint !== thumbprint ||
+        next.ownershipProvenance !== "tokentimer_installed" ||
+        (next.store || "My").toUpperCase() !== store ||
+        next.jobOrRollbackJournalRefs.some(reference => reference.active) ||
+        Date.parse(next.verifiedCutoverAt) < cutoverMs ||
+        Date.parse(next.verifiedCutoverAt) > nowMs) return null;
+    cutoverMs = Date.parse(next.verifiedCutoverAt);
+    thumbprint = next.replacementThumbprint;
+  }
+  return null;
 }
 
 /**
@@ -565,56 +603,71 @@ function evaluateEligibility(row, {
  *   old certificate/key container from the store; throwing here defers the
  *   row (a failed delete must not be recorded as removed).
  * @param {() => Date} [input.now]
+ * @param {(row: object, work: Function) => Promise<void>} [input.withRowLock]
+ *   Production holds its store mutex across the fresh row read, live facts,
+ *   native deletion and final ledger write. Pure-data callers may omit this.
  * @returns {Promise<{
  *   removed: string[],
  *   deferred: { oldThumbprint: string, reason: string }[],
  *   deferredCountByReason: Record<string, number>,
  * }>}
  */
-async function sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup, now = () => new Date() }) {
+async function sweepLedger({ ledgerDir, retentionHours, gatherContext, performCleanup, now = () => new Date(), withRowLock }) {
   validateRetentionHours(retentionHours);
   const removed = [];
   const deferred = [];
   const deferredCountByReason = Object.fromEntries(DEFERRAL_REASONS.map((reason) => [reason, 0]));
 
   for (const oldThumbprint of listLedgerThumbprints(ledgerDir)) {
-    const row = readLedgerRow(ledgerDir, oldThumbprint);
-    if (row === null || row.lifecycleState === "removed") continue;
+    const initialRow = readLedgerRow(ledgerDir, oldThumbprint);
+    if (initialRow === null || initialRow.lifecycleState === "removed") continue;
 
-    const context = await gatherContext(row);
-    const result = evaluateEligibility(row, { ...context, retentionHours, now });
-
-    if (result.eligible) {
-      try {
-        await performCleanup(row);
-      } catch (err) {
-        // Eligibility held, but the actual delete failed (e.g. a
-        // transient store/filesystem error): this is NOT one of decision
-        // 18's six named deferral reasons (those gate ELIGIBILITY, not the
-        // delete operation itself), so the row is marked `eligible` and
-        // retried as a delete attempt on the next sweep, rather than
-        // mislabeled under an unrelated deferral reason or silently
-        // dropped. The error is intentionally not persisted into the
-        // ledger row (rows carry cleanup-decision facts, not error logs);
-        // a caller wanting to observe it should do so via its own logging
-        // around performCleanup.
-        writeLedgerRow(ledgerDir, { ...row, lifecycleState: "eligible", deferralReason: null });
-        deferred.push({ oldThumbprint: row.oldThumbprint, reason: "cleanup_failed" });
-        void err;
-        continue;
+    const processRow = async ({ assertHeld = () => {}, signal } = {}) => {
+      assertHeld();
+      // Lock acquisition may wait behind a cutover, rollback or recovery. Never
+      // base deletion or its state write on the pre-lock row snapshot.
+      const row = readLedgerRow(ledgerDir, oldThumbprint);
+      if (row === null || row.lifecycleState === "removed") return;
+      if ((row.store || "My").toUpperCase() !== (initialRow.store || "My").toUpperCase()) {
+        throw buildError("retention row store changed while acquiring its lock");
       }
-      writeLedgerRow(ledgerDir, { ...row, lifecycleState: "removed", deferralReason: null });
-      removed.push(row.oldThumbprint);
-      continue;
-    }
+      const lockContext = { assertHeld, signal };
+      const context = await gatherContext(row, lockContext);
+      assertHeld();
+      const result = evaluateEligibility(row, { ...context, retentionHours, now });
 
-    writeLedgerRow(ledgerDir, {
-      ...row,
-      lifecycleState: "deferred",
-      deferralReason: result.reason,
-    });
-    deferred.push({ oldThumbprint: row.oldThumbprint, reason: result.reason });
-    deferredCountByReason[result.reason] += 1;
+      if (result.eligible) {
+        try {
+          await performCleanup(row, lockContext);
+          assertHeld();
+        } catch (err) {
+          // Authority loss must never fall through into a ledger mutation.
+          assertHeld();
+          if (err?.code === "STORE_LOCK_LOST") throw err;
+          // A native deletion failure remains retryable while authority holds.
+          // It is distinct from the six eligibility deferral reasons; private
+          // native diagnostics never become persisted ledger fields.
+          writeLedgerRow(ledgerDir, { ...row, lifecycleState: "eligible", deferralReason: null });
+          deferred.push({ oldThumbprint: row.oldThumbprint, reason: "cleanup_failed" });
+          return;
+        }
+        assertHeld();
+        writeLedgerRow(ledgerDir, { ...row, lifecycleState: "removed", deferralReason: null });
+        removed.push(row.oldThumbprint);
+        return;
+      }
+
+      assertHeld();
+      writeLedgerRow(ledgerDir, {
+        ...row,
+        lifecycleState: "deferred",
+        deferralReason: result.reason,
+      });
+      deferred.push({ oldThumbprint: row.oldThumbprint, reason: result.reason });
+      deferredCountByReason[result.reason] += 1;
+    };
+    if (withRowLock) await withRowLock(initialRow, processRow);
+    else await processRow();
   }
 
   return { removed, deferred, deferredCountByReason };
@@ -640,6 +693,7 @@ module.exports = {
   validateLedgerRow,
   createLedgerRow,
   readLedgerRow,
+  resolveBoundReplacement,
   writeLedgerRow,
   listLedgerThumbprints,
   closeJournalReference,

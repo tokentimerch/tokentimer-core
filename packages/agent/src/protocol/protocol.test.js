@@ -487,6 +487,19 @@ test("heartbeat: accepts and forwards declaredCapabilities, omits when absent", 
   assert.equal("declaredTargetSelectors" in calls[3].parsedBody.body, false);
 });
 
+test("heartbeat: distinguishes omitted operations from explicit execution disable", async () => {
+  const calls = stubFetch([{ status: 200, json: { ok: true } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => CREDENTIAL });
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  await client.heartbeat({ agentVersion: "0.1.0", supportedOperations: ["noop"] });
+  await client.heartbeat({ agentVersion: "0.1.0", supportedOperations: [] });
+  assert.equal("supportedOperations" in calls[0].parsedBody.body, false);
+  assert.deepEqual(calls[1].parsedBody.body.supportedOperations, ["noop"]);
+  assert.deepEqual(calls[2].parsedBody.body.supportedOperations, []);
+  await assert.rejects(client.heartbeat({ agentVersion: "0.1.0", supportedOperations: ["unsupported-operation"] }));
+  assert.equal(calls.length, 3);
+});
+
 test("reportResult: sends correct envelope shape (messageType + resultBody fields)", async () => {
   const calls = stubFetch([{ status: 202, json: { accepted: true } }]);
 
@@ -1538,4 +1551,17 @@ test("postJobLogs completes when client shutdown signal is already aborted", asy
   assert.equal(calls[0].init.signal.aborted, false);
   assert.equal(ack.ok, true);
   assert.equal(ack.status, 200);
+});
+
+test("heartbeat: command profile removal and replacement remain explicit", async () => {
+  const calls = stubFetch([{ status: 200, json: { ok: true } }]);
+  const client = createProtocolClient({ serverUrl: "https://example.test", agentId: "agent-1", protocolVersion: "1.0.0", getCredential: () => CREDENTIAL });
+  await client.heartbeat({ agentVersion: "0.1.0" });
+  await client.heartbeat({ agentVersion: "0.1.0", declaredCommandProfileNames: ["nginx-reload"] });
+  await client.heartbeat({ agentVersion: "0.1.0", declaredCommandProfileNames: [] });
+  assert.equal("declaredCommandProfileNames" in calls[0].parsedBody.body, false);
+  assert.deepEqual(calls[1].parsedBody.body.declaredCommandProfileNames, ["nginx-reload"]);
+  assert.deepEqual(calls[2].parsedBody.body.declaredCommandProfileNames, []);
+  await assert.rejects(client.heartbeat({ agentVersion: "0.1.0", declaredCommandProfileNames: ["unsafe command"] }));
+  assert.equal(calls.length, 3);
 });

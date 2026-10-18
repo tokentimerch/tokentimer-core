@@ -35,12 +35,20 @@ const CHALLENGE = {
   recordName: "_acme-challenge.www.example.com",
   txtValue: "token-value",
 };
+test("DNS request redaction preserves full errors for static secret boundary checks", async () => {
+  const { fetchWithTimeout, makeExcerptRedactor } = require("./internal");
+  const secret = "static-credential-boundary-fixture";
+  const body = "x".repeat(1018) + secret;
+  const response = await fetchWithTimeout(() => Promise.resolve({ status: 403, text: () => Promise.resolve(body) }), "https://fixture.invalid", { headers: { Authorization: "Bearer unrelated-generated-fixture" } }, 1000);
+  assert.equal(response.bodyText, body);
+  assert.equal(makeExcerptRedactor([secret])(response.bodyText), "[redacted]");
+});
 
 // ---------------------------------------------------------------------------
 // listSupportedDnsProviders
 // ---------------------------------------------------------------------------
 
-test("listSupportedDnsProviders returns the wave-1 then wave-2 provider ids", () => {
+test("listSupportedDnsProviders returns the stable supported provider order", () => {
   assert.deepEqual(listSupportedDnsProviders(), [
     "cloudflare",
     "route53",

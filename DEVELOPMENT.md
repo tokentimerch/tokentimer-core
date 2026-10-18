@@ -40,14 +40,14 @@ Stop the full local stack with `Ctrl+C`.
 
 If the dashboard shows enterprise demo data or a mock API profile switcher, another
 process is still bound to port 4000. The core API only listens after PostgreSQL is
-ready, so `tokentimer-enterprise` `pnpm demo:local` can keep serving mock data on
-`:4000` while core dev is starting.
+ready, so another development stack can keep serving mock data on `:4000`
+while Core dev is starting.
 
 Check and free the ports:
 
 ```bash
 pnpm run dev:ports:check
-pkill -f dev-mock-api/server.js   # from tokentimer-enterprise demo:local
+# Stop the owning process identified by the port check before continuing.
 pnpm run dev
 ```
 

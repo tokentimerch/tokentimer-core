@@ -690,7 +690,8 @@ async function recordHeartbeat({
     typeof body.pinnedSigningKeyId === "string" && body.pinnedSigningKeyId
       ? body.pinnedSigningKeyId
       : null;
-  const supportedOperations = normalizeStringList(body.supportedOperations, 16);
+  const supportedOperations = Array.isArray(body.supportedOperations)
+    ? normalizeStringList(body.supportedOperations, 16) : null;
   const supportedDnsProviders = normalizeStringList(
     body.supportedDnsProviders,
     64,
@@ -699,10 +700,8 @@ async function recordHeartbeat({
     body.declaredTargetSelectors,
     64,
   );
-  const declaredCommandProfileNames = normalizeStringList(
-    body.declaredCommandProfileNames,
-    64,
-  );
+  const declaredCommandProfileNames = Array.isArray(body.declaredCommandProfileNames)
+    ? normalizeStringList(body.declaredCommandProfileNames, 64) : null;
   // Capability declaration is three-valued, unlike the legacy list fields
   // above: omitted preserves the stored set, an explicitly-sent empty array
   // clears it, and a non-empty array replaces it. Collapsing "absent" and
@@ -752,7 +751,7 @@ async function recordHeartbeat({
               pinned_signing_key_id = COALESCE($5, pinned_signing_key_id),
               agent_version = $6,
               supported_operations = CASE
-                WHEN $7::jsonb = '[]'::jsonb THEN supported_operations
+                WHEN $7::jsonb IS NULL THEN supported_operations
                 ELSE $7::jsonb
               END,
               supported_dns_providers = CASE
@@ -764,7 +763,7 @@ async function recordHeartbeat({
                 ELSE $9::jsonb
               END,
               declared_command_profile_names = CASE
-                WHEN $10::jsonb = '[]'::jsonb THEN declared_command_profile_names
+                WHEN $10::jsonb IS NULL THEN declared_command_profile_names
                 ELSE $10::jsonb
               END,
               declared_capabilities = CASE
@@ -794,10 +793,10 @@ async function recordHeartbeat({
         uptimeSeconds,
         pinnedSigningKeyId,
         body.agentVersion || agent.agentVersion,
-        JSON.stringify(supportedOperations),
+        supportedOperations === null ? null : JSON.stringify(supportedOperations),
         JSON.stringify(supportedDnsProviders),
         JSON.stringify(declaredTargetSelectors),
-        JSON.stringify(declaredCommandProfileNames),
+        declaredCommandProfileNames === null ? null : JSON.stringify(declaredCommandProfileNames),
         envelope.protocolVersion || null,
         declaredCapabilities,
       ],
@@ -1030,10 +1029,7 @@ async function claimJobs({
       `UPDATE certops_agents
           SET last_seen_at = NOW(),
               status = CASE WHEN status = 'offline' THEN 'active' ELSE status END,
-              supported_operations = CASE
-                WHEN $2::jsonb = '[]'::jsonb THEN supported_operations
-                ELSE $2::jsonb
-              END,
+              supported_operations = $2::jsonb,
               supported_dns_providers = CASE
                 WHEN $3::jsonb = '[]'::jsonb THEN supported_dns_providers
                 ELSE $3::jsonb
@@ -1160,6 +1156,25 @@ async function claimJobs({
         WHERE workspace_id = $1
           AND executor_kind = 'agent'
           AND NOT (payload ? 'distributionRollout')
+          -- Exclude contained/superseded distribution work before LIMIT.
+          -- Otherwise maxJobs=1 repeatedly selects an unclaimable older job
+          -- and starves a freshly approved rollout for the same consumer.
+          -- The locked resolveDistributionJobDefaults check below remains
+          -- authoritative for current authorization and exact pinned intent.
+          AND (
+            NOT (payload ? 'materialDeployment')
+            OR EXISTS (
+              SELECT 1 FROM certops_distribution_rollouts rollout
+              JOIN certops_distribution_groups distribution_group
+                ON distribution_group.workspace_id = rollout.workspace_id
+               AND distribution_group.id = rollout.group_id
+              WHERE rollout.workspace_id = cj.workspace_id
+                AND rollout.id::text = cj.payload->'materialDeployment'->>'rolloutId'
+                AND rollout.state IN ('pending', 'deploying')
+                AND rollout.generation = distribution_group.generation
+                AND distribution_group.state = 'active'
+            )
+          )
           AND (
             (
               status = 'pending'
@@ -2184,6 +2199,15 @@ async function refreshRenewedCertificateEvidence({
   await client.query(
     `UPDATE managed_certificates
         SET fingerprint_sha256 = $3, identity_observed_at = clock_timestamp(),
+            -- Claim-bound legacy verify evidence contains no parsed public leaf.
+            -- A different certificate cannot inherit the predecessor's key facts.
+            public_metadata = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3)
+              THEN public_metadata - ARRAY['parser','chainIndex','subject','subjectAltName','fingerprint512','publicKeyMetadata','signatureAlgorithmOid']::text[] ELSE public_metadata END,
+            certificate_pem = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE certificate_pem END,
+            spki_fingerprint_sha256 = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE spki_fingerprint_sha256 END,
+            public_key_algorithm = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE public_key_algorithm END,
+            public_key_size = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE public_key_size END,
+            signature_algorithm = CASE WHEN certops_normalize_fingerprint(fingerprint_sha256) IS DISTINCT FROM certops_normalize_fingerprint($3) THEN NULL ELSE signature_algorithm END,
             serial_number = COALESCE($4, serial_number),
             subject = COALESCE($5, subject),
             issuer = COALESCE($6, issuer),

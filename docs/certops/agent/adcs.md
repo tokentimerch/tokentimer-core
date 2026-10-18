@@ -18,6 +18,25 @@ Linux hosts, and Windows hosts that are not domain-joined, do not enroll over DC
 
 **Renewal profiles** is the shared list on that page, and it is listed first. ACME profiles appear there after an issuance. **AD CS issuers**, further down, only prepares a private CA. Confirm an issuer there before **New AD CS profile** can select it.
 
+## Per-enrollment timing and certificate policy
+
+The public `POST /api/v1/workspaces/:workspaceId/certops/enrollments` request accepts four optional policy fields. Values are frozen with the selected issuer, agent, target and key; retries and continuations retain that snapshot.
+
+- `pollInterval`: integer seconds from 60 to 86400, default 900.
+- `pendingTimeout`: integer seconds from 3600 to 7776000, default 1209600 (14 days).
+- `minimumRemainingValidity`: integer seconds from 0 to 31536000, default 0. An issued certificate must remain valid beyond this interval when the agent validates it.
+- `requireLaterNotAfter`: boolean, default `false`. When enabled, the incoming certificate must expire later than the certificate currently installed on the target.
+
+Omitting these fields retains the existing defaults. Explicit nulls, strings, fractional numbers and values outside these bounds are rejected before an enrollment or job is created. These options do not bypass issuer confirmation, local enrollment rules, native certificate validation or approval policy. A certificate that fails the frozen validity policy is refused before acceptance; its unaccepted key is removed and the outgoing IIS binding remains in place.
+
+## Validation-deferral deadline
+
+When native revocation status cannot be obtained, the issued certificate stays uninstalled and its key remains protected in `validation_deferred`. The agent retries validation until a host-local deadline, then reports `validation_expired` and removes only that unaccepted key.
+
+Set `adcs.validationTimeoutSeconds` in the agent's protected `config.json` to an integer from `300` through `86400`. The default is `86400` (24 hours); the option permits shortening the window, not disabling or extending it. Nulls, strings, fractions and out-of-range values prevent agent startup. Restart `TokenTimerAgent` after editing it. This setting belongs to the host operator; an API enrollment or signed snapshot cannot override it.
+
+**Operator guidance:** a short window can discard an otherwise valid issued certificate during a prolonged CRL outage. The deadline is recorded when validation first defers. Restarting the agent or restoring a longer timeout does not extend that enrollment's existing deadline. New enrollments use the new setting; installed or already accepted keys are preserved by installation-recovery custody checks.
+
 ## Where the agent runs
 
 Install the agent on a domain-joined Windows member. The service runs as `LocalSystem` and authenticates to the CA with Kerberos as `DOMAIN\HOST$`. Grant Enroll on the template to that computer account, or to a group that contains it.
@@ -55,7 +74,11 @@ The check reads two CA settings and refuses with `ADCS_CA_CONFIG_UNSAFE` when ei
 - `policy\EditFlags` must not include `EDITF_ATTRIBUTESUBJECTALTNAME2`. The agent never sends a `SAN:` request attribute.
 - `CA\InterfaceFlags` must include `IF_ENFORCEENCRYPTICERTREQUEST` (`0x200`), so certificate requests stay encrypted.
 
-If the computer account cannot read either value, the check refuses. An enrollment rule can set `operatorAttested` to `true` for that CA after you have verified the flags yourself. Leave it unset otherwise.
+If the computer account cannot read either value, the check refuses. An enrollment rule can set `operatorAttested` to `true` for that CA after you have verified the flags yourself. Leave it unset otherwise. Attestation applies only to unreadable flags. A known unsafe value always refuses enrollment, including when the other flag is unreadable and `operatorAttested` is true.
+
+Before generating a key for a new enrollment, and before resuming an enrollment that has not yet submitted its CSR, the agent reads the current template and CA settings again. It checks the template identity, server-auth-only policies, schema, minimum key size, and requested key algorithm against the frozen enrollment. Schema 2 supports RSA; newer schemas must explicitly match the requested RSA or ECDSA algorithm. Missing or ambiguous required attributes refuse enrollment with `ADCS_TEMPLATE_UNSAFE`. Unsafe CA settings refuse with `ADCS_CA_CONFIG_UNSAFE`; an unmatched CA key refuses with `ADCS_CA_KEY_UNPINNED`.
+
+A successful check can be reused for up to five minutes between key generation and the first submit within the same execution. Each new execution reads the settings again. A safety refusal while recovering an unused key records the refusal and removes only that enrollment's unused container. A refusal before the CSR exists records no CSR or issued-certificate evidence. Already submitted requests keep their frozen issuer and follow retrieval and certificate validation; later template edits do not turn a pending request into a new submission. Signed terminal cleanup also remains independent of CA availability.
 
 ## CA config
 
@@ -77,7 +100,9 @@ On the agent, `config.json` lists the only CA and template pairs that host may c
     "enrollmentRules": [
       {
         "caConfig": "ca01.corp.example.com\\Corp Issuing CA",
-        "template": "WebServer"
+        "template": "WebServer",
+        "dnsScopes": ["corp.example.com"],
+        "keyAlgorithms": ["rsa", "ecdsa"]
       }
     ]
   }
@@ -85,6 +110,10 @@ On the agent, `config.json` lists the only CA and template pairs that host may c
 ```
 
 `caConfig` is `host\CA name`. `template` is the template common name. The pair must match the issuer exactly. A preflight or enrollment whose pair is not in this list is rejected with `issuer_not_allowlisted` and does not contact the CA. Separate CA and template allowlists are not used, because the cross product would allow pairs nobody chose.
+
+Enrollment additionally requires `dnsScopes` and `keyAlgorithms` on one matching rule. Every requested SAN, the target name and any SNI name must equal a DNS scope or be beneath it at a dot boundary: `corp.example.com` covers `web.corp.example.com`, but not `evilcorp.example.com`. Use DNS zones without `*.` prefixes. `dnsScopes` accepts 1–32 unique ASCII zones; names are matched case-insensitively. `keyAlgorithms` accepts one or both of `rsa` and `ecdsa`; template key-size and curve constraints still apply separately. DNS permission on one rule cannot combine with key permission on another. Empty or malformed explicit lists prevent agent startup. A CA/template-only rule can perform read-only issuer preflight but cannot authorize enrollment.
+
+**Operator action:** add explicit DNS and key constraints before enabling enrollment, then restart the service. Public issuer confirmation, profile changes and immutable signed snapshots cannot broaden these host-local permissions. Tightening a rule refuses later continuations and deletes only their exact unaccepted key; an accepted or installing key requires installation reconciliation and is preserved. Terminal cancellation/expiry cleanup remains available even after local rules change.
 
 Restart `TokenTimerAgent` after you save the rule. The certificate DNS name on the renewal profile must be in `declaredTargetSelectors`. Add the name there and restart the agent. The next heartbeat publishes it. An empty list does not remove the last name. If the issuer wizard stays on "Waiting for the agent to report the preflight verdict", confirm the agent is online, that this rule names the same CA and template, and that the agent build advertises AD CS preflight.
 
@@ -139,13 +168,43 @@ A request the CA accepts and holds shows **Awaiting CA approval**, with the Requ
 
 The 14-day limit starts when the CA accepts the request. While the enrollment is still **Requested** or **Prepared**, that limit has not started. **Cancel enrollment** removes it, and the CA was not contacted. After 14 days in **Awaiting CA approval**, the enrollment expires and the key on the host is removed.
 
+Cancellation, expiry, and abandonment dispatch a signed cleanup continuation
+to the original agent. The agent deletes only that enrollment's uninstalled
+CNG key and reports completion after recording the terminal outcome. It
+does not retrieve the pending CA request during cleanup, so cleanup can
+finish while the CA is unavailable. If deletion fails, the control plane
+keeps scheduling cleanup. A repeated continuation checks absence safely.
+
+Cleanup refuses a key whose journal or ownership receipt shows issuance,
+acceptance, or installation may have begun. If the journal is missing, an
+absent key can be acknowledged, while a present key requires operator
+reconciliation. Cleanup never deletes an unproven key to clear a failed job.
+
 ## Uncertain submission
 
 If the agent restarts after it has started submit and before it has a trustworthy result, the enrollment is **Submission uncertain**. The error is `ADCS_DISPOSITION_UNKNOWN`. It is not resubmitted.
 
 On that enrollment, enter the RequestId from the CA and choose **Reconcile**. A supplied RequestId is accepted only when a retrieve returns a certificate for the key already on the host. Or choose **Abandon**, then **Free the key**. Abandon deletes the key on the host. A certificate the CA issues later for that request has no key on the agent.
 
+The RequestId is a candidate. The signed continuation retrieves that exact
+request and checks its public key, pinned CA, template, and certificate names
+before installing it. A wrong or inaccessible RequestId leaves the enrollment
+uncertain and retains the key; the agent does not submit another request or
+attach a different candidate automatically. A pending candidate can be checked
+again after the CA approves it. Change the proposed RequestId or abandon the
+enrollment when the CA cannot produce a valid certificate for it.
+
 The CA database is not readable by the computer account unless you grant CA Read. Leave that right unset. It exposes every request, not only this computer's. Without it, reconciliation is the RequestId you supply, or a retrieve of this computer's own requests.
+
+## Installation recovery
+
+An interrupted enrollment reported as `installing` remains eligible for a signed continuation after its active job ends. The agent inspects the existing certificate, key and IIS binding and resumes the first incomplete installation step; it does not generate another key or submit another CA request.
+
+A service crash after lease renewal can leave the current job `orphaned_unknown_effect`, with no final enrollment result. That status requires a human decision. Send `POST /api/v1/workspaces/:id/certops/enrollments/:enrollmentId/recover` with the exact `orphanedJobId`, `acknowledgeUnknownEffect: true`, and a printable `reason` of up to 500 characters after inspecting the CA and host. An authenticated operator with `certops.issuer.manage` receives a new continuation, or the existing active recovery. The endpoint refuses a different job, a job without its reconciliation flag, a live unrelated attempt, terminal enrollment revival and changes to the frozen issuer, agent, key, names or target. Workspace pause and approval policy apply; internal worker identities cannot make this decision.
+
+The agent's authoritative local journal determines which step can resume. A prepared CSR can make its first submit after current safety checks; a submitted or uncertain request cannot be submitted again. A missing journal refuses recovery without deleting or generating a key. The original orphaned job keeps its historical unknown-effect flag; recovery is audited as `certops.enrollment.recovery_requested`, and the new continuation must prove the actual outcome. A legitimately reclaimed original renew job can also resume its own durable journal only while its job, attempt, snapshot and container identity still match. A different job must use a signed continuation, and failed installations require the explicit retry below.
+
+An explicit `install_failed` result waits for an operator decision. After correcting the IIS or certificate-store problem, an operator with `certops.issuer.manage` can send an empty JSON object to `POST /api/v1/workspaces/:id/certops/enrollments/:enrollmentId/retry-installation`. The endpoint returns `201` with the new `jobId`, or `200` with the existing active retry. It accepts only failed installations and cannot change the enrollment's agent, CA, template, key, DNS names or target. The retry is audited as `certops.enrollment.installation_retry_requested`, respects workspace pause and approval policy, and reuses the issued certificate and protected key. It does not acknowledge an unsafe key deletion or recreate a missing issued key.
 
 ## CA key change
 
@@ -187,6 +246,24 @@ A denied request can also carry a CA result. Console text is localized and is no
 | `0x800706BF` `RPC_S_CALL_FAILED_DNE` | submit, no response file | Same as unreachable: nothing was submitted. |
 
 Any other result after submit has started is uncertain. Do not resubmit it.
+
+## Signed response validation
+
+The CMC helper verifies the CA signature and pinned public key before trusting
+response facts. Pending RequestIds must be nonzero unsigned 32-bit values;
+the maximum value remains supported. Status fields require a nonempty list of
+valid body identifiers, valid UTF-8 description text, exactly one optional
+choice, and a valid GeneralizedTime pending timestamp. Malformed fields and
+trailing data fail closed. The field layout follows the existing
+[RFC5272 CMC status and pending structures](https://www.rfc-editor.org/rfc/rfc5272#section-6.1.2).
+
+Thirty-three focused native Go checks on Windows passed the genuine signed issued, pending,
+and denied fixture controls, tampering and truncation refusals, malformed field
+checks, and English/French/German description parsing. Localized descriptions
+are synthetic structured-content cases; they do not replace responses from
+qualified localized AD CS hosts. The mandatory Windows Go suite includes these
+tests. This helper decodes responses and does not implement signed CMC renewal
+requests.
 
 ## Related
 

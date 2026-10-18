@@ -3,7 +3,7 @@ param(
   [ValidatePattern('^tt-wildcard-ux-[a-z0-9-]+$')][string]$Project = 'tt-wildcard-ux-20261009-merge2',
   [ValidateSet('all','setup','prepare-publication','publish','bindings','rejection','authorization','recovery','deployment-recovery','repair','validation','scanner','transfer','transfer-status','status')][string]$Phase = 'all',
   [ValidateRange(1024,65392)][int]$BasePort = 58800,
-  [ValidateSet('san','wildcard')][string]$CertificateMode = 'san',
+  [ValidateSet('san','wildcard','ordinary')][string]$CertificateMode = 'san',
   [switch]$BuildImages
 )
 $ErrorActionPreference = 'Stop'
@@ -21,7 +21,7 @@ function BuildImage([string]$dockerfile, [string]$tag) {
 Push-Location $repo
 $environmentNames = @('TT_WILDCARD_UX_OUTPUT','TT_UX_API_IMAGE','TT_UX_WORKER_IMAGE','TT_UX_CUSTOMER_IMAGE',
   'TT_UX_API_PORT','TT_UX_WEB_PORT','TT_UX_MAIL_PORT','TT_UX_CONTROL_PORT','TT_UX_NGINX_PORT','TT_UX_HAPROXY_PORT',
-  'TT_UX_CERTIFICATE_MODE','TT_UX_CORE_COMMIT')
+  'TT_UX_CERTIFICATE_MODE','TT_UX_CORE_COMMIT','TT_UX_PROJECT')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 try {
@@ -41,6 +41,8 @@ try {
   $env:TT_UX_HAPROXY_PORT = "$($BasePort + 143)"
   $env:TT_UX_CERTIFICATE_MODE = $CertificateMode
   $env:TT_UX_CORE_COMMIT = (& git rev-parse HEAD)
+  if ($Action -eq 'Test' -and (!$options -or $options.coreCommit -ne $env:TT_UX_CORE_COMMIT)) { throw "Owned lab candidate differs from current checkout; recreate the lab." }
+  $env:TT_UX_PROJECT = $Project
   $imagesFile = Join-Path $output 'runtime-images.json'
   if (Test-Path $imagesFile) {
     $images = Get-Content $imagesFile -Raw | ConvertFrom-Json
@@ -54,7 +56,8 @@ try {
       if ($existing) { throw 'Project already exists. Use Test/Status, or Stop and choose a new Project for a fresh run.' }
       if (Test-Path (Join-Path $output 'journey-state.json')) { throw 'Evidence already exists. Choose a new Project for a fresh run.' }
       foreach ($port in @($BasePort,($BasePort+1),($BasePort+3),($BasePort+5),($BasePort+43),($BasePort+143))) {
-        if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) { throw "Port $port is occupied. Choose a different BasePort." }
+        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+        try { $probe.Start() } catch { throw "Port $port is occupied. Choose a different BasePort." } finally { $probe.Stop() }
       }
       @{basePort=$BasePort;certificateMode=$CertificateMode;coreCommit=$env:TT_UX_CORE_COMMIT} | ConvertTo-Json | Set-Content $optionsFile
       if ($BuildImages) {

@@ -164,6 +164,39 @@ exact bytes on the enrollment row. Every job for that enrollment carries:
 - `enrollment.snapshotB64`: base64 of the stored snapshot bytes
 - `enrollment.snapshotSha256`: SHA-256 hex of those bytes
 
+A terminal cleanup continuation also carries `enrollment.terminalState`,
+restricted to `expired`, `cancelled`, or `abandoned`. The dispatcher derives
+it from the current durable enrollment row; it is never accepted from a
+job request. The signed payload schema allows it only with action
+`continue-enrollment`. The agent must not retrieve or resubmit a CA request
+when this directive is present.
+
+Under the enrollment lock and an active job lease, cleanup checks the local
+snapshot hash, exact deterministic enrollment container name, and attempt.
+It refuses a stale attempt and any journal or ownership receipt indicating
+issuance, acceptance, or installation may have begun. Successful deletion
+is journaled before the agent reports the same terminal enrollment state.
+A replay independently checks whether the key still exists and treats its
+absence as success. Failed cleanup reports a failed job without terminal
+enrollment evidence, allowing another cleanup continuation.
+
+If no local journal exists, the agent can acknowledge only an independently
+confirmed absent key. A present key without a journal is never deleted.
+Terminal cleanup needs neither a cached CA certificate nor a CA helper
+binary because it performs no CA operation.
+
+For `submission_uncertain`, an operator-proposed RequestId travels as signed
+`enrollment.reconcileRequestId`, an integer from 1 through 4294967295 derived
+from the durable enrollment row. It is allowed only on `continue-enrollment`
+and cannot coexist with `terminalState`. The agent retrieves exactly that
+candidate and verifies the returned leaf's SPKI against the durable CSR before
+running decision-6 against the frozen CA key, template and DNS constraints.
+It never trusts a RequestId alone or silently replaces a rejected explicit
+proposal with an automatically scanned candidate. Pending, inaccessible,
+malformed, foreign-key or invalid candidates leave the enrollment uncertain;
+the key stays intact. Reconciliation keeps a retry poll date until the proposed
+certificate validates or the operator changes/abandons the enrollment.
+
 These fields are inside the signed payload. The agent hashes the decoded
 bytes itself rather than re-canonicalizing JSON, for the same reason the v2
 envelope signs exact bytes (ADR-0012 decision 1).
@@ -347,7 +380,12 @@ is collected for diagnostics and evidence only, never as the decision.
 obtained, the enrollment moves to `validation_deferred`: the certificate
 stays uninstalled, the key is retained, and validation is retried with
 backoff until an agent-local deadline (default 24 hours), after which the
-enrollment ends `validation_expired` and the key is freed. The agent-local
+enrollment ends `validation_expired` and the key is freed. The host operator may
+shorten that window with `adcs.validationTimeoutSeconds` (integer 300–86400);
+omission keeps the 24-hour default, and invalid values fail agent startup.
+The recorded deadline survives restarts and later configuration changes,
+so restoring a longer timeout cannot extend an already deferred enrollment.
+The agent-local
 `adcs.revocationCheck` setting is `require` by default; `best-effort` is an
 explicit local exception, and every certificate accepted under it is
 recorded as such in evidence.

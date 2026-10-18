@@ -28,6 +28,42 @@ const OTHER_KEY_PEM = fs.readFileSync(path.join(FIXTURES_DIR, "wrong-san.key.pem
 const PRIVATE_KEY_PEM =
   "-----BEGIN PRIVATE KEY-----\nMIIEfake-key-body\n-----END PRIVATE KEY-----\n";
 
+it("restricts empty private staging and backup files before writing secret bytes", async () => {
+  const dir = makeTempDir(), keyPath = path.join(dir, "protected.key"), staged = path.join(dir, "staged.key");
+  fs.writeFileSync(staged, MATCHING_KEY_PEM, { mode: 0o600 });
+  fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, "protected.crt"), OTHER_CERT_PEM, { mode: 0o600 });
+  const realFsp = require("node:fs/promises");
+  let observedPrivateWrites = 0;
+  const result = await deployCertificateAndKey({
+    target: { type: "endpoint", reference: "protected-private-file", certPath: path.join(dir, "protected.crt"), keyPath },
+    certificatePem: CERT_PEM, privateKeyPath: staged, checkPath: makeCheckPath(dir),
+    _fsOverrides: {
+      async open(file, ...args) {
+        const handle = await realFsp.open(file, ...args);
+        if (!path.basename(String(file)).startsWith(".protected.key.")) return handle;
+        return {
+          async writeFile(content) {
+            assert.equal(fs.statSync(file).size, 0, "No private bytes may precede permission enforcement");
+            if (process.platform === "win32") {
+              const environment = { ...process.env, CERTOPS_FIXTURE_KEY: String(file) };
+              for (const key of Object.keys(environment)) if (key.toLowerCase() === "psmodulepath") delete environment[key];
+              const acl = require("node:child_process").spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $acl=Get-Acl -LiteralPath $env:CERTOPS_FIXTURE_KEY; if(-not $acl.AreAccessRulesProtected){throw 'Inherited ACL'}; $allowed=@('S-1-5-18','S-1-5-32-544',[Security.Principal.WindowsIdentity]::GetCurrent().User.Value); foreach($rule in $acl.Access){if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed){throw 'Unexpected trustee'}}; 'restricted'"], { encoding: "utf8", env: environment, timeout: 15000 });
+              assert.equal(acl.status, 0, "Independent native ACL oracle failed; raw output withheld"); assert.equal(acl.stdout.trim(), "restricted");
+            } else assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+            observedPrivateWrites++;
+            return handle.writeFile(content);
+          },
+          chmod: handle.chmod.bind(handle), chown: handle.chown.bind(handle), sync: handle.sync.bind(handle), close: handle.close.bind(handle),
+        };
+      },
+    },
+  });
+  assert.equal(result.deployed, true); assert.equal(observedPrivateWrites, 2);
+  assert.equal(fs.readFileSync(result.backupPaths.key, "utf8"), OTHER_KEY_PEM);
+  assert.equal(fs.readFileSync(keyPath, "utf8"), MATCHING_KEY_PEM);
+});
+
 const tempDirs = [];
 
 function makeTempDir() {
@@ -388,9 +424,9 @@ describe("deployCertificate", () => {
 
     assert.equal(result.deployed, true);
     assert.ok(result.backupPath, "expected a backupPath in the result");
-    assert.equal(
+    assert.match(
       path.basename(result.backupPath),
-      "server.crt.2026-07-22T05-00-00.000Z.bak",
+      /^server\.crt\.2026-07-22T05-00-00\.000Z\.[a-f0-9]{32}\.[a-f0-9]{32}\.bak$/,
     );
     assert.equal(fs.readFileSync(result.backupPath, "utf8"), CERT_PEM);
     assert.equal(fs.readFileSync(target.certPath, "utf8"), OTHER_CERT_PEM);
@@ -1087,7 +1123,7 @@ describe("deployCertificateAndKey", () => {
     fs.writeFileSync(keyPath, OTHER_KEY_PEM, { mode: 0o600 });
     fs.writeFileSync(stagedKeyPath, MATCHING_KEY_PEM, { mode: 0o600 });
 
-    let renameCount = 0;
+    let keySwapFailed = false;
     const realRename = require("node:fs/promises").rename;
     const result = await deployCertificateAndKey({
       target: {
@@ -1101,9 +1137,10 @@ describe("deployCertificateAndKey", () => {
       checkPath: makeCheckPath(dir),
       _fsOverrides: {
         rename: (from, to) => {
-          renameCount += 1;
-          // First rename is the cert temp→live; second is the key. Fail the key.
-          if (renameCount >= 2) {
+          // Fail only the actual private-key swap, after real backups exist.
+          // Backup staging and the subsequent rollback must remain available.
+          if (!keySwapFailed && path.resolve(String(to)) === path.resolve(keyPath)) {
+            keySwapFailed = true;
             return Promise.reject(new Error("injected key rename failure"));
           }
           return realRename(from, to);
@@ -1192,7 +1229,9 @@ describe("deployCertificateAndKey", () => {
         // Simulates a downstream failure (e.g. the atomic rename step)
         // that happens AFTER the existing key has already been loaded
         // into memory -- the failure path this regression protects.
-        rename: () => Promise.reject(new Error("injected downstream failure after key load")),
+        rename: (from, to) => path.resolve(String(to)) === path.resolve(certPath)
+          ? Promise.reject(new Error("injected downstream failure after key load"))
+          : realFsp.rename(from, to),
       },
     });
 

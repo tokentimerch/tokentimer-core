@@ -5526,6 +5526,28 @@ paths:
                   type: integer
                   description: RSA 2048, 3072, or 4096. ECDSA 256 or 384.
                 profileId: { type: string, format: uuid }
+                pollInterval:
+                  type: integer
+                  minimum: 60
+                  maximum: 86400
+                  default: 900
+                  description: Seconds between pending continuations, frozen for this enrollment.
+                pendingTimeout:
+                  type: integer
+                  minimum: 3600
+                  maximum: 7776000
+                  default: 1209600
+                  description: Seconds after submission before pending expiry, frozen for this enrollment.
+                minimumRemainingValidity:
+                  type: integer
+                  minimum: 0
+                  maximum: 31536000
+                  default: 0
+                  description: Required remaining certificate validity in seconds at native validation.
+                requireLaterNotAfter:
+                  type: boolean
+                  default: false
+                  description: Refuse an issued certificate whose expiry is not later than the currently installed certificate. These options apply only to this new immutable enrollment; continuations retain its original values.
       responses:
         "201":
           description: Enrollment and first job created
@@ -5622,6 +5644,97 @@ paths:
           description: >-
             Enrollment cancelled. The CA was not contacted when the enrollment
             was still requested or prepared.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/retry-installation:
+    post:
+      tags: [CertOps]
+      summary: Retry an AD CS enrollment installation
+      operationId: retryCertOpsEnrollmentInstallation
+      description: >-
+        Requires certops.issuer.manage and an install_failed enrollment. Audits
+        an explicit retry and creates a signed continuation for the same frozen
+        issuer, agent, key, names and target. It never creates another enrollment
+        or CA request. Concurrent requests reuse the active retry. Workspace
+        pause refuses with CERTOPS_WORKSPACE_PAUSED (400); workspace approval
+        policy still applies to the retry job. Cookies and CSRF are required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        "201":
+          description: A new audited continuation was created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId, created]
+                properties:
+                  jobId: { type: string, format: uuid }
+                  created: { type: boolean }
+        "200": { description: The existing active retry is returned with jobId and created false }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v1/workspaces/{id}/certops/enrollments/{enrollmentId}/recover:
+    post:
+      tags: [CertOps]
+      summary: Reconcile an interrupted AD CS enrollment
+      operationId: recoverCertOpsEnrollment
+      description: >-
+        Human session and certops.issuer.manage are required. The exact current
+        enrollment-bound real agent job must be orphaned_unknown_effect and
+        still need operator reconciliation. Explicit acknowledgement and a
+        bounded reason authorize only a continuation of the frozen enrollment,
+        never a fresh key or automatic resubmission of an uncertain request.
+        Installed, cancelled, expired, denied and other terminal enrollments
+        cannot be revived; install_failed uses retry-installation instead.
+        Concurrent calls reuse the active recovery. Workspace pause refuses
+        with CERTOPS_WORKSPACE_PAUSED (400); approval policy applies. The original
+        job keeps its historical unknown-effect flag. CSRF is required.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - in: path
+          name: enrollmentId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orphanedJobId, acknowledgeUnknownEffect, reason]
+              properties:
+                orphanedJobId: { type: string, format: uuid }
+                acknowledgeUnknownEffect: { type: boolean, enum: [true] }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "201":
+          description: An audited continuation was created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobId, created]
+                properties:
+                  jobId: { type: string, format: uuid }
+                  created: { type: boolean }
+        "200": { description: Existing active recovery returned with jobId and created false }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }

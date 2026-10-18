@@ -41,10 +41,10 @@ const FORWARD = Object.freeze({
   prepared: ["submitting", "refused", "cancelled"],
   submitting: ["pending_issuance", "issued", "denied", "submission_uncertain", "refused", "cancelled"],
   submission_uncertain: ["pending_issuance", "issued", "abandoned", "refused", "cancelled"],
-  pending_issuance: ["issued", "denied", "expired", "cancelled"],
-  issued: ["validated", "rejected_invalid", "validation_deferred"],
-  validation_deferred: ["validated", "rejected_invalid", "validation_expired"],
-  validated: ["installing"],
+  pending_issuance: ["issued", "denied", "expired", "cancelled", "refused"],
+  issued: ["validated", "rejected_invalid", "validation_deferred", "refused"],
+  validation_deferred: ["validated", "rejected_invalid", "validation_expired", "refused"],
+  validated: ["installing", "refused"],
   installing: ["installed", "install_failed"],
   // Agent install recovery can finish after a recorded failure.
   install_failed: ["installed"],
@@ -62,6 +62,7 @@ const TERMINAL = new Set([
 ]);
 
 const CONTINUATION_STATES = new Set([
+  "installing",
   "pending_issuance",
   "submitting",
   "submission_uncertain",
@@ -111,10 +112,10 @@ function freezeSnapshot(input) {
     keyAlgorithm: input.keyAlgorithm,
     keySize: input.keySize,
     policyVersion: input.policyVersion || 1,
-    pollInterval: input.pollInterval || DEFAULT_POLL_INTERVAL_SECONDS,
-    pendingTimeout: input.pendingTimeout || DEFAULT_PENDING_TIMEOUT_SECONDS,
-    minimumRemainingValidity: input.minimumRemainingValidity || 0,
-    requireLaterNotAfter: input.requireLaterNotAfter === true,
+    pollInterval: input.pollInterval === undefined ? DEFAULT_POLL_INTERVAL_SECONDS : input.pollInterval,
+    pendingTimeout: input.pendingTimeout === undefined ? DEFAULT_PENDING_TIMEOUT_SECONDS : input.pendingTimeout,
+    minimumRemainingValidity: input.minimumRemainingValidity === undefined ? 0 : input.minimumRemainingValidity,
+    requireLaterNotAfter: input.requireLaterNotAfter === undefined ? false : input.requireLaterNotAfter,
   };
   if (snapshot.transport !== "dcom") {
     throw serviceError("AD CS transport must be dcom", "CERTOPS_SNAPSHOT_INVALID");
@@ -206,6 +207,7 @@ function decideContinuation(enrollment, snapshot, now) {
     if (now.getTime() >= deadline) return { state: "expired", reason: "pending_timeout" };
   }
   if (enrollment.nextPollAt && enrollment.nextPollAt.getTime() > now.getTime()) return null;
+  if (enrollment.state === "installing") return { dispatch: true, reason: "resume_installation" };
   if (enrollment.state === "submitting" && enrollment.lastErrorCode === UNREACHABLE_ERROR) {
     return { dispatch: true, reason: UNREACHABLE_ERROR };
   }
@@ -259,12 +261,12 @@ function attachEnrollmentDispatch(stored, enrollment) {
       "CERTOPS_ENROLLMENT_DISPATCH_ONLY",
     );
   }
-  const metadata = Array.isArray(stored.metadata) ? stored.metadata.slice() : [];
+  // Public metadata is not an operator directive. Replace any stale hint
+  // with the durable row's current proposal so the signed fields agree.
+  const metadata = Array.isArray(stored.metadata)
+    ? stored.metadata.filter((entry) => !entry || entry.name !== "adcs.reconcileRequestId") : [];
   const requestId = parseRequestId(enrollment.operatorRequestId);
-  if (
-    requestId != null &&
-    !metadata.some((entry) => entry && entry.name === "adcs.reconcileRequestId")
-  ) {
+  if (requestId != null) {
     metadata.push({
       name: "adcs.reconcileRequestId",
       value: requestId,
@@ -278,6 +280,10 @@ function attachEnrollmentDispatch(stored, enrollment) {
       attempt: enrollment.attempt,
       snapshotB64: enrollment.snapshotB64,
       snapshotSha256: enrollment.snapshotSha256,
+      ...(enrollment.state === "submission_uncertain" && requestId != null
+        ? { reconcileRequestId: requestId } : {}),
+      ...(["expired", "cancelled", "abandoned"].includes(enrollment.state)
+        ? { terminalState: enrollment.state } : {}),
     },
     ...(metadata.length ? { metadata } : {}),
   };

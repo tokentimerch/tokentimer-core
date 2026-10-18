@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "minimum-key-zero",
+      "attribute": "msPKI-Minimal-Key-Size",
+      "operation": "set-zero",
+      "observedField": "minimalKeySize",
+      "observedValue": 0
+    },
+    {
+      "id": "subject-name-flag-absent",
+      "attribute": "msPKI-Certificate-Name-Flag",
+      "operation": "clear",
+      "observedField": "enrolleeSuppliesSubject",
+      "observedValue": null
+    }
+  ]
+}

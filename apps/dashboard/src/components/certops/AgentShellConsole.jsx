@@ -8,6 +8,9 @@ const MAX_PAGES_PER_TICK = 5;
 const VISIBLE_POLL_MS = 700;
 const HIDDEN_POLL_MS = 5000;
 const ERROR_POLL_MS = 10000;
+// Completed output is still permission-sensitive. Revalidate the cursor at a
+// lower rate while mounted so a later role/membership change clears cached text.
+const COMPLETED_REVALIDATE_MS = 15000;
 
 /** Always-dark terminal palette so light UI theme cannot wash out log text. */
 const SHELL = {
@@ -310,6 +313,9 @@ export default function AgentShellConsole({
           return String(a.id).localeCompare(String(b.id));
         });
     }
+    // A role change can withdraw text access while this console stays mounted.
+    // Authoritative status-only responses must also hide previously cached text.
+    if (payload?.linesVisible === false) return [];
     const fromApi = [...items]
       .sort((a, b) => {
         const aSeq = Number(a.seq) || 0;
@@ -339,7 +345,7 @@ export default function AgentShellConsole({
         sortMs: Date.parse(iso) || 0,
       };
     });
-  }, [items, seedLines, staticEntries, useStatic]);
+  }, [items, seedLines, staticEntries, useStatic, payload?.linesVisible]);
 
   useEffect(() => {
     if (useStatic) return undefined;
@@ -370,7 +376,13 @@ export default function AgentShellConsole({
           if (page?.nextCursor) cursor = page.nextCursor;
           pages += 1;
         } while (page?.hasMore && pages < MAX_PAGES_PER_TICK);
-        if (fresh.length > 0) setItems(current => [...current, ...fresh]);
+        if (page?.linesVisible === false) {
+          setItems([]);
+          // A later access restoration must reload retained history; the old
+          // cursor describes text that has just been deliberately discarded.
+          cursor = undefined;
+        } else if (fresh.length > 0)
+          setItems(current => [...current, ...fresh]);
         setPayload(page);
         setFailed(false);
         // Drain remaining pages even after the job finishes; logsComplete alone
@@ -380,15 +392,19 @@ export default function AgentShellConsole({
             doneRef.current = true;
             onComplete?.(page);
           }
-          return;
-        }
-        if (page?.hasMore) delay = 0;
-      } catch (_error) {
+          delay = COMPLETED_REVALIDATE_MS;
+        } else if (page?.hasMore) delay = 0;
+      } catch (error) {
         if (cancelled) return;
+        if ([401, 403].includes(error?.response?.status)) {
+          setItems([]);
+          cursor = undefined;
+          setPayload({ linesVisible: false, streams: [], logsComplete: false });
+        }
         setFailed(true);
         delay = ERROR_POLL_MS;
       }
-      if (!cancelled && !doneRef.current) {
+      if (!cancelled) {
         timer = setTimeout(tick, delay);
       }
     };

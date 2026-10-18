@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
+	"time"
 
 	"go.mozilla.org/pkcs7"
 )
@@ -26,7 +27,7 @@ const MaxResponseBytes = 64 * 1024
 var (
 	oidCMCStatusInfo = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 7, 1}
 	// Microsoft nests the issued-cert hash (21.17) under this control attribute.
-	oidMSCMCCertHash = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 10, 1}
+	oidMSCMCCertHash    = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 10, 1}
 	oidMSIssuedCertHash = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 21, 17}
 )
 
@@ -260,9 +261,9 @@ type taggedAttribute struct {
 }
 
 type pkiResponse struct {
-	ControlSequence    []taggedAttribute
-	CMSSequence        []asn1.RawValue `asn1:"optional"`
-	OtherMsgSequence   []asn1.RawValue `asn1:"optional"`
+	ControlSequence  []taggedAttribute
+	CMSSequence      []asn1.RawValue `asn1:"optional"`
+	OtherMsgSequence []asn1.RawValue `asn1:"optional"`
 }
 
 func parsePKIResponse(content []byte) (status int, requestID *uint32, certHash []byte, err error) {
@@ -316,7 +317,7 @@ func parseCMCStatusInfo(der []byte) (status int, requestID *uint32, err error) {
 	// }
 	var outer asn1.RawValue
 	rest, err := asn1.Unmarshal(der, &outer)
-	if err != nil || len(rest) != 0 || outer.Tag != asn1.TagSequence {
+	if err != nil || len(rest) != 0 || outer.Class != asn1.ClassUniversal || outer.Tag != asn1.TagSequence || !outer.IsCompound {
 		return 0, nil, fmt.Errorf("CMCStatusInfo: malformed SEQUENCE")
 	}
 	b := outer.Bytes
@@ -330,6 +331,16 @@ func parseCMCStatusInfo(der []byte) (status int, requestID *uint32, err error) {
 	if err != nil {
 		return 0, nil, fmt.Errorf("CMCStatusInfo.bodyList: %w", err)
 	}
+	var bodyIDs []int64
+	bodyRest, bodyErr := asn1.Unmarshal(bodyList.FullBytes, &bodyIDs)
+	if bodyErr != nil || len(bodyRest) != 0 || len(bodyIDs) == 0 {
+		return 0, nil, fmt.Errorf("CMCStatusInfo.bodyList: malformed or empty list")
+	}
+	for _, id := range bodyIDs {
+		if id < 0 || id > 4294967295 {
+			return 0, nil, fmt.Errorf("CMCStatusInfo.bodyList: body identifier out of range")
+		}
+	}
 	if len(b) == 0 {
 		return st, nil, nil
 	}
@@ -339,8 +350,12 @@ func parseCMCStatusInfo(der []byte) (status int, requestID *uint32, err error) {
 	if err != nil {
 		return 0, nil, fmt.Errorf("CMCStatusInfo.optional: %w", err)
 	}
+	b = nb
 	if next.Tag == asn1.TagUTF8String {
-		b = nb
+		var text string
+		if _, err := asn1.UnmarshalWithParams(next.FullBytes, &text, "utf8"); err != nil {
+			return 0, nil, fmt.Errorf("CMCStatusInfo.statusString: %w", err)
+		}
 		if len(b) == 0 {
 			return st, nil, nil
 		}
@@ -349,6 +364,9 @@ func parseCMCStatusInfo(der []byte) (status int, requestID *uint32, err error) {
 			return 0, nil, fmt.Errorf("CMCStatusInfo.otherInfo: %w", err)
 		}
 	}
+	if len(b) != 0 || next.Class != asn1.ClassUniversal || (next.Tag != asn1.TagSequence && next.Tag != asn1.TagInteger) {
+		return 0, nil, fmt.Errorf("CMCStatusInfo.otherInfo: malformed choice or trailing fields")
+	}
 	// pendInfo is SEQUENCE (universal); failInfo is INTEGER.
 	if next.Tag == asn1.TagSequence {
 		rid, err := parsePendToken(next.Bytes)
@@ -356,6 +374,10 @@ func parseCMCStatusInfo(der []byte) (status int, requestID *uint32, err error) {
 			return 0, nil, err
 		}
 		return st, &rid, nil
+	}
+	var failInfo int
+	if _, err := asn1.Unmarshal(next.FullBytes, &failInfo); err != nil {
+		return 0, nil, fmt.Errorf("CMCStatusInfo.failInfo: %w", err)
 	}
 	return st, nil, nil
 }
@@ -371,9 +393,17 @@ func parsePendToken(pendInfoBytes []byte) (uint32, error) {
 		return 0, fmt.Errorf("pendToken must be 4 bytes, got %d", len(token))
 	}
 	id := uint32(token[0]) | uint32(token[1])<<8 | uint32(token[2])<<16 | uint32(token[3])<<24
+	if id == 0 {
+		return 0, fmt.Errorf("pendToken RequestId must be nonzero")
+	}
 	// consume GeneralizedTime so the SEQUENCE is fully read
-	var gt asn1.RawValue
-	rest, err = asn1.Unmarshal(rest, &gt)
+	var rawTime asn1.RawValue
+	timeRest, err := asn1.Unmarshal(rest, &rawTime)
+	if err != nil || len(timeRest) != 0 || rawTime.Class != asn1.ClassUniversal || rawTime.Tag != asn1.TagGeneralizedTime || rawTime.IsCompound {
+		return 0, fmt.Errorf("pendTime: malformed GeneralizedTime")
+	}
+	var gt time.Time
+	rest, err = asn1.UnmarshalWithParams(rawTime.FullBytes, &gt, "generalized")
 	if err != nil || len(rest) != 0 {
 		return 0, fmt.Errorf("pendTime: malformed")
 	}

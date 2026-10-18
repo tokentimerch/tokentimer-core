@@ -32,6 +32,10 @@ const {
   tryReconcileUncertainSubmission,
 } = require("./issuers");
 const fs = require("node:fs");
+const { retrieveProposedEnrollmentCandidate } = require("./issuers/adcs-enrollment-reconcile");
+const { newValidationDeadline } = require("./issuers/adcs-validation-deadline");
+const { matchWholeEnrollmentRule } = require("./issuers/adcs-enrollment-rules");
+const { createEnrollmentSafetyGuard } = require("./issuers/adcs-safety");
 const {
   validateIssuedCertificate,
   extractSpkiFromCsr,
@@ -49,6 +53,7 @@ const {
   removeIssuedContainerRecord,
   buildEnrollmentContainerName,
   hasIssuedContainerRecord,
+  readIssuedContainerRecord,
   computeSha1ThumbprintFromPem,
   CERTREQ_ACCEPT_DEFAULT_STORE,
 } = require("./windows-cert-store");
@@ -605,6 +610,27 @@ function createAdcsWindowsIisExecutors(deps) {
     recordWindowsCngContainer,
     isValidCertificateId,
   } = deps;
+  const checkEnrollmentSafety = createEnrollmentSafetyGuard();
+
+  async function currentSafety({ jobId, client, snapshot, executionContext, stateDir, forceRefresh = true }) {
+    const safety = await checkEnrollmentSafety({ snapshot, executionContext, stateDir, forceRefresh,
+      info: (message) => logAdcs(jobId, message) });
+    logAdcs(jobId, `AD CS first-submit safety ${safety.ok ? "passed" : "refused"}` +
+      (safety.errorCode ? ` code=${safety.errorCode}` : ""));
+    if (typeof reportStepEvidence === "function") await reportStepEvidence(client, jobId, [{
+      eventType: safety.ok ? "validation.passed" : "validation.failed", observedAt: new Date().toISOString(),
+      summary: safety.ok ? "Current AD CS template, requested key and CA safety verified before submission" :
+        `AD CS submission refused: ${safety.errorCode}`,
+      metadata: [{ name: "step", value: "adcs-safety" }, { name: "operatorAttested", value: safety.operatorAttested === true }],
+    }]);
+    return safety;
+  }
+
+  function safetyRefusalResult(safety, decoded) {
+    return { status: "rejected", rejectionReason: "issuer_not_allowlisted", keyRotated: null,
+      errorMessage: boundErrorMessage(`${safety.errorCode}: ${safety.detail}`),
+      enrollmentResult: enrollmentResultFor(decoded.enrollmentId, decoded.attempt, "refused", { errorCode: safety.errorCode }) };
+  }
 
   function logAdcs(jobId, message) {
     if (typeof emitInfo !== "function") return;
@@ -752,9 +778,14 @@ function createAdcsWindowsIisExecutors(deps) {
   async function buildAdcsIssuerContext({ job, executionContext, stateDir }) {
     const decoded = decodeEnrollmentSnapshot(job);
     if (!decoded.ok) return { error: decoded.error };
+    // Cleanup must remain possible when the CA cache/helper is unavailable.
+    if (decoded.terminalState) return { decoded, snapshot: decoded.snapshot };
 
     const keyMapped = mapSnapshotKeyAlgorithm(decoded.snapshot);
     if (keyMapped.error) return { error: keyMapped.error };
+    const localRule=matchWholeEnrollmentRule(executionContext.adcsEnrollmentRules,decoded.snapshot.caConfig,decoded.snapshot.template,{...decoded.snapshot,extraDnsNames:[job.target?.reference,job.target?.binding?.sniHost].filter(value=>typeof value==="string"&&value.length)});
+    if(!localRule)return {decoded,snapshot:decoded.snapshot,keyMapped,domains:decoded.snapshot.authorizedDnsNames,localRuleRefused:true};
+
 
     const helper = resolveAdcsCmcHelperPath({
       overridePath: executionContext.adcsHelperPath,
@@ -871,6 +902,10 @@ function createAdcsWindowsIisExecutors(deps) {
     }
 
     const { decoded, keyMapped, helperPath, caCertPath, domains, snapshot } = ctx;
+    if (decoded.terminalState || decoded.reconcileRequestId !== undefined) {
+      return { status: "rejected", rejectionReason: "invalid_terminal_cleanup_operation",
+        keyRotated: null, errorMessage: "Terminal cleanup requires continue-enrollment" };
+    }
     if (!domains.includes(commonName)) {
       return {
         status: "failed",
@@ -894,6 +929,19 @@ function createAdcsWindowsIisExecutors(deps) {
     const cngWorkDir = path.join(stateDir, WINDOWS_CERT_STORE_WORK_DIR_NAME);
     const windowsExecFileImpl = executionContext.windowsExecFileImpl;
     const windowsConnectImpl = executionContext.windowsConnectImpl;
+
+    // A lease retry of the original signed renew job resumes its own durable
+    // request. A different job must use the server continuation mechanism.
+    const renewRecovery = readEnrollmentJournal(stateDir, decoded.enrollmentId);
+    if (renewRecovery.kind === "valid" &&
+        ["prepared", "submitting", "submission_uncertain", "pending", "pending_issuance", "issued", "validation_deferred", "installing", "installed"].includes(renewRecovery.journal.state) &&
+        renewRecovery.journal.jobId === jobId && renewRecovery.journal.attempt === decoded.attempt &&
+        renewRecovery.journal.snapshotSha256 === decoded.snapshotSha256 &&
+        renewRecovery.journal.containerName === buildEnrollmentContainerName(decoded.enrollmentId)) {
+      return executeWindowsIisContinueEnrollmentJob({ job, jobId, client, executionContext, log,
+        leaseOpts, onBeforeMutation, renewRecoveryAuthorization: { jobId, attempt: decoded.attempt,
+          snapshotSha256: decoded.snapshotSha256 } });
+    }
 
     let enrollmentLock;
     try {
@@ -951,26 +999,12 @@ function createAdcsWindowsIisExecutors(deps) {
         };
       }
 
-      const templateOidResolved = resolveTemplateOid({
-        stateDir,
-        caConfig: snapshot.caConfig,
-        template: snapshot.template,
-        templateOid: executionContext.adcsTemplateOid,
-      });
-      if (!templateOidResolved.ok) {
-        return {
-          status: "failed",
-          keyRotated: null,
-          errorMessage: boundErrorMessage(templateOidResolved.error),
-          enrollmentResult: enrollmentResultFor(
-            decoded.enrollmentId,
-            decoded.attempt,
-            "rejected_invalid",
-            { errorCode: "ADCS_CERTIFICATE_INVALID" },
-          ),
-        };
-      }
-      const templateOid = templateOidResolved.templateOid;
+      const safety = ctx.localRuleRefused ? {ok:false,errorCode:"ADCS_CA_CONFIG_UNSAFE",detail:"No whole local enrollment rule permits the signed CA, template, target, DNS names and key algorithm"} : await currentSafety({ jobId, client, snapshot, executionContext, stateDir });
+      if (!safety.ok) return safetyRefusalResult(safety, decoded);
+      enrollmentLock.assertHeld();
+      const safetyLease = await renewJobLeaseOrAbort(leaseOpts || {});
+      if (safetyLease?.ok === false) return safetyLease.abort;
+      const templateOid = safety.templateOid;
 
       // Durable keygen intent before certreq -new (crash window A1).
       await writeKeygenIntent({
@@ -1113,6 +1147,19 @@ function createAdcsWindowsIisExecutors(deps) {
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
       }
       enrollmentLock.assertHeld();
+      const submitSafety = await currentSafety({ jobId, client, snapshot, executionContext, stateDir, forceRefresh: false });
+      if (!submitSafety.ok || submitSafety.templateOid !== templateOid) {
+        const refused = submitSafety.ok ? { errorCode: "ADCS_TEMPLATE_UNSAFE", detail: "Template identity changed before first submission" } : submitSafety;
+        enrollmentLock.assertHeld();
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, { state: "refused", attempt: decoded.attempt,
+          containerName, snapshotSha256: decoded.snapshotSha256, jobId, csrSha256, csrSpkiSha256,
+          templateOid, caConfig: snapshot.caConfig, template: snapshot.template, errorCode: refused.errorCode });
+        issuanceOutcome = "refused";
+        return safetyRefusalResult(refused, decoded);
+      }
+      enrollmentLock.assertHeld();
+      const freshSubmitLease = await renewJobLeaseOrAbort(leaseOpts || {});
+      if (freshSubmitLease?.ok === false) return freshSubmitLease.abort;
       if (typeof onBeforeMutation === "function") onBeforeMutation(issuer.step);
       // Durable submitting barrier: must succeed before certreq -submit.
       // Capture enrollment reconcile cursor from the CA watermark here so later
@@ -1340,7 +1387,7 @@ function createAdcsWindowsIisExecutors(deps) {
         issuanceOutcome =
           validation.state === "validation_deferred" ? "validation_deferred" : "rejected_invalid";
         if (validation.state === "validation_deferred") {
-          const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          const deadline = newValidationDeadline(executionContext);
           await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
             state: "validation_deferred",
             attempt: decoded.attempt,
@@ -1512,6 +1559,13 @@ function createAdcsWindowsIisExecutors(deps) {
       ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
+            keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+            assertHeld: () => {
+              enrollmentLock?.assertHeld();
+              if (typeof onBeforeMutation === "function") {
+                onBeforeMutation("cleanup-enrollment-key");
+              }
+            },
             containerName,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
           });
@@ -1766,7 +1820,7 @@ function createAdcsWindowsIisExecutors(deps) {
         const deadline =
           typeof journal.validationDeadlineAt === "string"
             ? journal.validationDeadlineAt
-            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            : newValidationDeadline(executionContext);
         await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
           state: "validation_deferred",
           ...journalBase,
@@ -1853,6 +1907,7 @@ function createAdcsWindowsIisExecutors(deps) {
     log,
     leaseOpts = null,
     onBeforeMutation = null,
+    renewRecoveryAuthorization = null,
   }) {
     const { execution } = executionContext;
     const targetResolved = await resolveWindowsIisTarget(job);
@@ -1870,6 +1925,7 @@ function createAdcsWindowsIisExecutors(deps) {
       };
     }
     const { decoded, helperPath, caCertPath, snapshot, domains, keyMapped } = ctx;
+
 
     let enrollmentLock;
     try {
@@ -1897,7 +1953,7 @@ function createAdcsWindowsIisExecutors(deps) {
           ),
         };
       }
-      if (read.kind === "not_found") {
+      if (read.kind === "not_found" && !decoded.terminalState) {
         if (enrollmentLock) enrollmentLock.release();
         return {
           status: "failed",
@@ -1907,7 +1963,7 @@ function createAdcsWindowsIisExecutors(deps) {
           ),
         };
       }
-      journal = read.journal;
+      journal = read.journal || { state: "missing", snapshotSha256: decoded.snapshotSha256 };
       artifacts = read.artifacts || artifacts;
     }
     if (
@@ -1936,6 +1992,23 @@ function createAdcsWindowsIisExecutors(deps) {
 
     try {
       return await enrollmentLock.run(async (signal) => {
+      // Re-prove the original-job binding under the authoritative lock. An
+      // intervening continuation or manual failed-installation decision wins.
+      if (renewRecoveryAuthorization &&
+          (journal.jobId !== renewRecoveryAuthorization.jobId ||
+           journal.attempt !== renewRecoveryAuthorization.attempt ||
+           journal.snapshotSha256 !== renewRecoveryAuthorization.snapshotSha256 ||
+           journal.containerName !== buildEnrollmentContainerName(decoded.enrollmentId) ||
+           !["prepared", "submitting", "submission_uncertain", "pending", "pending_issuance", "issued", "validation_deferred", "installing", "installed"].includes(journal.state))) {
+        return { status: "blocked", keyRotated: null,
+          errorMessage: "Renew recovery no longer belongs to the original signed job" };
+      }
+      const operatorRecovery = Array.isArray(job.metadata) ? job.metadata.filter(item => item?.name === "adcs.recoveryFromJobId") : [];
+      if (operatorRecovery.length && (operatorRecovery.length !== 1 ||
+          typeof operatorRecovery[0].value !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(operatorRecovery[0].value) ||
+          journal.state === "keygen_intent")) {
+        return {status:"blocked",keyRotated:null,errorMessage:"ADCS_RECOVERY_CSR_REQUIRED: operator recovery requires an existing bound CSR and cannot generate a new key"};
+      }
       {
         const leaseGate = await renewJobLeaseOrAbort(leaseOpts || {});
         if (leaseGate && leaseGate.ok === false) return leaseGate.abort;
@@ -1948,7 +2021,55 @@ function createAdcsWindowsIisExecutors(deps) {
           ` template ${snapshot.template} CA ${snapshot.caConfig}`,
       );
 
+      // Only the signed control-plane directive may terminate a pending enrollment.
+      // Refuse keys that may already back an accepted or installed certificate.
+      if (decoded.terminalState) {
+        const ownedName = buildEnrollmentContainerName(decoded.enrollmentId);
+        const receipt = readIssuedContainerRecord({ stateDir, containerName });
+        if (containerName !== ownedName || journal.attempt > decoded.attempt || journal.installStep ||
+            ["issued", "validated", "installing", "installed", "install_failed"].includes(journal.state) ||
+            receipt?.status === "enrolled_by_agent" || receipt?.acceptedThumbprint) {
+          return { status: "failed", keyRotated: null,
+            errorMessage: "Terminal cleanup refused: enrollment key may back an installed certificate" };
+        }
+        if (typeof onBeforeMutation === "function") onBeforeMutation("cleanup-enrollment-key");
+        enrollmentLock.assertHeld();
+        const cleanup = await removeAbandonedKeyContainer({
+          keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+          assertHeld: () => {
+            enrollmentLock?.assertHeld();
+            if (typeof onBeforeMutation === "function") {
+              onBeforeMutation("cleanup-enrollment-key");
+            }
+          },
+          containerName,
+          allowAlreadyAbsent: true,
+          requireAlreadyAbsent: journal.state === "missing",
+          signal,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        enrollmentLock.assertHeld();
+        if (!cleanup.ok) {
+          return { status: "failed", keyRotated: null,
+            errorMessage: "Terminal enrollment CNG cleanup failed; retry required" };
+        }
+        if (journal.state !== "missing") {
+          await writeEnrollmentJournal(stateDir, decoded.enrollmentId, {
+            ...journal, state: decoded.terminalState, attempt: decoded.attempt, jobId,
+          });
+        }
+        removeIssuedContainerRecord({ stateDir, containerName });
+        return { status: "succeeded", keyRotated: null,
+          enrollmentResult: enrollmentResultFor(decoded.enrollmentId, decoded.attempt,
+            decoded.terminalState, Number.isInteger(journal.requestId) ? { requestId: journal.requestId } : {}) };
+      }
+
       // Terminal receipts: return recorded outcome without repeating CA contact.
+      if (decoded.reconcileRequestId !== undefined &&
+          (!['submission_uncertain', 'submitting'].includes(journal.state) || journal.attempt > decoded.attempt)) {
+        return { status: "rejected", rejectionReason: "invalid_reconcile_state", keyRotated: null,
+          errorMessage: "Proposed RequestId requires a current uncertain submission journal" };
+      }
       if (journal.state === "installed") {
         return {
           status: "succeeded",
@@ -1974,6 +2095,60 @@ function createAdcsWindowsIisExecutors(deps) {
             terminalEnrollmentResultExtras(journal),
           ),
         };
+      }
+
+      async function refuseUnsubmittedSafety(safety) {
+        const receipt = readIssuedContainerRecord({ stateDir, containerName });
+        if (containerName !== buildEnrollmentContainerName(decoded.enrollmentId) ||
+            receipt?.status === "enrolled_by_agent" || receipt?.acceptedThumbprint) {
+          return { status: "failed", keyRotated: null,
+            errorMessage: "Unsubmitted safety refusal cannot free an unowned or already accepted key" };
+        }
+        enrollmentLock.assertHeld();
+        await writeEnrollmentJournal(stateDir, decoded.enrollmentId, { ...journal, state: "refused",
+          ...(journal.state === "keygen_intent" ? { preSubmitPhase: "keygen_intent" } : {}),
+          attempt: decoded.attempt, containerName, snapshotSha256: decoded.snapshotSha256, jobId,
+          caConfig: snapshot.caConfig, template: snapshot.template, errorCode: safety.errorCode });
+        journal = { ...journal, state: "refused", errorCode: safety.errorCode };
+        continueOutcomeRef.value = "refused";
+        return safetyRefusalResult(safety, decoded);
+      }
+
+      if(ctx.localRuleRefused){
+        if(journal.installStep || ["installing","install_failed"].includes(journal.state))return {status:"failed",keyRotated:null,errorMessage:"Local enrollment policy now refuses this job; installation reconciliation is required before key cleanup"};
+        const receipt=readIssuedContainerRecord({stateDir,containerName});
+        if(containerName!==buildEnrollmentContainerName(decoded.enrollmentId)||receipt?.status==="enrolled_by_agent"||receipt?.acceptedThumbprint)return {status:"failed",keyRotated:null,errorMessage:"Local policy refusal cannot free an unowned or already accepted enrollment key"};
+        enrollmentLock.assertHeld();if(typeof onBeforeMutation==="function")onBeforeMutation("cleanup-enrollment-key");
+        const cleanup=await removeAbandonedKeyContainer({
+          keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+          assertHeld: () => {
+            enrollmentLock?.assertHeld();
+            if (typeof onBeforeMutation === "function") {
+              onBeforeMutation("cleanup-enrollment-key");
+            }
+          },
+          containerName,
+          allowAlreadyAbsent: true,
+          signal,
+          ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
+        });
+        enrollmentLock.assertHeld();if(!cleanup.ok)return {status:"failed",keyRotated:null,errorMessage:"Local policy refusal could not free the protected enrollment key; retry required"};
+        removeIssuedContainerRecord({stateDir,containerName});
+        await writeEnrollmentJournal(stateDir,decoded.enrollmentId,{...journal,state:"refused",...(journal.state==="keygen_intent"?{preSubmitPhase:"keygen_intent"}:{}),attempt:decoded.attempt,jobId,errorCode:"ADCS_CA_CONFIG_UNSAFE"});
+        return safetyRefusalResult({errorCode:"ADCS_CA_CONFIG_UNSAFE",detail:"Current whole local enrollment rule refuses the original signed names or key algorithm"},decoded);
+      }
+
+      // Only material proven not yet submitted is subject to a new safety
+      // refusal. Pending retrieval keeps its original frozen issuer/key.
+      if (journal.state === "keygen_intent" || journal.state === "prepared") {
+        const safety = await currentSafety({ jobId, client, snapshot, executionContext, stateDir });
+        if (!safety.ok) return refuseUnsubmittedSafety(safety);
+        if (journal.state === "prepared" && safety.templateOid !== journal.templateOid) {
+          return refuseUnsubmittedSafety({ errorCode: "ADCS_TEMPLATE_UNSAFE", detail: "Current template identity does not match the prepared enrollment" });
+        }
+        enrollmentLock.assertHeld();
+        const safetyLease = await renewJobLeaseOrAbort(leaseOpts || {});
+        if (safetyLease?.ok === false) return safetyLease.abort;
       }
 
       // Crash between keygen intent and prepared: finish CSR then resume-submit.
@@ -2004,6 +2179,13 @@ function createAdcsWindowsIisExecutors(deps) {
         });
         if (!csrResult.ok && csrResult.reason === "enrollment_container_exists") {
           const cleanup = await removeAbandonedKeyContainer({
+            keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+            assertHeld: () => {
+              enrollmentLock?.assertHeld();
+              if (typeof onBeforeMutation === "function") {
+                onBeforeMutation("cleanup-enrollment-key");
+              }
+            },
             containerName,
             signal,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
@@ -2130,6 +2312,14 @@ function createAdcsWindowsIisExecutors(deps) {
             ),
           };
         }
+        const submitSafety = await currentSafety({ jobId, client, snapshot, executionContext, stateDir, forceRefresh: false });
+        if (!submitSafety.ok) return refuseUnsubmittedSafety(submitSafety);
+        if (submitSafety.templateOid !== journal.templateOid) {
+          return refuseUnsubmittedSafety({ errorCode: "ADCS_TEMPLATE_UNSAFE", detail: "Template identity changed before resumed first submission" });
+        }
+        enrollmentLock.assertHeld();
+        const freshSubmitLease = await renewJobLeaseOrAbort(leaseOpts || {});
+        if (freshSubmitLease?.ok === false) return freshSubmitLease.abort;
         let resumeReconcileSearchFrom;
         try {
           resumeReconcileSearchFrom = reconcileSearchFromForSubmit(
@@ -2402,6 +2592,17 @@ function createAdcsWindowsIisExecutors(deps) {
           });
         };
 
+        // A newer signed operator proposal must not accidentally install a
+        // previously deferred candidate for a different request.
+        if (decoded.reconcileRequestId !== undefined &&
+            journal.reconcileCandidateRequestId !== decoded.reconcileRequestId && journal.leafSha256) {
+          await persistUncertain({ reconcileSearchFrom: journal.reconcileSearchFrom,
+            reconcileCandidateRequestId: null, validationDeadlineAt: null, leafSha256: null });
+          clearProvisionalLeafArtifacts(stateDir, decoded.enrollmentId);
+          journal = { ...journal, reconcileCandidateRequestId: null, validationDeadlineAt: null, leafSha256: null };
+          artifacts = { ...artifacts, leafPem: null };
+        }
+
         // Retry a previously deferred unique candidate before scanning again.
         if (
           Number.isInteger(journal.reconcileCandidateRequestId) &&
@@ -2467,7 +2668,7 @@ function createAdcsWindowsIisExecutors(deps) {
             const deadline =
               typeof journal.validationDeadlineAt === "string"
                 ? journal.validationDeadlineAt
-                : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+                : newValidationDeadline(executionContext);
             await persistUncertain({
               reconcileSearchFrom: journal.reconcileSearchFrom,
               reconcileCandidateRequestId: journal.reconcileCandidateRequestId,
@@ -2517,7 +2718,10 @@ function createAdcsWindowsIisExecutors(deps) {
           typeof executionContext.adcsTryReconcileUncertainSubmissionImpl === "function"
             ? executionContext.adcsTryReconcileUncertainSubmissionImpl
             : tryReconcileUncertainSubmission;
-        const reconciled = await reconcileImpl({
+        const reconciled = decoded.reconcileRequestId !== undefined
+          ? await retrieveProposedEnrollmentCandidate({ issuer, requestId: decoded.reconcileRequestId,
+            csrSpkiSha256: journal.csrSpkiSha256, reconcileSearchFrom: journal.reconcileSearchFrom, assertIssuanceOutcome })
+          : await reconcileImpl({
           issuer,
           stateDir,
           caConfig: snapshot.caConfig,
@@ -2534,7 +2738,7 @@ function createAdcsWindowsIisExecutors(deps) {
             status: "failed",
             keyRotated: null,
             errorMessage: boundErrorMessage(
-              `AD CS tier-2 reconcile failed for enrollment ${decoded.enrollmentId}: ${reconciled.error}`,
+              `AD CS reconcile failed for enrollment ${decoded.enrollmentId}: ${reconciled.error}`,
             ),
             enrollmentResult: enrollmentResultFor(
               decoded.enrollmentId,
@@ -2612,7 +2816,7 @@ function createAdcsWindowsIisExecutors(deps) {
               enrollmentId: decoded.enrollmentId,
               leafPem: reconciled.certificatePem,
             });
-            const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            const deadline = newValidationDeadline(executionContext);
             await persistUncertain({
               // Keep earliest unresolved cursor (includes this candidate).
               reconcileSearchFrom: reconciled.nextSearchFrom,
@@ -2851,6 +3055,13 @@ function createAdcsWindowsIisExecutors(deps) {
       ) {
         try {
           const cleanup = await removeAbandonedKeyContainer({
+            keySurvivorHelperPath: executionContext.windowsKeySurvivorHelperPath,
+            assertHeld: () => {
+              enrollmentLock?.assertHeld();
+              if (typeof onBeforeMutation === "function") {
+                onBeforeMutation("cleanup-enrollment-key");
+              }
+            },
             containerName,
             ...(windowsExecFileImpl ? { execFileImpl: windowsExecFileImpl } : {}),
           });

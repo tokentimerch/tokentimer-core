@@ -50,10 +50,14 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
     );
     if (invites.rowCount > 0) {
       for (const row of invites.rows) {
-        await pool.query(
+        // Invitations cannot replace an owner's implicit admin role or an existing admin.
+        const membership = await pool.query(
           `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
-           VALUES ($1,$2,$3,NULL)
-           ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
+           SELECT $1, w.id, $3, NULL FROM workspaces w
+            WHERE w.id = $2 AND w.created_by IS DISTINCT FROM $1
+           ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
+           WHERE workspace_memberships.role <> 'admin'
+           RETURNING role`,
           [userId, row.workspace_id, row.role],
         );
         try {
@@ -65,16 +69,18 @@ async function ensureInitialWorkspaceForUser(userId, userEmail, displayName) {
           logger.warn("DB operation failed", { error: _err.message });
         }
         try {
-          await writeAudit({
-            actorUserId: userId,
-            subjectUserId: userId,
-            action: "WORKSPACE_MEMBERSHIP_ACCEPTED",
-            targetType: "workspace",
-            targetId: null,
-            channel: null,
-            workspaceId: row.workspace_id,
-            metadata: { role: row.role },
-          });
+          if (membership.rowCount > 0) {
+            await writeAudit({
+              actorUserId: userId,
+              subjectUserId: userId,
+              action: "WORKSPACE_MEMBERSHIP_ACCEPTED",
+              targetType: "workspace",
+              targetId: null,
+              channel: null,
+              workspaceId: row.workspace_id,
+              metadata: { role: row.role },
+              });
+          }
         } catch (_err) {
           logger.warn("Audit write failed (WORKSPACE_MEMBERSHIP_ACCEPTED)", {
             error: _err.message,

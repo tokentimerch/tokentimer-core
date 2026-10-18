@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "disposableForestRan": false,
+  "hostCapabilityAbsentIsPass": false,
+  "catalogStatus": "partial",
+  "annotation": "local-contract",
+  "allowedEvidenceLevels": ["integration", "real-host", "e2e"],
+  "suites": [
+    {
+      "id": "adcs-browser-enrollment",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "scenarios": [
+        "adcs-browser-preflight",
+        "adcs-browser-confirmation-before-submit",
+        "adcs-browser-enrollment"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "browserLaunched",
+        "journey",
+        "confirmationBeforeSubmit",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-browser-enrollment.js",
+        "scripts/certops-adcs-browser-enrollment.js",
+        "docs/certops/adcs/browser-enrollment.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        { "id": "adcs.issuer-preflight", "catalogStatus": "partial", "annotation": "local-contract" },
+        { "id": "adcs.auto-issue", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    },
+    {
+      "id": "adcs-install-interruption",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "scenarios": [
+        "adcs-install-interruption-role-install",
+        "adcs-install-interruption-ca-config",
+        "adcs-install-interruption-template-publish",
+        "adcs-install-interruption-acl-grant",
+        "adcs-install-interruption-iis-enroll-site"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "phase",
+        "target",
+        "restartedTarget",
+        "inUseKeyDeleted",
+        "blanketNetshReset",
+        "powerLossDurabilityQualified",
+        "realRebootQualified",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-install-interruption.js",
+        "scripts/certops-adcs-install-interruption.js",
+        "docs/certops/adcs/install-interruption.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        { "id": "adcs.restart-phases", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    },
+    {
+      "id": "adcs-lost-submit",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "scenarios": [
+        "adcs-lost-submit-clean-miss",
+        "adcs-lost-submit-ambiguous",
+        "adcs-lost-submit-owned-candidate"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "requestId",
+        "chosen",
+        "candidateCount",
+        "localParserResult",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-lost-submit.js",
+        "scripts/certops-adcs-lost-submit.js",
+        "docs/certops/adcs/lost-submit.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        { "id": "adcs.lost-submit-response", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    },
+    {
+      "id": "adcs-uncertain-abandon",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "scenarios": ["adcs-uncertain-abandon-accepted"],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "state",
+        "abandoned",
+        "inUseKeyDeleted",
+        "foreignRequestTouched",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "scripts/certops-adcs-uncertain-abandon.js",
+        "tests/e2e/helpers/certops-adcs-uncertain-abandon.js",
+        "docs/certops/adcs/uncertain-abandon.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        { "id": "adcs.abandon", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    },
+    {
+      "id": "adcs-cmc-renewal",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "scenarios": [
+        "adcs-cmc-signed-renewal",
+        "adcs-cmc-repeated-unattended-renewal"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "case",
+        "template",
+        "requestId",
+        "priorRequestId",
+        "signatureVerified",
+        "ownerMatched",
+        "consumedRequestReused",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-cmc-renewal.js",
+        "scripts/certops-adcs-cmc-renewal.js",
+        "docs/certops/adcs/cmc-renewal.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        { "id": "adcs.adcs-renewal", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    },
+    {
+      "id": "adcs-safety-variants",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "scenarios": [
+        "adcs-safety-template-mismatch",
+        "adcs-safety-allowlist-miss",
+        "adcs-safety-disallowed-algorithm",
+        "adcs-safety-foreign-request",
+        "adcs-safety-revocation-ocsp-disagreement"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "variant",
+        "closed",
+        "authoritativeRevokedStatusQualified",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-safety-variants.js",
+        "scripts/certops-adcs-safety-variants.js",
+        "docs/certops/adcs/safety-variants.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml",
+        "tests/e2e/helpers/certops-adcs-ocsp-revoked.js"
+      ],
+      "catalogIds": [
+        { "id": "adcs.auto-issue", "catalogStatus": "partial", "annotation": "local-contract" },
+        { "id": "adcs.ocsp-revoked-status", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    },
+    {
+      "id": "adcs-crash-experiments",
+      "evidenceLevel": "integration",
+      "nativeExecutionQualified": false,
+      "releaseQualificationSatisfied": false,
+      "scenarios": [
+        "adcs-crash-response-loss",
+        "adcs-crash-journal-phase",
+        "adcs-crash-key-generation"
+      ],
+      "reportFields": [
+        "status",
+        "evidenceLevel",
+        "experiment",
+        "releaseQualificationSatisfied",
+        "nativeExecutionQualified",
+        "hostCapabilityAbsentIsPass",
+        "disposableForestRan",
+        "requiredScenarios",
+        "missingScenarios"
+      ],
+      "requiredSources": [
+        "tests/e2e/helpers/certops-adcs-crash-experiments.js",
+        "scripts/certops-adcs-crash-experiments.js",
+        "docs/certops/adcs/crash-experiments.md",
+        ".github/workflows/certops-adcs-coverage-variants.yml"
+      ],
+      "catalogIds": [
+        { "id": "adcs.lost-submit-response", "catalogStatus": "partial", "annotation": "local-contract" },
+        { "id": "adcs.restart-phases", "catalogStatus": "partial", "annotation": "local-contract" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Manager and viewer boundary for AD CS administration
+
+Core requires workspace `admin` for issuer and enrollment administration. A user who is an admin of a different workspace, or a system administrator, must not be assumed to have this workspace's membership authority. The fixture uses distinct owned non-owner users whose `users.is_admin` values are false, with explicit prerequisite memberships for a controller admin and a manager.
+
+The public membership PATCH route changes a manager to viewer and back to manager and deliberately refuses changing an existing admin. The DELETE route refuses removing an admin; invitations cannot grant admin. This fixture exercises those exact boundaries and does not qualify other membership mutation paths. The fixture therefore does not claim a public admin-to-viewer demotion, restored admin access, or live withdrawal of an already mounted admin view. The dashboard admin hook resolves on workspace or explicit retry changes; it does not continuously poll a mounted role.
+
+With the same restricted page mounted, both manager and viewer must see the actual AD CS admin-only panel and no Reconcile or Abandon controls. Each role sends genuine public Reconcile and Abandon requests and requires 403. A distinct controller also attempts to demote the real owner and requires the actual admin-protection refusal, leaving that owner admin. Manager-to-viewer-to-manager transitions produce exactly two attributable membership audits.
+
+The genuine uncertain enrollment, its jobs and enrollment audit, durable journal, nonexportable machine key and zero native CA requests must remain unchanged. The independent serving certificate's protected native custody, IIS/HTTP.sys coordinates and trusted TLS must also remain unchanged. The manager membership and both users' original memberships are restored in `finally`; all fixture identities are registered with the parent before membership changes. The subsequent, separately mandatory admin Abandon journey provides the positive authority control.
+
+This helper is initially source-only. Its intended hook is immediately before the existing admin browser abandonment on the same owned uncertain enrollment. Pure proof checks do not run browsers, change roles or perform native Windows operations. Native qualification remains pending the protected disposable domain lane.

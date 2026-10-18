@@ -8,7 +8,7 @@
  * acme-dns subdomain, and challenges are satisfied by updating that
  * subdomain's TXT value. The blast radius of a leaked credential is one
  * TXT record, not a whole zone -- which is why acme-dns is the recommended
- * wave-1 provider when the authoritative DNS host has no scoped API tokens.
+ * provider when the authoritative DNS host has no scoped API tokens.
  *
  * Credentials shape:
  *   { baseUrl: string, username: string, password: string, subdomain: string,

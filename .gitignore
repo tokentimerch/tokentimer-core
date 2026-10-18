@@ -86,3 +86,10 @@ reports/
 /docs/agents/
 # .scratch is local-only planning/notes space; nothing under it is tracked.
 /.scratch/
+
+# Disposable qualification outputs and browser/Python caches.
+/qualification-results/
+/playwright-report/
+/test-results/
+__pycache__/
+*.pyc

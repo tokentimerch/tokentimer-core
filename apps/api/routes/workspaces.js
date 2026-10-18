@@ -647,11 +647,21 @@ router.post(
       if (userRes.rowCount > 0) {
         // Existing user: create membership directly
         targetUserId = userRes.rows[0].id;
-        await pool.query(
+        // Owners retain implicit admin access even without a membership row.
+        if (String(targetUserId) === String(ws.created_by)) {
+          return res.status(403).json({ error: "Workspace admin role cannot be changed here", code: "FORBIDDEN" });
+        }
+        const membership = await pool.query(
           `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
+         ON CONFLICT (user_id, workspace_id) DO UPDATE SET role = EXCLUDED.role
+         WHERE workspace_memberships.role <> 'admin'
+         RETURNING user_id`,
           [targetUserId, ws.id, role, userId],
         );
+        // The predicate checks the locked current role, including concurrent promotions.
+        if (membership.rowCount === 0) {
+          return res.status(403).json({ error: "Workspace admin role cannot be changed here", code: "FORBIDDEN" });
+        }
         // Clear any residual invitation row for this email so it does not count
         // against plan caps and does not leak through the pending list.
         try {

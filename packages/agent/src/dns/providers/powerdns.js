@@ -139,10 +139,16 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     let rrsets = [];
     try {
       const parsed = JSON.parse(response.bodyText);
-      rrsets = parsed && Array.isArray(parsed.rrsets) ? parsed.rrsets : [];
+      // Merge/delete requires an authoritative enumeration, not an omitted
+      // or malformed RR set list that might conceal another TXT value.
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.rrsets) ||
+          parsed.rrsets.some(rrset => !rrset || typeof rrset !== "object" ||
+            typeof rrset.type !== "string" || typeof rrset.name !== "string")) {
+        throw new Error("Invalid zone response");
+      }
+      rrsets = parsed.rrsets;
     } catch {
-      // Treat an unparseable zone body as "no rrsets"; the subsequent
-      // PATCH will surface any real API problem.
+      return { ok: false, statusCode: response.status, detail: excerpt("powerdns zone read returned an invalid record list") };
     }
 
     const rrset = rrsets.find(
@@ -152,6 +158,9 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
         typeof candidate.name === "string" &&
         toCanonicalFqdn(candidate.name) === recordFqdn,
     );
+    if (rrset && (!Array.isArray(rrset.records) || rrset.records.some(record => !record || typeof record.content !== "string"))) {
+      return { ok: false, statusCode: response.status, detail: excerpt("powerdns TXT record set contained invalid records") };
+    }
     const contents =
       rrset && Array.isArray(rrset.records)
         ? rrset.records

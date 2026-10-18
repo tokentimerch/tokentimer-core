@@ -4059,15 +4059,15 @@ function isHttpSysBindingQuery(file, args) {
   return file === "powershell.exe" && String(args[args.length - 1]).includes("SslBindingInfo");
 }
 
-/** listHttpSysBindings' query output for IP-keyed bindings in the My store. */
+/** listHttpSysBindings' query output for IP-keyed bindings in explicit stores. */
 function httpSysBindingsJson(bindings) {
   return JSON.stringify({
-    items: bindings.map(({ ipPort, thumbprint }) => ({
+    items: bindings.map(({ ipPort, thumbprint, storeName = "My" }) => ({
       kind: "SslBindingInfo",
       key: ipPort,
       values: {
         SslCertHash: Array.from(Buffer.from(thumbprint, "hex")),
-        SslCertStoreName: { chars: Array.from("My", (char) => char.charCodeAt(0)) },
+        SslCertStoreName: { chars: Array.from(storeName, (char) => char.charCodeAt(0)) },
       },
     })),
   });
@@ -4125,6 +4125,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
       acmeExecFileImpl,
       windowsExecFileImpl,
       windowsConnectImpl,
+      windowsKeySurvivorHelperPath: __filename,
     });
   }
 
@@ -4134,13 +4135,13 @@ describe("windows-iis renew job (os-store-managed)", () => {
    * separately deploys a chain/intermediate file, so a single leaf is
    * all any test here needs).
    */
-  function makeCertbotStub({ exitCode = 0 } = {}) {
+  function makeCertbotStub({ exitCode = 0, certificatePem = FIXTURE_NEW_CERT_PEM } = {}) {
     const calls = [];
     function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
       const at = args.indexOf("--cert-path");
       if (at !== -1) {
-        fs.writeFileSync(args[at + 1], FIXTURE_NEW_CERT_PEM, { mode: 0o600 });
+        fs.writeFileSync(args[at + 1], certificatePem, { mode: 0o600 });
       }
       const error =
         exitCode === 0
@@ -4173,6 +4174,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     storeKeyContainer = null,
     storeLanguage = "en",
     acceptExitCode = 0,
+    keySurvivorMode = "absent",
   } = {}) {
     const storeListing = windowsStoreListing(
       outgoingThumbprint
@@ -4186,11 +4188,18 @@ describe("windows-iis renew job (os-store-managed)", () => {
       let error = null;
       let stdout = "";
       let stderr = "";
-      if (file === "certreq.exe" && args[2] === "-new") {
+      if (args[0] === "--key-survivors") {
+        assert.equal(file, __filename);
+        assert.equal(args[1], "--container");
+        assert.equal(args.length, 3, "abandoned-key cleanup excludes no certificate");
+        const shared = keySurvivorMode === "shared";
+        stdout = JSON.stringify({ complete: keySurvivorMode !== "incomplete", shared, storesScanned: 3, certificatesScanned: shared ? 1 : 0, matches: shared ? 1 : 0 });
+      } else if (file === "certreq.exe" && args[2] === "-new") {
         const reqPath = args[args.length - 1];
+        calls.at(-1).generatedContainer = fs.readFileSync(args[args.length - 2], "utf8").match(/KeyContainer = "([^"]+)"/)[1];
         fs.writeFileSync(
           reqPath,
-          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          require("./keys").generateCsr({ keyPath: path.join(__dirname, "verify/fixtures/leaf.key.pem"), subject: { commonName: "iis.example.com" }, altNames: ["iis.example.com"] }).csrPem,
           "utf8",
         );
       } else if (file === "certreq.exe" && args[2] === "-accept") {
@@ -4281,7 +4290,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
     );
   }
 
-  async function runIisRenew({ job, windowsOpts = {}, acmeExitCode = 0 }) {
+  async function runIisRenew({ job, windowsOpts = {}, acmeExitCode = 0, certificatePem }) {
     const client = createRecordingClient();
     const windowsExecFileImpl = makeWindowsExecStub(windowsOpts);
     const outcome = await executeJob({
@@ -4291,13 +4300,29 @@ describe("windows-iis renew job (os-store-managed)", () => {
       policyEngine: permissiveEngine(),
       client,
       executionContext: makeExecutionContext({
-        acmeExecFileImpl: makeCertbotStub({ exitCode: acmeExitCode }),
+        acmeExecFileImpl: makeCertbotStub({ exitCode: acmeExitCode, certificatePem }),
         windowsExecFileImpl,
         windowsConnectImpl: makeConnectStub(),
       }),
       log: silentLog,
     });
     return { outcome, client, windowsExecFileImpl };
+  }
+
+  for (const mode of ["real", "dry_run"]) {
+    it(`refuses explicit CNG key reuse in signed ${mode} jobs before native or CA calls`, async () => {
+      const job = makeJob({ keyRotation: false, mode });
+      const outcome = await executeJob({ job, jobId: job.jobId,
+        policyEngine: permissiveEngine(), client: createRecordingClient(),
+        executionContext: makeExecutionContext({
+          windowsExecFileImpl: () => { assert.fail("native operation before reuse refusal"); },
+          acmeExecFileImpl: () => { assert.fail("CA operation before reuse refusal"); },
+          windowsConnectImpl: () => { assert.fail("TLS mutation before reuse refusal"); },
+        }), log: silentLog });
+      assert.equal(outcome.status, "blocked");
+      assert.equal(outcome.keyRotated, null);
+      assert.match(outcome.errorMessage, /^WINDOWS_ACME_KEY_REUSE_UNSUPPORTED:/);
+    });
   }
 
   it("runs CNG CSR -> ACME -> certreq accept -> IIS bind -> TLS verify end to end and reports succeeded", async () => {
@@ -4307,6 +4332,37 @@ describe("windows-iis renew job (os-store-managed)", () => {
     assert.equal(outcome.status, "succeeded");
     assert.equal(outcome.keyRotated, null);
   });
+
+  it("rejects another real public key before acceptance or binding and cleans the unaccepted job key", async () => {
+    const wrong = fs.readFileSync(path.join(__dirname, "verify/fixtures/chain-leaf.crt.pem"), "utf8");
+    const { outcome, windowsExecFileImpl } = await runIisRenew({ job: makeJob(), certificatePem: wrong });
+    assert.equal(outcome.status, "failed");
+    assert.match(outcome.errorMessage, /^ACME_CERTIFICATE_KEY_MISMATCH:/);
+    assert.equal(windowsExecFileImpl.calls.some(call => call.file === "certreq.exe" && call.args.includes("-accept")), false);
+    assert.equal(windowsExecFileImpl.calls.some(call => call.file === "netsh.exe" && call.args.includes("add")), false);
+    const deleted = windowsExecFileImpl.calls.filter(call => call.file === "certutil.exe" && call.args.includes("-delkey"));
+    assert.equal(deleted.length, 1);
+    assert.match(deleted[0].args.at(-1), /^tokentimer-certificate-iis-[a-f0-9]{8}$/);
+    assert.equal(deleted[0].args.at(-1), windowsExecFileImpl.calls.find(call => call.generatedContainer).generatedContainer);
+  });
+
+  for (const keySurvivorMode of ["shared", "incomplete"]) {
+    for (const failure of ["wrong returned key", "bare acceptance failure"]) {
+      it(`preserves the owned key and issuance receipt after ${failure} when global inventory is ${keySurvivorMode}`, async () => {
+        const options = failure === "wrong returned key"
+          ? { certificatePem: fs.readFileSync(path.join(__dirname, "verify/fixtures/chain-leaf.crt.pem"), "utf8"), windowsOpts: { keySurvivorMode } }
+          : { windowsOpts: { acceptExitCode: 2, keySurvivorMode } };
+        const { outcome, windowsExecFileImpl } = await runIisRenew({ job: makeJob(), ...options });
+        assert.equal(outcome.status, "failed");
+        assert.match(outcome.errorMessage, failure === "wrong returned key" ? /^ACME_CERTIFICATE_KEY_MISMATCH:/ : /CNG certificate acceptance failed/);
+        const probes = windowsExecFileImpl.calls.filter(call => call.args[0] === "--key-survivors");
+        assert.equal(probes.length, 1, "the actual cleanup boundary must query global metadata");
+        assert.equal(windowsExecFileImpl.calls.some(call => call.args.includes("-delkey")), false);
+        const containerName = windowsExecFileImpl.calls.find(call => call.generatedContainer).generatedContainer;
+        assert.ok(require("./windows-cert-store").readIssuedContainerRecord({ stateDir: stateDir(), containerName }), "unresolved ownership receipt must remain for future recovery");
+      });
+    }
+  }
 
   it("reports a claim-bound validation.passed/step=verify evidence item carrying fingerprintSha256 and validTo, so control-plane reconciliation (reconcileProvisionedCertificate / refreshRenewedCertificateEvidence) can promote or refresh the certificate row", async () => {
     const job = makeJob();
@@ -4542,7 +4598,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,
-          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          require("./keys").generateCsr({ keyPath: path.join(__dirname, "verify/fixtures/leaf.key.pem"), subject: { commonName: "iis.example.com" }, altNames: ["iis.example.com"] }).csrPem,
           "utf8",
         );
         process.nextTick(() => callback(null, "", ""));
@@ -4635,10 +4691,15 @@ describe("windows-iis renew job (os-store-managed)", () => {
         const reqPath = args[args.length - 1];
         fs.writeFileSync(
           reqPath,
-          "-----BEGIN NEW CERTIFICATE REQUEST-----\nMAMCAQA=\n-----END NEW CERTIFICATE REQUEST-----\n",
+          require("./keys").generateCsr({ keyPath: path.join(__dirname, "verify/fixtures/leaf.key.pem"), subject: { commonName: "iis.example.com" }, altNames: ["iis.example.com"] }).csrPem,
           "utf8",
         );
         process.nextTick(() => callback(null, "", ""));
+        return;
+      }
+      if (args[0] === "--key-survivors") {
+        assert.equal(file, __filename);
+        process.nextTick(() => callback(null, JSON.stringify({ complete: true, shared: false, storesScanned: 3, certificatesScanned: 0, matches: 0 }), ""));
         return;
       }
       if (file === "certutil.exe" && args[0] === "-csp" && args[2] === "-delkey") {
@@ -4662,6 +4723,7 @@ describe("windows-iis renew job (os-store-managed)", () => {
 
     assert.equal(outcome.status, "failed");
     assert.match(outcome.errorMessage, /acme step failed/);
+    assert.equal(calls.filter(call => call.file === "certutil.exe" && call.args.includes("-delkey")).length, 1, "the intended cleanup failure must actually occur after a complete inventory");
   });
 
   it("executeDeployJob rejects a windows-iis target with a clear, specific error", async () => {
@@ -4898,6 +4960,12 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     });
   }
 
+  // Resolve an existing harmless file for the simulated helper invocation.
+  // Unit checks must not depend on a native binary left in the source checkout.
+  function runTestSweep(options) {
+    return runWindowsRetentionSweep({ keySurvivorHelperPath: __filename, ...options });
+  }
+
   /**
    * @param {object} opts
    * @param {boolean} [opts.oldStillBound] whether http.sys reports a binding
@@ -4906,10 +4974,9 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
    *   binding for REPLACEMENT_THUMBPRINT (needed before any handshake
    *   probe can even be attempted).
    * @param {string|null} [opts.sharedContainerOnOtherCert] when set, the
-   *   machine-store listing reports a SECOND certificate (distinct
-   *   thumbprint) sharing this key container name.
+   *   complete machine-wide inventory reports another reference to this key.
    * @param {boolean} [opts.bindingQueryFails] simulate listHttpSysBindings ok:false.
-   * @param {boolean} [opts.storeQueryFails] simulate listMachineStoreCertificates ok:false.
+   * @param {boolean} [opts.storeQueryFails] simulate incomplete machine-store inventory.
    */
   function makeSweepExecStub({
     oldStillBound = false,
@@ -4926,6 +4993,18 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     const calls = [];
     return function execFileStub(file, args, options, callback) {
       calls.push({ file, args, options });
+      if (args[0] === "--key-survivors") {
+        assert.equal(args[1], "--container");
+        assert.equal(args[3], "--exclude-store");
+        assert.equal(args[5], "--exclude-thumbprint");
+        if (storeQueryFails) {
+          process.nextTick(() => callback(Object.assign(new Error("incomplete inventory"), { code: 2 }), "", ""));
+          return;
+        }
+        const shared = sharedContainerOnOtherCert === args[2];
+        process.nextTick(() => callback(null, JSON.stringify({ complete: true, shared, storesScanned: 3, certificatesScanned: shared ? 1 : 0, matches: shared ? 1 : 0 }), ""));
+        return;
+      }
       if (isHttpSysBindingQuery(file, args)) {
         if (bindingQueryFails) {
           process.nextTick(() => callback(Object.assign(new Error("boom"), { code: 1 }), "", "boom"));
@@ -4991,7 +5070,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
   it("returns null without touching execFileImpl when the ledger directory does not exist yet", async () => {
     workDir = makeTempConfigDir();
     let called = false;
-    await runWindowsRetentionSweep({
+    await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl: () => {
@@ -5035,7 +5114,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
       execFileImpl(file, args, options, callback);
     };
 
-    const summary = await runWindowsRetentionSweep({
+    const summary = await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl: execFileImplWithRealThumbprint,
@@ -5047,12 +5126,71 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     assert.equal(row.lifecycleState, "removed");
   });
 
+  it("follows verified replacement lineage after two cutovers without rewriting the original retention clock", async () => {
+    workDir = makeTempConfigDir();
+    const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+    const first = seedRow(workDir);
+    seedRow(workDir, {
+      oldThumbprint: REPLACEMENT_THUMBPRINT,
+      replacementThumbprint: currentThumbprint,
+      cngKeyContainerId: "tokentimer-second-job-abcd1234",
+      verifiedCutoverAt: new Date(Date.now() - 20 * 86400000).toISOString(),
+    });
+    const removed = [];
+    const fallback = makeSweepExecStub();
+    const summary = await runTestSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl(file, args, options, callback) {
+        if (isHttpSysBindingQuery(file, args)) {
+          process.nextTick(() => callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: currentThumbprint }]), ""));
+          return;
+        }
+        if (file === "certutil.exe" && args[0] === "-delstore") removed.push(args[2]);
+        fallback(file, args, options, callback);
+      },
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+    assert.deepEqual(new Set(summary.removed), new Set([OLD_THUMBPRINT, REPLACEMENT_THUMBPRINT]));
+    assert.deepEqual(new Set(removed), new Set([OLD_THUMBPRINT, REPLACEMENT_THUMBPRINT]));
+    const persisted = readLedgerRow(ledgerDirFor(workDir), OLD_THUMBPRINT);
+    assert.equal(persisted.replacementThumbprint, REPLACEMENT_THUMBPRINT);
+    assert.equal(persisted.verifiedCutoverAt, first.verifiedCutoverAt);
+    assert.equal(persisted.lifecycleState, "removed");
+  });
+
+  it("holds the actual store mutex while gathering native facts and deleting an eligible predecessor", async () => {
+    workDir = makeTempConfigDir();
+    const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+    seedRow(workDir, { replacementThumbprint: currentThumbprint });
+    const fallback = makeSweepExecStub();
+    let protectedChecks = 0;
+    const summary = await runTestSweep({
+      stateDir: workDir,
+      retentionHours: 24,
+      execFileImpl(file, args, options, callback) {
+        assert.throws(() => acquireStoreLock(workDir, "My"), { code: "STORE_LOCKED" });
+        protectedChecks += 1;
+        if (isHttpSysBindingQuery(file, args)) {
+          process.nextTick(() => callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: currentThumbprint }]), ""));
+          return;
+        }
+        fallback(file, args, options, callback);
+      },
+      connectImpl: makeHandshakeStub({ matches: true }),
+    });
+    assert.deepEqual(summary.removed, [OLD_THUMBPRINT]);
+    assert.ok(protectedChecks >= 4);
+    const successor = acquireStoreLock(workDir, "My");
+    successor.release();
+  });
+
   it("defers (never calls performCleanup) when the old thumbprint is still bound", async () => {
     workDir = makeTempConfigDir();
     seedRow(workDir);
     const execFileImpl = makeSweepExecStub({ oldStillBound: true, replacementBound: true });
 
-    const summary = await runWindowsRetentionSweep({
+    const summary = await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl,
@@ -5074,7 +5212,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
       sharedContainerOnOtherCert: CONTAINER_NAME,
     });
 
-    const summary = await runWindowsRetentionSweep({
+    const summary = await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl,
@@ -5090,7 +5228,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     seedRow(workDir);
     const execFileImpl = makeSweepExecStub({ oldStillBound: false, replacementBound: false });
 
-    const summary = await runWindowsRetentionSweep({
+    const summary = await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl,
@@ -5101,12 +5239,90 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
     assert.equal(summary.deferred[0].reason, "replacement_handshake_failed");
   });
 
+    it("preserves the key when global metadata reports a survivor outside the excluded store and thumbprint", async () => {
+      workDir = makeTempConfigDir();
+      const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+      seedRow(workDir, { replacementThumbprint: currentThumbprint });
+      const fallback = makeSweepExecStub();
+      let probes = 0, deletes = 0;
+      const summary = await runTestSweep({
+        stateDir: workDir, retentionHours: 24,
+        execFileImpl(file, args, options, callback) {
+          if (args[0] === "--key-survivors") {
+            probes += 1;
+            assert.deepEqual(args.slice(1), ["--container", CONTAINER_NAME, "--exclude-store", "My", "--exclude-thumbprint", OLD_THUMBPRINT]);
+            process.nextTick(() => callback(null, JSON.stringify({ complete: true, shared: true, storesScanned: 3, certificatesScanned: 2, matches: 1 }), ""));
+            return;
+          }
+          if (isHttpSysBindingQuery(file, args)) {
+            process.nextTick(() => callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: currentThumbprint }]), ""));
+            return;
+          }
+          if (file === "certutil.exe" && (args[0] === "-delstore" || args[2] === "-delkey")) deletes += 1;
+          fallback(file, args, options, callback);
+        },
+        connectImpl: makeHandshakeStub(),
+      });
+      assert.equal(probes, 1);
+      assert.equal(deletes, 0);
+      assert.deepEqual(summary.removed, []);
+      assert.equal(summary.deferred[0].reason, "shared_key_container");
+    });
+
+  it("defers without launching helper or deletion commands when the survivor helper is missing", async () => {
+    workDir = makeTempConfigDir();
+    seedRow(workDir);
+    const fallback = makeSweepExecStub();
+    let probes = 0, deletes = 0;
+    const summary = await runTestSweep({
+      stateDir: workDir, retentionHours: 24,
+      keySurvivorHelperPath: path.join(workDir, "missing-helper.exe"),
+      execFileImpl(file, args, options, callback) {
+        if (args[0] === "--key-survivors") probes += 1;
+        if (file === "certutil.exe" && (args[0] === "-delstore" || args[2] === "-delkey")) deletes += 1;
+        fallback(file, args, options, callback);
+      },
+      connectImpl: makeHandshakeStub(),
+    });
+    assert.equal(probes, 0);
+    assert.equal(deletes, 0);
+    assert.equal(summary.deferred[0].reason, "shared_key_container");
+  });
+
+  it("holds My and WebHosting throughout a non-default-store sweep", async () => {
+    workDir = makeTempConfigDir();
+    const currentThumbprint = new crypto.X509Certificate(FIXTURE_REPLACEMENT_PROBE_CERT_PEM).fingerprint.replace(/:/g, "").toUpperCase();
+    seedRow(workDir, { store: "WebHosting", replacementThumbprint: currentThumbprint });
+    const fallback = makeSweepExecStub();
+    let protectedChecks = 0;
+    const summary = await runTestSweep({
+      stateDir: workDir, retentionHours: 24,
+      execFileImpl(file, args, options, callback) {
+        for (const store of ["My", "WebHosting"]) assert.throws(() => acquireStoreLock(workDir, store), { code: "STORE_LOCKED" });
+        protectedChecks += 1;
+        if (isHttpSysBindingQuery(file, args)) {
+          process.nextTick(() => callback(null, httpSysBindingsJson([{ ipPort: "0.0.0.0:443", thumbprint: currentThumbprint, storeName: "WebHosting" }]), ""));
+          return;
+        }
+        if (args[0] === "--key-survivors") assert.equal(args[4], "WebHosting");
+        fallback(file, args, options, callback);
+      },
+      connectImpl: makeHandshakeStub(),
+    });
+    assert.deepEqual(summary.removed, [OLD_THUMBPRINT]);
+    assert.ok(protectedChecks >= 4);
+    for (const store of ["My", "WebHosting"]) {
+      const successor = acquireStoreLock(workDir, store);
+      successor.release();
+    }
+  });
+
   it("fails safe (defers as still-bound) when listHttpSysBindings itself cannot be queried", async () => {
     workDir = makeTempConfigDir();
     seedRow(workDir);
     const execFileImpl = makeSweepExecStub({ bindingQueryFails: true });
 
-    const summary = await runWindowsRetentionSweep({
+    const summary = await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl,
@@ -5126,7 +5342,7 @@ describe("runWindowsRetentionSweep (ADR-0012 decision 18 sweep wiring)", () => {
       storeQueryFails: true,
     });
 
-    const summary = await runWindowsRetentionSweep({
+    const summary = await runTestSweep({
       stateDir: workDir,
       retentionHours: 24,
       execFileImpl,
@@ -5163,8 +5379,17 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     enrolledInStore = null,
     storeLanguage = "en",
     delkeyFails = false,
+    globalSurvivor = false,
+    globalFailure = null,
   } = {}) {
     return function execFileStub(file, args, options, callback) {
+      if (args[0] === "--key-survivors") {
+        assert.deepEqual(args.slice(0,2), ["--key-survivors", "--container"]);
+        assert.equal(args.length,3,"Orphan scan must exclude no certificate or store");
+        assert.ok(options.signal instanceof AbortSignal);
+        if(globalFailure) { process.nextTick(()=>callback(Object.assign(new Error("Simulated native inventory failure"),{code:globalFailure}),"",""));return; }
+        process.nextTick(()=>callback(null,JSON.stringify({complete:true,shared:globalSurvivor,storesScanned:25,certificatesScanned:globalSurvivor?1:0,matches:globalSurvivor?1:0}),""));return;
+      }
       const queriedStore = stubbedStoreQueryTarget(file, args);
       if (queriedStore) {
         const showEnrolled =
@@ -5204,7 +5429,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     const containerName = "tokentimer-job-1-orphan01";
     seedOrphanedContainerJournalEntry(workDir, { containerName });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub(),
     });
@@ -5218,6 +5443,140 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     assert.equal(hasUnresolvedJournalForJob(workDir, "job-1"), true);
   });
 
+  it("preserves a key referenced only in a different machine store and reconciles its crash receipt", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-otherstore";
+    seedOrphanedContainerJournalEntry(workDir, { containerName, store: "My" });
+    let deletes = 0;
+    const stub = makeReconcileExecStub({ globalSurvivor: true });
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      keySurvivorHelperPath: __filename,
+      execFileImpl(file, args, options, callback) {
+        if (args.includes("-delkey")) deletes++;
+        return stub(file, args, options, callback);
+      },
+    });
+    assert.deepEqual(result.freed, []);
+    assert.equal(deletes, 0);
+    assert.equal(result.skipped[0].reason, "enrolled");
+    assert.equal(
+      typeof scanUnresolvedJournalEntries(workDir)[0]
+        .windowsCngContainerReconciledAt,
+      "string",
+    );
+  });
+
+  it("preserves a survivor appearing at the final primitive guard after earlier global absence", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-latesurvivor";
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    let probes = 0,
+      deletes = 0;
+    const fallback = makeReconcileExecStub();
+    const result = await reconcileOrphanedWindowsCngContainers({
+      stateDir: workDir,
+      keySurvivorHelperPath: __filename,
+      execFileImpl(file, args, options, callback) {
+        if (args[0] === "--key-survivors") {
+          assert.equal(args.length, 3);
+          assert.ok(options.signal instanceof AbortSignal);
+          const shared = ++probes === 2;
+          process.nextTick(() =>
+            callback(
+              null,
+              JSON.stringify({
+                complete: true,
+                shared,
+                storesScanned: 25,
+                certificatesScanned: shared ? 1 : 0,
+                matches: shared ? 1 : 0,
+              }),
+              "",
+            ),
+          );
+          return;
+        }
+        if (args.includes("-delkey")) deletes++;
+        return fallback(file, args, options, callback);
+      },
+    });
+    assert.equal(probes, 2);
+    assert.equal(deletes, 0);
+    assert.deepEqual(result.freed, []);
+    assert.equal(result.skipped[0].reason, "enrolled");
+    assert.equal(
+      typeof scanUnresolvedJournalEntries(workDir)[0]
+        .windowsCngContainerReconciledAt,
+      "string",
+    );
+  });
+
+  it("defers unknown and cancelled global inventory without deleting or marking reconciliation", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-unknownstore";
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    for (const globalFailure of ["EACCES", "ABORT_ERR"]) {
+      let deletes = 0;
+      const stub = makeReconcileExecStub({ globalFailure });
+      const result = await reconcileOrphanedWindowsCngContainers({
+        stateDir: workDir,
+        keySurvivorHelperPath: __filename,
+        execFileImpl(file, args, options, callback) {
+          if (args.includes("-delkey")) deletes++;
+          return stub(file, args, options, callback);
+        },
+      });
+      assert.deepEqual(result.freed, []);
+      assert.equal(deletes, 0);
+      assert.match(result.skipped[0].reason, /global machine-store inventory/);
+      assert.equal(
+        scanUnresolvedJournalEntries(workDir)[0].windowsCngContainerReconciledAt,
+        undefined,
+      );
+    }
+  });
+
+  it("defers incomplete global inventory and an unavailable helper", async () => {
+    workDir = makeTempConfigDir();
+    const containerName = "tokentimer-job-1-incomplete";
+    seedOrphanedContainerJournalEntry(workDir, { containerName });
+    const stub = makeReconcileExecStub();
+    for (const helperPath of [
+      __filename,
+      path.join(workDir, "missing-helper.exe"),
+    ]) {
+      const result = await reconcileOrphanedWindowsCngContainers({
+        stateDir: workDir,
+        keySurvivorHelperPath: helperPath,
+        execFileImpl(file, args, options, callback) {
+          if (args[0] === "--key-survivors") {
+            process.nextTick(() =>
+              callback(
+                null,
+                JSON.stringify({
+                  complete: false,
+                  shared: false,
+                  storesScanned: 25,
+                  certificatesScanned: 0,
+                  matches: 0,
+                }),
+                "",
+              ),
+            );
+            return;
+          }
+          assert.equal(args.includes("-delkey"), false);
+          return stub(file, args, options, callback);
+        },
+      });
+      assert.deepEqual(result.freed, []);
+      assert.equal(
+        scanUnresolvedJournalEntries(workDir)[0].windowsCngContainerReconciledAt,
+        undefined,
+      );
+    }
+  });
   it("never frees an AD CS enrollment container protected by an open enrollment journal", async () => {
     workDir = makeTempConfigDir();
     const enrollmentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -5233,7 +5592,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
       jobId: "job-1",
     });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub(),
     });
@@ -5252,7 +5611,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     fs.mkdirSync(path.join(workDir, "adcs-enrollments"), { recursive: true });
     fs.writeFileSync(path.join(workDir, "adcs-enrollments", "not-a-uuid"), "x");
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub(),
     });
@@ -5273,7 +5632,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
       recursive: true,
     });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub(),
     });
@@ -5291,7 +5650,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     const containerName = "tokentimer-job-1-live0001";
     seedOrphanedContainerJournalEntry(workDir, { containerName });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub({ enrolledContainer: containerName }),
     });
@@ -5306,7 +5665,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     const containerName = "tokentimer-job-1-live0002";
     seedOrphanedContainerJournalEntry(workDir, { containerName });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub({ enrolledContainer: containerName, storeLanguage: "de" }),
     });
@@ -5327,7 +5686,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
       return makeReconcileExecStub()(file, args, options, callback);
     };
 
-    const result = await reconcileOrphanedWindowsCngContainers({ stateDir: workDir, execFileImpl });
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename, stateDir: workDir, execFileImpl });
     assert.deepEqual(new Set(queriedStores), new Set(["My", "WebHosting"]));
     // Never enrolled in either store: genuinely orphaned, safe to free.
     assert.deepEqual(result.freed, [containerName]);
@@ -5343,7 +5702,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     // certificate -- and its live key reference -- exists ONLY in "My".
     seedOrphanedContainerJournalEntry(workDir, { containerName, store: "WebHosting" });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub({ enrolledContainer: containerName, enrolledInStore: "My" }),
     });
@@ -5368,7 +5727,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
       return makeReconcileExecStub()(file, args, options, callback);
     };
 
-    const result = await reconcileOrphanedWindowsCngContainers({ stateDir: workDir, execFileImpl });
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename, stateDir: workDir, execFileImpl });
     assert.deepEqual(result.freed, []);
     assert.equal(result.skipped.length, 1);
     assert.match(result.skipped[0].reason, /query failed/);
@@ -5379,7 +5738,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     const containerName = "tokentimer-job-1-faildel1";
     seedOrphanedContainerJournalEntry(workDir, { containerName });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: makeReconcileExecStub({ delkeyFails: true }),
     });
@@ -5393,7 +5752,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     workDir = makeTempConfigDir();
     markSideEffectReached({ stateDir: workDir, jobId: "job-linux", attemptId: "attempt-1", stage: "deploy" });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: () => {
         throw new Error("must not shell out when there is nothing to reconcile");
@@ -5410,7 +5769,7 @@ describe("reconcileOrphanedWindowsCngContainers (crash-safe startup cleanup)", (
     seedOrphanedContainerJournalEntry(workDir, { containerName });
     markWindowsCngContainerReconciled({ stateDir: workDir, jobId: "job-1", attemptId: "attempt-1" });
 
-    const result = await reconcileOrphanedWindowsCngContainers({
+    const result = await reconcileOrphanedWindowsCngContainers({ keySurvivorHelperPath: __filename,
       stateDir: workDir,
       execFileImpl: () => {
         throw new Error("must not shell out for an already-reconciled entry");

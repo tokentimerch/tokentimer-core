@@ -604,6 +604,7 @@ async function listMachineStoreCertificates({
   certutilPath = "certutil.exe",
   powershellPath = "powershell.exe",
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal = undefined,
 } = {}) {
   if (!isNonEmptyString(store) || !STORE_NAME_PATTERN.test(store) || /^\.+$/.test(store)) {
     throw buildError(`store must be a valid Windows certificate store name (got ${JSON.stringify(store)})`);
@@ -619,7 +620,7 @@ async function listMachineStoreCertificates({
     execFileImpl,
     [...powershellArgv, buildStoreQueryScript(store)],
     timeoutMs,
-    { env: buildPowerShellEnv() },
+    { env: buildPowerShellEnv(), ...(signal ? { signal } : {}) },
   );
   if (query.exitCode !== 0) {
     return { ok: false, exitCode: query.exitCode, stderrExcerpt: boundAndRedactExcerpt(query.stderr || query.stdout) };
@@ -636,7 +637,7 @@ async function listMachineStoreCertificates({
   if (keyed.length > 0) {
     const argv = [certutilPath, "-store", store];
     assertSafeArgvElements("argv", argv);
-    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs);
+    const { exitCode, stdout, stderr } = await execWithoutShell(execFileImpl, argv, timeoutMs, signal ? { signal } : {});
     if (exitCode !== 0) {
       return { ok: false, exitCode, stderrExcerpt: boundAndRedactExcerpt(stderr || stdout) };
     }

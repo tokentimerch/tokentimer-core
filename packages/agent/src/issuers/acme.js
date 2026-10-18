@@ -97,6 +97,7 @@ function createAcmeIssuer({
   jobId,
   checkCaEndpoint,
   execFileImpl,
+  signal = null,
   info = () => {},
 }) {
   async function submit({ csrPem, domains }) {
@@ -113,6 +114,7 @@ function createAcmeIssuer({
         kind: acmeKind,
         commandProfile: { argv },
         execFileImpl,
+        signal,
       });
       const renewalOpts = {
         caEndpoint,

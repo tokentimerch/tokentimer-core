@@ -774,6 +774,17 @@ async function ensureManagedCertificateToken(
   existingManagedCertificate = null,
 ) {
   if (options.tokenId) return options.tokenId;
+  // Discovery has already resolved this source inside its workspace. Reusing
+  // its linked token allocates nothing; unchanged or stopped-source captures
+  // must remain writable while another transaction holds quota admission.
+  if (existingManagedCertificate?.token_id) return existingManagedCertificate.token_id;
+
+  // Allocation must share the inventory admission lock: two concurrent
+  // imports otherwise both find no token, insert separate tokens, and only
+  // later converge on the same unique managed-certificate row. Reuse the
+  // existing workspace lock so CSR, reconciliation and quota paths retain
+  // the same lock ordering instead of introducing an inverse lock pair.
+  await acquireManagedCertificateImportLock(client, options.workspaceId);
 
   const existing =
     existingManagedCertificate ||

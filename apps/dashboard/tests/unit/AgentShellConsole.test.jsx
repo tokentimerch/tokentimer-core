@@ -13,11 +13,16 @@ vi.mock('../../src/components/certops/certopsJobsApi', () => ({
   listAgentJobLog: vi.fn(),
 }));
 
-function renderConsole(fetcher) {
+function renderConsole(fetcher, props = {}) {
   return render(
     <ChakraProvider>
       <DashboardThemeProvider>
-        <AgentShellConsole workspaceId='ws-1' jobId='job-1' fetcher={fetcher} />
+        <AgentShellConsole
+          workspaceId='ws-1'
+          jobId='job-1'
+          fetcher={fetcher}
+          {...props}
+        />
       </DashboardThemeProvider>
     </ChakraProvider>
   );
@@ -51,6 +56,135 @@ afterEach(() => {
 });
 
 describe('AgentShellConsole', () => {
+  it.each(['status-only', 'forbidden', 'unauthenticated'])(
+    'revalidates completed output and withdraws cached text on %s',
+    async mode => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const completed = {
+        items: [line(1, 'Completed permitted output')],
+        nextCursor: 'completed-cursor',
+        hasMore: false,
+        logsComplete: true,
+        jobStatus: 'failed',
+        streams: finalStreams,
+        linesVisible: true,
+      };
+      const fetcher = vi.fn().mockResolvedValueOnce(completed);
+      if (mode === 'status-only')
+        fetcher.mockResolvedValue({
+          ...completed,
+          items: [],
+          linesVisible: false,
+        });
+      else
+        fetcher.mockRejectedValue({
+          response: { status: mode === 'forbidden' ? 403 : 401 },
+        });
+      const onComplete = vi.fn();
+      const view = renderConsole(fetcher, {
+        onComplete,
+        seedLines: ['Previously authorized seed'],
+      });
+      await screen.findByText(/Completed permitted output/);
+      expect(screen.getByText('Failed')).toBeInTheDocument();
+      expect(screen.queryByText('Succeeded')).not.toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14_000);
+      });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_100);
+      });
+      await waitFor(() =>
+        expect(document.querySelectorAll('[data-shell-line]')).toHaveLength(0)
+      );
+      expect(
+        screen.queryByText(/Previously authorized seed/)
+      ).not.toBeInTheDocument();
+      expect(fetcher.mock.calls[1][2].cursor).toBe('completed-cursor');
+      expect(onComplete).toHaveBeenCalledTimes(1);
+      const callCount = fetcher.mock.calls.length;
+      view.unmount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(fetcher).toHaveBeenCalledTimes(callCount);
+    }
+  );
+
+  it('reloads discarded completed history after permission restoration without repeating completion', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const completed = {
+      items: [line(1, 'Retained completed history')],
+      nextCursor: 'c1',
+      hasMore: false,
+      logsComplete: true,
+      jobStatus: 'succeeded',
+      streams: finalStreams,
+      linesVisible: true,
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(completed)
+      .mockResolvedValueOnce({ ...completed, items: [], linesVisible: false })
+      .mockResolvedValue(completed);
+    const onComplete = vi.fn();
+    renderConsole(fetcher, { onComplete });
+    await screen.findByText(/Retained completed history/);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_100);
+    });
+    expect(document.querySelectorAll('[data-shell-line]')).toHaveLength(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_100);
+    });
+    await screen.findByText(/Retained completed history/);
+    expect(fetcher.mock.calls[2][2].cursor).toBeUndefined();
+    expect(document.querySelectorAll('[data-shell-line]')).toHaveLength(1);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['status-only', 'forbidden'])(
+    'withdraws cached text after an authoritative %s response',
+    async mode => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const fetcher = vi.fn().mockResolvedValueOnce({
+        items: [line(1, 'Previously authorized output')],
+        nextCursor: 'c1',
+        hasMore: false,
+        logsComplete: false,
+        streams: streaming,
+        linesVisible: true,
+        storageEnabled: true,
+      });
+      if (mode === 'forbidden')
+        fetcher.mockRejectedValue({ response: { status: 403 } });
+      else
+        fetcher.mockResolvedValue({
+          items: [],
+          streams: streaming,
+          nextCursor: 'c1',
+          hasMore: false,
+          logsComplete: false,
+          linesVisible: false,
+        });
+      renderConsole(fetcher, { seedLines: ['Previously authorized seed'] });
+      await screen.findByText(/Previously authorized output/);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/Previously authorized output/)
+        ).not.toBeInTheDocument()
+      );
+      expect(document.querySelectorAll('[data-shell-line]')).toHaveLength(0);
+      expect(
+        screen.queryByText(/Previously authorized seed/)
+      ).not.toBeInTheDocument();
+    }
+  );
+
   it('renders the POC terminal chrome and formats agent lines', async () => {
     const fetcher = vi.fn().mockResolvedValue({
       items: [line(1, 'Starting renew')],

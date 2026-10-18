@@ -290,6 +290,9 @@ describe("createAdcsIssuer", () => {
     assertIssuanceOutcome(outcome);
     assert.equal(outcome.outcome, "issued");
     assert.equal(outcome.certificatePem, derB64ToPem(der.toString("base64")));
+    // Immediate CMC issuance need not supply a RequestId. Native qualification
+    // binds an independently observed CA row instead of inventing a wire field.
+    assert.equal(Object.hasOwn(outcome, "requestId"), false);
   });
 
   it("submit treats CMC issued without certificateDerB64 as uncertain", async () => {

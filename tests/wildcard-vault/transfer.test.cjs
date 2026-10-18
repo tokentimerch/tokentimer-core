@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 assert.equal(process.env.DB_HOST, "127.0.0.1");
-assert.equal(process.env.DB_PORT, process.env.CI === "true" && process.env.DB_NAME === "pr329_final_distribution_ci_test" ? "5432" : "60470");
+assert.equal(process.env.DB_PORT, require("./qualification-database.cjs")("pr329_final", process.env.CI === "true" && process.env.DB_NAME === "pr329_final_distribution_ci_test" ? "5432" : "60470"));
 assert.match(process.env.DB_NAME || "", /^pr329_final/);
 process.env.NODE_ENV = "test";
 process.env.CERTOPS_ENABLED = "true";

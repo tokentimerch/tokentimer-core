@@ -292,8 +292,12 @@ function errorCode(error) {
 }
 
 function errorStatus(error) {
-  const status = error?.statusCode ?? error?.status ?? error?.code;
-  return Number(status);
+  // Kubernetes Status uses status: "Failure" alongside its numeric code.
+  for (const value of [error?.statusCode, error?.status, error?.code]) {
+    const status = Number(value);
+    if (Number.isInteger(status) && status >= 100 && status <= 599) return status;
+  }
+  return undefined;
 }
 
 function restartDelay({ attempt, baseDelayMs, maxDelayMs, random }) {

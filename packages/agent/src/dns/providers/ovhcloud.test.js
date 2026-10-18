@@ -287,3 +287,26 @@ test("ovhcloud: error body echoing the consumerKey is redacted wholesale", async
 
   assert.equal(result.detail, "[redacted]");
 });
+test("ovhcloud: malformed record lookup refuses cleanup without mutations", async () => {
+  for (const body of ["not-json", "{}", "[null]"]) {
+    const fetchStub = makeFetchStub(() => ({ status: 200, body }));
+    const result = await solverWith(fetchStub).cleanupChallenge(CHALLENGE);
+    assert.equal(result.ok, false);
+    assert.equal(fetchStub.calls.length, 1);
+    assert.equal(fetchStub.calls[0].options.method, "GET");
+  }
+});
+
+test("ovhcloud: generated request signature echoes are redacted on HTTP and network failures", async () => {
+  for (const network of [false, true]) {
+    let signature;
+    const fetchImpl = (_url, options) => {
+      signature = options.headers["X-Ovh-Signature"];
+      assert.ok(signature);
+      if (network) throw new Error("Reflected signed request " + signature);
+      return Promise.resolve({ status: 403, text: () => Promise.resolve("Reflected signed request " + signature) });
+    };
+    const result = await solverWith(fetchImpl).presentChallenge(CHALLENGE);
+    assert.equal(result.ok, false); assert.equal(result.detail.includes(signature), false);
+  }
+});

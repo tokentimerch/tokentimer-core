@@ -21,10 +21,16 @@
     "pack:release": "node scripts/pack-release.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "node --test src/**/*.test.js scripts/**/*.test.js"
+    "test": "node --test src/**/*.test.js scripts/**/*.test.js",
+    "build:windows-chain-helper": "node scripts/build-windows-chain-helper.js"
   },
   "files": [
-    "bin",
+    "bin/*.js",
+    "bin/*.sh",
+    "bin/tokentimer-agent-host-amd64.exe",
+    "bin/tokentimer-agent-host-arm64.exe",
+    "bin/tokentimer-adcs-chain-amd64.exe",
+    "bin/tokentimer-adcs-chain-arm64.exe",
     "src",
     "!src/**/*.test.js",
     "!src/verify/fixtures/**",

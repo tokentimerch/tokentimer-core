@@ -83,7 +83,7 @@ type certSimpleChain struct {
 	cbSize                      uint32
 	trustStatus                 certTrustStatus
 	cElement                    uint32
-	rgpElement                  uintptr
+	rgpElement                  unsafe.Pointer
 	pTrustListInfo              uintptr
 	fHasRevocationFreshnessTime uint32
 	dwRevocationFreshnessTime   uint32
@@ -98,7 +98,7 @@ type certChainContext struct {
 	cbSize                      uint32
 	trustStatus                 certTrustStatus
 	cChain                      uint32
-	rgpChain                    uintptr
+	rgpChain                    unsafe.Pointer
 	cLowerQualityChainContext   uint32
 	rgpLowerQualityChainContext uintptr
 	fHasRevocationFreshnessTime uint32
@@ -190,7 +190,7 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 	// Mutually exclusive CERT_CHAIN_REVOCATION_CHECK_* group: use only
 	// CHAIN_EXCLUDE_ROOT (leaf + intermediates, root excluded).
 	flags := uint32(CertChainRevocationCheckChainExcludeRoot)
-	var chainCtx uintptr
+	var chain *certChainContext
 	r, _, callErr := procCertGetCertificateChain.Call(
 		0, // HCCE_CURRENT_USER default engine; machine context still uses local machine roots
 		leafCtx,
@@ -199,14 +199,12 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 		uintptr(unsafe.Pointer(&para)),
 		uintptr(flags),
 		0,
-		uintptr(unsafe.Pointer(&chainCtx)),
+		uintptr(unsafe.Pointer(&chain)),
 	)
-	if r == 0 || chainCtx == 0 {
+	if r == 0 || chain == nil {
 		return Result{Verdict: VerdictInvalid, Error: fmt.Sprintf("CertGetCertificateChain failed: %v", callErr)}, nil
 	}
-	defer procCertFreeCertificateChain.Call(chainCtx)
-
-	chain := (*certChainContext)(unsafe.Pointer(chainCtx))
+	defer procCertFreeCertificateChain.Call(uintptr(unsafe.Pointer(chain)))
 	trust := chain.trustStatus.dwErrorStatus
 
 	// Pin check against the immediate issuer before mapping other failures.
@@ -218,7 +216,7 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 	policyStatus := certChainPolicyStatus{cbSize: uint32(unsafe.Sizeof(certChainPolicyStatus{}))}
 	policyOK, _, policyCallErr := procCertVerifyCertificateChainPolicy.Call(
 		uintptr(certChainPolicyBase),
-		chainCtx,
+		uintptr(unsafe.Pointer(chain)),
 		uintptr(unsafe.Pointer(&policyPara)),
 		uintptr(unsafe.Pointer(&policyStatus)),
 	)
@@ -235,16 +233,16 @@ func Verify(leafDER []byte, caKeySha256 string, extraCerts [][]byte, revocationM
 }
 
 func checkIssuerPin(chain *certChainContext, caKeySha256 string) *Result {
-	if chain.cChain == 0 || chain.rgpChain == 0 {
+	if chain.cChain == 0 || chain.rgpChain == nil {
 		return &Result{Verdict: VerdictInvalid, Error: "certificate chain is empty"}
 	}
-	simpleChains := unsafe.Slice((**certSimpleChain)(unsafe.Pointer(chain.rgpChain)), chain.cChain)
+	simpleChains := unsafe.Slice((**certSimpleChain)(chain.rgpChain), chain.cChain)
 	simple := simpleChains[0]
-	if simple == nil || simple.cElement < 2 || simple.rgpElement == 0 {
+	if simple == nil || simple.cElement < 2 || simple.rgpElement == nil {
 		return &Result{Verdict: VerdictInvalid, Error: "certificate chain has no issuer element"}
 	}
 	// Element 0 is the leaf; element 1 is the issuing CA.
-	elements := unsafe.Slice((**certChainElement)(unsafe.Pointer(simple.rgpElement)), simple.cElement)
+	elements := unsafe.Slice((**certChainElement)(simple.rgpElement), simple.cElement)
 	issuerElem := elements[1]
 	if issuerElem == nil || issuerElem.pCertContext == nil {
 		return &Result{Verdict: VerdictInvalid, Error: "issuer certificate context missing"}

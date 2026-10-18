@@ -1891,16 +1891,34 @@ describe("execWithoutShell AbortSignal", () => {
   });
 });
 
+describe("certificate/key deletion authority fencing",()=>{
+  it("loss after actual mocked delstore completion forbids the subsequent delkey",async()=>{
+    let lost=false,calls=0;
+    await assert.rejects(removeCertificateAndKeyContainer({thumbprint:"AA".repeat(20),store:"My",containerName:buildContainerName("fenced"),assertHeld(){if(lost)throw Object.assign(new Error("lost"),{code:"STORE_LOCK_LOST"});},execFileImpl(file,args,options,callback){calls++;assert.equal(args[0],"-delstore");lost=true;callback(null,"removed","");}}),{code:"STORE_LOCK_LOST"});
+    assert.equal(calls,1);
+  });
+});
+
 describe("removeAbandonedKeyContainer", () => {
+  function guardedStub(options = {}) {
+    const original = makeExecStub(options), calls = [];
+    const stub = (file,args,execOptions,callback) => {
+      calls.push({file,args,options:execOptions});
+      if(args[0] === "--key-survivors") { process.nextTick(()=>callback(null,JSON.stringify({complete:true,shared:false,storesScanned:2,certificatesScanned:0,matches:0}),"")); return; }
+      original(file,args,execOptions,callback);
+    };
+    stub.calls=calls;return stub;
+  }
+  const cleanup = options => removeAbandonedKeyContainer({keySurvivorHelperPath:__filename,...options});
   it("invokes certutil -csp <KSP> -delkey <containerName> without a shell", async () => {
-    const execFileImpl = makeExecStub({});
+    const execFileImpl = guardedStub({});
     const containerName = buildContainerName("job-99");
 
-    const result = await removeAbandonedKeyContainer({ containerName, execFileImpl });
+    const result = await cleanup({ containerName, execFileImpl });
 
     assert.equal(result.ok, true);
-    assert.equal(execFileImpl.calls.length, 1);
-    const call = execFileImpl.calls[0];
+    assert.equal(execFileImpl.calls.length, 2);
+    const call = execFileImpl.calls[1];
     assert.equal(call.file, "certutil.exe");
     assert.deepEqual(call.args, [
       "-csp",
@@ -1911,23 +1929,23 @@ describe("removeAbandonedKeyContainer", () => {
     assert.equal(call.options.shell, undefined);
   });
 
-  it("does NOT call -delstore first (unlike removeCertificateAndKeyContainer): only one certutil call", async () => {
-    const execFileImpl = makeExecStub({});
-    await removeAbandonedKeyContainer({
+  it("does NOT call -delstore first (unlike removeCertificateAndKeyContainer): metadata check then one certutil call", async () => {
+    const execFileImpl = guardedStub({});
+    await cleanup({
       containerName: buildContainerName("job-1"),
       execFileImpl,
     });
-    assert.equal(execFileImpl.calls.length, 1);
-    assert.equal(execFileImpl.calls[0].args[0], "-csp");
+    assert.equal(execFileImpl.calls.length, 2);
+    assert.equal(execFileImpl.calls[1].args[0], "-csp");
   });
 
   it("returns ok:false with exit code and excerpts when certutil -delkey fails", async () => {
-    const execFileImpl = makeExecStub({
+    const execFileImpl = guardedStub({
       error: Object.assign(new Error("boom"), { code: 1 }),
       stderr: "certutil: key container not found",
     });
 
-    const result = await removeAbandonedKeyContainer({
+    const result = await cleanup({
       containerName: buildContainerName("job-2"),
       execFileImpl,
     });
@@ -1937,10 +1955,54 @@ describe("removeAbandonedKeyContainer", () => {
     assert.match(result.stderrExcerpt, /key container not found/);
   });
 
+  it("refuses deletion for any surviving machine-store reference or incomplete/malformed inventory", async () => {
+    for (const response of [{complete:true,shared:true,storesScanned:3,certificatesScanned:1,matches:1},{complete:false,shared:true,storesScanned:1,certificatesScanned:1,matches:0,reason:"store_open_failed"},"malformed"]) {
+      let deletes=0;
+      const result=await cleanup({containerName:buildContainerName("guarded-job"),execFileImpl(file,args,options,callback){
+        if(args.includes("-delkey"))deletes++;
+        assert.equal(args[0],"--key-survivors");assert.equal(args.length,3,"primitive must exclude no certificate");
+        callback(null,typeof response==="string"?response:JSON.stringify(response),"");
+      }});
+      assert.equal(result.ok,false);assert.equal(deletes,0);
+      assert.equal(result.reason,response.complete===true?"key_container_referenced":"key_reference_probe_failed");
+    }
+  });
+
+  it("missing helper and in-flight cancellation cannot delete an abandoned key",async()=>{
+    let calls=0;
+    const missing=await cleanup({containerName:buildContainerName("missing"),keySurvivorHelperPath:path.join(os.tmpdir(),crypto.randomUUID(),"missing.exe"),execFileImpl(){calls++}});
+    assert.equal(missing.reason,"key_reference_probe_failed");assert.equal(calls,0);
+    const controller=new AbortController();
+    const aborted=await cleanup({containerName:buildContainerName("cancelled"),signal:controller.signal,execFileImpl(file,args,options,callback){calls++;assert.equal(options.signal,controller.signal);controller.abort();callback(null,JSON.stringify({complete:true,shared:false,storesScanned:2,certificatesScanned:0,matches:0}),"");}});
+    assert.equal(aborted.reason,"aborted");assert.equal(calls,1);
+  });
+
+  it("already-absent mode proves absence without helper or deletion; requireAlreadyAbsent refuses a present key",async()=>{
+    const containerName=buildContainerName("absence");
+    for(const present of [false,true]){
+      let calls=0;
+      const result=await cleanup({containerName,requireAlreadyAbsent:true,execFileImpl(file,args,options,callback){calls++;assert.deepEqual(args,["-csp","Microsoft Software Key Storage Provider","-key"]);callback(null,present?containerName+"\n":"","");}});
+      assert.equal(calls,1);assert.equal(result.ok,!present);
+      if(present)assert.equal(result.reason,"unproven_container_ownership");else assert.equal(result.alreadyAbsent,true);
+    }
+  });
+
+  it("rechecks authority after both absence listing and global inventory before any deletion",async()=>{
+    for(const allowAlreadyAbsent of [false,true]){
+      let lost=false,calls=0;
+      await assert.rejects(cleanup({containerName:buildContainerName("lost-authority"),allowAlreadyAbsent,assertHeld(){if(lost)throw Object.assign(new Error("lost"),{code:"STORE_LOCK_LOST"});},execFileImpl(file,args,options,callback){
+        calls++;assert.equal(args.includes("-delkey"),false);
+        lost=true;
+        callback(null,args[0]==="--key-survivors"?JSON.stringify({complete:true,shared:false,storesScanned:2,certificatesScanned:0,matches:0}):buildContainerName("lost-authority")+"\n","");
+      }}),{code:"STORE_LOCK_LOST"});
+      assert.equal(calls,1);
+    }
+  });
+
   it("rejects a containerName outside the safe alphabet before invoking execFile", async () => {
-    const execFileImpl = makeExecStub({});
+    const execFileImpl = guardedStub({});
     await assert.rejects(
-      removeAbandonedKeyContainer({ containerName: "evil;rm -rf", execFileImpl }),
+      cleanup({ containerName: "evil;rm -rf", execFileImpl }),
       /containerName must match/,
     );
     assert.equal(execFileImpl.calls.length, 0);
