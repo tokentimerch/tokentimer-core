@@ -62,7 +62,16 @@ for (const mode of ["abort", "timeout"]) test('exited launcher cannot orphan an 
 
 test("native command preserves quoted and empty arguments", {timeout:testBudget}, async () => {
   if (windows) {
-    const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-handles-")),driver=path.join(directory,"noninheritable.ps1");
+    const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-handles-")),driver=path.join(directory,"noninheritable.ps1"),probe=path.join(directory,"bootstrap.ps1"),receipt=path.join(directory,"stage.txt");
+    // A test-only copy records fixed startup phases without mixing diagnostics
+    // into client output or changing the production wrapper's inputs.
+    let source=fs.readFileSync(path.join(__dirname,"windows-command.ps1"),"utf8").replace(/^([ \t]*\$stage='([a-z-]+)')\r?$/gm,(_line,assignment,stage)=>assignment+`\n  [IO.File]::WriteAllText($env:CERTOPS_STARTUP_RECEIPT,'${stage}')`);
+    for(const [anchor,stage] of [["IntPtr job=CreateJobObject","create-job"],["Check(CreateProcess(","create-process"],["Check(AssignProcessToJobObject(","assign-job"],["Check(ResumeThread(","resume-client"],["Check(WaitForSingleObject(","wait-client"]]) {
+      assert.ok(source.includes(anchor),`Native startup probe anchor missing: ${anchor}`);
+      source=source.replace(anchor,`System.IO.File.WriteAllText(Environment.GetEnvironmentVariable("CERTOPS_STARTUP_RECEIPT"),"${stage}"); ${anchor}`);
+    }
+    fs.writeFileSync(probe,source);
+    function startupPhase(){try{const value=fs.readFileSync(receipt,"utf8");return ["read-request","compile-owner","execute-client","create-job","create-process","assign-job","resume-client","wait-client"].includes(value)?value:"unknown";}catch{return "script-not-started";}}
     // Model service hosts that do not mark their redirected handles inheritable.
     // Compile the production owner first so this isolates CreateProcess handle
     // inheritance from the separate CodeDOM compiler process.
@@ -84,14 +93,15 @@ foreach($kind in @(-10,-11,-12)) {
 & $env:CERTOPS_COMMAND_WRAPPER
 exit $LASTEXITCODE
 `);
-    try { for(const script of [path.join(__dirname,"windows-command.ps1"),driver]) {
+    try { for(const script of [probe,driver]) {
+    fs.rmSync(receipt,{force:true});
     // Keep stdin open after a complete frame. A ReadToEnd wrapper deadlocks here.
     await new Promise((resolve,reject)=>{
       const wrapper=cp.spawn(path.join(process.env.SystemRoot,"System32/WindowsPowerShell/v1.0/powershell.exe"),
         ["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",script],
-        {windowsHide:true,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,CERTOPS_COMMAND_WRAPPER:path.join(__dirname,"windows-command.ps1")},stdio:["pipe","pipe","pipe"]});
+        {windowsHide:true,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,CERTOPS_COMMAND_WRAPPER:path.join(__dirname,"windows-command.ps1"),CERTOPS_STARTUP_RECEIPT:receipt},stdio:["pipe","pipe","pipe"]});
       let output="",diagnostic="";
-      const timer=setTimeout(()=>{wrapper.kill();reject(new Error("Windows wrapper did not finish the framed request within its deadline"));},commandBudget);
+      const timer=setTimeout(()=>{const phase=startupPhase();cp.spawnSync("taskkill.exe",["/PID",String(wrapper.pid),"/T","/F"],{windowsHide:true,stdio:"ignore",timeout:5000});wrapper.kill();reject(new Error(`Windows wrapper did not finish the framed request (phase ${phase})`));},commandBudget);
       wrapper.stdout.on("data",chunk=>{output+=chunk;});wrapper.stderr.on("data",chunk=>{diagnostic+=chunk;});
       wrapper.stdin.on("error",()=>{});
       wrapper.once("error",error=>{clearTimeout(timer);reject(error);});

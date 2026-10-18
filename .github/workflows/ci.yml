@@ -705,6 +705,10 @@ jobs:
 
       # Native cases start PowerShell/C# wrappers; bound concurrency so cold
       # starts do not compete with every other test file on the hosted runner.
+      - name: Verify native Windows ACME startup before the full agent suite
+        working-directory: packages/agent
+        run: node --test --test-name-pattern="native command preserves quoted and empty arguments" src/acme/command.test.js
+
       - name: Run agent package tests (Windows ACL/durability/platform suite)
         working-directory: packages/agent
         run: node --test --test-concurrency=2 "src/**/*.test.js" "scripts/**/*.test.js"
