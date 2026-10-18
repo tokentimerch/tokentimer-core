@@ -14,6 +14,7 @@ const {pathToFileURL}=require("node:url");
 const {buildEnrollmentContainerName}=require("../../../packages/agent/src/windows-cert-store");
 const {readEnrollmentJournal}=require("../../../packages/agent/src/issuers/adcs-enrollment");
 const startObserver=require("./certops-adcs-journal-phase");
+const {verifyNativeRequestId}=require("./certops-adcs-live-enroll-acl");
 module.exports=async function runJournalPhaseExperiment(context){
   const phase=process.env.CERTOPS_ADCS_JOURNAL_PHASE_EXPERIMENT;if(!phase)return;
   assert.ok(["keygen_intent","prepared","submitting","issued","installing"].includes(phase));assert.equal(process.platform,"win32");
@@ -55,7 +56,8 @@ module.exports=async function runJournalPhaseExperiment(context){
     const nativeAtFault=observe();report.caRequestsAtFault=nativeAtFault.subjectRequestCount;
     if(phase==="issued"){
       assert.equal(nativeAtFault.subjectRequestCount,1);
-      assert.equal(String(nativeAtFault.requestId),String(stoppedJournal.journal.requestId));
+      verifyNativeRequestId(nativeAtFault.requestId,stoppedJournal.journal.requestId);
+      report.nativeRequestIdAtFault=nativeAtFault.requestId;
       assert.ok(stoppedJournal.artifacts.csrPem,"Issued interruption requires the original durable CSR");
     }
     assert.ok((await getJob(created.body.jobId)).lease_renewed_at,"Observed native fault requires an actual renewed lease");report.actualRenewedLeaseObserved=true;
@@ -97,9 +99,13 @@ module.exports=async function runJournalPhaseExperiment(context){
       const journal=readEnrollmentJournal(configDir,enrollmentId);assert.equal(journal.kind,"valid");assert.equal(journal.journal.containerName,stoppedJournal.journal.containerName);
       for(const field of ["csrSha256","csrSpkiSha256","snapshotSha256"])assert.equal(journal.journal[field],stoppedJournal.journal[field]);
       report.sameKeyAndCsrIdentityPreserved=true;
-      const native=observe();assert.equal(native.subjectRequestCount,1);assert.equal(String(native.requestId),String(installed.request_id));report.caRequestsAfterRecovery=1;
-      if(["issued","installing"].includes(phase))assert.equal(String(installed.request_id),String(stoppedJournal.journal.requestId));
-      if(phase==="issued")report.issuedRequestIdentityPreserved=true;
+      const native=observe();assert.equal(native.subjectRequestCount,1);verifyNativeRequestId(native.requestId,installed.request_id,journal.journal.requestId);report.caRequestsAfterRecovery=1;
+      if(["issued","installing"].includes(phase))verifyNativeRequestId(native.requestId,stoppedJournal.journal.requestId);
+      if(phase==="issued"){
+        assert.equal(native.requestId,nativeAtFault.requestId);
+        report.nativeRequestIdAfterRecovery=native.requestId;
+        report.issuedRequestIdentityPreserved=true;
+      }
       const leaf=await new Promise((resolve,reject)=>{const socket=tls.connect({host:"127.0.0.1",port,servername:domain,ca:tlsAuthority(authority),rejectUnauthorized:true},()=>{try{assert.equal(socket.authorized,true);resolve(new crypto.X509Certificate(socket.getPeerCertificate().raw));}catch(error){reject(error);}finally{socket.destroy();}});socket.setTimeout(10000,()=>socket.destroy(new Error("Recovered trusted native TLS timed out")));socket.once("error",reject);});assert.equal(leaf.checkHost(domain),domain);ownedThumbprints.add(leaf.fingerprint.replace(/:/g,""));report.trustedNativeTls=true;
     }
     const audits=(await fixture.pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='certops.enrollment.recovery_requested' AND metadata->>'enrollmentId'=$2",[fixture.workspaceId,enrollmentId])).rows;

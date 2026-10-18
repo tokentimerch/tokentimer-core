@@ -22,6 +22,8 @@ function verify(report){
   if(report.phase==="issued"){
     assert.equal(report.caRequestsAtFault,1);
     assert.equal(report.issuedRequestIdentityPreserved,true);
+    assert.ok(Number.isInteger(report.nativeRequestIdAtFault) && report.nativeRequestIdAtFault > 0 && report.nativeRequestIdAtFault <= 0xffffffff);
+    assert.equal(report.nativeRequestIdAfterRecovery,report.nativeRequestIdAtFault);
   }
   if(report.phase==="keygen_intent"){
     assert.equal(report.outcome,"pre-csr-recovery-refused-owned-key-cancelled");

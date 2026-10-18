@@ -59,7 +59,7 @@ test("AD CS operator journey uses the verified package and documented installer"
   const run = crypto.randomBytes(5).toString("hex"), site = `TTADCS-${run}-rsa2048`, domain = `certops-adcs-${run}-rsa2048.example.test`;
   const port = await new Promise(resolve => { const server = net.createServer(); server.listen(0, "127.0.0.1", () => { const value = server.address().port; server.close(() => resolve(value)); }); });
   const api = `/api/v1/workspaces/${fixture.workspaceId}/certops`;
-  let packageRoot, files, credential, installed = false, siteOwned = false, primary;
+  let packageRoot, files, credential, installed = false, siteOwned = false, primary, stage = "package-install";
   await gate.preflight();
   try {
     await gate.scenario("adcs-package-checksum-and-extraction", async () => {
@@ -97,14 +97,23 @@ test("AD CS operator journey uses the verified package and documented installer"
       ps("Restart-Service TokenTimerAgent -Force");
       assert.deepEqual(fs.readFileSync(path.join(configDir, "credential")), credential);
     });
+    stage = "existing-iis-certificate";
     // Existing IIS content is an operator prerequisite, not a fabricated managed
     // source. The agent must discover it before the browser can attach a profile.
     const seed = JSON.parse(ps(`Import-Module WebAdministration;$c=New-SelfSignedCertificate -DnsName '${domain}' -CertStoreLocation Cert:\\LocalMachine\\My -NotAfter (Get-Date).AddDays(1);New-Website -Name '${site}' -PhysicalPath '${workDir.replace(/'/g,"''")}' -Port ${port}|Out-Null;Remove-WebBinding -Name '${site}' -Protocol http;New-WebBinding -Name '${site}' -Protocol https -Port ${port} -HostHeader '${domain}' -SslFlags 1;(Get-WebBinding -Name '${site}' -Protocol https).AddSslCertificate($c.Thumbprint,'My');@{pem=[Convert]::ToBase64String($c.RawData);thumb=$c.Thumbprint}|ConvertTo-Json -Compress`));
     siteOwned = true;
     ownedThumbprints.add(seed.thumb);
-    const caDer = ps("$roots=@(Get-ChildItem Cert:\\LocalMachine\\Root|Where-Object {$_.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -eq 'TTQualificationRoot'});if($roots.Count -ne 1){throw 'Ambiguous owned CA root'};[Convert]::ToBase64String($roots[0].RawData)");
-    const ca = new crypto.X509Certificate(Buffer.from(caDer, "base64"));
+    // Domain trust can expose multiple same-name roots. Export the active CA
+    // certificate through its authenticated endpoint and match exact DER.
+    stage = "active-ca-trust";
+    const caFile = path.join(workDir, "active-ca.cer");
+    command("certutil.exe", ["-f", "-config", "tt-ca.lab.certops.test\\TTQualificationRoot", "-ca.cert", caFile]);
+    const ca = new crypto.X509Certificate(fs.readFileSync(caFile));
+    assert.equal(ca.ca, true); assert.equal(ca.verify(ca.publicKey), true);
+    const caDer = ca.raw.toString("base64"), caThumb = ca.fingerprint.replace(/:/g, "");
+    assert.equal(ps(`$roots=@(Get-ChildItem Cert:\\LocalMachine\\Root|Where-Object Thumbprint -eq '${caThumb}');if($roots.Count -lt 1){throw 'Active CA root is not trusted'};foreach($root in $roots){if([Convert]::ToBase64String($root.RawData) -ne '${caDer}'){throw 'Active CA trust bytes mismatch'}};'trusted-active-ca'`), "trusted-active-ca");
     const authority = { keySha256: crypto.createHash("sha256").update(ca.publicKey.export({ type: "spki", format: "der" })).digest("hex") };
+    stage = "browser-journey";
     await browserJourney.qualifyAdcsBrowserJourney({ gate, fixture: readonlyFixture, api, agentRowId: agentRow.id, configDir, workDir, run,
       renewalFixture: { item: { id: "rsa2048", domain }, site, port, authority }, until, workerDriven: true,
       jobFinished: id => until(async () => { const row = (await fixture.request(`${api}/jobs/${id}`)).body.job; assert.ok(!["failed", "rejected", "cancelled"].includes(row?.status)); return row?.status === "succeeded"; }),
@@ -116,7 +125,14 @@ test("AD CS operator journey uses the verified package and documented installer"
       verifyInstalled(files, path.join(installedRoot, "app"));
       assert.equal(ps("(Get-Service TokenTimerAgent).Status"), "Running");
     });
-  } catch (error) { primary = error; throw error; }
+  } catch (error) {
+    primary = error;
+    // Keep a bounded diagnostic even when strict finalization reports missing
+    // scenarios. Never persist arbitrary native output, URLs or error bodies.
+    gate.report.failureStage = stage;
+    gate.report.failureCode = /^[A-Z0-9_]{1,64}$/.test(error?.code || "") ? error.code : "UNCLASSIFIED";
+    throw error;
+  }
   finally {
     let cleanup = "passed";
     try {

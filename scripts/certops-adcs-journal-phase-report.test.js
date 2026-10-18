@@ -11,7 +11,7 @@ test("missing native fault, lease acknowledgement, TLS or integrity never passes
 test("certreq-new interruption requires real protected key and absent CSR then physical cancellation cleanup",()=>{const report={...fixture("keygen_intent"),fault:{...fixture("keygen_intent").fault,actualCertreqNewObserved:true,nonExportableOwnedKeyObserved:true},outcome:"pre-csr-recovery-refused-owned-key-cancelled",caRequestsAtFault:0,caRequestsAfterRecovery:0,preCsrRecoveryRefused:true,ownedProtectedKeyPreserved:true,durableCsrAbsent:true,cancelledKeyAbsent:true};assert.equal(verify(report),true);for(const field of ["preCsrRecoveryRefused","ownedProtectedKeyPreserved","durableCsrAbsent","cancelledKeyAbsent"])assert.throws(()=>verify({...report,[field]:false}));assert.throws(()=>verify({...report,caRequestsAfterRecovery:1}));assert.throws(()=>verify({...report,fault:{...report.fault,actualCertreqNewObserved:false}}));});
 
 test("issued crash recovery requires one pre-existing CA request and preserves its RequestId",()=>{
-  const report={...fixture("issued"),issuedRequestIdentityPreserved:true};
+  const report={...fixture("issued"),issuedRequestIdentityPreserved:true,nativeRequestIdAtFault:17,nativeRequestIdAfterRecovery:17};
   assert.equal(verify(report),true);
-  for(const change of [{caRequestsAtFault:0},{caRequestsAtFault:2},{caRequestsAfterRecovery:2},{issuedRequestIdentityPreserved:false}])assert.throws(()=>verify({...report,...change}));
+  for(const change of [{caRequestsAtFault:0},{caRequestsAtFault:2},{caRequestsAfterRecovery:2},{issuedRequestIdentityPreserved:false},{nativeRequestIdAtFault:undefined},{nativeRequestIdAtFault:0},{nativeRequestIdAtFault:4294967296},{nativeRequestIdAfterRecovery:18}])assert.throws(()=>verify({...report,...change}));
 });
