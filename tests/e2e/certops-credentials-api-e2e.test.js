@@ -65,7 +65,7 @@ test("public machine credential and agent enrollment lifecycle", { timeout: 1200
     });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("credentials-api-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["credentials-api-lifecycle"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("credentials-api-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["credentials-api-lifecycle"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Credential lifecycle and finalization failed"); throw error; }
   }
 });

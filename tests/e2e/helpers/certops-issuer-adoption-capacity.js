@@ -5,6 +5,7 @@
  * foreign issuer fail closed, and nativeCell stays pending. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -24,6 +25,7 @@ const CATALOG_IDS = Object.freeze([
   "renewal.issuer-switch",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-issuer-adoption-capacity.js",
   "scripts/certops-issuer-adoption-capacity.js",
   "scripts/certops-issuer-adoption-capacity.test.js",
@@ -120,37 +122,17 @@ function assessLab(env = process.env) {
 function closedReport(reason, env = process.env) {
   const lab = assessLab(env);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    nativeCell: "pending",
-    nativeCellQualified: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    promotesCatalogRows: false,
-    separateSuite: "native-adcs-issuer-reassignment",
-    reason: lab.ok
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+nativeCell: "pending",
+nativeCellQualified: false,
+separateSuite: "native-adcs-issuer-reassignment",
+reason: lab.ok
       ? "Lab markers do not qualify native issuer adoption"
       : String(reason || `lab absent: ${lab.missing.join(",")}`),
-    cleanup: {
+cleanup: {
       status: "failed",
       summary: "No forest enrollment or issuer confirmation was started",
-    },
-  };
+    }};
 }
 
 function writeReport(reportPath, report) {

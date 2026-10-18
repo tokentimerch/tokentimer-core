@@ -47,6 +47,35 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(patch=patch), self.assertRaises(ValueError):
                 expand({**value, **patch})
 
+    def test_canonical_suites_reject_missing_or_conflicting_obligations(self):
+        definition = {"evidenceLevel": "real-host", "capabilities": ["windows"], "scenarioEvidenceLevel": "real-host", "scenarios": ["first", "second"], "scenarioEvidenceOverrides": {"second": "unit"}}
+        result = expand({"suiteDefinitions": {"sample": definition}})
+        self.assertEqual(result["suites"]["sample"], ["first", "second"])
+        self.assertEqual(result["scenarioEvidenceLevels"]["sample"], {"first": "real-host", "second": "unit"})
+        for patch in [{"scenarios": []}, {"scenarios": ["first", "first"]}, {"scenarios": [False]}, {"capabilities": []}, {"evidenceLevel": "unit"}, {"scenarioEvidenceLevel": "invented"}, {"scenarioEvidenceOverrides": {"unknown": "unit"}}, {"scenarioEvidenceOverrides": None}]:
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                expand({"suiteDefinitions": {"sample": {**definition, **patch}}})
+        for patch in [{"suites": {}}, {"requiredCapabilities": {}}, {"suiteEvidenceLevels": {}}, {"scenarioEvidenceLevels": {"sample": {}}}, {"scenarioEvidenceLevels": []}]:
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                expand({"suiteDefinitions": {"sample": definition}, **patch})
+
+    def test_source_segments_are_ordered_bounded_and_cycle_safe(self):
+        value = {"sourceGroups": {"base": ["a.js", "b.js"], "composed": [{"sourceGroup": "base"}, "c.js"]}, "slots": [{"requiredSourceGroup": "composed"}]}
+        self.assertEqual(expand(value)["slots"][0]["requiredSources"], ["a.js", "b.js", "c.js"])
+        for groups in [{"base": [{"sourceGroup": "base"}]}, {"base": [{"sourceGroup": "other"}], "other": [{"sourceGroup": "base"}]}, {"base": [{"sourceGroup": "missing"}]}, {"base": ["a"], "other": [{"sourceGroup": "base"}, "a"]}, {"base": [{"sourceGroup": "other", "ignored": True}], "other": ["a"]}, {"base": [str(i) for i in range(200)], "other": [{"sourceGroup": "base"}] + ["extra" + str(i) for i in range(57)]}]:
+            with self.subTest(groups=groups), self.assertRaises(ValueError):
+                expand({"sourceGroups": groups})
+
+    def test_shared_capabilities_are_independent(self):
+        suite = {"evidenceLevel": "real-host", "scenarios": ["case"], "capabilityGroup": "windows"}
+        value = {"capabilityGroups": {"windows": ["windows", "system"]}, "suiteDefinitions": {"first": suite, "second": suite}}
+        result = expand(value)
+        result["requiredCapabilities"]["first"].append("changed")
+        self.assertEqual(result["requiredCapabilities"]["second"], ["windows", "system"])
+        for patch in [{"capabilityGroups": None}, {"capabilityGroups": {"windows": []}}, {"suiteDefinitions": {"first": {**suite, "capabilities": ["windows"]}}}, {"suiteDefinitions": {"first": {**suite, "capabilityGroup": "missing"}}}]:
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                expand({**value, **patch})
+
     def test_groups_do_not_share_mutable_arrays(self):
         value = {"sourceGroups": {"shared": ["a"]}, "slots": [{"requiredSourceGroup": "shared"}, {"requiredSourceGroup": "shared"}]}
         result = expand(value)

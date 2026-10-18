@@ -4,6 +4,7 @@
  * closed. This file does not open a socket or talk to a cluster. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -25,6 +26,7 @@ const CATALOG_IDS = Object.freeze([
   "controller.observe",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-k8s-rbac-outage.js",
   "scripts/certops-k8s-rbac-outage.js",
   "scripts/certops-k8s-rbac-outage.test.js",
@@ -102,32 +104,12 @@ function assessLab(env = process.env) {
 function closedReport(reason, env = process.env) {
   const lab = assessLab(env);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    suiteStatus: SUITE_STATUS,
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    kubernetesQualified: false,
-    talkedToCluster: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    promotesCatalogRows: false,
-    reason: String(reason || `lab absent: ${lab.missing.join(",")}`),
-    cleanup: { status: "failed", summary: "No cluster client was opened" },
-  };
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+suiteStatus: SUITE_STATUS,
+kubernetesQualified: false,
+talkedToCluster: false,
+reason: String(reason || `lab absent: ${lab.missing.join(",")}`),
+cleanup: { status: "failed", summary: "No cluster client was opened" }};
 }
 
 function writeReport(reportPath, report) {

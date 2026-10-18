@@ -57,7 +57,7 @@ test("live workspace membership and machine workspace fences", { timeout: 120000
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { if (member) await member.cleanup(); } };
-    try { if (ready) { await gate.scenario("membership-fences-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["membership-api-fences"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("membership-fences-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["membership-api-fences"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Membership fence qualification and cleanup failed"); throw error; }
   }
 });

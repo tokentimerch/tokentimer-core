@@ -74,7 +74,7 @@ test("renewal admission preserves monitored-only and terminal certificate policy
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { try { if (viewer) await viewer.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } } };
-    try { if (ready) { await gate.scenario("renewal-admission-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["renewal-admission-api"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("renewal-admission-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["renewal-admission-api"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Renewal admission qualification and cleanup failed"); throw error; }
   }
 });

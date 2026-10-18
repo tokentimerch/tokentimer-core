@@ -103,7 +103,7 @@ test("unknown empty and newly unclassified domain profiles fail closed", () => {
     subject.selectProfile({ slots: [matrix.slots[0]] }, "adcs"),
   );
   const caps =
-    require("../docs/certops/qualification-suites.json").requiredCapabilities;
+    require("./certops-qualification-manifest").requiredCapabilities;
   caps["new-domain-fixture"] = ["domain"];
   try {
     assert.throws(() =>

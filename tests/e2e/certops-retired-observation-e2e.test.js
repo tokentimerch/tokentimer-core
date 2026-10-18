@@ -92,7 +92,7 @@ test("fresh TLS observation cannot reactivate a retired identity", { timeout: 12
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { if (server) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); } finally { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } } };
-    try { if (ready) { await gate.scenario("retired-observation-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["retired-observation-lifecycle"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("retired-observation-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["retired-observation-lifecycle"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Retired observation and finalization failed"); throw error; }
   }
 });

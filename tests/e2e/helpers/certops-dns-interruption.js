@@ -5,6 +5,7 @@
  * file does not send DNS queries or talk to a provider. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -26,6 +27,7 @@ const CATALOG_IDS = Object.freeze([
   "acme.txt-coexist",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-dns-interruption.js",
   "scripts/certops-dns-interruption.js",
   "scripts/certops-dns-interruption.test.js",
@@ -154,32 +156,12 @@ function closedReport(reason, env = process.env) {
   const lab = assessLab(env);
   const live = assessLive(env.CERTOPS_DNS_PROVIDER_PROBE === "1" ? { provider: true } : null);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    suiteStatus: SUITE_STATUS,
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    liveDnsQualified: live.liveDnsQualified,
-    propagationClaimed: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    promotesCatalogRows: false,
-    reason: String(reason || live.reason || `lab absent: ${lab.missing.join(",")}`),
-    cleanup: { status: "failed", summary: "No provider record was deleted" },
-  };
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+suiteStatus: SUITE_STATUS,
+liveDnsQualified: live.liveDnsQualified,
+propagationClaimed: false,
+reason: String(reason || live.reason || `lab absent: ${lab.missing.join(",")}`),
+cleanup: { status: "failed", summary: "No provider record was deleted" }};
 }
 
 function writeReport(reportPath, report) {

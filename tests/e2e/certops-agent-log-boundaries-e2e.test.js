@@ -53,7 +53,7 @@ test("agent log size and ownership boundaries through real API", { timeout: 1200
     });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("agent-log-boundaries-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["agent-log-boundaries"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("agent-log-boundaries-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["agent-log-boundaries"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Agent log boundaries and finalization failed"); throw error; }
   }
 });

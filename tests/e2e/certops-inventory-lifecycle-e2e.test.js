@@ -104,7 +104,7 @@ test("real TLS endpoint certificate inventory lifecycle", { timeout: 120000 }, a
       finally { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } }
     };
     try {
-      if (ready) { await gate.scenario("inventory-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["inventory-api-lifecycle"] }); }
+      if (ready) { await gate.scenario("inventory-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["inventory-api-lifecycle"] }); }
       else await cleanup();
     } catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Inventory journey and final qualification failed"); throw error; }
   }

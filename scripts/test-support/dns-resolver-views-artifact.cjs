@@ -1,4 +1,5 @@
 "use strict";
+const {reportFacts} = require("./qualification-artifact.cjs");
 // Synthetic verifier fixtures only; these objects are never execution evidence.
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -42,38 +43,21 @@ function artifact() {
       .digest("hex"),
   });
   const report = {
-    schemaVersion: 1,
+    ...reportFacts({ids: IDS, capabilities: CAPS, evidenceLevel: "integration", startedAt: startedAt, finishedAt: finishedAt}),
     suite: SUITE,
     platform: "linux",
     architecture: "x64",
     nodeVersion: "v24.11.0",
-    strict: true,
     candidateSha: CANDIDATE,
     evidenceLevel: "integration",
-    status: "passed",
     startedAt,
     finishedAt,
-    cleanup: { status: "passed" },
     artifactQualification: "workflow-checkout-source",
     qualificationEnvironment: environment,
-    requiredScenarios: IDS,
-    requiredCapabilities: CAPS,
-    missingScenarios: [],
-    missingCapabilities: [],
-    capabilities: Object.fromEntries(
-      CAPS.map((name) => [name, { available: true }]),
-    ),
-    scenarios: IDS.map((id) => ({
-      id,
-      status: "passed",
-      evidenceLevel: "integration",
-      startedAt,
-      finishedAt,
-    })),
     fixtureSource: source("scripts/certops-dns-routing-host.js"),
     fixtureSources: [...new Set([...helper.REQUIRED_SOURCES, ...require("../certops-dns-hook-interruption").REQUIRED_SOURCES])].map(source),
     nativeDnsHookInterruption: {schemaVersion:1,scope:require("../certops-dns-hook-interruption").SCOPE,interruptedExitCode:-15,cleanupRuns:2,liveProviderQualified:false,acmeCancellationQualified:false,sameNameSiblingQualified:false,fullPropagationQualified:false,...Object.fromEntries(require("../certops-dns-hook-interruption").FLAGS.map(flag=>[flag,true]))},
-    nativeResolverViews: nativeProof(),
+    nativeResolverViews: nativeProof()
   };
   return { kind: "host", suite: SUITE, environment, report };
 }

@@ -52,7 +52,7 @@ test("active claim force retirement fences real agent HTTP", { timeout: 120000 }
     }, { oracle: "Retired credential cannot revive a force-cancelled genuine lease with a late success report" });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("agent-lease-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["agent-lease-api"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("agent-lease-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["agent-lease-api"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Agent lease qualification and finalization failed"); throw error; }
   }
 });

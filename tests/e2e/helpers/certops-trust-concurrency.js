@@ -5,6 +5,7 @@
  * signed-trust cell stays a separate suite. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -25,6 +26,7 @@ const CATALOG_IDS = Object.freeze([
 ]);
 const SEPARATE_CATALOG_IDS = Object.freeze(["trust.public-signed-lifecycle"]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-trust-concurrency.js",
   "scripts/certops-trust-concurrency.js",
   "scripts/certops-trust-concurrency.test.js",
@@ -130,34 +132,14 @@ function assessLab(env = process.env) {
 function closedReport(reason, env = process.env) {
   const lab = assessLab(env);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    publicSignedTrustSeparate: true,
-    publicSignedTrustQualified: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    separateCatalogIds: [...SEPARATE_CATALOG_IDS],
-    promotesCatalogRows: false,
-    reason: lab.ok
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+publicSignedTrustSeparate: true,
+publicSignedTrustQualified: false,
+separateCatalogIds: [...SEPARATE_CATALOG_IDS],
+reason: lab.ok
       ? "A local store fixture does not qualify signed trust distribution"
       : String(reason || `lab absent: ${lab.missing.join(",")}`),
-    cleanup: { status: "failed", summary: "The public signed-trust cell was not started" },
-  };
+cleanup: { status: "failed", summary: "The public signed-trust cell was not started" }};
 }
 
 function writeReport(reportPath, report) {

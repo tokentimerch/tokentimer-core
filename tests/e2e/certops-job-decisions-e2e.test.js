@@ -93,7 +93,7 @@ test("real API approval rejection and protocol terminal transitions", { timeout:
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { if (viewer) await viewer.cleanup(); } };
-    try { if (ready) { await gate.scenario("job-decisions-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["job-decisions-api"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("job-decisions-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["job-decisions-api"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Job decision qualification and finalization failed"); throw error; }
   }
 });

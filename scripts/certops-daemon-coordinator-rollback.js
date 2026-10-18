@@ -48,7 +48,8 @@ const REQUIRED_SOURCES = [
 const scenarioFor = (service) =>
   `${service}-coordinator-validation-paired-rollback`;
 const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
-function verifyProof(value) {
+function createProofVerifier(SCOPE, FLAGS) {
+ return function verifyProof(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   assert.deepEqual(
     Object.keys(value).sort(),
@@ -78,7 +79,9 @@ function verifyProof(value) {
   );
   for (const flag of FLAGS) assert.equal(value[flag], true, flag);
   return true;
+};
 }
+const verifyProof = createProofVerifier(SCOPE, FLAGS);
 function fileIdentity(file) {
   const st = fs.lstatSync(file, { bigint: true });
   assert.ok(
@@ -333,6 +336,8 @@ async function qualifyCoordinatorRollback({
   return proof;
 }
 module.exports = {
+  createProofVerifier,
+  fileIdentity,
   SCOPE,
   FLAGS,
   REQUIRED_SOURCES,

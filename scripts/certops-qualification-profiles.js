@@ -34,7 +34,7 @@ function classify(slot) {
   if (DOMAIN.includes(slot.suite)) return "domain-adcs";
   if (EXTENDED.includes(slot.suite)) return "extended-domain-adcs";
   const caps =
-    require("../docs/certops/qualification-suites.json").requiredCapabilities[
+    require("./certops-qualification-manifest").requiredCapabilities[
       slot.suite
     ] || [];
   assert.ok(

@@ -1,22 +1,17 @@
 "use strict";
+const {matrixErrors} = require("./test-support/qualification-artifact.cjs");
 /** Current-source synthetic reports only; never a native execution verdict. */
 const test = require("node:test"),
   assert = require("node:assert/strict"),
   {
     artifact,
     candidateSha,
-  } = require("./test-support/windows-failed-rollback.cjs"),
-  { verifyMatrix } = require("./certops-release-qualification");
+  } = require("./test-support/windows-failed-rollback.cjs");
 const slots =
   require("./certops-qualification-manifest").slots.filter(
     (x) => x.suite === "windows-installed-failed-rollback-renewal",
   );
-function errors(value, slot) {
-  return verifyMatrix([value], {
-    candidateSha,
-    specification: { schemaVersion: 1, slots: [slot] },
-  });
-}
+const errors = (value, slot) => matrixErrors(value, slot, candidateSha);
 test("both separate failed-rollback Server slots require actual closed facts and current causal sources", () => {
   assert.equal(slots.length, 2);
   for (const slot of slots) {

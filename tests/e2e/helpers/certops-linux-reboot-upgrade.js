@@ -5,6 +5,7 @@
  * closed and is not a pass. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -27,6 +28,7 @@ const CATALOG_IDS = Object.freeze([
   "deploy.no-systemd",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-linux-reboot-upgrade.js",
   "scripts/certops-linux-reboot-upgrade.js",
   "scripts/certops-linux-reboot-upgrade.test.js",
@@ -135,31 +137,11 @@ function assessLab(env = process.env, probe = probeSystemd()) {
 function closedReport(reason, env = process.env, probe = probeSystemd()) {
   const lab = assessLab(env, probe);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    realRebootQualified: false,
-    rebootClaimed: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    promotesCatalogRows: false,
-    reason: String(reason || `lab absent: ${lab.missing.join(",")}`),
-    cleanup: { status: "failed", summary: "No reboot was requested and no host unit was replaced" },
-  };
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+realRebootQualified: false,
+rebootClaimed: false,
+reason: String(reason || `lab absent: ${lab.missing.join(",")}`),
+cleanup: { status: "failed", summary: "No reboot was requested and no host unit was replaced" }};
 }
 
 function writeReport(reportPath, report) {

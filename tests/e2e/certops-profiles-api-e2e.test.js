@@ -51,7 +51,7 @@ test("AD CS profile administration through real API", { timeout: 120000 }, async
     });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("profiles-api-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["profiles-api-policy"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("profiles-api-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["profiles-api-policy"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Profile policy and finalization failed"); throw error; }
   }
 });

@@ -1,28 +1,10 @@
 "use strict";
 
-const path = require("node:path");
+/** Supporting contract CLI; its scope-specific failure projection stays explicit. */
+const {createPendingCli} = require("./certops-qualification-report");
 const contract = require("../tests/e2e/helpers/certops-issuer-adoption-capacity");
 
-function main() {
-  try {
-    const report = contract.run({ env: process.env });
-    process.stdout.write(`${JSON.stringify({
-      status: report.status,
-      qualified: report.qualified,
-      nativeCell: report.nativeCell,
-      nativeCellQualified: report.nativeCellQualified,
-      hostCapabilityAbsentIsPass: report.hostCapabilityAbsentIsPass,
-    })}\n`);
-  } catch (error) {
-    const report = contract.closedReport(error.message);
-    contract.writeReport(
-      process.env[contract.REPORT_ENV] || path.join("qualification-results", contract.REPORT_FILE),
-      report,
-    );
-    process.stdout.write(`${JSON.stringify({ status: "failed", nativeCell: "pending", qualified: false })}\n`);
-  }
-  process.exitCode = 1;
-}
+const main = createPendingCli(contract, ["status","qualified","nativeCell","nativeCellQualified","hostCapabilityAbsentIsPass"], { status: "failed", nativeCell: "pending", qualified: false });
 
 if (require.main === module) main();
 

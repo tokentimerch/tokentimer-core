@@ -6,6 +6,7 @@
  * fails closed and no live browser is started. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -35,6 +36,7 @@ const CATALOG_IDS = Object.freeze([
   "experience.audit-target",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-browser-audit-redaction.js",
   "scripts/certops-browser-audit-redaction.js",
   "scripts/certops-browser-audit-redaction.test.js",
@@ -169,33 +171,13 @@ function closedReport(reason, env = process.env, probe) {
   const lab = assessLab(env);
   const browser = assessBrowser(probe);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    browserQualified: false,
-    liveBrowser: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    promotesCatalogRows: false,
-    reason: reason || (!browser.available || !lab.ok
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+browserQualified: false,
+liveBrowser: false,
+reason: reason || (!browser.available || !lab.ok
       ? "browser absent"
       : "A present browser is not claimed as qualification"),
-    cleanup: { status: "failed", summary: "No browser process was started" },
-  };
+cleanup: { status: "failed", summary: "No browser process was started" }};
 }
 
 function writeReport(reportPath, report) {

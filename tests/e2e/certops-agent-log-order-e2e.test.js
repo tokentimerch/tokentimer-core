@@ -59,7 +59,7 @@ test("actual agent telemetry ordering, conflict and final closure", { timeout: 1
     }, { oracle: "Telemetry finalization does not fabricate a terminal job; additional unresolved lines are refused and history remains stable" });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("agent-log-order-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["agent-log-order-api"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("agent-log-order-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["agent-log-order-api"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Log ordering qualification and cleanup failed"); throw error; }
   }
 });

@@ -46,7 +46,7 @@ test("external CSR algorithm compatibility through public API", { timeout: 12000
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } };
-    try { if (ready) { await gate.scenario("csr-algorithms-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["csr-api-algorithms"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("csr-algorithms-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["csr-api-algorithms"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "CSR algorithms and finalization failed"); throw error; }
   }
 });

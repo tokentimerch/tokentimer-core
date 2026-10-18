@@ -7,8 +7,7 @@
  */
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
+const {assessLab, createClosedReport, writeReport} = require("../../../scripts/certops-adcs-lab-contract");
 
 const SUITE = "adcs-crash-experiments";
 const SOURCE = "tests/e2e/helpers/certops-adcs-crash-experiments.js";
@@ -23,6 +22,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
 ]);
 const REQUIRED_CAPABILITIES = Object.freeze(["windows", "domain", "api", "qualifiedBuild"]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-adcs-lab-contract.js",
   SOURCE,
   "scripts/certops-adcs-crash-experiments.js",
   "docs/certops/adcs/crash-experiments.md",
@@ -39,23 +39,7 @@ const PROOF_KEYS = Object.freeze([
 ]);
 const REJECTED = "Experimental crash report cannot satisfy release qualification";
 
-function assessLab(env = process.env, platform = process.platform) {
-  const missing = [];
-  if (platform !== "win32") missing.push("win32");
-  if (env.CERTOPS_ADCS_DISPOSABLE_LAB !== "1") missing.push("CERTOPS_ADCS_DISPOSABLE_LAB");
-  try {
-    if (new URL(env.CERTOPS_ADCS_API_URL || "").protocol !== "https:") missing.push("CERTOPS_ADCS_API_URL");
-  } catch {
-    missing.push("CERTOPS_ADCS_API_URL");
-  }
-  return {
-    ok: missing.length === 0,
-    missing,
-    passed: false,
-    nativeQualified: false,
-    hostCapabilityAbsentIsPass: false,
-  };
-}
+
 
 function buildExperimentProof(experiment) {
   assert.ok(EXPERIMENTS.includes(experiment), "crash experiment required");
@@ -98,37 +82,9 @@ function qualifyCrashExperiment(context = {}) {
   throw new Error(REJECTED);
 }
 
-function buildClosedReport(reason) {
-  const now = new Date().toISOString();
-  const candidate = process.env.GITHUB_SHA;
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    evidenceLevel: EVIDENCE_LEVEL,
-    status: "failed",
-    releaseQualificationSatisfied: false,
-    nativeExecutionQualified: false,
-    hostCapabilityAbsentIsPass: false,
-    disposableForestRan: false,
-    startedAt: now,
-    finishedAt: now,
-    candidateSha: /^[a-f0-9]{40}$/i.test(candidate || "") ? candidate : "0".repeat(40),
-    requiredCapabilities: [...REQUIRED_CAPABILITIES],
-    capabilities: {},
-    requiredScenarios: [...REQUIRED_SCENARIOS],
-    missingScenarios: [...REQUIRED_SCENARIOS],
-    missingCapabilities: [...REQUIRED_CAPABILITIES],
-    scenarios: [],
-    cleanup: { status: "failed", summary: String(reason).slice(0, 512) },
-    fixturePrerequisite: "No disposable forest executed this journey. A failed report is not native qualification.",
-  };
-}
+const buildClosedReport = createClosedReport({SUITE, EVIDENCE_LEVEL, REQUIRED_CAPABILITIES, REQUIRED_SCENARIOS}, {}, {releaseQualificationSatisfied: false});
 
-function writeReport(reportPath, report) {
-  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-}
+
 
 function dispatch(options = {}) {
   const env = options.env || process.env;

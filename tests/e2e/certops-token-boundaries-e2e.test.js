@@ -54,7 +54,7 @@ test("scoped machine token expiry and revocation through executor HTTP", { timeo
     });
   } catch (error) { primaryError = error; throw error; }
   finally {
-    try { if (ready) { await gate.scenario("token-api-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["token-api-boundaries"] }); } else await fixture.cleanup(); }
+    try { if (ready) { await gate.scenario("token-api-cleanup", fixture.cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["token-api-boundaries"] }); } else await fixture.cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Token boundaries and finalization failed"); throw error; }
   }
 });

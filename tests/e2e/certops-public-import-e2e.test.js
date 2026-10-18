@@ -142,7 +142,7 @@ test("public certificate import parsing, refusal and identity conservation", { t
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } };
-    try { if (ready) { await gate.scenario("public-import-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["public-import-api"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("public-import-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["public-import-api"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Public import qualification and cleanup failed"); throw error; }
   }
 });

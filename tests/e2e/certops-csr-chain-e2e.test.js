@@ -61,7 +61,7 @@ test("external signing chain lifecycle through public CSR API", { timeout: 12000
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } };
-    try { if (ready) { await gate.scenario("csr-chain-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["csr-api-chain"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("csr-chain-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["csr-api-chain"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "CSR chain lifecycle and finalization failed"); throw error; }
   }
 });

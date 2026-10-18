@@ -3,6 +3,7 @@
  * observes the production coordinator; native validate/reload implementations
  * and actual certificate files are unchanged. This is not signed/API admission. */
 const assert = require("node:assert/strict");
+const {createProofVerifier, fileIdentity, snapshot, assertSnapshot} = require("./certops-daemon-coordinator-rollback");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -33,6 +34,7 @@ const FLAGS = [
   "ownershipGuardReleased",
 ];
 const REQUIRED_SOURCES = [
+  "scripts/certops-daemon-coordinator-rollback.js",
   "scripts/certops-daemon-served-leaf-mismatch.js",
   "scripts/certops-nginx-host.js",
   "packages/agent/src/index.js",
@@ -49,68 +51,10 @@ const REQUIRED_SOURCES = [
 const scenarioFor = (service) =>
   `${service}-coordinator-served-leaf-mismatch-paired-rollback`;
 const sha = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
-function verifyProof(value) {
-  assert.ok(value && typeof value === "object" && !Array.isArray(value));
-  assert.deepEqual(
-    Object.keys(value).sort(),
-    [
-      "schemaVersion",
-      "scope",
-      "service",
-      "evidenceTransport",
-      "fingerprints",
-      ...FLAGS,
-    ].sort(),
-  );
-  assert.equal(value.schemaVersion, 1);
-  assert.equal(value.scope, SCOPE);
-  assert.ok(["nginx", "apache", "haproxy"].includes(value.service));
-  assert.equal(
-    value.evidenceTransport,
-    "read-only-local-recorder-not-signed-api",
-  );
-  assert.ok(
-    Array.isArray(value.fingerprints) &&
-      value.fingerprints.length === 2 &&
-      value.fingerprints.every(
-        (v) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v),
-      ) &&
-      new Set(value.fingerprints).size === 2,
-  );
-  for (const flag of FLAGS) assert.equal(value[flag], true, flag);
-  return true;
-}
-function fileIdentity(file) {
-  const st = fs.lstatSync(file, { bigint: true });
-  assert.ok(
-    st.isFile() && !st.isSymbolicLink() && st.ino > 0n,
-    "Owned native file required",
-  );
-  assert.equal(fs.realpathSync.native(file), file);
-  return `${st.dev}:${st.ino}`;
-}
-function snapshot(file) {
-  const st = fs.lstatSync(file, { bigint: true });
-  return {
-    identity: fileIdentity(file),
-    sha256: sha(fs.readFileSync(file)),
-    mode: String(st.mode),
-    uid: String(st.uid),
-    gid: String(st.gid),
-  };
-}
-function assertSnapshot(file, before, preserveIdentity = true) {
-  const current = snapshot(file);
-  if (!preserveIdentity) {
-    delete current.identity;
-    before = { ...before };
-    delete before.identity;
-  }
-  assert.ok(
-    isDeepStrictEqual(current, before),
-    "Owned bytes or permissions changed",
-  );
-}
+const verifyProof = createProofVerifier(SCOPE, FLAGS);
+
+
+
 function assertCleanupSafe(root) {
   assert.ok(
     !unresolvedRoots.has(root),

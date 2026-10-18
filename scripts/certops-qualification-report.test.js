@@ -22,7 +22,7 @@ test("verifier rejects false success, duplicate IDs and missing capability evide
 });
 test("committed mandatory IDs cannot be removed from a success report", () => {
   const report = { schemaVersion: 1, suite: "windows-host", candidateSha: "a".repeat(40), evidenceLevel: "real-host", strict: true, status: "passed", finishedAt: new Date().toISOString(), scenarios: [{ id: "unrelated", status: "passed", startedAt: "now", finishedAt: "now" }], requiredScenarios: [] };
-  assert.equal(verifyReport(report).filter((error) => error.includes("Missing required scenario")).length, require("../docs/certops/qualification-suites.json").suites["windows-host"].length);
+  assert.equal(verifyReport(report).filter((error) => error.includes("Missing required scenario")).length, require("./certops-qualification-manifest").suites["windows-host"].length);
 });
 test("malformed reports return failure instead of crashing", () => {
   for (const report of [null, [], {}, { scenarios: {} }, { scenarios: [null] }]) assert.ok(verifyReport(report).length);
@@ -113,4 +113,28 @@ test("public signed Ubuntu trust report cannot omit a mandatory scenario id", ()
   report.missingScenarios = [];
   const errors = verifyReport(report, undefined, { expectedSha: f.CANDIDATE });
   assert.ok(errors.includes(`Missing required scenario: ${missing}`));
+});
+
+test("shared pending CLI limits public output and propagates receipt-write failure", () => {
+  const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
+  const {createRequire} = require("node:module"), filename = path.join(__dirname, "certops-qualification-report.js");
+  const output = [], writes = [], runtime = {env: {REPORT_PATH: "owned-receipt.json"}, stdout: {write: text => output.push(JSON.parse(text))}, exitCode: 0};
+  const loaded = {exports: {}};
+  vm.runInNewContext(fs.readFileSync(filename, "utf8"), {module: loaded, exports: loaded.exports, require: createRequire(filename), process: runtime, console, __dirname});
+  let failed = false, writeFailed = false;
+  const contract = {
+    REPORT_ENV: "REPORT_PATH", REPORT_FILE: "fallback.json",
+    run: () => {if (failed) throw new Error("owned refusal"); return {status: "failed", qualified: false, privateDetail: "must-not-be-public"};},
+    closedReport: reason => ({status: "failed", reason}),
+    writeReport: (file, report) => {if (writeFailed) throw new Error("receipt write refused"); writes.push({file, report});},
+  };
+  const main = loaded.exports.createPendingCli(contract, ["status", "qualified"], {status: "failed", qualified: false});
+  main();
+  assert.deepEqual(output, [{status: "failed", qualified: false}]);
+  assert.equal(runtime.exitCode, 1);
+  failed = true; main();
+  assert.deepEqual(writes, [{file: "owned-receipt.json", report: {status: "failed", reason: "owned refusal"}}]);
+  assert.deepEqual(output[1], {status: "failed", qualified: false});
+  writeFailed = true; assert.throws(main, /receipt write refused/);
+  assert.equal(output.length, 2);
 });

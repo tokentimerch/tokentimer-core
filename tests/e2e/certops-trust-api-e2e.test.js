@@ -57,7 +57,7 @@ test("trust approval and workspace pause through real API", { timeout: 120000 },
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } };
-    try { if (ready) { await gate.scenario("trust-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["trust-api-lifecycle"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("trust-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["trust-api-lifecycle"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Trust API journey and finalization failed"); throw error; }
   }
 });

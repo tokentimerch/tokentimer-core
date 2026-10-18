@@ -5,6 +5,7 @@
  * restores the previous file bytes and does not follow a symlink. */
 
 const assert = require("node:assert/strict");
+const {pendingFacts} = require("../../../scripts/certops-qualification-report");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -26,6 +27,7 @@ const CATALOG_IDS = Object.freeze([
   "linux-install.state-permissions",
 ]);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-fs-symlink-rollback.js",
   "scripts/certops-fs-symlink-rollback.js",
   "scripts/certops-fs-symlink-rollback.test.js",
@@ -137,32 +139,12 @@ function assessLab(env = process.env) {
 function closedReport(reason, env = process.env) {
   const lab = assessLab(env);
   const now = new Date().toISOString();
-  return {
-    schemaVersion: 1,
-    suite: SUITE,
-    strict: true,
-    status: "failed",
-    evidenceLevel: SUITE_LEVEL,
-    proofEvidenceLevel: PROOF_LEVEL,
-    qualified: false,
-    claimsQualification: false,
-    hostCapabilityAbsentIsPass: false,
-    followedSymlink: false,
-    inUseKeyDeleted: false,
-    blanketNetshReset: false,
-    startedAt: now,
-    finishedAt: now,
-    requiredScenarios: [...SCENARIOS],
-    missingScenarios: [...SCENARIOS],
-    scenarios: [],
-    requiredSources: [...REQUIRED_SOURCES],
-    catalogIds: [...CATALOG_IDS],
-    promotesCatalogRows: false,
-    reason: lab.ok
+  return {...pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}),
+followedSymlink: false,
+reason: lab.ok
       ? "A local rollback fixture does not qualify the host deployment"
       : String(reason || `lab absent: ${lab.missing.join(",")}`),
-    cleanup: { status: "failed", summary: "No path outside the owned root was written" },
-  };
+cleanup: { status: "failed", summary: "No path outside the owned root was written" }};
 }
 
 function writeReport(reportPath, report) {

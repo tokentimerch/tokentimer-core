@@ -47,7 +47,7 @@ test("pending policy proof requires actual retrieval, usable original key and an
 
 test("old destructive pending proofs and missing installed-key protection cannot qualify",()=>{
  for(const patch of [{firstError:"Local policy refusal could not free the protected enrollment key; retry required"},{signedRetrievalInstalled:false},{originalKeyUsableAfterReconciliation:false},{installedKeyProtectedFromCleanup:false},{installedReferenceSurvivesSecondaryRemoval:false}])assert.throws(()=>helper.verifySurvivorProof({...survivorProof(),...patch}));
- const contract=require("../docs/certops/qualification-suites.json");for(const suite of ["enterprise-adcs-real","enterprise-adcs-hierarchy-real"]){assert.ok(contract.suites[suite].includes(helper.tighteningScenario));assert.ok(contract.suites[suite].includes(helper.survivorScenario));assert.ok(!contract.suites[suite].includes("adcs-real-local-rule-tightening-frees-pending-key"));assert.ok(!contract.suites[suite].includes("adcs-real-pending-key-survivor-protects-local-policy-cleanup"));}
+ const contract=require("./certops-qualification-manifest");for(const suite of ["enterprise-adcs-real","enterprise-adcs-hierarchy-real"]){assert.ok(contract.suites[suite].includes(helper.tighteningScenario));assert.ok(contract.suites[suite].includes(helper.survivorScenario));assert.ok(!contract.suites[suite].includes("adcs-real-local-rule-tightening-frees-pending-key"));assert.ok(!contract.suites[suite].includes("adcs-real-pending-key-survivor-protects-local-policy-cleanup"));}
 });
 
 test("survivor setup uses trigger-created management without readding an open source",async()=>{

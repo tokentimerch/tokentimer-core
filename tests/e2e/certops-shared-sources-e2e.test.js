@@ -74,7 +74,7 @@ test("shared served fingerprint keeps source history and management accounting",
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { const failures = []; for (const server of servers) { try { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); } catch (error) { failures.push(error); } } try { await fixture.cleanup(); } catch (error) { failures.push(error); } finally { fs.rmSync(directory, { recursive: true, force: true }); } if (failures.length) throw new AggregateError(failures, "Shared source fixture cleanup failed"); };
-    try { if (ready) { await gate.scenario("shared-source-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["shared-source-lifecycle"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("shared-source-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["shared-source-lifecycle"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Shared source lifecycle and finalization failed"); throw error; }
   }
 });

@@ -73,7 +73,7 @@ test("observed certificate governance through public API", { timeout: 120000 }, 
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { if (server) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); } finally { try { await fixture.cleanup(); } finally { fs.rmSync(directory, { recursive: true, force: true }); } } };
-    try { if (ready) { await gate.scenario("governance-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["governance-api-lifecycle"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("governance-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["governance-api-lifecycle"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Governance journey and finalization failed"); throw error; }
   }
 });

@@ -64,7 +64,7 @@ test("registered agent log redaction and replay through real API", { timeout: 12
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { if (viewer) await viewer.cleanup(); } };
-    try { if (ready) { await gate.scenario("agent-log-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["agent-log-api"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("agent-log-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["agent-log-api"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Agent log qualification and finalization failed"); throw error; }
   }
 });

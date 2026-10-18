@@ -61,7 +61,7 @@ test("manual job approval and pause boundaries through real API", { timeout: 120
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { if (approver) await approver.cleanup(); } };
-    try { if (ready) { await gate.scenario("jobs-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["jobs-api-boundaries"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("jobs-api-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["jobs-api-boundaries"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Jobs API journey and finalization failed"); throw error; }
   }
 });

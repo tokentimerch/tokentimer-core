@@ -214,7 +214,7 @@ test("CSR authenticated API lifecycle", { timeout: 120000 }, async (t) => {
         catch (error) { failures.push(error); }
         if (failures.length) throw new AggregateError(failures, "CSR owned fixture cleanup failed");
       });
-      await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["csr-api-lifecycle"] });
+      await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["csr-api-lifecycle"] });
       }
     } finally { await pool.end(); fs.rmSync(directory, { recursive: true, force: true }); }
   }

@@ -1,20 +1,15 @@
 "use strict";
+const {matrixErrors} = require("./test-support/qualification-artifact.cjs");
 /** Offline current-source artifacts, never native execution evidence. */
 const { test } = require("node:test"),
   assert = require("node:assert/strict");
 const fixture = require("./test-support/acme-stage-artifact.cjs"),
-  h = require("../tests/e2e/helpers/certops-acme-bulk-renewal"),
-  { verifyMatrix } = require("./certops-release-qualification");
+  h = require("../tests/e2e/helpers/certops-acme-bulk-renewal");
 const slot =
   require("./certops-qualification-manifest").slots.find(
     (row) => row.id === "linux-real-acme",
   );
-function errors(value) {
-  return verifyMatrix([value], {
-    candidateSha: fixture.CANDIDATE,
-    specification: { schemaVersion: 1, slots: [slot] },
-  });
-}
+const errors = (value) => matrixErrors(value, slot, fixture.CANDIDATE);
 function native(value) {
   return value.events.find(
     (event) => event.name === require("./certops-acme-bulk-report").MAIN,

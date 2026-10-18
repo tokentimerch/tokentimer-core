@@ -1,4 +1,5 @@
 "use strict";
+const {reportFacts} = require("./qualification-artifact.cjs");
 /** Synthetic schema fixtures for offline verifier tests; never execution evidence. */
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -45,34 +46,17 @@ function artifact(version = "24.04") {
   const startedAt = "2026-10-15T01:00:00.000Z",
     finishedAt = "2026-10-15T01:01:00.000Z";
   const report = {
-    schemaVersion: 1,
+    ...reportFacts({ids: IDS, capabilities: CAPS, evidenceLevel: "real-host", startedAt: startedAt, finishedAt: finishedAt}),
     suite: SUITE,
     platform: "linux",
     architecture: "x64",
     nodeVersion: "v24.11.0",
-    strict: true,
     candidateSha: CANDIDATE,
     evidenceLevel: "real-host",
-    status: "passed",
     startedAt,
     finishedAt,
-    cleanup: { status: "passed" },
     artifactQualification: "workflow-checkout-source",
     qualificationEnvironment: environment,
-    requiredScenarios: IDS,
-    requiredCapabilities: CAPS,
-    missingScenarios: [],
-    missingCapabilities: [],
-    capabilities: Object.fromEntries(
-      CAPS.map((name) => [name, { available: true }]),
-    ),
-    scenarios: IDS.map((id) => ({
-      id,
-      status: "passed",
-      evidenceLevel: "real-host",
-      startedAt,
-      finishedAt,
-    })),
     fixtureSource: source("scripts/certops-filesystem-host.js"),
     fixtureSources:
       require("../certops-filesystem-host").ROLLBACK_SOURCES.map(
@@ -111,7 +95,7 @@ function artifact(version = "24.04") {
           true,
         ]),
       ),
-    },
+    }
   };
   return { kind: "host", suite: SUITE, environment, report };
 }

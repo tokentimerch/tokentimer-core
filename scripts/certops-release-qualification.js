@@ -57,11 +57,11 @@ function validateMatrix(specification = matrix) {
     }
     const identity = JSON.stringify([slot.kind, slot.suite, Object.entries(slot.environment || {}).sort()]);
     if (identities.has(identity)) errors.push(`${slot.id}: duplicate suite/environment specification`); identities.add(identity);
-    if (slot.kind === "host" && !require("../docs/certops/qualification-suites.json").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
+    if (slot.kind === "host" && !require("./certops-qualification-manifest").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
     if (slot.kind === "stack" && !slot.requiredInventory && !slot.requiredTests?.length) errors.push(`${slot.id}: mandatory tests are missing`);
     if (slot.kind === "database" && !require("./certops-integration-inventory").groups[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
   }
-  for (const suite of Object.keys(require("../docs/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
+  for (const suite of Object.keys(require("./certops-qualification-manifest").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
   for (const group of Object.keys(require("./certops-integration-inventory").groups)) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
   return errors;
 }
@@ -192,7 +192,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-native-dispatch-timing").verifyTimingFacts(artifact.report.nativeDispatchTiming);
           const privacy = artifact.report.nativeChildOutputPrivacy;
           if (!privacy || privacy.executedChildren !== 2 || !["stdoutEmitted", "stderrEmitted", "rawChildOutputWithheld", "genericExecutionMarkerPersisted", "jobSucceeded"].every(key => privacy[key] === true)) throw new Error("Native child-output confidentiality evidence incomplete");
-          const cases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("native-agent-log-"));
+          const cases = require("./certops-qualification-manifest").suites[slot.suite].filter(id => id.startsWith("native-agent-log-"));
           const rows = artifact.report.nativeLogFaults;
           if (!Array.isArray(rows) || rows.length !== cases.length) throw new Error("Native log transport fault evidence incomplete");
           for (const id of cases) {
@@ -260,7 +260,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
             workspaces.add(cohort.workspaceId); agents.add(cohort.agentId);
           }
           const mutations = artifact.report.nativeTemplateMutations;
-          const mutationCases = require("../docs/certops/qualification-suites.json").suites[slot.suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => id.slice("adcs-real-mutated-template-".length, -"-native-refused".length));
+          const mutationCases = require("./certops-qualification-manifest").suites[slot.suite].filter(id => id.startsWith("adcs-real-mutated-template-")).map(id => id.slice("adcs-real-mutated-template-".length, -"-native-refused".length));
           if (!Array.isArray(mutations) || mutations.length !== mutationCases.length) throw new Error("Native template mutation evidence incomplete");
           for (const caseId of mutationCases) {
             const rows = mutations.filter(item => item?.caseId === caseId);

@@ -66,7 +66,7 @@ test("unused bootstrap revocation, expiry and workspace ownership through real A
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { try { await fixture.cleanup(); } finally { if (other) await other.cleanup(); } };
-    try { if (ready) { await gate.scenario("bootstrap-fences-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["bootstrap-api-fences"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("bootstrap-fences-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["bootstrap-api-fences"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Bootstrap fence qualification and cleanup failed"); throw error; }
   }
 });

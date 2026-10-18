@@ -175,12 +175,12 @@ function verifyPrivacy(report, file, mode, candidateSha) {
 function verify(directory, candidateSha, root = ROOT) {
   assert.match(candidateSha || "", /^[a-f0-9]{40}$/);
   const files = walk(directory),
-    matrix = JSON.parse(
+    matrix = require("./certops-qualification-manifest").expand(JSON.parse(
       fs.readFileSync(
         path.join(root, "docs/certops/qualification-suites.json"),
         "utf8",
       ),
-    ),
+    )),
     cohorts = [];
   for (const kind of ["postgres", "vault"]) {
     const matches = files

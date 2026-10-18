@@ -60,7 +60,7 @@ test("public renewal profile permissions and immutable execution policy", { time
   } catch (error) { primaryError = error; throw error; }
   finally {
     const cleanup = async () => { const errors = []; for (const identity of [fixture, manager, viewer].filter(Boolean)) { try { await identity.cleanup(); } catch (error) { errors.push(error); } } if (errors.length) throw new AggregateError(errors, "Owned profile fixtures failed cleanup"); };
-    try { if (ready) { await gate.scenario("profile-permissions-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../docs/certops/qualification-suites.json").suites["profile-permissions-api"] }); } else await cleanup(); }
+    try { if (ready) { await gate.scenario("profile-permissions-cleanup", cleanup); await gate.finish({ requiredScenarios: require("../../scripts/certops-qualification-manifest").suites["profile-permissions-api"] }); } else await cleanup(); }
     catch (error) { if (primaryError) throw new AggregateError([primaryError, error], "Profile permission qualification and cleanup failed"); throw error; }
   }
 });
