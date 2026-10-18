@@ -216,8 +216,7 @@ test("the domain-only workflow is manual, protected and destroys its optional fo
   const yaml = createRequire(require.resolve("mocha/package.json"))("js-yaml");
   const name = "certops-native-issuer-reassignment.yml";
   const file = path.join(root, ".github/workflows", name);
-  const text = fs.readFileSync(file, "utf8");
-  assert.equal(text.includes("\r"), false);
+  const text = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   assert.equal(text.includes("pull_request"), false);
   assert.equal(text.includes("\npush:"), false);
   assert.match(text, /IssuerReassignment 1/);

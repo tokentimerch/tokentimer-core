@@ -111,21 +111,31 @@ async function until(read, label) {
   throw new Error(`Owned DNS server ${label} unproven`);
 }
 async function startOwnedDnsServer(register) {
+  const executable = (process.env.PATH || "").split(path.delimiter).map(dir => path.join(dir, "pebble-challtestsrv")).find(file => {
+    try { return fs.statSync(file).isFile(); } catch { return false; }
+  });
+  assert.ok(executable, "Pinned native DNS fixture executable required");
+  return startOwnedProcess(register, fs.realpathSync(executable), ARGS, nativeEnvironment());
+}
+async function startOwnedDnsPresent(register, { configDir, domain, value }) {
+  assert.ok(path.isAbsolute(configDir));
+  const directory = fs.lstatSync(configDir);
+  assert.ok(directory.isDirectory() && !directory.isSymbolicLink());
+  assert.match(domain, /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.invalid$/);
+  assert.match(value, /^certops-interrupt-[a-f0-9]{32}$/);
+  const hook = path.resolve(__dirname, "../packages/agent/bin/certops-dns-hook.js");
+  assert.ok(fs.lstatSync(hook).isFile() && !fs.lstatSync(hook).isSymbolicLink());
+  return startOwnedProcess(register, fs.realpathSync(process.execPath), [hook, "present"], {
+    ...nativeEnvironment(), TOKENTIMER_AGENT_CONFIG_DIR: configDir,
+    CERTBOT_DOMAIN: domain, CERTBOT_VALIDATION: value,
+  });
+}
+// One existing retained controller, with two fixed checked entry points. No
+// arbitrary public argv/executable override or numeric process signaling.
+async function startOwnedProcess(register, actual, args, environment) {
   assert.equal(process.platform, "linux");
   assert.equal(typeof register, "function");
-  const executable = (process.env.PATH || "")
-    .split(path.delimiter)
-    .map((dir) => path.join(dir, "pebble-challtestsrv"))
-    .find((file) => {
-      try {
-        return fs.statSync(file).isFile();
-      } catch {
-        return false;
-      }
-    });
-  assert.ok(executable, "Pinned native DNS fixture executable required");
-  const actual = fs.realpathSync(executable),
-    nonce = crypto.randomBytes(16).toString("hex");
+  const nonce = crypto.randomBytes(16).toString("hex");
   let child,
     ready,
     closed,
@@ -149,7 +159,7 @@ async function startOwnedDnsServer(register) {
           .toString()
           .split("\0")
           .filter((_, index, array) => index < array.length - 1),
-        [actual, ...ARGS],
+        [actual, ...args],
       );
     },
     async stop() {
@@ -169,6 +179,7 @@ async function startOwnedDnsServer(register) {
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
+      return closed;
     },
     assertCleanupSafe() {
       assert.ok(
@@ -184,10 +195,10 @@ async function startOwnedDnsServer(register) {
     [
       path.join(__dirname, "certops-dns-owned-server.py"),
       actual,
-      JSON.stringify(ARGS),
+      JSON.stringify(args),
       nonce,
     ],
-    { stdio: ["pipe", "pipe", "pipe"], env: nativeEnvironment() },
+    { stdio: ["pipe", "pipe", "pipe"], env: environment },
   );
   child.stdin.on("error", () => {
     failed = true;
@@ -258,4 +269,5 @@ module.exports = {
   verifyReady,
   verifyClosed,
   startOwnedDnsServer,
+  startOwnedDnsPresent,
 };

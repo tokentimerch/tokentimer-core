@@ -275,7 +275,7 @@ test("host script and workflow keep execution behind a fail-closed gate", () => 
   assert.doesNotMatch(ps1, /Invoke-Expression/);
   assert.doesNotMatch(ps1, /netsh int ip reset/);
   assert.doesNotMatch(ps1, /winsock reset/);
-  assert.match(workflow, /^on:\n {2}workflow_dispatch:\n/m);
+  assert.match(workflow, /^on:\r?\n {2}workflow_dispatch:\r?\n/m);
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.doesNotMatch(workflow, /\npush:/);
   assert.match(workflow, /contents: read/);

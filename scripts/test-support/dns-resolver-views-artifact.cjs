@@ -71,7 +71,8 @@ function artifact() {
       finishedAt,
     })),
     fixtureSource: source("scripts/certops-dns-routing-host.js"),
-    fixtureSources: helper.REQUIRED_SOURCES.map(source),
+    fixtureSources: [...new Set([...helper.REQUIRED_SOURCES, ...require("../certops-dns-hook-interruption").REQUIRED_SOURCES])].map(source),
+    nativeDnsHookInterruption: {schemaVersion:1,scope:require("../certops-dns-hook-interruption").SCOPE,interruptedExitCode:-15,cleanupRuns:2,liveProviderQualified:false,acmeCancellationQualified:false,sameNameSiblingQualified:false,fullPropagationQualified:false,...Object.fromEntries(require("../certops-dns-hook-interruption").FLAGS.map(flag=>[flag,true]))},
     nativeResolverViews: nativeProof(),
   };
   return { kind: "host", suite: SUITE, environment, report };

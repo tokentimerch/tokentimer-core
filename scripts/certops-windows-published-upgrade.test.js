@@ -99,7 +99,7 @@ test("a missing published archive host is not a pass", () => {
     path.join(root, ".github/workflows/certops-windows-coverage-variants.yml"),
     "utf8",
   );
-  assert.match(workflow, /^on:\n {2}workflow_dispatch:\n/m);
+  assert.match(workflow, /^on:\r?\n {2}workflow_dispatch:\r?\n/m);
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.doesNotMatch(workflow, /\npush:/);
   assert.doesNotMatch(workflow, /\bgh\b/);

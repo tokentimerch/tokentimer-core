@@ -4904,6 +4904,7 @@
       },
       "requiredSources": [
         "scripts/certops-dns-resolver-views.js",
+        "scripts/certops-dns-hook-interruption.js",
         "scripts/certops-dns-owned-server.js",
         "scripts/certops-dns-owned-server.py",
         "scripts/certops-dns-routing-host.js",

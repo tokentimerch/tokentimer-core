@@ -55,3 +55,25 @@ test("native views cannot relabel reachability, environment, cleanup or public r
     assert.ok(errors(value).length);
   }
 });
+
+test("interrupted real hook proof, scenario, sources and limited claims are mandatory", () => {
+  const interruption = require("./certops-dns-hook-interruption");
+  for (const key of Object.keys(fixture.artifact().report.nativeDnsHookInterruption)) {
+    for (const wrong of [undefined, typeof fixture.artifact().report.nativeDnsHookInterruption[key] === "boolean" ? 1 : true, null]) {
+      const value = fixture.artifact();
+      value.report.nativeDnsHookInterruption[key] = wrong;
+      assert.ok(errors(value).length, key);
+    }
+  }
+  for (const key of ["liveProviderQualified", "acmeCancellationQualified", "sameNameSiblingQualified", "fullPropagationQualified"]) {
+    const value = fixture.artifact(); value.report.nativeDnsHookInterruption[key] = true;
+    assert.ok(errors(value).length);
+  }
+  for (const file of interruption.REQUIRED_SOURCES) {
+    const value = fixture.artifact(); value.report.fixtureSources.find(row => row.file === file).sha256 = "e".repeat(64);
+    assert.ok(errors(value).length);
+  }
+  for (const mutate of [v => delete v.report.nativeDnsHookInterruption, v => v.report.nativeDnsHookInterruption.rawPackets = "secret", v => v.report.scenarios.find(row => row.id === interruption.SCENARIO).status = "skipped"]) {
+    const value = fixture.artifact(); mutate(value); assert.ok(errors(value).length);
+  }
+});

@@ -12,6 +12,7 @@ const assert = require("node:assert/strict"),
   { spawn } = require("node:child_process"),
   { Resolver } = require("node:dns/promises");
 const resolverViews = require("./certops-dns-resolver-views");
+const interruption = require("./certops-dns-hook-interruption");
 const {
   applyRestrictivePermissions,
 } = require("../packages/agent/src/platform");
@@ -66,13 +67,14 @@ async function stop(child) {
   }
   assert.ok(child.exitCode !== null || child.signalCode !== null);
 }
-async function hook(configDir, domain, value) {
+async function hook(configDir, domain, value, mode = "present") {
+  assert.ok(["present", "cleanup"].includes(mode));
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
       [
         path.resolve(__dirname, "../packages/agent/bin/certops-dns-hook.js"),
-        "present",
+        mode,
       ],
       {
         env: {
@@ -104,7 +106,7 @@ async function hook(configDir, domain, value) {
       clearTimeout(timeout);
       reject(new Error("Native DNS hook launch failed"));
     });
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       clearTimeout(timeout);
       if (signal || bytes > 65536)
         reject(new Error("Native DNS hook exceeded runtime/output limit"));
@@ -161,7 +163,7 @@ async function main() {
       },
     }),
   });
-  gate.report.fixtureSources = resolverViews.REQUIRED_SOURCES.map((file) => ({
+  gate.report.fixtureSources = [...new Set([...resolverViews.REQUIRED_SOURCES, ...interruption.REQUIRED_SOURCES])].map((file) => ({
     file,
     sha256: crypto
       .createHash("sha256")
@@ -178,7 +180,7 @@ async function main() {
       throw error;
     }
   }
-  function config(allowedZones = [zone], dnsServers = ["127.0.0.1:8053"]) {
+  function config(allowedZones = [zone], dnsServers = ["127.0.0.1:8053"], timeoutMs = 1000) {
     const credentials = path.join(directory, "dns.json");
     fs.writeFileSync(
       credentials,
@@ -216,7 +218,7 @@ async function main() {
         resolvers: dnsServers,
         checkAuthoritative: false,
         intervalMs: 100,
-        timeoutMs: 1000,
+        timeoutMs,
       },
     };
     fs.writeFileSync(
@@ -353,6 +355,7 @@ async function main() {
     throw error;
   } finally {
     const cleanup = async () => {
+      if (!primary) gate.report.nativeDnsHookInterruption = await interruption.qualify({directory, zone, config, hook, txt, records, ownedResolverResources});
       for (const resource of ownedResolverResources)
         resource.assertCleanupSafe();
       const failures = [];

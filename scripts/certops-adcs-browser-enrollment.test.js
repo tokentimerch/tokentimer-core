@@ -72,7 +72,7 @@ test("command entry writes a failed report and the workflow stays manual", () =>
     fs.rmSync(dir, { recursive: true, force: true });
   }
   const workflow = fs.readFileSync(path.join(root, ".github/workflows/certops-adcs-coverage-variants.yml"), "utf8");
-  assert.match(workflow, /^on:\n {2}workflow_dispatch:\n/m);
+  assert.match(workflow, /^on:\r?\n {2}workflow_dispatch:\r?\n/m);
   assert.doesNotMatch(workflow, /pull_request:/);
   assert.doesNotMatch(workflow, /\npush:/);
   assert.match(workflow, /contents: read/);

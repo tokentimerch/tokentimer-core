@@ -114,6 +114,8 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         }
         if (slot.suite === "dns-routing-host") {
           require("./certops-dns-resolver-views").verifyProof(artifact.report.nativeResolverViews);
+          require("./certops-dns-hook-interruption").verifyProof(artifact.report.nativeDnsHookInterruption);
+          if (!artifact.report.scenarios.some(row => row.id === require("./certops-dns-hook-interruption").SCENARIO && row.status === "passed")) throw new Error("Native DNS interruption scenario required");
           const native=artifact.report.qualificationEnvironment;
           if(artifact.report.platform!=="linux" || artifact.report.architecture!=="x64" || native.osFamily!=="linux" || native.distributionId!=="ubuntu" || native.distributionVersion!=="24.04" || native.executionSurface!=="host")throw new Error("Native configured DNS resolver views require the owned Ubuntu host");
         }

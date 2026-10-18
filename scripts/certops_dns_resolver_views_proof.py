@@ -23,4 +23,13 @@ def project_report(value):
     for flag in FLAGS:
         require(p[flag] is True)
     require(isinstance(e, dict) and e.get("measurement") == "native" and e.get("osFamily") == "linux" and e.get("distributionId") == "ubuntu" and e.get("distributionVersion") == "24.04" and e.get("executionSurface") == "host")
-    return {FIELD: copy.deepcopy(p)}
+    field = "nativeDnsHookInterruption"
+    interruption = value.get(field)
+    flags = "realTargetAndSiblingTxtObserved interruptedHookLiveBeforeStop retainedPidfdStopAndDrainVerified freshCleanupProcessVerified repeatedCleanupVerified distinctNameSiblingPreservedDuringCleanup ownedTxtAbsentAfterCleanup".split()
+    counters = "liveProviderQualified acmeCancellationQualified sameNameSiblingQualified fullPropagationQualified".split()
+    require(isinstance(interruption, dict) and set(interruption) == {"schemaVersion", "scope", "interruptedExitCode", "cleanupRuns", *flags, *counters})
+    require(type(interruption["schemaVersion"]) is int and interruption["schemaVersion"] == 1 and interruption["scope"] == "native-dns-hook-interruption-fresh-cleanup")
+    require(type(interruption["interruptedExitCode"]) is int and interruption["interruptedExitCode"] == -15)
+    require(type(interruption["cleanupRuns"]) is int and interruption["cleanupRuns"] == 2)
+    require(all(interruption[flag] is True for flag in flags) and all(interruption[flag] is False for flag in counters))
+    return {"platform": "linux", "architecture": "x64", FIELD: copy.deepcopy(p), field: copy.deepcopy(interruption)}
