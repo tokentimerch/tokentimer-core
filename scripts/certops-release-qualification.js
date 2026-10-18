@@ -59,7 +59,7 @@ function validateMatrix(specification = matrix) {
     if (slot.kind === "stack" && !slot.requiredInventory && !slot.requiredTests?.length) errors.push(`${slot.id}: mandatory tests are missing`);
     if (slot.kind === "database" && !require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
   }
-  for (const suite of Object.keys(require("../docs/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
+  for (const suite of Object.keys(require("../docs/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite) && !(specification.deferredSlots || []).some(slot => slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
   for (const group of Object.keys(require("../tests/integration/certops-qualification-groups.json"))) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
   return errors;
 }

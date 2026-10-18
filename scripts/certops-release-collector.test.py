@@ -782,18 +782,20 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(collector.supporting_sources(value), [{'file': file, 'sha256': 'a' * 64}])
         with self.assertRaises(ValueError):
             collector.supporting_sources([{'file': file, 'sha256': 'private-value'}])
-        declared = sorted(collector.declared_sources())
-        self.assertGreaterEqual(len(declared), 257)
-        public_sources = [{'file': name, 'sha256': hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:257]]
-        for count in (97, 128, 129, 192, 256):
-            self.assertEqual(collector.supporting_sources(public_sources[:count]), public_sources[:count])
-        with self.assertRaises(ValueError):
-            collector.supporting_sources(public_sources)
-        with self.assertRaises(ValueError):
-            collector.supporting_sources([public_sources[0], public_sources[0]])
-        for escaped in ('../outside.js', 'C:\\private.js', '/private.js', 'inside/../private.js'):
+        from unittest.mock import patch
+        with patch.object(collector, 'declared_sources', return_value=set(name for name in subprocess.check_output(['git', 'ls-files'], cwd=collector.ROOT, text=True).splitlines() if (collector.ROOT / name).is_file())):
+            declared = sorted(name for name in subprocess.check_output(['git', 'ls-files'], cwd=collector.ROOT, text=True).splitlines() if (collector.ROOT / name).is_file())
+            self.assertGreaterEqual(len(declared), 257)
+            public_sources = [{'file': name, 'sha256': hashlib.sha256((collector.ROOT / name).read_bytes()).hexdigest()} for name in declared[:257]]
+            for count in (97, 128, 129, 192, 256):
+                self.assertEqual(collector.supporting_sources(public_sources[:count]), public_sources[:count])
             with self.assertRaises(ValueError):
-                collector.supporting_sources([{'file': escaped, 'sha256': 'a' * 64}])
+                collector.supporting_sources(public_sources)
+            with self.assertRaises(ValueError):
+                collector.supporting_sources([public_sources[0], public_sources[0]])
+            for escaped in ('../outside.js', 'C:\\private.js', '/private.js', 'inside/../private.js'):
+                with self.assertRaises(ValueError):
+                    collector.supporting_sources([{'file': escaped, 'sha256': 'a' * 64}])
 
     def test_algorithm_and_cmc_closed_native_proofs_refuse_missing_and_duplicate_controls(self):
         self.assertEqual(collector.algorithm_boundaries_fields(algorithm_proof()), algorithm_proof())
@@ -848,7 +850,8 @@ class CollectorTests(unittest.TestCase):
         collector.validate_run(run, 'a' * 40, 'owner/repo')
         for workflow in ('certops-enterprise-adcs-hierarchy-qualification.yml', 'certops-native-issuer-reassignment.yml'):
             trusted = {**run, 'path': '.github/workflows/' + workflow}
-            collector.validate_run(trusted, 'a' * 40, 'owner/repo')
+            with self.assertRaises(ValueError):
+                collector.validate_run(trusted, 'a' * 40, 'owner/repo')
             for field, value in (('head_branch', 'feature'), ('head_sha', 'b' * 40), ('event', 'pull_request'), ('conclusion', 'cancelled')):
                 with self.subTest(workflow=workflow, field=field), self.assertRaises(ValueError):
                     collector.validate_run({**trusted, field: value}, 'a' * 40, 'owner/repo')

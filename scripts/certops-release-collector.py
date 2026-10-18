@@ -35,7 +35,7 @@ import certops_native_issuer_reassignment_proof as issuer_reassignment_proof
 import certops_adcs_browser_enrollment_proof as browser_enrollment_proof
 import certops_adcs_uncertain_abandon_proof as uncertain_abandon_proof
 ROOT = Path(__file__).resolve().parent.parent
-WORKFLOWS = {'.github/workflows/certops-retention24h-finalize.yml', '.github/workflows/certops-standalone-adcs-smoke.yml', '.github/workflows/certops-adcs-lab-janitor.yml', '.github/workflows/certops-adcs-coverage-variants.yml', '.github/workflows/certops-enterprise-adcs-qualification.yml', '.github/workflows/certops-enterprise-adcs-hierarchy-qualification.yml', '.github/workflows/certops-adcs-ttl24h-prepare.yml', '.github/workflows/certops-distribution-qualification.yml', '.github/workflows/certops-enterprise-adcs-response-loss-experiment.yml', '.github/workflows/certops-adcs-ttl24h-finalize.yml', '.github/workflows/certops-native-issuer-reassignment.yml', '.github/workflows/certops-adcs-ttl24h-janitor.yml', '.github/workflows/certops-enterprise-adcs-journal-phase-experiment.yml', '.github/workflows/certops-enterprise-adcs-pending-elapsed.yml', '.github/workflows/certops-retention-cadence-finalize.yml', '.github/workflows/certops-qualification.yml', '.github/workflows/certops-integration-qualification.yml'}
+WORKFLOWS = {'.github/workflows/certops-enterprise-adcs-qualification.yml', '.github/workflows/certops-distribution-qualification.yml', '.github/workflows/certops-qualification.yml'}
 MAX_ARCHIVE = 20 * 1024 * 1024
 MAX_REPORT = 2 * 1024 * 1024
 MAX_TOTAL_DOWNLOAD = 512 * 1024 * 1024
