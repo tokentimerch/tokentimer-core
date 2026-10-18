@@ -1,4 +1,5 @@
 "use strict";
+const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
 /** Script contract for installed public bind-failure injection and rollback.
  * Parsers and cleanup guards do not need a Windows host. A missing IIS or
@@ -12,6 +13,7 @@ const SCENARIO = "windows-installed-public-bind-failure";
 const EVIDENCE_LEVEL = "script";
 const BAD_THUMBPRINT = "00".repeat(20);
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-installed-bind-failure.js",
   "scripts/certops-windows-installed-bind-failure.js",
   "scripts/certops-windows-installed-bind-failure.ps1",
@@ -496,24 +498,7 @@ function assertCleanupSafe(manifest, commands) {
   }
 }
 
-function assessHostCapabilities(probe) {
-  const required = ["windows", "iis", "netsh", "appcmd"];
-  if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return {
-      available: false,
-      missing: required,
-      nativeQualified: false,
-      passed: false,
-    };
-  }
-  const missing = required.filter((name) => probe[name] !== true);
-  return {
-    available: missing.length === 0,
-    missing,
-    nativeQualified: false,
-    passed: false,
-  };
-}
+const assessHostCapabilities = probe => assessHostProbe(probe, ["windows", "iis", "netsh", "appcmd"]);
 
 function hashArg(args) {
   const raw = args.find((arg) => arg.startsWith("certhash="));

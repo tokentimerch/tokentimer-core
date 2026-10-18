@@ -1,4 +1,5 @@
 "use strict";
+const {createHostContractCli} = require("./certops-qualification-report");
 
 /** Host entry for a full-installer second-rename failure. A missing installer
  * host fails closed. Leaving the original name is not a native pass. */
@@ -47,25 +48,10 @@ function checkManifest(file) {
   return { passed: false, nativeQualified: false, planSafe: true, proof: result.proof };
 }
 
-function main() {
-  try {
-    if (process.argv[2] === "--check") {
-      process.stdout.write(`${JSON.stringify(checkManifest(process.argv[3]))}\n`);
-      return;
-    }
-    const result = run({
-      probe: probeHost(),
-      execute: process.env.CERTOPS_WINDOWS_SECOND_RENAME_EXECUTE === "1",
-    });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    process.exitCode = 1;
-  } catch (error) {
-    process.stdout.write(
-      `${JSON.stringify({ passed: false, nativeQualified: false, reason: error.message })}\n`,
-    );
-    process.exitCode = 1;
-  }
-}
+const main = createHostContractCli({
+  option: "--check", check: checkManifest, run: run, probeHost: probeHost,
+  executeEnv: "CERTOPS_WINDOWS_SECOND_RENAME_EXECUTE",
+});
 
 if (require.main === module) main();
 

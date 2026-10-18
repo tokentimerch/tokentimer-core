@@ -1,4 +1,5 @@
 "use strict";
+const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
 /** Script contract for protected-key and journal recovery. An orphan journal,
  * a weak ACL, and an unreadable journal fail closed. None of those cases
@@ -14,6 +15,7 @@ const SUITE_LEVEL = "integration";
 const REPORT_FIELD = "protectedKeyRecovery";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-protected-recovery.js",
   "scripts/certops-windows-protected-recovery.js",
   "scripts/certops-windows-protected-recovery.test.js",
@@ -156,19 +158,7 @@ function failClosed(manifest, defect) {
   return { passed: false, nativeQualified: false, proof, commands, keyDeleted: false };
 }
 
-function assessHostCapabilities(probe) {
-  const required = ["windows", "journal", "protectedKey", "ownedTarget"];
-  if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return { available: false, missing: required, nativeQualified: false, passed: false };
-  }
-  const missing = required.filter((name) => probe[name] !== true);
-  return {
-    available: missing.length === 0,
-    missing,
-    nativeQualified: false,
-    passed: false,
-  };
-}
+const assessHostCapabilities = probe => assessHostProbe(probe, ["windows", "journal", "protectedKey", "ownedTarget"]);
 
 function verifyProof(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));

@@ -1,10 +1,8 @@
 "use strict";
+const {sourceIdentity} = require("./qualification-artifact.cjs");
 const {reportFacts} = require("./qualification-artifact.cjs");
 // Synthetic verifier fixtures only; these objects are never execution evidence.
-const fs = require("node:fs"),
-  path = require("node:path"),
-  crypto = require("node:crypto"),
-  helper = require("../certops-dns-resolver-views");
+const helper = require("../certops-dns-resolver-views");
 const SUITE = "dns-routing-host",
   CANDIDATE = "a".repeat(40);
 function nativeProof() {
@@ -35,13 +33,7 @@ function artifact() {
     },
     startedAt = "2026-10-15T01:00:00.000Z",
     finishedAt = "2026-10-15T01:01:00.000Z";
-  const source = (file) => ({
-    file,
-    sha256: crypto
-      .createHash("sha256")
-      .update(fs.readFileSync(path.resolve(__dirname, "../..", file)))
-      .digest("hex"),
-  });
+  const source = file => sourceIdentity(file, true);
   const report = {
     ...reportFacts({ids: IDS, capabilities: CAPS, evidenceLevel: "integration", startedAt: startedAt, finishedAt: finishedAt}),
     suite: SUITE,

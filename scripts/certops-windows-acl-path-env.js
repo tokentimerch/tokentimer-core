@@ -1,4 +1,5 @@
 "use strict";
+const {createHostContractCli} = require("./certops-qualification-report");
 
 /** Host entry for ACL, path, and environment refusals. A missing host fails
  * closed. A refusal is not a native pass. */
@@ -51,25 +52,10 @@ function checkRefusal(file) {
   return { passed: false, nativeQualified: false, planSafe: true, proof: result.proof };
 }
 
-function main() {
-  try {
-    if (process.argv[2] === "--check") {
-      process.stdout.write(`${JSON.stringify(checkRefusal(process.argv[3]))}\n`);
-      return;
-    }
-    const result = run({
-      probe: probeHost(),
-      execute: process.env.CERTOPS_WINDOWS_ACL_PATH_ENV_EXECUTE === "1",
-    });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    process.exitCode = 1;
-  } catch (error) {
-    process.stdout.write(
-      `${JSON.stringify({ passed: false, nativeQualified: false, reason: error.message })}\n`,
-    );
-    process.exitCode = 1;
-  }
-}
+const main = createHostContractCli({
+  option: "--check", check: checkRefusal, run: run, probeHost: probeHost,
+  executeEnv: "CERTOPS_WINDOWS_ACL_PATH_ENV_EXECUTE",
+});
 
 if (require.main === module) main();
 

@@ -1,9 +1,7 @@
 "use strict";
+const {sourceIdentity} = require("./qualification-artifact.cjs");
 /** Synthetic schema fixture. Manual workflow_dispatch only. Not native execution evidence. */
-const crypto = require("node:crypto"),
-  fs = require("node:fs"),
-  path = require("node:path"),
-  h = require("../certops-linux-signed-trust-proof");
+const h = require("../certops-linux-signed-trust-proof");
 const CANDIDATE = "a".repeat(40);
 function nativeProof() {
   return {
@@ -35,13 +33,7 @@ function artifact() {
     startedAt = "2026-10-15T01:00:00.000Z",
     finishedAt = "2026-10-15T01:01:00.000Z",
     caps = ["root-native-trust", "real-api"],
-    source = (file) => ({
-      file,
-      sha256: crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(path.resolve(__dirname, "../..", file)))
-        .digest("hex"),
-    });
+    source = file => sourceIdentity(file, true);
   return {
     kind: "host",
     suite: h.SUITE,

@@ -15,6 +15,7 @@ const SUITE_LEVEL = "real-host";
 const REPORT_FIELD = "nativeArm64Execution";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-arm64-execution.js",
   "scripts/certops-windows-arm64-execution.js",
   "scripts/certops-windows-arm64-execution.test.js",

@@ -1,4 +1,5 @@
 "use strict";
+const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
 /** Host-integration contract for installed-service re-registration.
  * Re-registration keeps the same CNG key custody. An in-use key is never
@@ -14,6 +15,7 @@ const SUITE_LEVEL = "integration";
 const REPORT_FIELD = "reregisterCustody";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-reregister-custody.js",
   "scripts/certops-windows-reregister-custody.js",
   "scripts/certops-windows-reregister-custody.test.js",
@@ -187,19 +189,7 @@ function reRegister(manifest, request) {
   return { proof, commands, keyDeleted: false, passed: false };
 }
 
-function assessHostCapabilities(probe) {
-  const required = ["windows", "serviceControl", "cngCustody", "ownedTarget"];
-  if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return { available: false, missing: required, nativeQualified: false, passed: false };
-  }
-  const missing = required.filter((name) => probe[name] !== true);
-  return {
-    available: missing.length === 0,
-    missing,
-    nativeQualified: false,
-    passed: false,
-  };
-}
+const assessHostCapabilities = probe => assessHostProbe(probe, ["windows", "serviceControl", "cngCustody", "ownedTarget"]);
 
 function verifyProof(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));

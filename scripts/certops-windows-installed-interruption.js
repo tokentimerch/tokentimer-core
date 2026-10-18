@@ -1,4 +1,5 @@
 "use strict";
+const {createHostContractCli} = require("./certops-qualification-report");
 
 /** Host entry for deterministic interruption recovery. A missing service or
  * process-control host fails closed. Checking a recorded point is not a
@@ -84,29 +85,10 @@ function checkPoint(file) {
   };
 }
 
-function main() {
-  try {
-    if (process.argv[2] === "--check-point") {
-      process.stdout.write(`${JSON.stringify(checkPoint(process.argv[3]))}\n`);
-      return;
-    }
-    const result = run({
-      probe: probeHost(),
-      execute: process.env.CERTOPS_WINDOWS_INTERRUPTION_EXECUTE === "1",
-    });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    process.exitCode = 1;
-  } catch (error) {
-    process.stdout.write(
-      `${JSON.stringify({
-        passed: false,
-        nativeQualified: false,
-        reason: error.message,
-      })}\n`,
-    );
-    process.exitCode = 1;
-  }
-}
+const main = createHostContractCli({
+  option: "--check-point", check: checkPoint, run: run, probeHost: probeHost,
+  executeEnv: "CERTOPS_WINDOWS_INTERRUPTION_EXECUTE",
+});
 
 if (require.main === module) main();
 

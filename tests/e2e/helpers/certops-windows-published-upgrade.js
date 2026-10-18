@@ -15,6 +15,7 @@ const SUITE_LEVEL = "real-host";
 const REPORT_FIELD = "publishedPackageUpgrade";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-published-upgrade.js",
   "scripts/certops-windows-published-upgrade.js",
   "scripts/certops-windows-published-upgrade.test.js",

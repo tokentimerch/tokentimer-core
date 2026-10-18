@@ -1,4 +1,5 @@
 "use strict";
+const {sourceIdentity} = require("./qualification-artifact.cjs");
 /** Offline strict-verifier fixture, never a native systemd execution receipt. */
 const helper = require("../../tests/e2e/helpers/certops-linux-installed-discovery");
 function proof() {
@@ -14,17 +15,7 @@ function proof() {
   return value;
 }
 function artifact(version = "24.04") {
-  const fs = require("node:fs"),
-    path = require("node:path"),
-    crypto = require("node:crypto");
-  const root = path.resolve(__dirname, "../.."),
-    source = (file) => ({
-      file,
-      sha256: crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(path.join(root, file)))
-        .digest("hex"),
-    });
+  const source = sourceIdentity;
   const date = "2026-10-15T10:00:00.000Z",
     environment = {
       osFamily: "linux",

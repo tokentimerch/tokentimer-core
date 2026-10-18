@@ -66,7 +66,7 @@ if (require.main === module) {
     } catch (error) { console.error(`${file}: ${error.message}`); process.exitCode = 1; }
   }
 }
-module.exports = { verifyReport, pendingFacts, createPendingCli };
+module.exports = { verifyReport, pendingFacts, createPendingCli, createHostContractCli, assessHostProbe };
 
 // Shared failure facts for supporting contracts; no native execution is inferred.
 function pendingFacts({SUITE, SUITE_LEVEL, PROOF_LEVEL, SCENARIOS, REQUIRED_SOURCES, CATALOG_IDS, now}) {
@@ -102,4 +102,24 @@ function createPendingCli(contract, fields, failure) {
   }
   process.exitCode = 1;
  };
+}
+
+// Local Windows contract CLIs preserve their check mode and explicit unqualified flags.
+function createHostContractCli({option, check, run, probeHost, executeEnv, failureFlags = {}}) {
+ return function main() {
+  try {
+   if (process.argv[2] === option) { process.stdout.write(`${JSON.stringify(check(process.argv[3]))}\n`); return; }
+   const result = run({probe: probeHost(), execute: process.env[executeEnv] === "1"});
+   process.stdout.write(`${JSON.stringify(result)}\n`);
+   process.exitCode = 1;
+  } catch (error) {
+   process.stdout.write(`${JSON.stringify({passed: false, nativeQualified: false, ...failureFlags, reason: error.message})}\n`);
+   process.exitCode = 1;
+  }
+ };
+}
+function assessHostProbe(probe, required) {
+ if (!probe || typeof probe !== "object" || Array.isArray(probe)) return {available: false, missing: required, nativeQualified: false, passed: false};
+ const missing = required.filter(name => probe[name] !== true);
+ return {available: missing.length === 0, missing, nativeQualified: false, passed: false};
 }

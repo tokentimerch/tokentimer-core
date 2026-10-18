@@ -1,8 +1,7 @@
 "use strict";
+const {sourceIdentity} = require("./qualification-artifact.cjs");
 /** Synthetic current-source stack fixtures for offline schema checks only. */
-const fs = require("node:fs"),
-  path = require("node:path"),
-  crypto = require("node:crypto");
+const path = require("node:path");
 const root = path.resolve(__dirname, "../..");
 const CANDIDATE = "a".repeat(40);
 function artifact(scope = "real-agent-acme-filesystem") {
@@ -11,13 +10,7 @@ function artifact(scope = "real-agent-acme-filesystem") {
       (row) => row.suite === scope,
     );
   const client = scope.includes("acmesh") ? "acme.sh" : "certbot";
-  const source = (file) => ({
-    file,
-    sha256: crypto
-      .createHash("sha256")
-      .update(fs.readFileSync(path.join(root, file)))
-      .digest("hex"),
-  });
+  const source = sourceIdentity;
   const names = [
     ...require(path.join(root, slot.requiredInventory)).requiredTests,
     ...slot.requiredTests,

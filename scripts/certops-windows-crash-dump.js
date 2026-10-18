@@ -1,4 +1,5 @@
 "use strict";
+const {createHostContractCli} = require("./certops-qualification-report");
 
 /** Host entry for crash-dump containment. The report stays unqualified.
  * A claim that crashDumpContainmentQualified is true is rejected. */
@@ -65,30 +66,10 @@ function checkReport(file) {
   };
 }
 
-function main() {
-  try {
-    if (process.argv[2] === "--check") {
-      process.stdout.write(`${JSON.stringify(checkReport(process.argv[3]))}\n`);
-      return;
-    }
-    const result = run({
-      probe: probeHost(),
-      execute: process.env.CERTOPS_WINDOWS_CRASH_DUMP_EXECUTE === "1",
-    });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    process.exitCode = 1;
-  } catch (error) {
-    process.stdout.write(
-      `${JSON.stringify({
-        passed: false,
-        nativeQualified: false,
-        crashDumpContainmentQualified: false,
-        reason: error.message,
-      })}\n`,
-    );
-    process.exitCode = 1;
-  }
-}
+const main = createHostContractCli({
+  option: "--check", check: checkReport, run: run, probeHost: probeHost,
+  executeEnv: "CERTOPS_WINDOWS_CRASH_DUMP_EXECUTE", failureFlags: {crashDumpContainmentQualified: false},
+});
 
 if (require.main === module) main();
 

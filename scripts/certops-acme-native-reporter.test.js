@@ -90,3 +90,19 @@ test("shared sidecar reader preserves bounds, inode ownership and journey valida
     assert.throws(() => read(SCOPE, MAIN, root));
   } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });
+
+test("shared fixture fingerprints reread current bytes without changing path identities", () => {
+  const {sourceIdentity} = require("./test-support/qualification-artifact.cjs");
+  const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "certops-source-"));
+  const file = path.join(root, "owned.js"), relative = path.relative(path.resolve(__dirname, ".."), file);
+  try {
+    fs.writeFileSync(file, "first");
+    const original = sourceIdentity(relative);
+    assert.equal(original.file, relative);
+    assert.deepEqual(sourceIdentity(relative, true), original);
+    fs.writeFileSync(file, "second");
+    assert.notEqual(sourceIdentity(relative).sha256, original.sha256);
+    fs.unlinkSync(file);
+    assert.throws(() => sourceIdentity(relative), {code: "ENOENT"});
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});

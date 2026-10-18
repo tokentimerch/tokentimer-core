@@ -1,4 +1,5 @@
 "use strict";
+const {createHostContractCli} = require("./certops-qualification-report");
 
 /** Host entry for native ARM64 execution. Any non-arm64 process, or a missing
  * ARM64 host, fails closed. This entry never reports a pass. */
@@ -70,30 +71,10 @@ function checkProbe(file) {
   };
 }
 
-function main() {
-  try {
-    if (process.argv[2] === "--check") {
-      process.stdout.write(`${JSON.stringify(checkProbe(process.argv[3]))}\n`);
-      return;
-    }
-    const result = run({
-      probe: probeHost(),
-      execute: process.env.CERTOPS_WINDOWS_ARM64_EXECUTE === "1",
-    });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    process.exitCode = 1;
-  } catch (error) {
-    process.stdout.write(
-      `${JSON.stringify({
-        passed: false,
-        nativeQualified: false,
-        nativeArm64ExecutionQualified: false,
-        reason: error.message,
-      })}\n`,
-    );
-    process.exitCode = 1;
-  }
-}
+const main = createHostContractCli({
+  option: "--check", check: checkProbe, run: run, probeHost: probeHost,
+  executeEnv: "CERTOPS_WINDOWS_ARM64_EXECUTE", failureFlags: {nativeArm64ExecutionQualified: false},
+});
 
 if (require.main === module) main();
 

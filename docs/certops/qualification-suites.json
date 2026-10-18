@@ -2387,7 +2387,8 @@
         "packages/agent/scripts/host-gate.js",
         {
           "sourceGroup": "shared-certops-acme-native-adoption-3"
-        }
+        },
+        "scripts/certops-native-browser-runner.js"
       ],
       "environmentGroup": "linux-native-acme-browser-console-ubuntu24-certbot-environment"
     },
@@ -2517,7 +2518,8 @@
         "packages/agent/scripts/host-gate.js",
         {
           "sourceGroup": "shared-certops-acme-native-adoption-3"
-        }
+        },
+        "scripts/certops-native-browser-runner.js"
       ],
       "environmentGroup": "linux-native-acme-browser-console-ubuntu24-certbot-environment"
     },
@@ -3208,7 +3210,8 @@
         "scripts/certops-windows-second-rename.js",
         "scripts/certops-windows-second-rename.test.js",
         "docs/certops/windows/second-rename.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3222,7 +3225,8 @@
         "scripts/certops-windows-published-upgrade.js",
         "scripts/certops-windows-published-upgrade.test.js",
         "docs/certops/windows/published-upgrade.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3236,7 +3240,8 @@
         "scripts/certops-windows-arm64-execution.js",
         "scripts/certops-windows-arm64-execution.test.js",
         "docs/certops/windows/arm64-execution.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3250,7 +3255,8 @@
         "scripts/certops-windows-acl-path-env.js",
         "scripts/certops-windows-acl-path-env.test.js",
         "docs/certops/windows/acl-path-env.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3264,7 +3270,8 @@
         "scripts/certops-windows-operation-interruption.js",
         "scripts/certops-windows-operation-interruption.test.js",
         "docs/certops/windows/operation-interruption.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3278,7 +3285,8 @@
         "scripts/certops-windows-reregister-custody.js",
         "scripts/certops-windows-reregister-custody.test.js",
         "docs/certops/windows/reregister-custody.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3306,7 +3314,8 @@
         "scripts/certops-windows-protected-recovery.js",
         "scripts/certops-windows-protected-recovery.test.js",
         "docs/certops/windows/protected-recovery.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     },
@@ -3320,7 +3329,8 @@
         "scripts/certops-windows-crash-dump.js",
         "scripts/certops-windows-crash-dump.test.js",
         "docs/certops/windows/crash-dump.md",
-        ".github/workflows/certops-windows-coverage-variants.yml"
+        ".github/workflows/certops-windows-coverage-variants.yml",
+        "scripts/certops-qualification-report.js"
       ],
       "environmentGroup": "adcs-install-interruption-environment"
     }
@@ -6050,7 +6060,8 @@
       "tests/e2e/windows-real-journey.js",
       "tests/e2e/helpers/certops-windows-contained-process.js",
       "tests/e2e/helpers/certops-windows-contained-process.ps1",
-      "tests/e2e/helpers/certops-windows-rename-guard.js"
+      "tests/e2e/helpers/certops-windows-rename-guard.js",
+      "scripts/certops-qualification-report.js"
     ],
     "windows-two-unattended-renewals": [
       "tests/e2e/helpers/certops-windows-two-renewals.js",
@@ -6247,7 +6258,8 @@
       "tests/e2e/helpers/certops-windows-stop-offline.js",
       "tests/e2e/windows-real-journey.js",
       "scripts/certops-windows-installed-producer.js",
-      "scripts/certops-windows-installed-sources.js"
+      "scripts/certops-windows-installed-sources.js",
+      "scripts/certops-qualification-report.js"
     ],
     "windows-installed-alive-grace-renewal": [
       ".github/workflows/certops-windows-alive-grace.yml",
@@ -6310,7 +6322,8 @@
       "apps/api/services/certops/protocolSchemaValidation.js",
       "packages/contracts/certops/agent-protocol.schema.json",
       "scripts/certops-windows-installed-producer.js",
-      "scripts/certops-windows-installed-sources.js"
+      "scripts/certops-windows-installed-sources.js",
+      "scripts/certops-qualification-report.js"
     ],
     "windows-installed-failed-rollback-renewal": [
       {
@@ -6326,7 +6339,8 @@
       "tests/e2e/helpers/certops-windows-stop-offline.js",
       "tests/e2e/windows-real-journey.js",
       "scripts/certops-windows-installed-producer.js",
-      "scripts/certops-windows-installed-sources.js"
+      "scripts/certops-windows-installed-sources.js",
+      "scripts/certops-qualification-report.js"
     ],
     "distribution-agent-lab": [
       "tests/wildcard-vault/ux-lab/qualification.cjs",
@@ -6384,7 +6398,8 @@
       "scripts/certops-windows-bind-interposer-compile.test.ps1",
       ".github/workflows/certops-windows-installed-bind-failure.yml",
       "scripts/certops-windows-installed-producer.js",
-      "scripts/certops-windows-installed-sources.js"
+      "scripts/certops-windows-installed-sources.js",
+      "scripts/certops-qualification-report.js"
     ],
     "real-agent-windows-acme-iis-rsa-2048": [
       "tests/e2e/helpers/certops-windows-reregistration.js",
@@ -6460,7 +6475,8 @@
       "packages/agent/scripts/host/credential-weak-acl-fixture.js",
       "packages/agent/scripts/host/credential-weak-acl-hold.ps1",
       "tests/e2e/helpers/certops-windows-source-junction.js",
-      "tests/e2e/helpers/certops-windows-source-junction-hold.ps1"
+      "tests/e2e/helpers/certops-windows-source-junction-hold.ps1",
+      "scripts/certops-qualification-report.js"
     ],
     "shared-certops-acme-stage-faults-1": [
       "tests/e2e/helpers/certops-acme-stage-faults.js",

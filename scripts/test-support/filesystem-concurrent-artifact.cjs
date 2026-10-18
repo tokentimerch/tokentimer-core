@@ -1,11 +1,10 @@
 "use strict";
+const {sourceIdentity} = require("./qualification-artifact.cjs");
 const {reportFacts} = require("./qualification-artifact.cjs");
 /** Synthetic schema fixtures for offline verifier tests; never execution evidence. */
-const fs = require("node:fs"),
-  path = require("node:path"),
-  crypto = require("node:crypto");
+
 const helper = require("../certops-filesystem-concurrent");
-const root = path.resolve(__dirname, "../..");
+
 const SUITE = "filesystem-host",
   CANDIDATE = "a".repeat(40);
 const contract = require("../certops-qualification-manifest");
@@ -36,13 +35,7 @@ function artifact(version = "24.04") {
     measurement: "native",
     executionSurface: "host",
   };
-  const source = (file) => ({
-    file,
-    sha256: crypto
-      .createHash("sha256")
-      .update(fs.readFileSync(path.join(root, file)))
-      .digest("hex"),
-  });
+  const source = sourceIdentity;
   const startedAt = "2026-10-15T01:00:00.000Z",
     finishedAt = "2026-10-15T01:01:00.000Z";
   const report = {

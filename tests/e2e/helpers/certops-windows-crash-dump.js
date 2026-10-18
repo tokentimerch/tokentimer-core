@@ -14,6 +14,7 @@ const SUITE_LEVEL = "integration";
 const REPORT_FIELD = "crashDumpContainment";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-crash-dump.js",
   "scripts/certops-windows-crash-dump.js",
   "scripts/certops-windows-crash-dump.test.js",

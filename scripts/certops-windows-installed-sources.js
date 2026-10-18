@@ -2,6 +2,7 @@
 /** Shared causal dependencies of the four installed IIS/ACME qualification lanes.
  * Lane manifests add their own verifier and report dependencies. */
 module.exports = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "packages/contracts/certops/agent-protocol.schema.json",
   "apps/api/routes/certops-agent.js",
   "apps/api/middleware/agent-auth.js",

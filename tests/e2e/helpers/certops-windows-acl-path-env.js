@@ -1,4 +1,5 @@
 "use strict";
+const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
 /** Script contract for weak ACLs, unquoted paths that contain spaces, and a
  * missing SYSTEM environment. Each defect fails closed. A missing host is
@@ -14,6 +15,7 @@ const SUITE_LEVEL = "integration";
 const REPORT_FIELD = "aclPathEnvironment";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-acl-path-env.js",
   "scripts/certops-windows-acl-path-env.js",
   "scripts/certops-windows-acl-path-env.test.js",
@@ -192,19 +194,7 @@ function assertOwnedCommands(manifest, commands) {
   }
 }
 
-function assessHostCapabilities(probe) {
-  const required = ["windows", "acl", "quotedPath", "systemEnvironment"];
-  if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return { available: false, missing: required, nativeQualified: false, passed: false };
-  }
-  const missing = required.filter((name) => probe[name] !== true);
-  return {
-    available: missing.length === 0,
-    missing,
-    nativeQualified: false,
-    passed: false,
-  };
-}
+const assessHostCapabilities = probe => assessHostProbe(probe, ["windows", "acl", "quotedPath", "systemEnvironment"]);
 
 function verifyProof(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));

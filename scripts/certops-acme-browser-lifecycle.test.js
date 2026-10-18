@@ -29,3 +29,31 @@ test("native browser lifecycle scope remains explicit trusted manual Ubuntu cert
   assert.throws(() => runner.checkScope(env, "linux", release, true));
   assert.throws(() => runner.checkScope(env, "win32", release, false));
 });
+
+test("shared preview cleanup closes its retained HTTP server and keepalive connections", async () => {
+  const http = require("node:http"), server = http.createServer((req, res) => res.end("owned"));
+  const agent = new http.Agent({keepAlive: true});
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await new Promise((resolve, reject) => {
+      http.get({host: "127.0.0.1", port: server.address().port, agent}, response => {
+        response.resume(); response.once("end", resolve); response.once("error", reject);
+      }).once("error", reject);
+    });
+    await runner.closePreview(server);
+    assert.equal(server.listening, false);
+  } finally {
+    agent.destroy();
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test("shared preview cleanup propagates close failure and still closes connections", async () => {
+  let connectionsClosed = false;
+  await assert.rejects(runner.closePreview({
+    once() {}, listening: true,
+    close(callback) { callback(new Error("owned close refused")); },
+    closeAllConnections() { connectionsClosed = true; },
+  }), /Owned dashboard close failed/);
+  assert.equal(connectionsClosed, true);
+});

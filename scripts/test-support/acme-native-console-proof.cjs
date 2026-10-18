@@ -1,4 +1,5 @@
 "use strict";
+const {sourceIdentity, reportFacts} = require("./qualification-artifact.cjs");
 /** Offline sanitizer/strict-verifier fixture; never native execution proof. */
 const helper = require("../../tests/e2e/helpers/certops-acme-browser-console");
 function proof() {
@@ -39,18 +40,8 @@ function envelope() {
   };
 }
 function artifact() {
-  const fs = require("node:fs"),
-    path = require("node:path"),
-    crypto = require("node:crypto"),
-    r = require("../certops-acme-native-console-report");
-  const root = path.resolve(__dirname, "../.."),
-    source = (file) => ({
-      file,
-      sha256: crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(path.join(root, file)))
-        .digest("hex"),
-    });
+  const r = require("../certops-acme-native-console-report");
+  const source = sourceIdentity;
   const base = envelope(),
     date = "2026-10-15T01:00:00.000Z";
   return {
@@ -58,39 +49,18 @@ function artifact() {
     suite: r.SUITE,
     environment: base.qualificationEnvironment,
     report: {
-      ...base,
-      schemaVersion: 1,
-      strict: true,
-      candidateSha: "a".repeat(40),
-      nodeVersion: "v24.18.0",
-      evidenceLevel: "e2e",
-      status: "passed",
-      startedAt: date,
-      finishedAt: date,
-      artifactQualification: "workflow-checkout-source",
-      cleanup: { status: "passed" },
-      requiredScenarios: [r.SCENARIO],
-      missingScenarios: [],
-      requiredCapabilities: ["linux", "api", "browser"],
-      missingCapabilities: [],
-      capabilities: {
-        linux: { available: true },
-        api: { available: true },
-        browser: { available: true },
-      },
-      scenarios: [
-        {
-          id: r.SCENARIO,
-          status: "passed",
-          evidenceLevel: "e2e",
-          startedAt: date,
-          finishedAt: date,
-        },
-      ],
-      fixtureSource: source("scripts/certops-acme-native-console.js"),
-      fixtureSources:
-        require("../certops-acme-native-console").REQUIRED_SOURCES.map(source),
-    },
+ ...reportFacts({ids: [r.SCENARIO], capabilities: ["linux", "api", "browser"], evidenceLevel: "e2e", startedAt: date, finishedAt: date}),
+ ...base,
+candidateSha: "a".repeat(40),
+nodeVersion: "v24.18.0",
+evidenceLevel: "e2e",
+startedAt: date,
+finishedAt: date,
+artifactQualification: "workflow-checkout-source",
+fixtureSource: source("scripts/certops-acme-native-console.js"),
+fixtureSources:
+        require("../certops-acme-native-console").REQUIRED_SOURCES.map(source)
+},
   };
 }
 function slot() {

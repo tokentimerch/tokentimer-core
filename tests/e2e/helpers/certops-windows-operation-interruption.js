@@ -1,4 +1,5 @@
 "use strict";
+const {assessHostProbe} = require("../../../scripts/certops-qualification-report");
 
 /** Host-integration contract for service interruption at certificate-operation
  * stages beyond a single recorded point. Each stage records a point and
@@ -19,6 +20,7 @@ const SUITE_LEVEL = "integration";
 const REPORT_FIELD = "operationInterruption";
 const WORKFLOW = ".github/workflows/certops-windows-coverage-variants.yml";
 const REQUIRED_SOURCES = Object.freeze([
+  "scripts/certops-qualification-report.js",
   "tests/e2e/helpers/certops-windows-operation-interruption.js",
   "scripts/certops-windows-operation-interruption.js",
   "scripts/certops-windows-operation-interruption.test.js",
@@ -243,19 +245,7 @@ function readPoint(dir, stage) {
   return { point: parsed.point, bytes: Buffer.from(parsed.payload, "base64") };
 }
 
-function assessHostCapabilities(probe) {
-  const required = ["windows", "serviceControl", "processControl", "ownedTarget"];
-  if (!probe || typeof probe !== "object" || Array.isArray(probe)) {
-    return { available: false, missing: required, nativeQualified: false, passed: false };
-  }
-  const missing = required.filter((name) => probe[name] !== true);
-  return {
-    available: missing.length === 0,
-    missing,
-    nativeQualified: false,
-    passed: false,
-  };
-}
+const assessHostCapabilities = probe => assessHostProbe(probe, ["windows", "serviceControl", "processControl", "ownedTarget"]);
 
 function verifyProof(value) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));

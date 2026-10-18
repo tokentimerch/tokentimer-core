@@ -1,4 +1,5 @@
 "use strict";
+const {createHostContractCli} = require("./certops-qualification-report");
 
 /** Host entry for the bind-failure script proof. The capability gate and the
  * execute gate both fail closed. A plan check can call the owned-command
@@ -70,29 +71,10 @@ function checkPlan(file) {
   return { planSafe: true, nativeQualified: false, passed: false };
 }
 
-function main() {
-  try {
-    if (process.argv[2] === "--check-plan") {
-      process.stdout.write(`${JSON.stringify(checkPlan(process.argv[3]))}\n`);
-      return;
-    }
-    const result = run({
-      probe: probeHost(),
-      execute: process.env.CERTOPS_WINDOWS_BIND_FAILURE_EXECUTE === "1",
-    });
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    process.exitCode = 1;
-  } catch (error) {
-    process.stdout.write(
-      `${JSON.stringify({
-        passed: false,
-        nativeQualified: false,
-        reason: error.message,
-      })}\n`,
-    );
-    process.exitCode = 1;
-  }
-}
+const main = createHostContractCli({
+  option: "--check-plan", check: checkPlan, run: run, probeHost: probeHost,
+  executeEnv: "CERTOPS_WINDOWS_BIND_FAILURE_EXECUTE",
+});
 
 if (require.main === module) main();
 
