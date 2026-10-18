@@ -32,7 +32,7 @@ permissions:
   id-token: write
 jobs:
   lab:
-    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    if: (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/verify/adcs-vault-package-acceptance')) && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: certops-adcs-lab
     timeout-minutes: 150
