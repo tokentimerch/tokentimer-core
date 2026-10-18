@@ -100,3 +100,52 @@ test("member bootstrap refuses existing membership, missing or ambiguous IPs, an
     if (failure === "no-address" || failure === "ambiguous-address") assert.doesNotMatch(result.stdout, /DNS_CONFIGURED/);
   }
 });
+
+test("Windows tools bootstrap selects one Node and Go release from REST arrays", t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-tools-selection-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const probe = path.join(dir, "probe.ps1");
+  fs.writeFileSync(probe, String.raw`
+$ErrorActionPreference='Stop'
+$global:certopsDownloads=@()
+function Get-CimInstance { [pscustomobject]@{Domain='lab.certops.test'} }
+function Test-Path { $false }
+function New-Item { }
+function Expand-Archive { }
+function Get-FileHash { [pscustomobject]@{Hash=('a'*64)} }
+function Invoke-RestMethod {
+  param($Uri)
+  switch($Uri){
+    'https://nodejs.org/dist/index.json' {
+      Write-Output -NoEnumerate @([pscustomobject]@{version='v26.0.0';files=@('win-x64-zip')},[pscustomobject]@{version='v24.9.0';files=@('win-x64-zip')},[pscustomobject]@{version='v24.8.0';files=@('win-x64-zip')})
+    }
+    'https://nodejs.org/dist/v24.9.0/SHASUMS256.txt' { ('a'*64)+'  node-v24.9.0-win-x64.zip' }
+    'https://go.dev/dl/?mode=json' {
+      Write-Output -NoEnumerate @([pscustomobject]@{version='go1.30rc1';stable=$false;files=@()},[pscustomobject]@{version='go1.29.1';stable=$true;files=@([pscustomobject]@{os='windows';arch='amd64';kind='archive';filename='go1.29.1.windows-amd64.zip';sha256=('a'*64)})})
+    }
+    default { throw 'Unexpected release request' }
+  }
+}
+function Invoke-WebRequest {
+  param($Uri,$OutFile)
+  $global:certopsDownloads+= $Uri
+  if($Uri -eq 'https://nodejs.org/dist/v24.9.0/node-v24.9.0-win-x64.zip'){return}
+  if($Uri -eq 'https://go.dev/dl/go1.29.1.windows-amd64.zip'){throw 'TEST_SELECTION_COMPLETE'}
+  throw 'Unexpected archive request'
+}
+try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' }
+catch {
+  if($_.Exception.Message -ne 'TEST_SELECTION_COMPLETE'){throw ('Guest release selection failed: '+$_.Exception.Message)}
+  if($global:certopsDownloads.Count -ne 2){throw 'Expected exactly two selected downloads'}
+  Write-Output 'RELEASE_ARRAY_SELECTION_PASSED'
+  exit 0
+}
+throw 'Expected bounded test completion'
+`);
+  const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
+    encoding: "utf8", windowsHide: true, timeout: 15000,
+    env: { ...process.env, CERTOPS_TOOLS_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/windows-tools.ps1") },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /RELEASE_ARRAY_SELECTION_PASSED/);
+});
