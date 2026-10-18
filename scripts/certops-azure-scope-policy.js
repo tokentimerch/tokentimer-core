@@ -5,9 +5,7 @@ const PROVISION = Object.freeze(["certops-enterprise-adcs-qualification.yml"]);
 const LIFECYCLE = Object.freeze(["certops-adcs-lab-janitor.yml"]);
 const MAIN = "github.ref == 'refs/heads/main'";
 const PROVISION_IF = MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
-const LIFECYCLE_IF =
-  MAIN +
-  " && (github.event_name == 'workflow_dispatch' || vars.CERTOPS_ADCS_LAB_ENABLED == 'true')";
+const LIFECYCLE_IF = MAIN;
 function allowedCondition(name, value) {
   return PROVISION.includes(name)
     ? value === PROVISION_IF

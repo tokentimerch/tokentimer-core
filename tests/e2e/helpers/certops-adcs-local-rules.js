@@ -1,6 +1,6 @@
 "use strict";
 /* Whole local enrollment-rule negative cases with genuine signed jobs, unchanged CA request count
- * and trusted outgoing TLS; tighter policy continuation checks exact unaccepted-key cleanup.
+ * and trusted outgoing TLS; submitted continuations preserve their frozen context and original key.
  * Called only by the protected disposable-forest AD CS harness; native qualification requires
  * that workflow to execute.
  */
@@ -10,17 +10,25 @@ const REQUIRED_SOURCES=Object.freeze(["tests/e2e/helpers/certops-adcs-local-rule
 const SURVIVOR_SOURCES=Object.freeze(["infra/certops-adcs/owned-ca-request-certificate.ps1","infra/certops-adcs/officer-action.ps1","infra/certops-adcs/owned-request-observation.ps1","infra/certops-adcs/owned-ca-checkpoint.ps1","packages/agent/src/windows-key-survivors/index.js","packages/agent/src/windows-cert-store/index.js","packages/agent/src/adcs-windows-iis.js","tests/e2e/helpers/certops-adcs-issued-revocation.js"]);
 const pairCases=Object.freeze(["ca-host-mismatch","ca-authority-mismatch","template-pair-mismatch","empty-allowlist"]);
 const pairFlags=Object.freeze(["actualSignedJobRefused","claimBoundOutcome","noCaRequestAllocated","noKeyGenerated","noAcceptedLeafOrJournal","originalNativeCustodyPreserved","outgoingTrustedTlsPreserved","configurationAndCredentialRestored"]);
-const survivorScenario="adcs-real-pending-key-survivor-protects-local-policy-cleanup";
-const survivorScope="native-pending-key-policy-refusal-then-public-cancellation";
-const survivorError="Local policy refusal could not free the protected enrollment key; retry required";
+const survivorScenario="adcs-real-pending-key-survivor-preserves-retrieval-and-installed-custody";
+const survivorScope="native-pending-key-policy-change-retrieval-install-and-survivor-protection";
 const survivorMarker=".preserve-adcs-pending-key-survivor.json",activeSurvivors=new Set();
-const survivorFlags=Object.freeze(["actualOwnedPendingRequest","actualOwnedCaLeafSameCsrSpki","exactWebHostingAssociationAndProtectedKey","nativeSurvivorReferenceObserved","signedCleanupRefusedWhileReferenced","pendingJournalAndKeyPreserved","noAdditionalCaRequest","exactPublicAssociationOnlyRemoved","publicCancellationAcknowledged","signedTerminalCleanupCompleted","predecessorCustodyIisTlsPreserved","configurationCredentialRestored","ownedCaLeafRevoked","ownershipGuardReleased"]);
+const survivorFlags=Object.freeze(["actualOwnedPendingRequest","actualOwnedCaLeafSameCsrSpki","exactWebHostingAssociationAndProtectedKey","nativeSurvivorReferenceObserved","signedRetrievalInstalled","frozenEnrollmentIdentityPreserved","originalKeyUsableAfterReconciliation","installedKeyProtectedFromCleanup","installedReferenceSurvivesSecondaryRemoval","noAdditionalCaRequest","exactPublicAssociationOnlyRemoved","predecessorCustodyIisTlsPreserved","configurationCredentialRestored","ownedCaLeafRevoked","ownershipGuardReleased"]);
 function assertCleanupSafe(workDir){assert.equal(activeSurvivors.has(path.resolve(workDir)),false,"Preserve unresolved AD CS key survivor association");assert.equal(fs.existsSync(path.join(workDir,survivorMarker)),false,"Preserve durable AD CS key survivor ownership");}
+const tighteningScenario="adcs-real-local-rule-tightening-preserves-pending-retrieval";
+const tighteningFlags=Object.freeze(["actualSignedRetrievalPending","originalCngKeyUsable","frozenContextPreserved","noAdditionalCaRequest","outgoingTrustedTlsPreserved","explicitTerminalCleanupAfterDenial"]);
+function verifyTighteningProof(value) {
+ assert.deepEqual(Object.keys(value).sort(),["enrollmentId","continuationJobId","requestId","snapshotSha256","caRequestCounts",...tighteningFlags].sort());
+ for(const key of ["enrollmentId","continuationJobId"])assert.match(value[key],/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+ assert.match(value.requestId,/^[1-9][0-9]{0,9}$/);assert.ok(Number(value.requestId)<=0xffffffff);assert.match(value.snapshotSha256,/^[a-f0-9]{64}$/);
+ assert.ok(Array.isArray(value.caRequestCounts)&&value.caRequestCounts.length===2&&value.caRequestCounts.every(n=>Number.isSafeInteger(n)&&n>0&&n===value.caRequestCounts[0]));
+ for(const flag of tighteningFlags)assert.equal(value[flag],true,flag);return true;
+}
 function verifySurvivorProof(value){
- assert.deepEqual(Object.keys(value).sort(),["scope","store","recovery","firstError","enrollmentId","requestId","failedJobId","cleanupJobId","fingerprint","csrSpkiSha256","caRequestCounts","automaticRetryQualified","schedulerDefaultClockQualified",...survivorFlags].sort());
- assert.equal(value.scope,survivorScope);assert.equal(value.store,"WebHosting");assert.equal(value.recovery,"public-cancel-then-terminal-cleanup");assert.equal(value.firstError,survivorError);assert.equal(value.automaticRetryQualified,false);assert.equal(value.schedulerDefaultClockQualified,false);
- for(const field of ["enrollmentId","failedJobId","cleanupJobId"])assert.match(value[field],/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
- assert.notEqual(value.failedJobId,value.cleanupJobId);assert.match(value.requestId,/^[1-9][0-9]{0,9}$/);assert.ok(Number(value.requestId)<=0xffffffff);
+ assert.deepEqual(Object.keys(value).sort(),["scope","store","recovery","enrollmentId","requestId","continuationJobId","fingerprint","csrSpkiSha256","caRequestCounts",...survivorFlags].sort());
+ assert.equal(value.scope,survivorScope);assert.equal(value.store,"WebHosting");assert.equal(value.recovery,"signed-retrieval-and-isolated-iis-installation");
+ for(const field of ["enrollmentId","continuationJobId"])assert.match(value[field],/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+ assert.match(value.requestId,/^[1-9][0-9]{0,9}$/);assert.ok(Number(value.requestId)<=0xffffffff);
  for(const field of ["fingerprint","csrSpkiSha256"])assert.match(value[field],/^[a-f0-9]{64}$/);
  assert.ok(Array.isArray(value.caRequestCounts)&&value.caRequestCounts.length===3&&value.caRequestCounts.every(n=>Number.isSafeInteger(n)&&n>0&&n===value.caRequestCounts[0]));
  for(const flag of survivorFlags)assert.equal(value[flag],true,flag);return true;
@@ -37,7 +45,7 @@ function verifyPairProof(rows){
  assert.ok(Array.isArray(rows));assert.equal(rows.length,pairCases.length);assert.deepEqual(rows.map(row=>row.caseId).sort(),[...pairCases].sort());
  for(const row of rows){assert.deepEqual(Object.keys(row).sort(),["caseId",...pairFlags].sort());for(const flag of pairFlags)assert.equal(row[flag],true,flag);}return true;
 }
-async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,configDir,run,preflight,command,ps,until,ownedEnrollmentIds,tlsAuthority,workDir,ownedResultResources,ownedTlsProbes}){
+async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,configDir,run,preflight,command,ps,until,ownedEnrollmentIds,tlsAuthority,workDir,ownedResultResources,ownedTlsProbes,ownedSites,ownedThumbprints,ownedCertificateIds,freePort}){
  const root=path.resolve(__dirname,"../../.."),file=path.join(configDir,"config.json"),original=fs.readFileSync(file),credential=fs.readFileSync(path.join(configDir,"credential"));
  const {item,issuerId,certificateId,site,port,authority,observed}=renewalFixture;const caConfig="tt-ca.lab.certops.test\\TTQualificationRoot";
  assert.equal(process.platform,"win32");assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB,"1");assert.equal(ps("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"),"S-1-5-18");
@@ -76,22 +84,38 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
   if(pairProof){assert.deepEqual(custody(),originalCustody);assert.equal(await served(),observed.fingerprint256);assert.deepEqual(checkpoint(),before);pairProof.configurationAndCredentialRestored=true;gate.report.nativeLocalRulePairs??=[];gate.report.nativeLocalRulePairs.push(pairProof);}
  });
  verifyPairProof(gate.report.nativeLocalRulePairs);
- await gate.scenario("adcs-real-local-rule-tightening-frees-pending-key",async()=>{
-  const checked=await preflight("TTQualificationPending");pendingSafetyIssuer=checked.issuerId;assert.equal((await fixture.request(`${api}/issuers/${checked.issuerId}/confirm`,"POST",{caKeySha256:authority.keySha256,caConfig,template:"TTQualificationPending"})).status,200);
-  let primaryError,pending;const cleanupErrors=[];
+ await gate.scenario(tighteningScenario,async()=>{
+  const checked=await preflight("TTQualificationPending");pendingSafetyIssuer=checked.issuerId;
+  assert.equal((await fixture.request(`${api}/issuers/${checked.issuerId}/confirm`,"POST",{caKeySha256:authority.keySha256,caConfig,template:"TTQualificationPending"})).status,200);
+  let primaryError,pending,proof;const cleanupErrors=[];
   try{
    const created=await fixture.request(`${api}/enrollments`,"POST",admittedInput(checked.issuerId));assert.equal(created.status,201);ownedEnrollmentIds.push(created.body.enrollmentId);
-   pending=await until(async()=>{const row=(await fixture.pool.query("SELECT id,state,request_id,next_poll_at,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,created.body.enrollmentId])).rows[0];return row.state==="pending_issuance"&&row.next_poll_at&&row.request_id?row:null;});const before=checkpoint();const container=buildEnrollmentContainerName(pending.id);assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(container));
+   pending=await until(async()=>{const row=(await fixture.pool.query("SELECT id,state,request_id,next_poll_at,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,created.body.enrollmentId])).rows[0];return row.state==="pending_issuance"&&row.next_poll_at&&row.request_id?row:null;});
+   const before=checkpoint(),container=buildEnrollmentContainerName(pending.id),journals=require("../../../packages/agent/src/issuers/adcs-enrollment-journal"),originalJournal=journals.readEnrollmentJournal(configDir,pending.id);assert.equal(originalJournal.kind,"valid");
+   const originalPublic=JSON.parse(ps(`$k=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);$r=[Security.Cryptography.RSACng]::new($k);try{$p=$r.ExportParameters($false);@{modulus=[Convert]::ToBase64String($p.Modulus);exponent=[Convert]::ToBase64String($p.Exponent)}|ConvertTo-Json -Compress}finally{$r.Dispose();$k.Dispose()}`));
    await configure("TTQualificationPending",[{caConfig,template:"TTQualificationPending",dnsScopes:["outside.test"],keyAlgorithms:["rsa"]}]);
-   const dispatch=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.parse(pending.next_poll_at)+1000)})).find(value=>value.enrollmentId===pending.id);assert.ok(dispatch);await refused(dispatch.jobId);
-   const after=(await fixture.pool.query("SELECT state,snapshot_sha256,request_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,pending.id])).rows[0];assert.equal(after.state,"refused");assert.equal(after.snapshot_sha256,pending.snapshot_sha256);assert.equal(String(after.request_id),String(pending.request_id));assert.deepEqual(checkpoint(),before);assert.ok(!command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(container));assert.equal(await served(),observed.fingerprint256);
-   gate.report.nativeLocalRuleTightening={actualPendingRequestId:String(pending.request_id),snapshotSha256:pending.snapshot_sha256,actualSignedContinuationRefused:true,exactUnacceptedKeyFreed:true,noAdditionalCaRequest:true,outgoingTrustedTlsPreserved:true};
+   const dispatch=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.parse(pending.next_poll_at)+1000)})).find(value=>value.enrollmentId===pending.id);assert.ok(dispatch);
+   await until(async()=>{const row=(await fixture.pool.query("SELECT state,current_job_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,pending.id])).rows[0];const job=(await fixture.pool.query("SELECT status,claim_id,assigned_agent_id,result_metadata FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,dispatch.jobId])).rows[0];assert.ok(!["failed","rejected"].includes(job.status));if(job.status!=="awaiting_issuer")return false;assert.ok(job.claim_id);assert.equal(job.assigned_agent_id,agentRowId);assert.equal(job.result_metadata.enrollmentResult.state,"pending_issuance");assert.equal(row.state,"pending_issuance");return true;});
+   const afterRow=(await fixture.pool.query("SELECT state,request_id,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,pending.id])).rows[0];assert.equal(afterRow.state,"pending_issuance");assert.equal(String(afterRow.request_id),String(pending.request_id));assert.equal(afterRow.snapshot_sha256,pending.snapshot_sha256);
+   const afterJournal=journals.readEnrollmentJournal(configDir,pending.id);assert.equal(afterJournal.kind,"valid");for(const key of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","requestId","caConfig","template"])assert.equal(afterJournal.journal[key],originalJournal.journal[key]);
+   const signature=ps(`$k=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);$r=[Security.Cryptography.RSACng]::new($k);try{[Convert]::ToBase64String($r.SignData([Text.Encoding]::UTF8.GetBytes('owned-pending-control'),[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1))}finally{$r.Dispose();$k.Dispose()}`);
+   const originalKey=crypto.createPublicKey({format:"jwk",key:{kty:"RSA",n:Buffer.from(originalPublic.modulus,"base64").toString("base64url"),e:Buffer.from(originalPublic.exponent,"base64").toString("base64url")}});assert.equal(crypto.verify("sha256",Buffer.from("owned-pending-control"),originalKey,Buffer.from(signature,"base64")),true);
+   assert.deepEqual(checkpoint(),before);assert.equal(await served(),observed.fingerprint256);
+   proof={enrollmentId:pending.id,continuationJobId:dispatch.jobId,requestId:String(pending.request_id),snapshotSha256:pending.snapshot_sha256,caRequestCounts:[before.nativeRequesterCount,checkpoint().nativeRequesterCount],...Object.fromEntries(tighteningFlags.filter(flag=>flag!=="explicitTerminalCleanupAfterDenial").map(flag=>[flag,true]))};
   }catch(error){primaryError=error;}finally{
    try{await restart(original);assert.ok(fs.readFileSync(file).equals(original));}catch(error){cleanupErrors.push(error);}
-   if(pending)try{command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(root,"infra/certops-adcs/officer-action.ps1"),"-RequestId",String(pending.request_id),"-Action","deny","-CommonName",item.domain]);}catch(error){cleanupErrors.push(error);}
+   if(pending)try{
+    command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(root,"infra/certops-adcs/officer-action.ps1"),"-RequestId",String(pending.request_id),"-Action","deny","-CommonName",item.domain]);
+    assert.equal((await fixture.request(`${api}/enrollments/${pending.id}/cancel`,"POST",{})).status,204);
+    const cleanup=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool})).find(row=>row.enrollmentId===pending.id);assert.ok(cleanup);
+    await until(async()=>{const row=(await fixture.pool.query("SELECT state FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,pending.id])).rows[0];const job=(await fixture.pool.query("SELECT status,claim_id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,cleanup.jobId])).rows[0];assert.ok(!["failed","rejected"].includes(job.status));if(row.state!=="cancelled"||job.status!=="succeeded")return false;assert.ok(job.claim_id);assert.equal(job.assigned_agent_id,agentRowId);return true;});
+    assert.equal(ps(`[Security.Cryptography.CngKey]::Exists('${buildEnrollmentContainerName(pending.id)}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey)`),"False");if(proof)proof.explicitTerminalCleanupAfterDenial=true;
+   }catch(error){cleanupErrors.push(error);}
   }
   if(cleanupErrors.length)throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors],"Pending local rule fixture restoration failed");if(primaryError)throw primaryError;
- },{evidenceLevel:"real-host",oracle:"actual pending CA request and CNG key; supported configuration tightening plus real SYSTEM restart and signed continuation frees only its original unaccepted key, preserves frozen request identity and live trusted TLS without CA resubmission"});
+  verifyTighteningProof(proof);gate.report.nativeLocalRuleTightening=proof;
+ },{evidenceLevel:"real-host",oracle:"Pending retrieval under changed policy preserves frozen request and usable CNG key without resubmission; only explicit terminal cancellation after CA denial removes the unaccepted key"});
+
  // A secondary store association is a real native key reference, never permission
  // to delete the key. Any unresolved phase keeps the parent cleanup barrier armed.
  await gate.scenario(survivorScenario,async()=>{
@@ -99,7 +123,12 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
   const root=path.resolve(workDir),rootIdentity=fs.lstatSync(root,{bigint:true}),marker=path.join(root,survivorMarker),nonce=crypto.randomBytes(32),baselineCustody=custody();
   const invoke=(script,args)=>JSON.parse(command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(rootPath,script),...args]));
   const rootPath=path.join(path.resolve(__dirname,"../../.."),"infra/certops-adcs");
-  const created=await fixture.request(`${api}/enrollments`,"POST",admittedInput(pendingSafetyIssuer));assert.equal(created.status,201);const id=created.body.enrollmentId;ownedEnrollmentIds.push(id);
+  assert.ok(Array.isArray(ownedSites)&&Array.isArray(ownedCertificateIds)&&ownedThumbprints instanceof Set);
+  const survivorSite=`TTADCS-${run}-key-survivor`,survivorPort=await freePort(),survivorDirectory=path.join(workDir,"key-survivor-site"),survivorCertificateId=crypto.randomUUID();
+  assert.equal(ps(`Import-Module WebAdministration;[bool](Test-Path 'IIS:\\Sites\\${survivorSite}')`),"False");
+  fs.mkdirSync(survivorDirectory);fs.writeFileSync(path.join(survivorDirectory,"index.html"),"owned key survivor");ownedSites.push(survivorSite);ownedCertificateIds.push(survivorCertificateId);
+  ps(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${survivorSite}'){throw 'Owned survivor site already exists'};New-Website -Name '${survivorSite}' -PhysicalPath '${survivorDirectory.replace(/'/g,"''")}' -IPAddress '*' -Port ${survivorPort} -HostHeader '${item.domain}' -Ssl|Out-Null;Set-WebBinding -Name '${survivorSite}' -BindingInformation '*:${survivorPort}:${item.domain}' -PropertyName sslFlags -Value 1`);
+  const created=await fixture.request(`${api}/enrollments`,"POST",{...admittedInput(pendingSafetyIssuer),certificateId:survivorCertificateId,target:{type:"windows-iis",reference:item.domain,store:"My",binding:{site:survivorSite,port:survivorPort,sniHost:item.domain}}});assert.equal(created.status,201);const id=created.body.enrollmentId;ownedEnrollmentIds.push(id);
   const row=async()=>(await fixture.pool.query("SELECT state,request_id,next_poll_at,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,id])).rows[0];
   const pending=await until(async()=>{const r=await row();return r.state==="pending_issuance"&&r.request_id&&r.next_poll_at?r:null;});
   const journals=require("../../../packages/agent/src/issuers/adcs-enrollment-journal"),originalJournal=journals.readEnrollmentJournal(configDir,id);assert.equal(originalJournal.kind,"valid");assert.equal(originalJournal.journal.state,"pending");
@@ -114,29 +143,34 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
    const leaf=require("./certops-adcs-issued-revocation").verifyIssuedLeaf({native:observed,authority,journal:originalJournal.journal,domain:item.domain}),fingerprint=crypto.createHash("sha256").update(leaf.raw).digest("hex"),thumbprint=leaf.fingerprint.replace(/:/g,"").toUpperCase();
    assert.notEqual(leaf.fingerprint256,observedPredecessor.fingerprint256);
    const publicFile=path.join(workDir,"pending-key-survivor-public.cer");fs.writeFileSync(publicFile,leaf.raw,{flag:"wx"});
-   const association=()=>JSON.parse(ps(`$c=Get-Item 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}' -ErrorAction Stop;$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if(!$k-or$k.Key.KeyName-ne'${container}'-or!$k.Key.IsMachineKey-or$k.Key.Provider.Provider-ne'Microsoft Software Key Storage Provider'-or[int]$k.Key.ExportPolicy-ne 0){throw 'Exact protected pending key association absent'};@{der=[Convert]::ToBase64String($c.RawData);container=$k.Key.KeyName;signature=[Convert]::ToBase64String($k.SignData([Convert]::FromBase64String('${nonce.toString("base64")}'),[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1))}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`));
+   const association=(store="WebHosting")=>JSON.parse(ps(`$c=Get-Item 'Cert:\\LocalMachine\\${store}\\${thumbprint}' -ErrorAction Stop;$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if(!$k-or$k.Key.KeyName-ne'${container}'-or!$k.Key.IsMachineKey-or$k.Key.Provider.Provider-ne'Microsoft Software Key Storage Provider'-or[int]$k.Key.ExportPolicy-ne 0){throw 'Exact protected pending key association absent'};@{der=[Convert]::ToBase64String($c.RawData);container=$k.Key.KeyName;signature=[Convert]::ToBase64String($k.SignData([Convert]::FromBase64String('${nonce.toString("base64")}'),[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1))}|ConvertTo-Json -Compress}finally{if($k){$k.Dispose()};$c.Dispose()}`));
    assert.equal(ps(`[bool](Test-Path -LiteralPath 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}')`),"False");
    command("certutil.exe",["-addstore","WebHosting",publicFile]);command("certutil.exe",["-repairstore","WebHosting",thumbprint]);
+   assert.equal(ps(`[bool](Test-Path -LiteralPath 'Cert:\\LocalMachine\\My\\${thumbprint}')`),"False");
+   ownedThumbprints.add(thumbprint);
    const reference=association();assert.equal(reference.der,leaf.raw.toString("base64"));assert.equal(crypto.verify("sha256",nonce,leaf.publicKey,Buffer.from(reference.signature,"base64")),true);
    const survivors=await require("../../../packages/agent/src/windows-key-survivors").inspectMachineKeySurvivors({containerName:container});assert.equal(survivors.ok,true);assert.equal(survivors.shared,true);
    const before=invoke("owned-request-observation.ps1",["-CommonName",item.domain,"-RequestId",requestId]);assert.equal(before.disposition,20);const nativeBefore=checkpoint();
    const denied=JSON.parse(original);denied.adcs.enrollmentRules=[];fs.writeFileSync(file,JSON.stringify(denied));await retainedStart();
    const first=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.parse(pending.next_poll_at)+1000)})).find(r=>r.enrollmentId===id);assert.ok(first);
-   const failed=await until(async()=>{const j=(await fixture.pool.query("SELECT status,error_message,claim_id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,first.jobId])).rows[0];assert.notEqual(j.status,"succeeded");return j.status==="failed"?j:null;});assert.equal(failed.error_message,survivorError);assert.ok(failed.claim_id);assert.equal(failed.assigned_agent_id,agentRowId);
-   assert.deepEqual(journals.readEnrollmentJournal(configDir,id),originalJournal);assert.deepEqual(association(),reference);assert.equal((await row()).state,"pending_issuance");assert.equal(String((await row()).request_id),requestId);assert.deepEqual(custody(),baselineCustody);assert.equal(await served(),observedPredecessor.fingerprint256);assert.deepEqual(checkpoint(),nativeBefore);
+   const completed=await until(async()=>{const j=(await fixture.pool.query("SELECT status,claim_id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,first.jobId])).rows[0];assert.ok(!["failed","rejected"].includes(j.status));return j.status==="succeeded"?j:null;});assert.ok(completed.claim_id);assert.equal(completed.assigned_agent_id,agentRowId);
+   const final=journals.readEnrollmentJournal(configDir,id);assert.equal(final.kind,"valid");assert.equal(final.journal.state,"installed");assert.equal((await row()).state,"installed");
+   for(const key of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","requestId","caConfig","template"])assert.equal(final.journal[key],originalJournal.journal[key]);
+   assert.equal(crypto.createHash("sha256").update(new crypto.X509Certificate(final.artifacts.leafPem).raw).digest("hex"),fingerprint);
+   const installed=association("My");assert.equal(installed.container,container);assert.equal(crypto.verify("sha256",nonce,leaf.publicKey,Buffer.from(installed.signature,"base64")),true);
+   const binding=await require("../../../packages/agent/src/windows-iis").queryCurrentBinding({binding:{site:survivorSite,port:survivorPort,sniHost:item.domain}});assert.equal(binding.ok,true);assert.equal(binding.thumbprint.toUpperCase(),thumbprint);
+   const installedTls=await probes.observe({host:"127.0.0.1",port:survivorPort,servername:item.domain,ca:tlsAuthority(authority),rejectUnauthorized:true},socket=>{assert.equal(socket.authorized,true);return socket.getPeerCertificate().fingerprint256;});assert.equal(installedTls,leaf.fingerprint256);
+   assert.deepEqual(custody(),baselineCustody);assert.equal(await served(),observedPredecessor.fingerprint256);assert.deepEqual(checkpoint(),nativeBefore);
    const after=invoke("owned-request-observation.ps1",["-CommonName",item.domain,"-RequestId",requestId]);assert.equal(after.subjectRequestCount,before.subjectRequestCount);
-   ownedGuard();await retainedStop();assert.deepEqual(association(),reference);command("certutil.exe",["-delstore","WebHosting",thumbprint]);assert.equal(ps(`[bool](Test-Path -LiteralPath 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}')`),"False");
-   const unreferenced=await require("../../../packages/agent/src/windows-key-survivors").inspectMachineKeySurvivors({containerName:container});assert.equal(unreferenced.ok,true);assert.equal(unreferenced.shared,false);
-   assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).split(/\r?\n/).map(s=>s.trim()).includes(container));
-   await retainedStart();assert.equal((await fixture.request(`${api}/enrollments/${id}/cancel`,"POST",{})).status,204);
-   const cleanupJob=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool})).find(r=>r.enrollmentId===id);assert.ok(cleanupJob);
-   await until(async()=>{const j=(await fixture.pool.query("SELECT status,claim_id,assigned_agent_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,cleanupJob.jobId])).rows[0];assert.ok(!["failed","rejected"].includes(j.status));if(j.status!=="succeeded")return false;assert.ok(j.claim_id);assert.equal(j.assigned_agent_id,agentRowId);return true;});
-   const final=journals.readEnrollmentJournal(configDir,id);assert.equal(final.kind,"valid");assert.equal(final.journal.state,"cancelled");for(const key of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","requestId"])assert.equal(final.journal[key],originalJournal.journal[key]);assert.equal((await row()).state,"cancelled");
-   assert.ok(!command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).split(/\r?\n/).map(s=>s.trim()).includes(container));
-   const absent=await require("../../../packages/agent/src/windows-cert-store").removeAbandonedKeyContainer({containerName:container,requireAlreadyAbsent:true});assert.equal(absent.ok,true);assert.equal(absent.alreadyAbsent,true);
+   ownedGuard();await retainedStop();assert.deepEqual(association(),reference);
+   const removal=require("../../../packages/agent/src/windows-cert-store").removeAbandonedKeyContainer;
+   const protectedBoth=await removal({containerName:container});assert.equal(protectedBoth.ok,false);assert.equal(protectedBoth.reason,"key_container_referenced");
+   command("certutil.exe",["-delstore","WebHosting",thumbprint]);assert.equal(ps(`[bool](Test-Path -LiteralPath 'Cert:\\LocalMachine\\WebHosting\\${thumbprint}')`),"False");
+   const protectedInstalled=await removal({containerName:container});assert.equal(protectedInstalled.ok,false);assert.equal(protectedInstalled.reason,"key_container_referenced");
+   const stillInstalled=association("My");assert.equal(stillInstalled.container,container);assert.equal(crypto.verify("sha256",nonce,leaf.publicKey,Buffer.from(stillInstalled.signature,"base64")),true);
    const last=invoke("owned-request-observation.ps1",["-CommonName",item.domain,"-RequestId",requestId]);assert.equal(last.subjectRequestCount,before.subjectRequestCount);assert.deepEqual(checkpoint(),nativeBefore);
    command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.join(rootPath,"officer-action.ps1"),"-RequestId",requestId,"-Action","revoke","-CommonName",item.domain]);assert.equal(invoke("owned-request-observation.ps1",["-CommonName",item.domain,"-RequestId",requestId]).disposition,21);
-   proof={scope:survivorScope,store:"WebHosting",recovery:"public-cancel-then-terminal-cleanup",firstError:survivorError,enrollmentId:id,requestId,failedJobId:first.jobId,cleanupJobId:cleanupJob.jobId,fingerprint,csrSpkiSha256:originalJournal.journal.csrSpkiSha256,caRequestCounts:[before.subjectRequestCount,after.subjectRequestCount,last.subjectRequestCount],automaticRetryQualified:false,schedulerDefaultClockQualified:false,...Object.fromEntries(survivorFlags.map(flag=>[flag,true]))};
+   proof={scope:survivorScope,store:"WebHosting",recovery:"signed-retrieval-and-isolated-iis-installation",enrollmentId:id,requestId,continuationJobId:first.jobId,fingerprint,csrSpkiSha256:originalJournal.journal.csrSpkiSha256,caRequestCounts:[before.subjectRequestCount,after.subjectRequestCount,last.subjectRequestCount],...Object.fromEntries(survivorFlags.map(flag=>[flag,true]))};
    complete=true;
   }finally{
    // Association ownership stays armed on every failure. Configuration restore
@@ -144,7 +178,7 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
    await restart(original,true);assert.deepEqual(fs.readFileSync(file),original);assert.deepEqual(fs.readFileSync(path.join(configDir,"credential")),credential);
   }
   assert.equal(complete,true);assert.deepEqual(custody(),baselineCustody);assert.equal(await served(),observedPredecessor.fingerprint256);verifySurvivorProof(proof);ownedGuard();fs.unlinkSync(marker);activeSurvivors.delete(root);gate.report.nativePendingKeySurvivor=proof;
- },{evidenceLevel:"real-host",oracle:"Actual same-CSR CA public leaf bound to pending CNG in WebHosting blocks signed local-policy key cleanup; exact public association removal followed by public cancel permits genuine terminal cleanup without any in-use key deletion or resubmission"});
+ },{evidenceLevel:"real-host",oracle:"Changed policy permits signed retrieval and isolated IIS installation with the original CNG key; cleanup refuses both shared and installed references, including after secondary-store removal, without CA resubmission"});
 
 }
-module.exports={assertCleanupSafe,survivorScenario,survivorScope,survivorError,survivorFlags,verifySurvivorProof,SURVIVOR_SOURCES,REQUIRED_SOURCES,qualifyLocalRules,pairCases,pairFlags,pairRules,verifyPairProof};
+module.exports={assertCleanupSafe,survivorScenario,survivorScope,survivorFlags,tighteningScenario,tighteningFlags,verifyTighteningProof,verifySurvivorProof,SURVIVOR_SOURCES,REQUIRED_SOURCES,qualifyLocalRules,pairCases,pairFlags,pairRules,verifyPairProof};

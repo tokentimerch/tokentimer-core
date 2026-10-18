@@ -49,8 +49,12 @@ def foreign_spki_proof():
     flags = ('sameRequesterNativeRetrieveSucceeded', 'nativeCaIdentityMatched', 'differentEnrollmentSpkiProved', 'explicitCandidateRefused', 'boundedSearchUnresolved', 'originalJournalWatermarkPreserved', 'originalNativeCustodyAndTlsPreserved', 'noAdditionalCaRequest')
     return {'scope': 'read-only-native-foreign-spki-candidate-not-public-uncertain-recovery', **dict.fromkeys(flags, True), 'requestIds': ['17', '18'], 'spkiFingerprints': ['a' * 64, 'b' * 64]}
 
+def local_rule_tightening_proof():
+    return {"enrollmentId":"11111111-1111-1111-1111-111111111111","continuationJobId":"22222222-2222-2222-2222-222222222222","requestId":"17","snapshotSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","caRequestCounts":[7,7],"actualSignedRetrievalPending":True,"originalCngKeyUsable":True,"frozenContextPreserved":True,"noAdditionalCaRequest":True,"outgoingTrustedTlsPreserved":True,"explicitTerminalCleanupAfterDenial":True}
+
+
 def pending_key_survivor_proof():
-    return {'scope': 'native-pending-key-policy-refusal-then-public-cancellation', 'store': 'WebHosting', 'recovery': 'public-cancel-then-terminal-cleanup', 'firstError': 'Local policy refusal could not free the protected enrollment key; retry required', 'enrollmentId': '11111111-1111-1111-1111-111111111111', 'requestId': '17', 'failedJobId': '22222222-2222-2222-2222-222222222222', 'cleanupJobId': '33333333-3333-3333-3333-333333333333', 'fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'csrSpkiSha256': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'caRequestCounts': [7, 7, 7], 'automaticRetryQualified': False, 'schedulerDefaultClockQualified': False, 'actualOwnedPendingRequest': True, 'actualOwnedCaLeafSameCsrSpki': True, 'exactWebHostingAssociationAndProtectedKey': True, 'nativeSurvivorReferenceObserved': True, 'signedCleanupRefusedWhileReferenced': True, 'pendingJournalAndKeyPreserved': True, 'noAdditionalCaRequest': True, 'exactPublicAssociationOnlyRemoved': True, 'publicCancellationAcknowledged': True, 'signedTerminalCleanupCompleted': True, 'predecessorCustodyIisTlsPreserved': True, 'configurationCredentialRestored': True, 'ownedCaLeafRevoked': True, 'ownershipGuardReleased': True}
+    return {"scope":"native-pending-key-policy-change-retrieval-install-and-survivor-protection","store":"WebHosting","recovery":"signed-retrieval-and-isolated-iis-installation","enrollmentId":"11111111-1111-1111-1111-111111111111","requestId":"17","continuationJobId":"22222222-2222-2222-2222-222222222222","fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","csrSpkiSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","caRequestCounts":[7,7,7],"actualOwnedPendingRequest":True,"actualOwnedCaLeafSameCsrSpki":True,"exactWebHostingAssociationAndProtectedKey":True,"nativeSurvivorReferenceObserved":True,"signedRetrievalInstalled":True,"frozenEnrollmentIdentityPreserved":True,"originalKeyUsableAfterReconciliation":True,"installedKeyProtectedFromCleanup":True,"installedReferenceSurvivesSecondaryRemoval":True,"noAdditionalCaRequest":True,"exactPublicAssociationOnlyRemoved":True,"predecessorCustodyIisTlsPreserved":True,"configurationCredentialRestored":True,"ownedCaLeafRevoked":True,"ownershipGuardReleased":True}
 
 def local_pairs_proof():
     fields = ('actualSignedJobRefused', 'claimBoundOutcome', 'noCaRequestAllocated', 'noKeyGenerated', 'noAcceptedLeafOrJournal', 'originalNativeCustodyPreserved', 'outgoingTrustedTlsPreserved', 'configurationAndCredentialRestored')
@@ -274,6 +278,30 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             collector.sanitized_report(value, {value['suite']}, set())
 
+    def test_local_policy_proofs_reject_destructive_or_incomplete_recovery(self):
+        for factory, verify in ((local_rule_tightening_proof, collector.local_rule_tightening_fields), (pending_key_survivor_proof, collector.pending_key_survivor_fields)):
+            self.assertEqual(verify(factory()), factory())
+            for key in factory():
+                missing = factory()
+                del missing[key]
+                with self.subTest(missing=key), self.assertRaises(ValueError):
+                    verify(missing)
+            invalid = factory()
+            invalid['caRequestCounts'][-1] += 1
+            with self.assertRaises(ValueError):
+                verify(invalid)
+            invalid = factory()
+            invalid['firstError'] = 'Local policy refusal could not free the protected enrollment key; retry required'
+            with self.assertRaises(ValueError):
+                verify(invalid)
+            for key,value in factory().items():
+                if value is True:
+                    for wrong in (False, 1, None, 'true'):
+                        invalid = factory()
+                        invalid[key] = wrong
+                        with self.subTest(flag=key, value=wrong), self.assertRaises(ValueError):
+                            verify(invalid)
+
     def test_uncommitted_execution_names_and_values_are_never_artifacts(self):
         sentinel = 'private-sentinel'
         value = {'suite': 'adcs-api-release-gates', 'requiredScenarios': [sentinel], 'missingScenarios': [sentinel], 'requiredCapabilities': [sentinel], 'capabilities': {sentinel: {'available': {'private': sentinel}}}, 'scenarios': [{'id': sentinel, 'status': sentinel, 'evidenceLevel': sentinel, 'startedAt': sentinel}]}
@@ -283,7 +311,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_native_cohort_budgets_are_bounded_without_private_fields(self):
         cohort = {'workspaceId': 'a' * 36, 'agentId': 'b' * 36, 'dispatchCount': 18, 'dispatchLimit': 18, 'nativeIdentity': 'LocalSystem', 'runtime': 'candidate-cli', 'privateState': 'sentinel'}
-        value = {'suite': 'enterprise-adcs-real', 'nativeLocalRulePairs': local_pairs_proof(), 'nativePendingKeySurvivor': pending_key_survivor_proof(), 'nativeForeignSpkiCandidate': foreign_spki_proof(), 'primaryNativePreflightDispatchCount': 18, 'nativePreflightCohorts': [cohort], 'nativeTemplateMutations': [], 'nativeValidationExpiry': {'configuredTimeoutSeconds': 300, 'defaultTimeoutSeconds': 86400, 'storedWindowSeconds': 299, 'monotonicObservedWaitSeconds': 301, 'actualDeadline': '2026-10-14T12:00:00.000Z', 'requestId': '17', 'snapshotSha256': 'a' * 64, 'nativeAndCaClocks': 'actual', 'qualificationScope': 'configured-five-minute-window-not-default-24-hour-elapsed'}}
+        value = {'suite': 'enterprise-adcs-real', 'nativeLocalRulePairs': local_pairs_proof(), 'nativePendingKeySurvivor': pending_key_survivor_proof(), 'nativeLocalRuleTightening': local_rule_tightening_proof(), 'nativeForeignSpkiCandidate': foreign_spki_proof(), 'primaryNativePreflightDispatchCount': 18, 'nativePreflightCohorts': [cohort], 'nativeTemplateMutations': [], 'nativeValidationExpiry': {'configuredTimeoutSeconds': 300, 'defaultTimeoutSeconds': 86400, 'storedWindowSeconds': 299, 'monotonicObservedWaitSeconds': 301, 'actualDeadline': '2026-10-14T12:00:00.000Z', 'requestId': '17', 'snapshotSha256': 'a' * 64, 'nativeAndCaClocks': 'actual', 'qualificationScope': 'configured-five-minute-window-not-default-24-hour-elapsed'}}
         value['nativeIssuedCancellation'] = {'requestId': '17', 'snapshotSha256': 'a' * 64, 'pollIntervalSeconds': 900, 'schedulerClock': 'default-real-now', 'databaseDatesRewritten': False, 'journalRewritten': False, 'private': 'sentinel'}
         value['nativeAdcsCapacity'] = {**adcs_capacity_proof(), 'privateManagerCredential': 'sentinel'}
         value['nativeBrowserJobApproval'] = {**browser_job_approval_proof(), 'privateTrace': 'sentinel'}
