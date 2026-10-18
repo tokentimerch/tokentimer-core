@@ -1,6 +1,6 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-15 for the integrated AD CS, distribution and real-host
+Last reviewed: 2026-10-18 for the integrated AD CS, distribution and real-host
 qualification candidate targeting **0.18.0**. Released agent capabilities remain
 gated until independent real-host qualification passes; lifecycle testing
 infrastructure and coverage remain in progress. Dropped the optional

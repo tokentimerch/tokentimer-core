@@ -90,3 +90,11 @@ reports/
 /qualification-results/
 # Qualification collector interpreter cache is local execution output.
 /scripts/__pycache__/
+
+/playwright-report/
+
+/test-results/
+
+__pycache__/
+
+*.pyc
