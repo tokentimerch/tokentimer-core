@@ -57,6 +57,9 @@ Invoke-Stage 'domain-ca' $env:CERTOPS_TEMPLATE_SCRIPT 'CERTOPS_STAGE=isolated-te
  for(const message of ["CERTOPS_MEMBER_FAILURE=domain-join:25:-1 private-credential-needle","CERTOPS_MEMBER_FAILURE=private-credential-needle:25:-1"]){
   const rejected=invoke(message);assert.notEqual(rejected.status,0);assert.doesNotMatch(rejected.stdout+rejected.stderr,/private-credential-needle/);
  }
+ const verify=invoke("private-credential-needle\nCERTOPS_MEMBER_VERIFY_FAILURE=ca-rpc:23:-2147467259\n");
+ assert.notEqual(verify.status,0);assert.match(verify.stdout,/CERTOPS_MEMBER_VERIFY_FAILURE=ca-rpc:23:-2147467259/);assert.doesNotMatch(verify.stdout+verify.stderr,/private-credential-needle/);
+ const unsafeVerify=invoke("CERTOPS_MEMBER_VERIFY_FAILURE=ca-rpc:23:-1 private-credential-needle");assert.notEqual(unsafeVerify.status,0);assert.doesNotMatch(unsafeVerify.stdout+unsafeVerify.stderr,/private-credential-needle/);
  const passed=invoke("private-credential-needle\nCERTOPS_STAGE=isolated-template-matrix-published");
  assert.equal(passed.status,0,passed.stderr);assert.equal(passed.stdout.trim(),"CERTOPS_STAGE=isolated-template-matrix-published");
 });

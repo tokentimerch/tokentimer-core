@@ -32,7 +32,8 @@ permissions:
   id-token: write
 jobs:
   lab:
-    if: github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'
+    # Temporary, manually dispatched verification branch; excluded from the fix PR.
+    if: vars.CERTOPS_ADCS_LAB_ENABLED == 'true' && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/verify/adcs-domain-member-join'))
     runs-on: ubuntu-latest
     environment: certops-adcs-lab
     timeout-minutes: 150

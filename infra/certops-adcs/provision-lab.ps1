@@ -76,6 +76,8 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
     if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
     $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($memberDiagnostic.Success){Write-Output $memberDiagnostic.Value.Trim()}
+    $verifyDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_VERIFY_FAILURE=(membership|secure-channel|ca-rpc|ca-export|ca-identity|root-trust):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    if($verifyDiagnostic.Success){Write-Output $verifyDiagnostic.Value.Trim()}
     throw "Expected stage receipt $Marker absent for $Machine ($([IO.Path]::GetFileName($Script)))"
   }
   foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT')){
