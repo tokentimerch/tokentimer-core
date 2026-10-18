@@ -188,13 +188,20 @@ test("comprehensive browser integration is mandatory outside isolated issuer, el
   assert.ok(!provision.includes("run-ttl24h-prepare.ps1"));
 });
 
-test("CA confirmation selects the independently current visible key group despite historical ordering", () => {
-  const certificate=(key,body,date)=>({keySha256:key,certificateB64:Buffer.from(body).toString("base64"),thumbprintSha1:crypto.createHash("sha1").update(body).digest("hex").toUpperCase(),notBefore:date});
-  const current="a".repeat(64),historical="b".repeat(64);
-  const old=certificate(historical,"historical-public-der","2030-01-01"),first=certificate(current,"current-earlier-public-der","2025-01-01"),latest=certificate(current,"current-renewed-public-der","2026-01-01");
-  assert.equal(helper.currentAuthorityGroup([old,first,latest],current),latest);
-  assert.throws(()=>helper.currentAuthorityGroup([old],current));
-  assert.throws(()=>helper.currentAuthorityGroup([{...latest,thumbprintSha1:"0".repeat(40)}],current));
+test("CA confirmation uses public metadata without DER and verifies the independently observed native key", () => {
+  const ca=new crypto.X509Certificate(fs.readFileSync(path.join(__dirname,"../packages/agent/reference/adcs-cmc/testdata/ca.cer")));
+  const current=crypto.createHash("sha256").update(ca.publicKey.export({type:"spki",format:"der"})).digest("hex");
+  const native={certificateB64:ca.raw.toString("base64")};
+  const old={keySha256:"b".repeat(64),thumbprintSha1:"b".repeat(40),notBefore:"2030-01-01"};
+  const first={keySha256:current,thumbprintSha1:"c".repeat(40),notBefore:"2025-01-01"};
+  const latest={keySha256:current,thumbprintSha1:crypto.createHash("sha1").update(ca.raw).digest("hex").toUpperCase(),notBefore:"2026-01-01"};
+  assert.equal(latest.certificateB64,undefined,"Actual public issuer shape contains no DER");
+  assert.equal(helper.currentAuthorityGroup([old,first,latest],current,native),latest);
+  assert.throws(()=>helper.currentAuthorityGroup([old],current,native));
+  assert.throws(()=>helper.currentAuthorityGroup([{...latest,thumbprintSha1:"0".repeat(40)}],current,native));
+  assert.throws(()=>helper.currentAuthorityGroup([latest],"0".repeat(64),native));
+  assert.throws(()=>helper.currentAuthorityGroup([latest],current,{certificateB64:Buffer.from("wrong DER").toString("base64")}));
+  assert.throws(()=>helper.currentAuthorityGroup([latest],current,{}));
 });
 
 test("package worker proof stays distinct from focused default-sweep qualification", () => {

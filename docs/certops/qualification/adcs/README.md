@@ -8,6 +8,8 @@ Normal CI runs the three AD CS API suites on its existing integration stack and 
 
 For native enrollment, pending approval/denial, renewal, recovery, IIS/CNG custody and browser authorization, dispatch `certops-enterprise-adcs-qualification.yml`. Choose an Azure region and VM size available to the subscription, Server version and language explicitly. The lab checks SKU restrictions and six-vCPU regional/family quota before creating resources. This creates a temporary domain-backed lab; it requires repository variable `CERTOPS_ADCS_LAB_ENABLED=true` and protected environment `certops-adcs-lab` with Azure OIDC variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. Non-English images also require `CERTOPS_WINDOWS_LANGUAGE_ASSETS`. Azure is used only for the domain lab.
 
+Set `CERTOPS_WINDOWS_LANGUAGE_ASSETS` to a JSON object keyed by OS/language, for example `2022/de-DE`, with `uri` and `sha256` for each official Server display-language CAB. Use a private HTTPS Azure Blob and a read-only SAS that remains valid through installation on both CA and member; refresh expired URLs before another dispatch. The checksum, installed resources and actual SYSTEM language are verified. A Basic language capability alone does not qualify a display-language slot.
+
 ## Results and cleanup
 
 Read the run summary and sanitized JSON artifacts. Missing prerequisites or mandatory scenarios fail the run. Fixture results never substitute for native evidence. Collect completed core native runs using `certops-release-qualification.yml` with the exact main candidate SHA and run IDs. Its verdict lists omitted environments and cannot claim full coverage.

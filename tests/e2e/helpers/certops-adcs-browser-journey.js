@@ -125,15 +125,21 @@ function verifyProof(proof, { workerDriven = false } = {}) {
   assert.ok(Number(proof.requestId) <= 0xffffffff);
   return true;
 }
-function currentAuthorityGroup(certificates, expectedKey) {
+function currentAuthorityGroup(certificates, expectedKey, nativeAuthority) {
   assert.match(expectedKey,/^[a-f0-9]{64}$/i);
+  // Issuer-list metadata deliberately omits DER. Verify the independently
+  // observed native CA, then locate its key group using the public UI metadata.
+  assert.equal(typeof nativeAuthority?.certificateB64,"string");
+  const der=Buffer.from(nativeAuthority.certificateB64,"base64"),ca=new crypto.X509Certificate(der);
+  assert.equal(ca.ca,true,"Independent native authority must be a CA certificate");
+  assert.equal(crypto.createHash("sha256").update(ca.publicKey.export({type:"spki",format:"der"})).digest("hex"),expectedKey.toLowerCase());
+  const nativeThumbprint=crypto.createHash("sha1").update(der).digest("hex");
   const group=certificates.filter(value=>value.keySha256===expectedKey).sort((a,b)=>(Date.parse(b.notBefore)||0)-(Date.parse(a.notBefore)||0));
   assert.ok(group.length,"Native preflight must contain the independently current CA key");
+  assert.ok(group.some(value=>typeof value.thumbprintSha1==="string" && value.thumbprintSha1.toLowerCase()===nativeThumbprint),"Public CA group must include the independently observed native certificate");
   const certificate=group.find(value=>value.thumbprintSha1);
   assert.ok(certificate,"Current native CA group needs its visible public certificate fingerprint");
   assert.match(certificate.thumbprintSha1,/^[a-f0-9]{40}$/i);
-  const der=Buffer.from(certificate.certificateB64,"base64");
-  assert.equal(crypto.createHash("sha1").update(der).digest("hex"),certificate.thumbprintSha1.toLowerCase());
   return certificate;
 }
 function createOwnedBrowserResource({ getServer, receipt, removeTrust }) {
@@ -342,7 +348,7 @@ async function qualifyAdcsBrowserJourney(context) {
     mutations++;
     return response;
   }
-  const peer = () => probes.observe({host:"127.0.0.1",port,servername:item.domain,ca:preflight.caCertificates.flatMap(value=>[tlsAuthority(value)].flat()),rejectUnauthorized:true}, socket => {
+  const peer = () => probes.observe({host:"127.0.0.1",port,servername:item.domain,ca:[tlsAuthority(renewalFixture.authority)].flat(),rejectUnauthorized:true}, socket => {
     assert.equal(socket.authorized,true);
     const cert=new crypto.X509Certificate(socket.getPeerCertificate().raw);
     assert.equal(cert.checkHost(item.domain),item.domain);
@@ -487,7 +493,7 @@ async function qualifyAdcsBrowserJourney(context) {
       REQUIRED_SCENARIOS[1],
       async () => {
         stage = "browser-ca-confirmation";
-        const expectedAuthority=currentAuthorityGroup(preflight.caCertificates,renewalFixture.authority.keySha256);
+        const expectedAuthority=currentAuthorityGroup(preflight.caCertificates,renewalFixture.authority.keySha256,renewalFixture.authority);
         // Each UI HStack contains one visible SHA1 label and its own confirmation
         // button. Select that known current key group, regardless of date/order.
         const currentRow=page.getByRole("dialog").getByText(new RegExp(`^${expectedAuthority.thumbprintSha1}(?: ·|$)`)).locator("xpath=../..");

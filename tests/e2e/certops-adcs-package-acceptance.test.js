@@ -112,7 +112,7 @@ test("AD CS operator journey uses the verified package and documented installer"
     assert.equal(ca.ca, true); assert.equal(ca.verify(ca.publicKey), true);
     const caDer = ca.raw.toString("base64"), caThumb = ca.fingerprint.replace(/:/g, "");
     assert.equal(ps(`$roots=@(Get-ChildItem Cert:\\LocalMachine\\Root|Where-Object Thumbprint -eq '${caThumb}');if($roots.Count -lt 1){throw 'Active CA root is not trusted'};foreach($root in $roots){if([Convert]::ToBase64String($root.RawData) -ne '${caDer}'){throw 'Active CA trust bytes mismatch'}};'trusted-active-ca'`), "trusted-active-ca");
-    const authority = { keySha256: crypto.createHash("sha256").update(ca.publicKey.export({ type: "spki", format: "der" })).digest("hex") };
+    const authority = { keySha256: crypto.createHash("sha256").update(ca.publicKey.export({ type: "spki", format: "der" })).digest("hex"), certificateB64:caDer, thumbprintSha1:caThumb, notBefore:ca.validFrom, notAfter:ca.validTo };
     stage = "browser-journey";
     await browserJourney.qualifyAdcsBrowserJourney({ gate, fixture: readonlyFixture, api, agentRowId: agentRow.id, configDir, workDir, run,
       renewalFixture: { item: { id: "rsa2048", domain }, site, port, authority }, until, workerDriven: true,
