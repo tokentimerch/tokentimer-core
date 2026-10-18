@@ -8,7 +8,7 @@ const fixture = require("./test-support/acme-stage-artifact.cjs"),
   h = require("./certops-acme-background-report"),
   helper = require("../tests/e2e/helpers/certops-acme-background-renewals"),
   { verifyMatrix } = require("./certops-release-qualification");
-const matrix = require("../docs/certops/release-qualification-matrix.json");
+const matrix = require("../docs/certops/qualification-suites.json");
 function errors(value) {
   const slot = matrix.slots.find((row) => row.suite === value.suite);
   return verifyMatrix([value], {

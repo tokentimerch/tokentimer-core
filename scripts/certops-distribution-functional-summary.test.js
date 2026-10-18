@@ -10,7 +10,7 @@ const summary = require("./certops-distribution-functional-summary"),
     createGate,
     PHASES,
   } = require("../tests/wildcard-vault/ux-lab/qualification.cjs"),
-  matrix = require("../docs/certops/release-qualification-matrix.json"),
+  matrix = require("../docs/certops/qualification-suites.json"),
   candidate = "a".repeat(40);
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex"),
   write = (file, value) => fs.writeFileSync(file, JSON.stringify(value));

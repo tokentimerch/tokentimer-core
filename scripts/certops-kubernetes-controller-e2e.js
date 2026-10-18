@@ -10,29 +10,7 @@ const tls=require("node:tls");
 const {spawn,spawnSync}=require("node:child_process");
 const {createApiFixture}=require("../tests/e2e/helpers/certops-api-fixture");
 const {createHostGate}=require("../packages/agent/scripts/host-gate");
-function run(binary,args,input){
-  const result=spawnSync(binary,args,{input,encoding:"utf8",timeout:180000,maxBuffer:1024*1024});
-  if(result.error||result.status!==0)throw new Error("Disposable controller fixture operation failed");
-  return result.stdout;
-}
-function kube(args,input){return run("kubectl",["--context",process.env.CERTOPS_KUBE_CONTEXT,...args],input);}
-async function eventually(check){
-  const until=Date.now()+180000;
-  while(Date.now()<until){const result=await check();if(result)return result;await new Promise(resolve=>setTimeout(resolve,1000));}
-  throw new Error("Actual controller journey exceeded deadline");
-}
-async function stopChild(child){
-  if(!child?.pid||child.exitCode!==null||child.signalCode!==null)return;
-  const exited=new Promise(resolve=>child.once("exit",resolve));
-  child.kill("SIGCONT");child.kill("SIGTERM");
-  let timeout;
-  await Promise.race([exited,new Promise(resolve=>{timeout=setTimeout(resolve,5000);})]);clearTimeout(timeout);
-  if(child.exitCode===null&&child.signalCode===null){
-    child.kill("SIGKILL");
-    await Promise.race([exited,new Promise(resolve=>{timeout=setTimeout(resolve,5000);})]);clearTimeout(timeout);
-    assert.ok(child.exitCode!==null||child.signalCode!==null,"Owned child must terminate during cleanup");
-  }
-}
+const {run,kube,eventually,stopChild}=require("./certops-kubernetes-runtime");
 async function main(){
   assert.equal(process.platform,"linux");
   assert.equal(process.env.GITHUB_ACTIONS,"true","Only disposable hosted Linux may expose the private kind fixture bridge");
@@ -46,6 +24,7 @@ async function main(){
   let bridge,forward,forwardPort,owned=false,ready=false,primary;
   const gate=createHostGate({suite:"kubernetes-controller-api",evidenceLevel:"e2e",requiredCapabilities:["api","kind","openssl"],probeCapabilities:async()=>({api:{available:(await fetch(api)).ok},kind:{available:JSON.parse(kube(["get","nodes","-o","json"])).items.length>0},openssl:{available:spawnSync("openssl",["version"]).status===0}})});
   gate.report.fixtureSource={file:"scripts/certops-kubernetes-controller-e2e.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")};
+  gate.report.fixtureSources=[{file:"scripts/certops-kubernetes-runtime.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(__dirname,"certops-kubernetes-runtime.js"))).digest("hex")}];
   gate.report.artifactQualification="workflow-checkout-source";
   try{
     assert.equal(await gate.preflight(),true);ready=true;

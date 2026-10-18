@@ -81,7 +81,7 @@ function artifact(version = "24.04") {
   return { kind: "host", suite: SUITE, environment, report };
 }
 function slot(version = "24.04") {
-  return require("../../docs/certops/release-qualification-matrix.json").slots.find(
+  return require("../../docs/certops/qualification-suites.json").slots.find(
     (row) => row.suite === SUITE && row.environment.osVersion === version,
   );
 }

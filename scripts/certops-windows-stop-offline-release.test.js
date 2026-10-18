@@ -8,7 +8,7 @@ const test = require("node:test"),
   } = require("./test-support/windows-stop-offline.cjs"),
   { verifyMatrix } = require("./certops-release-qualification");
 const slots =
-  require("../docs/certops/release-qualification-matrix.json").slots.filter(
+  require("../docs/certops/qualification-suites.json").slots.filter(
     (x) => x.suite === "windows-installed-stop-offline-renewal",
   );
 function errors(value, slot) {

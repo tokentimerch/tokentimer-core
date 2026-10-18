@@ -6,7 +6,7 @@ function validate(root = path.resolve(__dirname, "..")) {
   const errors = [],
     matrix = JSON.parse(
       fs.readFileSync(
-        path.join(root, "docs/certops/release-qualification-matrix.json"),
+        path.join(root, "docs/certops/qualification-suites.json"),
       ),
     );
   const {

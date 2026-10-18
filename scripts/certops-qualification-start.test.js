@@ -66,10 +66,11 @@ test("collection workflow preserves full default and passes explicit closed prof
     ),
     "utf8",
   );
-  assert.match(
-    source,
-    /profile:\s+description:[^\n]+\s+type: choice\s+default: full\s+options: \[full, standard-hosted, adcs, extended-adcs\]/,
-  );
+  const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+  const profile=yaml.load(source).on.workflow_dispatch.inputs.profile;
+  assert.equal(profile.type,"choice");
+  assert.equal(profile.default,"full");
+  assert.deepEqual(profile.options,Object.keys(require("./certops-qualification-profiles").PROFILES));
   assert.ok(
     source.includes("CERTOPS_QUALIFICATION_PROFILE: ${{ inputs.profile }}"),
   );
@@ -81,7 +82,7 @@ test("collection workflow preserves full default and passes explicit closed prof
   assert.doesNotMatch(source, /azure\/(?:login|cli)@|provision-lab\.ps1/);
 });
 test("profile inventory derives exact selected and omitted IDs without a qualified verdict", () => {
-  const matrix = require("../docs/certops/release-qualification-matrix.json"),
+  const matrix = require("../docs/certops/qualification-suites.json"),
     h = require("./certops-qualification-profiles"),
     inventory = helper.profileInventory();
   assert.equal(inventory.executionStatus, "not-run");

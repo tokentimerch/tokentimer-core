@@ -11,7 +11,7 @@ test("native interruption derives only an actual completed narrow parent scope",
     assert.equal(report.nativeInstalledInterruption.originalOperationAutomaticallyRecovered,false);
     assert.equal(report.nativeInstalledInterruption.realRebootQualified,false);
     assert.equal(native.verifyProof(report.nativeInstalledInterruption),true);
-    const slot=require("../docs/certops/release-qualification-matrix.json").slots.find(s=>s.suite===native.SUITE&&s.environment.osVersion===version);
+    const slot=require("../docs/certops/qualification-suites.json").slots.find(s=>s.suite===native.SUITE&&s.environment.osVersion===version);
     assert.deepEqual(require("./certops-release-qualification").verifyMatrix([{kind:"host",suite:report.suite,environment:slot.environment,report}],{candidateSha:fixture.candidateSha,specification:{schemaVersion:1,slots:[slot]}}),[]);
     const invalid=structuredClone(report);
     invalid.nativeInstalledInterruption={scope:"installed-deterministic-interruption-recovery",evidenceLevel:"host-integration",pointKind:"cng",interruptionMode:"service-stop",recordedSequence:1,startupRecovery:true,inUseKeyDeleted:false,powerLossDurabilityQualified:false,realRebootQualified:false,nativeExecutionQualified:false,hostCapabilityAbsentIsPass:false};

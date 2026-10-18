@@ -135,7 +135,7 @@ function buildPlan(candidateSha) {
 }
 function profileInventory() {
   const h = require("./certops-qualification-profiles"),
-    matrix = require("../docs/certops/release-qualification-matrix.json");
+    matrix = require("../docs/certops/qualification-suites.json");
   return {
     schemaVersion: 1,
     executionStatus: "not-run",

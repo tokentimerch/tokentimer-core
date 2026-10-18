@@ -5,7 +5,7 @@ const test = require("node:test"),
 const fixture = require("./test-support/linux-installed-discovery-proof.cjs"),
   helper = require("../tests/e2e/helpers/certops-linux-installed-discovery");
 const slot = (version) =>
-  require("../docs/certops/release-qualification-matrix.json").slots.find(
+  require("../docs/certops/qualification-suites.json").slots.find(
     (row) => row.id === `linux-installed-file-discovery-${version}`,
   );
 const errors = (artifact, version = "24.04") =>

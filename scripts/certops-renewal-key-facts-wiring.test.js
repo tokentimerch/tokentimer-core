@@ -8,7 +8,7 @@ const fs = require("node:fs"), path = require("node:path"), crypto = require("no
 const { suites, verifySource } = require("./certops-api-qualification");
 const { verifyMatrix } = require("./certops-release-qualification");
 const inventory = require("../docs/certops/qualification-suites.json");
-const matrix = require("../docs/certops/release-qualification-matrix.json");
+const matrix = require("../docs/certops/qualification-suites.json");
 const root = path.resolve(__dirname, ".."), suite = "renewal-key-facts-api";
 const source = "tests/e2e/certops-renewal-key-facts-e2e.test.js";
 const hash = file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") });

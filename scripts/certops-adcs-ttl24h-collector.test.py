@@ -264,10 +264,11 @@ class AuthenticationTests(unittest.TestCase):
             with tempfile.TemporaryDirectory(prefix="ttl-owner-main-") as directory:
                 root = Path(directory)
                 (root / "docs/certops").mkdir(parents=True)
-                (root / "docs/certops/release-qualification-matrix.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
+                (root / "docs/certops/qualification-suites.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
                 (root / "tests/integration").mkdir(parents=True)
                 (root / "tests/integration/certops-qualification-groups.json").write_bytes((ROOT / "tests/integration/certops-qualification-groups.json").read_bytes())
                 contract = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
+                contract["slots"] = json.loads((root / "docs/certops/qualification-suites.json").read_text())["slots"]
                 contract["suites"][auth.SUITE] = []
                 contract["requiredCapabilities"][auth.SUITE] = []
                 (root / "docs/certops/qualification-suites.json").write_bytes(encode(contract))

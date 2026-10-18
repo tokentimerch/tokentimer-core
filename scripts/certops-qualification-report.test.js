@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const { verifyReport } = require("./certops-qualification-report");
 const { validateCatalog } = require("./certops-qualification-catalog");
 test("committed catalog contains valid independent scenario specifications", () => {
-  assert.deepEqual(validateCatalog(require("../docs/certops/e2e-scenario-catalog.json")), []);
+  assert.deepEqual(validateCatalog(require("../docs/certops/qualification-suites.json")), []);
 });
 test("catalog rejects duplicate identities and unsupported implementation claims", () => {
   const row = { id: "fixture.case", outcome: "Checks behavior", status: "implemented", evidenceLevel: "unassigned", requiredEnvironments: [], implementation: null };

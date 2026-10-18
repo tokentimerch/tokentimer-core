@@ -35,7 +35,7 @@ class AcmeStageProjection(unittest.TestCase):
             value = events(scope)
             projected = collector.sanitized_report(value, set(), proof.SCOPES)
             main = next(e for e in projected if "nativeAcmeKeyReuse" in e)
-            check = "const f=require('./scripts/test-support/acme-stage-artifact.cjs'),a=f.artifact(" + json.dumps(scope) + ");a.events=JSON.parse(require('fs').readFileSync(0,'utf8'));const slot=require('./docs/certops/release-qualification-matrix.json').slots.find(x=>x.suite===a.suite);const e=require('./scripts/certops-release-qualification').verifyMatrix([a],{candidateSha:'a'.repeat(40),specification:{schemaVersion:1,slots:[slot]}});if(e.length)throw new Error(e.join(';'));"
+            check = "const f=require('./scripts/test-support/acme-stage-artifact.cjs'),a=f.artifact(" + json.dumps(scope) + ");a.events=JSON.parse(require('fs').readFileSync(0,'utf8'));const slot=require('./docs/certops/qualification-suites.json').slots.find(x=>x.suite===a.suite);const e=require('./scripts/certops-release-qualification').verifyMatrix([a],{candidateSha:'a'.repeat(40),specification:{schemaVersion:1,slots:[slot]}});if(e.length)throw new Error(e.join(';'));"
             subprocess.run(["node", "-e", check], cwd=ROOT, input=json.dumps(projected), text=True, check=True)
             original = main["nativeAcmeKeyReuse"]["materialPaths"]
             for key, current in original.items():

@@ -91,7 +91,7 @@ test("a complete mandatory matrix cannot promote incomplete feature specificatio
 const specification = { schemaVersion: 1, slots: [{ id: "fixture", kind: "host", suite: "job-decisions-api", source, environment }] };
 
 test("cheap matrix validation refuses growth beyond the reviewed collection ceiling", () => {
-  const committed = require("../docs/certops/release-qualification-matrix.json");
+  const committed = require("../docs/certops/qualification-suites.json");
   const slots = [...committed.slots];
   while (slots.length < 512) slots.push({ ...committed.slots[0], id: `collection-boundary-${slots.length}`, environment: { ...committed.slots[0].environment, fixtureIndex: slots.length } });
   assert.deepEqual(validateMatrix({ ...committed, slots }), []);
@@ -99,7 +99,7 @@ test("cheap matrix validation refuses growth beyond the reviewed collection ceil
 });
 test("dedicated elapsed-pending release slot requires actual-hour evidence", () => {
   const suite = "enterprise-adcs-elapsed-pending-real";
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(row => row.suite === suite);
   const report = { ...artifact().report, suite, evidenceLevel: "real-host",
     startedAt: "2026-10-14T12:00:00.000Z", finishedAt: "2026-10-14T13:00:01.000Z",
     qualificationEnvironment: { ...slot.environment, measurement: "native" },
@@ -152,7 +152,7 @@ function suiteArtifact(suite, file, fields) {
 
 test("Windows two-cycle evidence requires both native generations and refuses expiry cleanup promotion", () => {
   const suite = "windows-two-unattended-renewals", helper = require("../tests/e2e/helpers/certops-windows-two-renewals");
-  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(item => item.suite === suite);
+  const slots = require("../docs/certops/qualification-suites.json").slots.filter(item => item.suite === suite);
   assert.equal(slots.length, 10);
   const fields = ["automaticSourceAndRealMode", "naturallyDueGenerations", "distinctIdempotencyKeys", "leafAndSpkiChangedTwice", "nativeBindingMatchesLatest", "nativeKeyProfilesVerified", "persistedEvidenceBothCycles", "inventoryMatchesActualLeaf", "profileAndManagementLineagePreserved", "retentionLineageMatchesBothCutovers", "predecessorCustodyPreserved", "noExpiryOrClockOverrides"];
   const proof = { ...Object.fromEntries(fields.map(field => [field, true])), successfulAutomationCycles: 2, expiryCleanupQualified: false, scope: "two-unattended-cycles-and-preserved-predecessors-not-expiry-cleanup" };
@@ -172,7 +172,7 @@ test("Windows two-cycle evidence requires both native generations and refuses ex
 
 test("Windows certificate dry-run requires native observations in every server and key-profile cell", () => {
   const helper = require("../tests/e2e/helpers/certops-windows-certificate-dry-run");
-  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === helper.suite);
+  const slots = require("../docs/certops/qualification-suites.json").slots.filter(slot => slot.suite === helper.suite);
   assert.equal(slots.length, 10);
   const proof = { scope: helper.scope, admission: "production-service-explicit-mode", deployPlanSteps: 3, renewPlanSteps: 6, ...Object.fromEntries(helper.fields.map(field => [field, true])) };
   for (const slot of slots) {
@@ -188,7 +188,7 @@ test("Windows certificate dry-run requires native observations in every server a
 });
 
 test("browser audit requires all six executions and current UI/API source evidence", () => {
-  const suite = "browser-certificate-audit", slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+  const suite = "browser-certificate-audit", slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.suite === suite);
   const value = suiteArtifact(suite, slot.source, {});
   value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
   value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
@@ -205,7 +205,7 @@ test("systemd reapplication and real-elapsed worker facts cannot be omitted or w
     ["agent-log-maintenance-worker", { maintenance: { defaultGraceMs: 300000, observedMonotonicMs: 300100, actualDatabaseExpired: true, originalJobSucceeded: true, lateUploadRefused: true, tombstoneRetained: true, onlySelectedWorkerSweeps: true, timestampsRewritten: false, abandonedStreams: 1, purgedLines: 2, repeatedPurgeDeleted: 0, retentionDays: 0, scope: "actual-default-five-minute-grace-and-supported-retention-zero" } }, value => { value.report.maintenance.observedMonotonicMs = 299999; }],
   ];
   for (const [suite, facts, mutate] of cases) {
-    const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+    const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.suite === suite);
     const value = suiteArtifact(suite, slot.source, facts);
     value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
     value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
@@ -216,7 +216,7 @@ test("systemd reapplication and real-elapsed worker facts cannot be omitted or w
 });
 test("Windows child-output proof requires native profile identity bounded facts and current sources", () => {
   const suite = "windows-native-child-output-privacy";
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.suite === suite);
   const fields = { actualNativeIdentity: "LocalSystem", actualStdoutAndStderrEmission: true, actualDelegatedSuccess: true, actualAcmeSuccessLogObserved: true, actualHttpUploadsSecretFree: true, persistedLogsEvidenceResultsSecretFree: true, scmConsoleSecretFree: true, childOutputPolicy: "captured-and-withheld-not-live-forwarded", nativeCertificateOutcome: "parent-independent-CNG-IIS-trusted-TLS", receiptCount: 1, jobLogCount: 1, evidenceCount: 1, httpUploadCount: 1 };
   const value = suiteArtifact(suite, slot.source, fields);
   value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native", build: "20348", keyAlgorithm: "rsa", keySize: 2048 };
@@ -520,7 +520,7 @@ test("committed release matrix covers all mandatory suites and rejects escaped s
   assert.ok(verifyMatrix([], { candidateSha, specification: { schemaVersion: 1, slots: [null, { id: "invalid" }] } }).length);
 });
 test("release supporting sources enforce reviewed 256-item cap, unique identities and repository bounds",()=>{
- const declared=[...new Set(require("../docs/certops/release-qualification-matrix.json").slots.flatMap(slot=>[slot.source,...(slot.requiredSources||[])]))];assert.ok(declared.length>=257);
+ const declared=[...new Set(require("../docs/certops/qualification-suites.json").slots.flatMap(slot=>[slot.source,...(slot.requiredSources||[])]))];assert.ok(declared.length>=257);
  const records=declared.slice(0,257).map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
  const value=artifact(),spec=structuredClone(specification),options={candidateSha,specification:spec};value.report.fixtureSources=records.slice(0,256);spec.slots[0].requiredSources=records.slice(0,96).map(row=>row.file);assert.deepEqual(verifyMatrix([value],options),[]);
  for(const count of [97,128,129,192,256]){const good=structuredClone(value),specification=structuredClone(spec);good.report.fixtureSources=records.slice(0,count);specification.slots[0].requiredSources=records.slice(0,count).map(row=>row.file);assert.deepEqual(verifyMatrix([good],{candidateSha,specification}),[]);}
@@ -563,7 +563,7 @@ test("stack matrix validates exact mandatory journey names and refuses skipped o
 });
 test("Windows wrong-SPKI sidecars require preaccept custody and configuration restoration", () => {
   const suite = "windows-acme-wrong-spki";
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(row => row.suite === suite);
   const proof = Object.fromEntries(["actualSignedRenewalFailed", "actualCsrDiffersFromReturnedLeaf", "genuineCaIssuedLeafReused", "rejectedUnacceptedKeyRemoved", "predecessorCustodyUnchanged", "bindingAndTrustedTlsUnchanged", "storedProfileUnchanged", "configurationRestored"].map(field => [field, true]));
   const value = suiteArtifact(suite, slot.source, { nativeWrongSpki: proof });
   value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
@@ -575,7 +575,7 @@ test("Windows wrong-SPKI sidecars require preaccept custody and configuration re
 });
 
 test("Windows native stack slots require public admission proof beyond service-created jobs", () => {
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.kind === "stack" && row.suite === "real-agent-windows-acme-iis/rsa-2048");
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(row => row.kind === "stack" && row.suite === "real-agent-windows-acme-iis/rsa-2048");
   const names = [...require(path.join(root, slot.requiredInventory)).requiredTests, ...slot.requiredTests];
   const digest = file => crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex");
   const events = names.map(name => ({ type: "test:pass", name, file: slot.source, scope: slot.suite, candidateSha, qualificationEnvironment: { ...slot.environment, measurement: "native" }, artifactQualification: "workflow-checkout-source", fixtureSource: { file: slot.source, sha256: digest(slot.source) }, fixtureSources: slot.requiredSources.map(file => ({ file, sha256: digest(file) })), skip: false, todo: false }));
@@ -601,7 +601,7 @@ test("Windows native stack slots require public admission proof beyond service-c
   const encoding=require("../tests/e2e/helpers/certops-windows-config-encoding");events.at(-1).nativeInstalledConfigEncoding={scope:encoding.SCOPE,encodings:[...encoding.CASES],startupFailureCount:3,...Object.fromEntries(encoding.FLAGS.map(flag=>[flag,true]))};
   const handoff=require("../tests/e2e/helpers/certops-windows-installed-handoff");events.at(-1).nativeInstalledStateHandoff={scope:handoff.SCOPE,...Object.fromEntries(handoff.FLAGS.map(flag=>[flag,true]))};
   assert.deepEqual(verifyMatrix([value], options), []);
-  for(const nativeSlot of require("../docs/certops/release-qualification-matrix.json").slots.filter(row=>row.suite.startsWith("real-agent-windows-acme-iis/"))){
+  for(const nativeSlot of require("../docs/certops/qualification-suites.json").slots.filter(row=>row.suite.startsWith("real-agent-windows-acme-iis/"))){
     const sample=structuredClone(value);sample.suite=nativeSlot.suite;sample.environment={...nativeSlot.environment,measurement:"native"};
     // Each environment fixture binds its own declared inventory; do not reuse a
     // different profile slot's source set when their prerequisites diverge.
@@ -674,7 +674,7 @@ test("database matrix requires every committed case and source digest without pr
 });
 
 test("Windows host release proof requires complete CNG custody and same-port SNI isolation",()=>{
- const suite="windows-host",slot=require("../docs/certops/release-qualification-matrix.json").slots.find(item=>item.suite===suite),{CASES}=require("../packages/agent/scripts/host/cng-export-fixture");
+ const suite="windows-host",slot=require("../docs/certops/qualification-suites.json").slots.find(item=>item.suite===suite),{CASES}=require("../packages/agent/scripts/host/cng-export-fixture");
  const facts={privateExportBytesWritten:false,privateExportBytesReported:false,workDirectoryUnchanged:true,cases:CASES.map(caseId=>({caseId,exportableControlSucceeded:true,controlBytesZeroed:true,protectedBytesZeroed:true,protectedExportDenied:true,publicNonceSignatureVerified:true,originalCustodyUnchanged:true,controlKeyRemoved:true,privateExportHResult:-2146893813}))};
  const sni={siteCount:2,hostnameCount:2,certificateStore:"My",twoSitesSamePort:true,distinctHostnameSelectors:true,primaryCutoverPeerUnchanged:true,primaryRollbackPeerUnchanged:true,peerCutoverPrimaryUnchanged:true,peerRollbackPrimaryUnchanged:true,sameCertificateReplayVerified:true,independentAuthenticatedTls:true,ownedCleanupVerified:true};
  const contention={winnerGeneratedRealCsr:true,loserLockedBeforeNativeExecution:true,retryAcquiredEnrollmentLock:true,retryExistingContainerRefused:true,sameCsrAndSpki:true,sameNonExportableKey:true,winnerSignatureVerified:true,ownedChildrenStopped:true,ownedKeyRemoved:true,loserNativeCalls:0,loserCertreqCalls:0,retryCertreqCalls:0,winnerCertreqCalls:1,retryNativeCalls:1};
@@ -683,7 +683,7 @@ test("Windows host release proof requires complete CNG custody and same-port SNI
  const options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};assert.deepEqual(verifyMatrix([value],options),[]);
  const usageSource="packages/agent/scripts/host/cng-key-usage-proof.js",usageOptions=structuredClone(options),sourcedUsage=structuredClone(value);usageOptions.specification.slots[0].requiredSources=[...new Set([...slot.requiredSources,usageSource])];sourcedUsage.report.fixtureSources=sourcedUsage.report.fixtureSources.filter(row=>row.file!==usageSource);sourcedUsage.report.fixtureSources.push({file:usageSource,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,usageSource))).digest("hex")});assert.deepEqual(verifyMatrix([sourcedUsage],usageOptions),[]);
  const staleUsage=structuredClone(sourcedUsage);staleUsage.report.fixtureSources.find(row=>row.file===usageSource).sha256="0".repeat(64);assert.ok(verifyMatrix([staleUsage],usageOptions).length);const missingUsageSource=structuredClone(sourcedUsage);missingUsageSource.report.fixtureSources=missingUsageSource.report.fixtureSources.filter(row=>row.file!==usageSource);assert.ok(verifyMatrix([missingUsageSource],usageOptions).length);
- for(const nativeSlot of require("../docs/certops/release-qualification-matrix.json").slots.filter(row=>row.suite==="windows-host")){const good=structuredClone(value);good.environment=good.report.qualificationEnvironment={...nativeSlot.environment,measurement:"native"};assert.deepEqual(verifyMatrix([good],{candidateSha,specification:{schemaVersion:1,slots:[nativeSlot]}}),[],nativeSlot.id);}
+ for(const nativeSlot of require("../docs/certops/qualification-suites.json").slots.filter(row=>row.suite==="windows-host")){const good=structuredClone(value);good.environment=good.report.qualificationEnvironment={...nativeSlot.environment,measurement:"native"};assert.deepEqual(verifyMatrix([good],{candidateSha,specification:{schemaVersion:1,slots:[nativeSlot]}}),[],nativeSlot.id);}
  for(const field of Object.keys(packagedChainRuntimeProof())){const missing=structuredClone(value);delete missing.report.nativePackagedChainRuntime[field];assert.ok(verifyMatrix([missing],options).length,field);}
  for(const flag of require("../packages/agent/scripts/host/packaged-helper-runtime-fixture").FLAGS)for(const wrong of [false,1,null,"true"]){const bad=structuredClone(value);bad.report.nativePackagedChainRuntime[flag]=wrong;assert.ok(verifyMatrix([bad],options).length,flag);}
  for(const change of [{scope:"packaged-cmc-qualified"},{metadataOnly:false},{serviceInstalled:true},{cmcPackagedQualified:true},{nativeGoVerifierPackagedQualified:true},{architecture:"arm64"},{chainHelperSha256:"bad"},{wrongProtocolHostSha256:"a".repeat(64)},{rawProcessLog:"forbidden"}]){const bad=structuredClone(value);Object.assign(bad.report.nativePackagedChainRuntime,change);assert.ok(verifyMatrix([bad],options).length);}
@@ -760,7 +760,7 @@ test("Windows host release proof requires complete CNG custody and same-port SNI
 
 test("first-rename refusal requires actual held fault and preserved running predecessor", () => {
   const suite = "windows-installer-first-rename-refusal", helper = require("../tests/e2e/helpers/certops-windows-rename-refusal");
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(row => row.suite === suite);
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(row => row.suite === suite);
   const fields = ["nativeDirectoryHandleHeld", "nativeHandleIdentityMatched", "actualFirstRenameRefused", "stagingRemoved", "previousDirectoryAbsent", "installedFilesUnchanged", "configurationAndCredentialUnchanged", "sameRunningServicePid", "freshAuthenticatedHeartbeat", "trustedTlsUnchanged", "nativeHandleReleased", "ownedChildDrained"];
   const facts = Object.fromEntries(fields.map(field => [field, true]));
   assert.equal(helper.verifyProof(facts), true);
@@ -781,7 +781,7 @@ test("first-rename refusal requires actual held fault and preserved running pred
 
 test("second-rename evidence cannot claim full CLI rollback or omit native ownership and cleanup", () => {
   const suite = "windows-activation-second-rename", helper = require("../tests/e2e/helpers/certops-windows-second-rename");
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === suite);
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.suite === suite);
   const proof = { ...Object.fromEntries(helper.factFields.map(field => [field, true])), scope: "production-activation-functions-not-installer-cli" };
   const value = suiteArtifact(suite, slot.source, { nativeSecondRename: proof });
   value.environment = value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
@@ -802,7 +802,7 @@ function acmeReuseProof(client) {
 test("Linux ACME key reuse requires exact client-bound native proof and current sources", () => {
   const helper=require("../tests/e2e/helpers/certops-acme-key-reuse");
   const scopes=["real-agent-acme-filesystem","real-agent-acme-eab-filesystem","real-agent-acmesh-filesystem","real-agent-acmesh-eab-filesystem","real-agent-alpine-acmesh"];
-  const slots=require("../docs/certops/release-qualification-matrix.json").slots.filter(slot=>scopes.includes(slot.suite));
+  const slots=require("../docs/certops/qualification-suites.json").slots.filter(slot=>scopes.includes(slot.suite));
   assert.equal(slots.length,5);
   for(const slot of slots){
     const client=slot.suite.includes("acmesh")?"acme.sh":"certbot";
@@ -843,7 +843,7 @@ test("canonical Windows CLI and completed-console facts are mandatory and source
     ["browser-agent-console", "completedConsolePrivacy", require("./certops-completed-console-proof").FIELDS, {}],
   ];
   for (const [suite, key, fields, extra] of cases) {
-    const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === suite);
+    const slots = require("../docs/certops/qualification-suites.json").slots.filter(slot => slot.suite === suite);
     assert.equal(slots.length, suite === canonical.suite ? 2 : 1);
     for (const slot of slots) {
       const proof = { ...Object.fromEntries(fields.map(field => [field, true])), ...extra };
@@ -866,7 +866,7 @@ test("canonical Windows CLI and completed-console facts are mandatory and source
 test("full installer CLI second-rename evidence requires exact scope and all native facts", () => {
   const helper=require("../tests/e2e/helpers/certops-windows-cli-second-rename"), suite=helper.suite;
   assert.equal(helper.fields.length,19);
-  const slots=require("../docs/certops/release-qualification-matrix.json").slots.filter(slot=>slot.suite===suite);
+  const slots=require("../docs/certops/qualification-suites.json").slots.filter(slot=>slot.suite===suite);
   assert.equal(slots.length,2);
   for(const slot of slots){
     const proof={scope:"unmodified-installer-cli-canonical-root-operator-cng-binding",...Object.fromEntries(helper.fields.map(field=>[field,true]))};
@@ -887,7 +887,7 @@ test("full installer CLI second-rename evidence requires exact scope and all nat
 });
 
 test("resident domain retention requires genuine day, complete native facts and current candidate sources",()=>{
- const helper=require("./certops-retention24h-proof"),fixture=require("./certops-retention24h-test-fixture.cjs"),slot=require("../docs/certops/release-qualification-matrix.json").slots.find(item=>item.suite===helper.SUITE);assert.ok(slot);
+ const helper=require("./certops-retention24h-proof"),fixture=require("./certops-retention24h-test-fixture.cjs"),slot=require("../docs/certops/qualification-suites.json").slots.find(item=>item.suite===helper.SUITE);assert.ok(slot);
  const composite=fixture();composite.publicPreparation.fixtureSources=helper.REQUIRED_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
  const report=helper.createQualificationReport(composite),value={kind:"host",suite:helper.SUITE,environment:{...slot.environment},report},options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
  assert.deepEqual(verifyMatrix([value],options),[]);
@@ -908,7 +908,7 @@ test("resident domain retention requires genuine day, complete native facts and 
 test("WebHosting hosted cells require independent store, elapsed and borrowed-key custody proof", () => {
  const runner=require('./certops-windows-webhosting-retention');
  const fixture=require('./fixtures/certops-webhosting-retention.cjs');
- const slots=require('../docs/certops/release-qualification-matrix.json').slots.filter(x=>x.suite===runner.SUITE);
+ const slots=require('../docs/certops/qualification-suites.json').slots.filter(x=>x.suite===runner.SUITE);
  assert.equal(slots.length,2);
  for(const slot of slots){
   const value=suiteArtifact(slot.suite,slot.source,{nativeWebHostingRetention:fixture.proof(),cleanup:{status:"passed"}});
@@ -922,7 +922,7 @@ test("WebHosting hosted cells require independent store, elapsed and borrowed-ke
 });
 
 test("certificate signing rotation requires the owned non-forced cell", () => {
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "linux-native-certificate-signing-rotation");
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.id === "linux-native-certificate-signing-rotation");
   const proof = require("./fixtures/certops-acme-certificate-signing.cjs").fixture();
   const value = suiteArtifact(slot.suite, slot.source, { platform: "linux", architecture: "x64", nativeCertificateSigningRotation: proof });
   value.environment = { ...slot.environment };
@@ -950,7 +950,7 @@ test("installed bind-failure and interruption proofs stay local and fail closed"
     ["windows-installed-interruption-recovery", "nativeInstalledInterruption", interruptionProof],
   ];
   for (const [id, field, proof] of cases) {
-    const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === id);
+    const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.id === id);
     const value = suiteArtifact(slot.suite, slot.source, { [field]: proof });
     value.environment = { ...slot.environment };
     value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
@@ -960,7 +960,7 @@ test("installed bind-failure and interruption proofs stay local and fail closed"
     const missing = structuredClone(value); delete missing.report[field];
     assert.ok(verifyMatrix([missing], options).length);
   }
-  const interruption = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "windows-installed-interruption-recovery");
+  const interruption = require("../docs/certops/qualification-suites.json").slots.find(item => item.id === "windows-installed-interruption-recovery");
   const durable = suiteArtifact(interruption.suite, interruption.source, { nativeInstalledInterruption: { ...interruptionProof, powerLossDurabilityQualified: true } });
   durable.environment = { ...interruption.environment };
   durable.report.qualificationEnvironment = { ...interruption.environment, measurement: "native" };
@@ -969,7 +969,7 @@ test("installed bind-failure and interruption proofs stay local and fail closed"
 });
 
 test("native issuer reassignment stays pending without a disposable forest", () => {
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "windows-native-issuer-reassignment");
+  const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.id === "windows-native-issuer-reassignment");
   const helper = require("../tests/e2e/helpers/certops-native-issuer-reassignment");
   const proof = {
     scope: helper.SCOPE, renewalProtocol: "production-scheduler-sweep-after-public-issuer-switch", schedulerInvocation: "qualification-invoked-production-default-sweep", workerIntervalQualified: false, nativeCell: "pending",

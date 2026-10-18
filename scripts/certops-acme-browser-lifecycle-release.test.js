@@ -6,7 +6,7 @@ const test = require("node:test"),
   helper = require("../tests/e2e/helpers/certops-acme-browser-lifecycle"),
   runner = require("./certops-acme-browser-lifecycle");
 const slot = () =>
-  require("../docs/certops/release-qualification-matrix.json").slots.find(
+  require("../docs/certops/qualification-suites.json").slots.find(
     (s) => s.suite === "linux-native-acme-browser-lifecycle",
   );
 const errors = (a) =>

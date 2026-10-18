@@ -106,7 +106,7 @@ function artifact() {
   };
 }
 function slot() {
-  return require("../../docs/certops/release-qualification-matrix.json").slots.find(
+  return require("../../docs/certops/qualification-suites.json").slots.find(
     (value) => value.suite === "linux-native-acme-browser-lifecycle",
   );
 }

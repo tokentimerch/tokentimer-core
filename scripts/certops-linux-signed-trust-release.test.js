@@ -8,7 +8,7 @@ const test = require("node:test"),
   f = require("./test-support/linux-signed-trust-artifact.cjs"),
   { verifyMatrix } = require("./certops-release-qualification");
 const slot = () =>
-  require("../docs/certops/release-qualification-matrix.json").slots.find(
+  require("../docs/certops/qualification-suites.json").slots.find(
     (s) => s.suite === h.SUITE,
   );
 const errors = (a) =>

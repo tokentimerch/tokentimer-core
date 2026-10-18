@@ -29,7 +29,7 @@ After the first pass, use `windows_server=all` and `key_profile=all` for the Win
 
 Other Azure-lab-free workflows cover Linux published upgrades, Alpine clients, filesystem deployment, Linux OS trust, nginx/Apache/HAProxy, native agents, signing rotation, scheduler capacity, alerts, log maintenance and focused API integration. The consuming-server workflow defaults to one Ubuntu/service cell; select `os=all,service=all` deliberately. Supporting integration defaults to one `group`; `group=all` runs its committed groups. An integration group named `adcs` tests server-side behavior and fixtures; it does not provision a CA.
 
-The dedicated native ACME browser console and issue/renew lifecycle workflows are manual Ubuntu/certbot scopes. They require their actual built dashboard, pinned browser and local stack, all prepared by the workflow. None requires an Azure lab identity. Complete every selected environment required by the [release matrix](../../release-qualification-matrix.json), rather than treating this starting sequence as exhaustive.
+The dedicated native ACME browser console and issue/renew lifecycle workflows are manual Ubuntu/certbot scopes. They require their actual built dashboard, pinned browser and local stack, all prepared by the workflow. None requires an Azure lab identity. Complete every selected environment required by the [release matrix](../../qualification-suites.json), rather than treating this starting sequence as exhaustive.
 
 ## Live DNS credentials are separate
 

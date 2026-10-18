@@ -6,7 +6,7 @@ The release collector rejects the registered Windows, AD CS and cross-platform l
 
 For setup, follow [Azure-free first qualification](reporting/first-qualification.md). Azure lab identities are optional domain-backed AD CS prerequisites, not normal Windows or cross-platform setup.
 
-Machine-readable specifications retain their stable locations: [scenario catalog](../e2e-scenario-catalog.json), [mandatory suite inventory](../qualification-suites.json), [release environment matrix](../release-qualification-matrix.json) and [skip mappings](../skip-qualification.generated.json).
+Machine-readable specifications retain their stable locations: [scenario catalog](../qualification-suites.json), [mandatory suite inventory](../qualification-suites.json), [release environment matrix](../qualification-suites.json) and [skip mappings](../skip-qualification.generated.json).
 
 - [Browser approval and rejection of native AD CS jobs](adcs/browser-job-approval.md)
 - [Supported AD CS manager/viewer admin boundary](adcs/browser-admin-role-boundary.md)

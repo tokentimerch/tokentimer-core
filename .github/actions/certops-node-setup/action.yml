@@ -1,0 +1,14 @@
+name: CertOps Node setup
+description: Shared pinned Node and pnpm installation for Linux qualification jobs.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+      with:
+        version: '11.13.0'
+    - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+      with:
+        node-version: '24'
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash

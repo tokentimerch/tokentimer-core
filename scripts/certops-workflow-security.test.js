@@ -7,6 +7,33 @@
 const test=require("node:test"),assert=require("node:assert/strict");const {validateWorkflow}=require("./certops-workflow-security");
 const baseline=()=>({name:"CertOps / Fixture",on:{workflow_dispatch:null},permissions:{contents:"read"},jobs:{qualify:{if:"github.ref == 'refs/heads/main'","timeout-minutes":30,steps:[{uses:"actions/checkout@"+"a".repeat(40),with:{"persist-credentials":false}},{run:"docker compose -f owned.yml up -d"},{if:"always()",run:"docker compose -f owned.yml down -v"},{if:"always()",uses:"actions/upload-artifact@"+"b".repeat(40),with:{path:"qualification-results/report.json"}}]}}});
 
+test("Vault summary preserves main restriction while collecting failed cohort results",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows/certops-distribution-qualification.yml"),"utf8"));
+ const name="certops-distribution-qualification.yml";
+ assert.deepEqual(validateWorkflow(workflow,name),[]);
+ for(const alter of [job=>job.if="always()",job=>job.if="${{ always() }}",job=>job.needs=["postgres"],job=>job.if="${{ always() && github.ref != 'refs/heads/main' }}"]){
+  const changed=structuredClone(workflow);alter(changed.jobs["functional-summary"]);
+  assert.ok(validateWorkflow(changed,name).length);
+ }
+ assert.ok(validateWorkflow(workflow,"certops-unrelated.yml").length);
+});
+
+test("shared Linux setup refuses mutable actions, credential hooks and extra commands",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const yaml=require("node:module").createRequire(require.resolve("../node_modules/mocha/package.json"))("js-yaml");
+ const {validateNodeSetup}=require("./certops-workflow-security");
+ const action=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/actions/certops-node-setup/action.yml"),"utf8"));
+ assert.deepEqual(validateNodeSetup(action),[]);
+ for(const alter of [a=>a.runs.steps[0].uses="pnpm/action-setup@main",a=>a.runs.steps[1].with["node-version"]="22",a=>a.runs.steps[2].run="pnpm install",a=>a.runs.steps[2].env={TOKEN:"fixture"},a=>a.runs.steps.push({run:"echo extra",shell:"bash"}),a=>a.inputs={command:{}},a=>a.runs.using="node24"]){
+  const bad=structuredClone(action);alter(bad);assert.ok(validateNodeSetup(bad).length);
+ }
+ for(const step of [{uses:"./.github/actions/unreviewed"},{uses:"./.github/actions/certops-node-setup",with:{command:"extra"}},{uses:"./.github/actions/certops-node-setup",env:{TOKEN:"fixture"}}]){
+  const workflow=baseline();workflow.jobs.qualify.steps.splice(1,0,step);assert.ok(validateWorkflow(workflow).length);
+ }
+});
+
 // CodeQL analysis is the explicit exception to the public PR execution policy.
 test("only CodeQL permits automatic pull-request analysis",()=>{
  const fs=require("node:fs"),path=require("node:path");

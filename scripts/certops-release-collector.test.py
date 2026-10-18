@@ -728,7 +728,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_renewal_key_facts_keep_only_committed_sources_not_public_leaf_or_claim_bodies(self):
         suite = "renewal-key-facts-api"
-        matrix = json.loads((collector.ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+        matrix = json.loads((collector.ROOT / "docs/certops/qualification-suites.json").read_text())
         slot = next(row for row in matrix["slots"] if row["suite"] == suite)
         sources = [{"file": file, "sha256": "a" * 64} for file in slot["requiredSources"]]
         report = {"suite": suite, "fixtureSource": sources[0], "fixtureSources": sources,
@@ -983,7 +983,7 @@ class CollectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="certops-collector-budget-") as directory:
             root = Path(directory)
             (root / "docs/certops").mkdir(parents=True)
-            (root / "docs/certops/release-qualification-matrix.json").write_text(json.dumps(fixture_matrix))
+            (root / "docs/certops/qualification-suites.json").write_text(json.dumps(fixture_matrix))
             with patch.object(collector, "ROOT", root), patch.dict(collector.os.environ, {"CERTOPS_RELEASE_CANDIDATE": candidate, "CERTOPS_RELEASE_RUN_IDS": json.dumps(run_ids), "GITHUB_REPOSITORY": "owner/repo", "GITHUB_TOKEN": "offline-fixture"}), patch.object(collector, "download", side_effect=download), patch.object(collector, "validate_run"), patch.object(collector, "catalog_coverage", return_value=coverage), patch.object(collector, "extract_reports", return_value=[(".json", {"suite": "fixture"})]), patch.object(collector.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(summary))) as verifier:
                 output = io.StringIO()
                 with redirect_stdout(output):
@@ -1005,7 +1005,7 @@ class CollectorTests(unittest.TestCase):
             collector.validate_run_ids(list(range(1, slots + 1)), limits)
         for invalid in (0, -1, 513, 1024, True, 201.0, "201", None):
             with self.assertRaises(ValueError): collector.collection_limits(invalid)
-        matrix = json.loads((collector.ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+        matrix = json.loads((collector.ROOT / "docs/certops/qualification-suites.json").read_text())
         self.assertGreaterEqual(collector.collection_limits(len(matrix["slots"]))["reports"], len(matrix["slots"]))
 
     def test_growth_preserves_run_identity_and_independent_download_bounds(self):

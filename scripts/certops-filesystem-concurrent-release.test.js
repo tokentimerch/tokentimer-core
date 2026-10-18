@@ -71,7 +71,7 @@ test("Filesystem concurrency release cannot accept mislabeled platforms, contain
 
 test("paired concurrency is required in all four existing native filesystem slots", () => {
   const slots =
-    require("../docs/certops/release-qualification-matrix.json").slots.filter(
+    require("../docs/certops/qualification-suites.json").slots.filter(
       (row) => row.suite === fixture.SUITE,
     );
   assert.equal(slots.length, 4);
@@ -138,7 +138,7 @@ test("native retention count cannot omit scoped pruning or sibling/private prese
 
 test("every filesystem release slot requires actual paired rollback evidence and causal source identity", () => {
   const h = require("./certops-filesystem-host");
-  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(row => row.suite === fixture.SUITE);
+  const slots = require("../docs/certops/qualification-suites.json").slots.filter(row => row.suite === fixture.SUITE);
   for (const slot of slots) assert.deepEqual(slot.requiredSources, h.ROLLBACK_SOURCES);
   assert.ok(fixture.IDS.includes(h.ROLLBACK_SCENARIO));
   for (const flag of h.ROLLBACK_FLAGS) {

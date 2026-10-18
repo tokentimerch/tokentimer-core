@@ -54,7 +54,7 @@
     "check:certops:release-matrix": "node scripts/ci-guards/certops-release-matrix.cjs",
     "check:certops:release-qualification": "node scripts/certops-release-qualification.js",
     "check:certops:dns-errors": "node scripts/ci-guards/certops-dns-errors.cjs",
-    "check:certops:catalog": "node scripts/certops-qualification-catalog.js docs/certops/e2e-scenario-catalog.json",
+    "check:certops:catalog": "node scripts/certops-qualification-catalog.js docs/certops/qualification-suites.json",
     "check:certops:skip-qualification": "node scripts/certops-skip-qualification.js",
     "test:baseline": "node scripts/run-baseline.js",
     "test:proxy-smoke": "node scripts/proxy-smoke-test.js",

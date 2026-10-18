@@ -212,3 +212,5 @@ test("AD CS result outbox projection selects tooling without a native domain lab
 test("installed failed-rollback projection selects tooling without native dispatch",()=>{const file="scripts/certops_windows_failed_rollback_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
 
 test("signed Linux trust projection selects tooling without native execution",()=>{const file="scripts/certops_linux_signed_trust_proof.py";assert.deepEqual(selectFiles([file]),{tooling:true,windows:false,stack:false,reason:"changed-files"});assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+
+test("shared Linux setup changes select supporting checks without native Windows execution",()=>{const selected=require("./certops-ci-selection").selectFiles([".github/actions/certops-node-setup/action.yml"]);assert.equal(selected.tooling,true);assert.equal(selected.stack,true);assert.equal(selected.windows,false);});

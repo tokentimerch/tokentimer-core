@@ -1,7 +1,7 @@
 "use strict";
 // Source-bound artifact adversaries only; no SCM/service execution.
 const test=require("node:test"),assert=require("node:assert/strict"),{artifact,candidateSha}=require("./test-support/arm64-scm-artifact.cjs"),{verifyMatrix}=require("./certops-release-qualification"),h=require("./certops-arm64-scm-proof");
-const slot=require("../docs/certops/release-qualification-matrix.json").slots.find(row=>row.suite===h.suite),options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
+const slot=require("../docs/certops/qualification-suites.json").slots.find(row=>row.suite===h.suite),options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
 test("separate ARM64 packaged SCM slot requires every measured fact, scenario and current source",()=>{
  assert.ok(slot);assert.equal(slot.requiredSources.length,16);assert.deepEqual(verifyMatrix([artifact()],options),[]);
  for(const key of Object.keys(artifact().report.nativeArm64Scm)){const missing=artifact();delete missing.report.nativeArm64Scm[key];assert.ok(verifyMatrix([missing],options).length,key);const wrong=artifact();wrong.report.nativeArm64Scm[key]=typeof wrong.report.nativeArm64Scm[key]==="boolean"?!wrong.report.nativeArm64Scm[key]:"wrong";assert.ok(verifyMatrix([wrong],options).length,key);}

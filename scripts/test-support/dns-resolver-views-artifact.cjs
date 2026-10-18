@@ -19,7 +19,7 @@ function nativeProof() {
   };
 }
 function slot() {
-  return require("../../docs/certops/release-qualification-matrix.json").slots.find(
+  return require("../../docs/certops/qualification-suites.json").slots.find(
     (row) => row.suite === SUITE,
   );
 }

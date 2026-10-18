@@ -117,7 +117,7 @@ def validate_run_ids(run_ids, limits):
 
 
 def catalog_coverage():
-    catalog = json.loads((ROOT / "docs/certops/e2e-scenario-catalog.json").read_text())
+    catalog = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
     rows = catalog.get("scenarios")
     if catalog.get("schemaVersion") != 1 or not isinstance(rows, list) or not rows:
         raise ValueError("Invalid committed scenario catalog")
@@ -195,7 +195,7 @@ def migration_evidence(value):
 
 
 def declared_sources():
-    slots = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())["slots"]
+    slots = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())["slots"]
     declared = {source for slot in slots for source in slot.get("requiredSources", [])}
     declared.update(slot["source"] for slot in slots if "source" in slot)
     groups = json.loads((ROOT / "tests/integration/certops-qualification-groups.json").read_text())
@@ -2060,7 +2060,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
 
 
 def committed_case_names(scope, kind):
-    slots = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())["slots"]
+    slots = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())["slots"]
     matching = [slot for slot in slots if slot["kind"] == kind and slot["suite"] == scope]
     if kind == "database":
         groups = json.loads((ROOT / "tests/integration/certops-qualification-groups.json").read_text())
@@ -2253,7 +2253,7 @@ def main(arguments=()):
     run_ids = json.loads(os.environ.get("CERTOPS_RELEASE_RUN_IDS", "[]"))
     if not re.fullmatch(r"[a-f0-9]{40}", candidate) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not token:
         raise ValueError("Explicit candidate, repository and read-only workflow token required")
-    matrix = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+    matrix = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
     selection=qualification_profiles.select_profile(matrix,profile)
     selected_matrix=selection["specification"]
     limits = collection_limits(len(selected_matrix["slots"]))
@@ -2363,7 +2363,7 @@ def failed_profile_summary(arguments, environment, root=ROOT):
     try:
         profile=qualification_profiles.requested_profile(arguments,environment)
         result["qualificationProfile"]=profile
-        matrix=json.loads((root / "docs/certops/release-qualification-matrix.json").read_text())
+        matrix=json.loads((root / "docs/certops/qualification-suites.json").read_text())
         selected=qualification_profiles.select_profile(matrix,profile)
         result.update(qualification_profiles.summary_fields(selected))
         result["mandatoryEnvironments"]=len(selected["selectedSlotIds"])

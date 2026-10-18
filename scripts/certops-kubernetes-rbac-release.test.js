@@ -3,7 +3,7 @@
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const {verifyMatrix}=require("./certops-release-qualification");
 const h=require("./certops-kubernetes-rbac"),fixture=require("./test-support/kubernetes-rbac-artifact.cjs");
-const slot=require("../docs/certops/release-qualification-matrix.json").slots.find(row=>row.suite===fixture.SUITE);
+const slot=require("../docs/certops/qualification-suites.json").slots.find(row=>row.suite===fixture.SUITE);
 const errors=value=>verifyMatrix([value],{candidateSha:fixture.CANDIDATE,specification:{schemaVersion:1,slots:[slot]}});
 test("Kubernetes release requires mandatory startup denial, native recovery facts and causal source identity",()=>{
   assert.deepEqual(errors(fixture.artifact()),[]);

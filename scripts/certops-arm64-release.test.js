@@ -4,7 +4,7 @@
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const contract = require("./certops-arm64-runtime-proof"), { verifyMatrix } = require("./certops-release-qualification");
 const root = path.resolve(__dirname, "..");
-const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.suite === contract.suite);
+const slot = require("../docs/certops/qualification-suites.json").slots.find(item => item.suite === contract.suite);
 const candidateSha = "a".repeat(40), stamp = "2026-10-14T00:00:00.000Z";
 function artifact() {
   const architecture = { productType: 1, build: "26200", cpuArchitectures: [12], platform: "win32", nodeArchitecture: "arm64", powershellArchitecture: "arm64", goHostArchitecture: "arm64", goHostOs: "windows", nodePeMachine: 0xaa64, powershellPeMachine: 0xaa64, goPeMachine: 0xaa64, certreqPeMachine: 0xaa64, certutilPeMachine: 0xaa64, administrator: true };

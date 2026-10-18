@@ -79,7 +79,7 @@ function artifact(service = "nginx", version = "24.04") {
   return { kind: "host", suite: SUITE, environment, report };
 }
 function slot(service = "nginx", version = "24.04") {
-  return require("../../docs/certops/release-qualification-matrix.json").slots.find(
+  return require("../../docs/certops/qualification-suites.json").slots.find(
     (row) =>
       row.suite === service + "-host" &&
       row.environment.distributionVersion === version,

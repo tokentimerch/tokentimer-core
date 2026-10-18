@@ -3,7 +3,7 @@
 const test = require("node:test"), assert = require("node:assert/strict");
 const { verifyMatrix } = require("./certops-release-qualification");
 const { artifact } = require("./fixtures/certops-windows-installed-bind-failure-native.cjs");
-const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === "windows-installed-bind-failure-rollback");
+const slots = require("../docs/certops/qualification-suites.json").slots.filter(slot => slot.suite === "windows-installed-bind-failure-rollback");
 test("native bind collector accepts only its exact current Server cells and native proof", () => {
   assert.equal(slots.length, 2);
   for (const slot of slots) {

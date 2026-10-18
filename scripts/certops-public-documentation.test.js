@@ -17,7 +17,7 @@ test("public documentation refuses private checkout paths and repository URLs", 
     const repository = ["tokentimer", edition].join("-");
     for (const text of ["`" + repository + "`", repository + "/scripts/private.js", "https://github.com/example/" + repository + "/blob/main/file.js"]) {
       assert.equal(findings("docs/certops/qualification/guide.md", text).length, 1);
-      assert.equal(findings("docs/certops/e2e-scenario-catalog.json", JSON.stringify({ implementation: text })).length, 1);
+      assert.equal(findings("docs/certops/qualification-suites.json", JSON.stringify({ implementation: text })).length, 1);
     }
   }
 });

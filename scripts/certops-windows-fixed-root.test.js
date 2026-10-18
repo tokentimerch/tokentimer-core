@@ -34,7 +34,7 @@ test("canonical lane remains manual, fresh hosted and independently cleaned", ()
   assert.match(source, /CERTOPS_REAL_WINDOWS_FIXED_ROOT_REQUIRED/);
   assert.match(source, /if: always\(\)\s+run: \|\s+if \(\$env:CERTOPS_FIXED_ROOT_OWNER_TOKEN\)/);
   assert.match(source, /node scripts\/certops-windows-fixed-root-cleanup.js/);
-  const slots = require("../docs/certops/release-qualification-matrix.json").slots.filter(slot => slot.suite === fixture.suite);
+  const slots = require("../docs/certops/qualification-suites.json").slots.filter(slot => slot.suite === fixture.suite);
   assert.equal(slots.length, 2); for (const slot of slots) assert.deepEqual(slot.requiredSources, fixture.requiredSources);
 });
 

@@ -2,6 +2,18 @@
 // Enforce trusted refs, bounded privileges and owned cleanup across every
 // qualification workflow; selection may only narrow the exact main guard.
 const fs=require("node:fs"),path=require("node:path");
+const NODE_SETUP="./.github/actions/certops-node-setup";
+// Only this resource-free local setup action may replace pinned setup steps.
+function validateNodeSetup(action){
+ const steps=action?.runs?.steps;
+ const keys=(value,expected)=>value&&Object.keys(value).sort().join(",")===expected;
+ const remote=(step,prefix)=>keys(step,"uses,with")&&new RegExp("^"+prefix+"@[a-f0-9]{40}$").test(step.uses);
+ if(!keys(action,"description,name,runs")||!keys(action.runs,"steps,using")||action.runs.using!=="composite"||!Array.isArray(steps)||steps.length!==3||
+    !remote(steps[0],"pnpm/action-setup")||!keys(steps[0].with,"version")||steps[0].with.version!=="11.13.0"||
+    !remote(steps[1],"actions/setup-node")||!keys(steps[1].with,"cache,node-version")||steps[1].with["node-version"]!=="24"||steps[1].with.cache!=="pnpm"||
+    !keys(steps[2],"run,shell")||steps[2].run!=="pnpm install --frozen-lockfile"||steps[2].shell!=="bash")return ["Local CertOps setup must contain only pinned Node/pnpm setup and frozen install"];
+ return [];
+}
 // Only this closed handoff protocol may deliberately retain its successful lab.
 // Every other provisioner still needs unconditional owned teardown.
 function retainedDayProtocol(workflow,id,job){
@@ -79,7 +91,8 @@ function validateWorkflow(workflow,name="workflow"){
     if(name==="certops-dns-fixture-janitor.yml"&&id==="cleanup"&&job.environment!=="certops-dns-cleanup-${{ matrix.provider }}")fail(`${id} independent DNS cleanup requires its dedicated unattended environment`);
     const selectedLane={tooling:"tooling","tooling-windows":"tooling",windows:"windows","agent-stack":"stack"}[id];
     const selectedCondition=name==="certops-qualification.yml"&&selectedLane&&job.needs==="selection"&&job.if===`github.ref == 'refs/heads/main' && needs.selection.outputs.${selectedLane} == 'true'`;
-    if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
+    const distributionSummary=name==="certops-distribution-qualification.yml"&&id==="functional-summary"&&JSON.stringify(job.needs)===JSON.stringify(["postgres","agent-lab"])&&job.if==="${{ always() && github.ref == 'refs/heads/main' }}";
+    if(job.if!=="github.ref == 'refs/heads/main'"&&!selectedCondition&&!dnsCondition&&!distributionSummary&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(name==="certops-qualification.yml"&&selectedLane&&!selectedCondition)fail(`${id} must narrow execution to its committed selection output`);
     if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>180)fail(`${id} requires a bounded timeout`);
     if(job.permissions)for(const [key,value] of Object.entries(job.permissions))if(!(["contents","actions"].includes(key)&&value==="read")&&!(key==="id-token"&&value==="write"))fail(`${id} expands token permissions`);
@@ -101,7 +114,8 @@ function validateWorkflow(workflow,name="workflow"){
     if(["certops-retention24h-finalize.yml","certops-retention24h-janitor.yml"].includes(name)&&(workflow.concurrency?.group!=="certops-retention24h-owned-azure-lifecycle"||workflow.concurrency?.["cancel-in-progress"]!==false))fail(`${id} retention lifecycle requires fixed non-cancelling serialization`);
 
     for(const step of steps){
-      if(step.uses&&!/^[-A-Za-z0-9_./]+@[a-f0-9]{40}$/.test(step.uses))fail(`${id} action must use an immutable commit`);
+      if(step.uses===NODE_SETUP){if(Object.keys(step).some(key=>!["uses","name"].includes(key)))fail(`${id} shared setup cannot override inputs, environment or conditions`);}
+      else if(step.uses&&!/^[-A-Za-z0-9_./]+@[a-f0-9]{40}$/.test(step.uses))fail(`${id} action must use an immutable commit`);
       if(step.uses?.startsWith("actions/checkout@")&&step.with?.["persist-credentials"]!==false)fail(`${id} checkout must not persist credentials`);
       if(step.uses?.startsWith("actions/upload-artifact@")){
         if(step.if!=="always()")fail(`${id} must preserve diagnostic reports after failure`);
@@ -117,7 +131,9 @@ function validateWorkflow(workflow,name="workflow"){
 }
 function check(root=path.resolve(__dirname,"..")){
   const {createRequire}=require("node:module");const yaml=createRequire(require.resolve(path.join(root,"node_modules/mocha/package.json")))("js-yaml");
-  const directory=path.join(root,".github/workflows");const errors=[];for(const name of fs.readdirSync(directory).filter(file=>/^certops-.*\.yml$/.test(file)))errors.push(...validateWorkflow(yaml.load(fs.readFileSync(path.join(directory,name),"utf8")),name));return errors;
+  const directory=path.join(root,".github/workflows");const errors=[];let shared=false;for(const name of fs.readdirSync(directory).filter(file=>/^certops-.*\.yml$/.test(file))){const workflow=yaml.load(fs.readFileSync(path.join(directory,name),"utf8"));errors.push(...validateWorkflow(workflow,name));shared ||= Object.values(workflow.jobs||{}).some(job=>(job.steps||[]).some(step=>step.uses===NODE_SETUP));}
+  if(shared){try{errors.push(...validateNodeSetup(yaml.load(fs.readFileSync(path.join(root,NODE_SETUP,"action.yml"),"utf8"))));}catch{errors.push("Shared CertOps setup definition missing or invalid");}}
+  return errors;
 }
 if(require.main===module){const errors=check();if(errors.length){console.error(errors.join("\n"));process.exitCode=1;}else console.log("certops-workflow-security: trusted refs, immutable actions, credential isolation and owned cleanup valid");}
-module.exports={validateWorkflow,check};
+module.exports={validateWorkflow,check,validateNodeSetup};

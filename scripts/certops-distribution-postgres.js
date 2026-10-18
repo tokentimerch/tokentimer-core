@@ -150,7 +150,7 @@ async function main() {
         path.join(output, suite + "-execution.log"),
       );
       const slot =
-        require("../docs/certops/release-qualification-matrix.json").slots.find(
+        require("../docs/certops/qualification-suites.json").slots.find(
           (s) => s.id === "distribution-postgres-" + suite,
         );
       verify(
