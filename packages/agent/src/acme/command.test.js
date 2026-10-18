@@ -39,3 +39,23 @@ test("native excessive-output command fails bounded and terminates its actual pr
  try{await until(()=>fs.existsSync(receipt));const pid=Number(fs.readFileSync(receipt,"utf8"));proof={parent:pid,child:pid};const result=await running;assert.ok(result.execError);assert.ok(Buffer.byteLength(result.stdout)+Buffer.byteLength(result.stderr)<=10*1024*1024);await until(()=>{try{process.kill(pid,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});}
  finally{ac.abort();await boundedDrain(running,proof);fs.rmSync(directory,{recursive:true});}
 });
+
+for (const mode of ["abort", "timeout"]) test('exited launcher cannot orphan an inherited-pipe child before '+mode, {timeout:15000}, async () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-orphan-")),receipt=path.join(directory,"ready.json"),ac=new AbortController();let proof;
+  const descendant="process.on('SIGTERM',()=>{});process.send('ready');setInterval(()=>{},1000);";
+  const launcher="const cp=require('child_process'),fs=require('fs');const child=cp.spawn(process.execPath,['-e',process.argv[1]],{stdio:['ignore','inherit','inherit','ipc']});child.once('message',()=>{fs.writeFileSync(process.argv[2],JSON.stringify({parent:process.pid,child:child.pid}));process.exit(0);});";
+  const running=execWithoutShell(cp.execFile,[process.execPath,"-e",launcher,descendant,receipt],mode==="timeout"?4000:10000,{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},ac.signal);
+  try {
+    await until(()=>fs.existsSync(receipt));proof=JSON.parse(fs.readFileSync(receipt));
+    await until(()=>{try{process.kill(proof.parent,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});
+    if(mode==="abort")ac.abort();
+    await running;
+    await until(()=>{try{process.kill(proof.child,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});
+  } finally {ac.abort();await boundedDrain(running,proof);fs.rmSync(directory,{recursive:true});}
+});
+
+test("native command preserves quoted and empty arguments", async () => {
+  const args=["", "café/测试", "space value", 'embedded"quote', "trailing space \\"];
+  const result=await execWithoutShell(cp.execFile,[process.execPath,"-e","process.stdout.write(JSON.stringify(process.argv.slice(1)))",...args],5000,{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot});
+  assert.equal(result.exitCode,0);assert.deepEqual(JSON.parse(result.stdout),args);
+});
