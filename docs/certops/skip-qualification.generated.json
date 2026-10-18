@@ -124,12 +124,8 @@
       "line": 13,
       "name": "closed gate publication prevents Windows reader sharing failures and refuses clobber",
       "kind": "test(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-native-process-containment",
-      "workflow": ".github/workflows/certops-windows-e2e.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-windows-e2e.yml"
     },
     {
       "id": "5ab9b5ab6871aa7ef958",
@@ -137,25 +133,15 @@
       "line": 77,
       "name": "real owned JobObject preserves suspended identity and drains an actual descendant",
       "kind": "test(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-native-process-containment",
-      "workflow": ".github/workflows/certops-windows-e2e.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-windows-e2e.yml"
     },
     {
       "id": "4d3605ce26faa1d8bbfb",
       "file": "packages/agent/scripts/host/windows-host.test.js",
       "line": 56,
       "name": "Windows real-host discovery and service-host qualification",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "windows-elevated",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "windows-elevated"
     },
     {
       "id": "75191f12f5ef96e1487a",
@@ -163,25 +149,17 @@
       "line": 14,
       "name": "actual installer filesystem branches preserve literal brackets and wildcard siblings",
       "kind": "test(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-powershell-filesystem",
-      "workflow": ".github/workflows/certops-windows-e2e.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-windows-e2e.yml"
     },
     {
       "id": "a496aa9e81eb1ebc257e",
       "file": "packages/agent/scripts/installer-smoke.test.js",
       "line": 370,
       "name": "reaches Running and survives a Stop-Service / Start-Service cycle",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "b124fed978bfca4e5929",
@@ -189,12 +167,9 @@
       "line": 121,
       "name": "sets 0700 permissions on non-win32 platforms",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "4443e1b95b878ac655ef",
@@ -202,12 +177,9 @@
       "line": 129,
       "name": "re-asserts 0700 on every call even if the mode was loosened",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "2ec788ee4658745189f6",
@@ -215,12 +187,9 @@
       "line": 139,
       "name": "applies a real restricted ACL on win32",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "017e77b2a801d3b57158",
@@ -228,12 +197,9 @@
       "line": 148,
       "name": "re-asserts the ACL when a foreign principal was granted (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "e07001c77de2dff352de",
@@ -241,12 +207,9 @@
       "line": 946,
       "name": "sets 0600 permissions on the pin file on non-win32 platforms",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "6a16090525b89563bfa8",
@@ -254,12 +217,9 @@
       "line": 1043,
       "name": "refuses to write the pin through a symlink",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "696063d6c7c3db3cd321",
@@ -267,12 +227,9 @@
       "line": 1140,
       "name": "sets 0600 permissions on the credential file on non-win32 platforms",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "6a8c836d194d58bc67a1",
@@ -280,12 +237,9 @@
       "line": 1200,
       "name": "refuses a credential file whose ACL grants Everyone (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "26d15b9d61c8363804da",
@@ -293,25 +247,18 @@
       "line": 1215,
       "name": "refuses a credential file owned by an untrusted principal (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "8471cea230602a13649a",
       "file": "packages/agent/src/config/config.test.js",
       "line": 1228,
       "name": "refuses a credential file owned by an untrusted principal (win32)",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "71960d4bf81cfcd3b72d",
@@ -319,12 +266,9 @@
       "line": 1542,
       "name": "refuses a group/other-readable credentials file (POSIX)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "89718a196c2cd623d00b",
@@ -332,12 +276,9 @@
       "line": 1552,
       "name": "refuses a credentials file whose ACL grants Everyone (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "15c2a6408c06ba8e2881",
@@ -345,12 +286,9 @@
       "line": 1563,
       "name": "accepts a credentials file restricted to the agent and SYSTEM (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "aec95d935c2d72099563",
@@ -358,12 +296,9 @@
       "line": 1639,
       "name": "refuses a group/other-readable credentials file (POSIX)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "309e94af8489aeb639e9",
@@ -371,12 +306,9 @@
       "line": 1651,
       "name": "refuses an ACL granting Everyone and never falls back to a skip (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "cf415b4fb7e50fb17958",
@@ -384,12 +316,9 @@
       "line": 1664,
       "name": "fails closed when the ACL cannot be inspected at all (win32)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "d66b9c24439bb96f6e6e",
@@ -397,12 +326,9 @@
       "line": 563,
       "name": "rejects a symlinked destination escaping the allowed root (realpath re-check)",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "45217825fbaf0368198b",
@@ -410,25 +336,18 @@
       "line": 592,
       "name": "rejects a symlinked parent directory escaping the allowed root",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "3df89c260dedffe07e62",
       "file": "packages/agent/src/discovery/discovery.test.js",
       "line": 308,
       "name": "rejects symbolic-link certificate candidates",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "2c4e758114365ee067cc",
@@ -436,12 +355,9 @@
       "line": 343,
       "name": "parses a real self-signed certificate and extracts public fields, normalizing the fingerprint",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "openssl-fixtures",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "177c1046e526e24a5883",
@@ -449,12 +365,9 @@
       "line": 372,
       "name": "never reads private key bytes into the returned certificate entry, even when it peeks the key",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "openssl-fixtures",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "9d4835a13450389dc907",
@@ -462,12 +375,7 @@
       "line": 214,
       "name": "computes a real SHA-256 fingerprint from base64 DER bytes",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "debeb5e71508b35b2ef8",
@@ -475,12 +383,7 @@
       "line": 327,
       "name": "reads real SAN entries directly from a certificate's own raw DER bytes",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "26365d2772bd13090c57",
@@ -488,12 +391,7 @@
       "line": 359,
       "name": "prefers the raw-bytes-derived SANs over windows-discovery's own list",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "b13e16258590f5a79244",
@@ -501,12 +399,7 @@
       "line": 402,
       "name": "reports a windows_store observation using windows-discovery's parsed fields plus an adapter-computed fingerprint",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "c8e49d156836f0525d40",
@@ -514,12 +407,7 @@
       "line": 431,
       "name": "resolves an http.sys binding matched to an IIS site as iis_binding, reusing the store's fingerprint",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "f95b49bb19f40cd2479e",
@@ -527,12 +415,7 @@
       "line": 462,
       "name": "unions binding-referenced stores and resolves a duplicate thumbprint in the binding's declared store",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "37eb38150afcae9c2681",
@@ -540,12 +423,7 @@
       "line": 515,
       "name": "reports an http.sys binding with no matching IIS site as http_sys, not iis_binding",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "896b620b80b9c787229a",
@@ -553,38 +431,25 @@
       "line": 603,
       "name": "reports real subjectAltNames end-to-end from the certificate's raw bytes",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
-      "environment": "openssl-fixtures",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "openssl-fixtures"
     },
     {
       "id": "ccf2a2554645cc1020e6",
       "file": "packages/agent/src/issuers/adcs-enrollment-reconcile.test.js",
       "line": 382,
       "name": "skips E_ACCESSDENIED and denied probes so a later unique match can attach",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "prerequisite-review",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "08aca8b3020336961d23",
       "file": "packages/agent/src/issuers/adcs-enrollment.test.js",
       "line": 170,
       "name": "pins a CA cert under stateDir/adcs-ca and refuses a pin mismatch",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "openssl-fixtures",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "5afa4005085b4f4112dd",
@@ -592,12 +457,9 @@
       "line": 180,
       "name": "sets 0600 on the key file and 0700 on the parent dir on non-win32",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "d2a44a1bb17a066fc071",
@@ -605,12 +467,9 @@
       "line": 209,
       "name": "refuses to write through a symlink at the key path",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "aceead6d0a5d55aab37b",
@@ -618,12 +477,9 @@
       "line": 499,
       "name": "verifies the CSR with openssl when available",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "openssl-fixtures",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "0b022e58e2d61f2eee08",
@@ -631,12 +487,8 @@
       "line": 88,
       "name": "real isolated Vault KV v2: pinned publication and idempotent CAS",
       "kind": "test(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "distribution-vault-adapter",
-      "workflow": ".github/workflows/certops-distribution-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-distribution-qualification.yml"
     },
     {
       "id": "501fb9619042e3d53d38",
@@ -644,12 +496,8 @@
       "line": 130,
       "name": "real Vault ACL separates issuer, consumer, scanner and customer prefixes",
       "kind": "test(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "distribution-vault-adapter",
-      "workflow": ".github/workflows/certops-distribution-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-distribution-qualification.yml"
     },
     {
       "id": "fa3bcd874625c1befd31",
@@ -657,12 +505,9 @@
       "line": 454,
       "name": "refuses a group/other-readable file on POSIX",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "e03762e2624a4efbd711",
@@ -670,12 +515,9 @@
       "line": 468,
       "name": "enforces a real restricted ACL end to end on win32",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "windows-elevated",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "cb0d320904f3f7b8eb0b",
@@ -683,1156 +525,676 @@
       "line": 144,
       "name": "writes the store file with 0600 permissions on non-win32",
       "kind": "it(..., { skip }) option-object",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "208a2d7927b2ca874b1d",
       "file": "packages/agent/src/trust-store/receipt.test.js",
       "line": 559,
       "name": "reports {corrupt: true} for a symlink at the receipt path, never following it",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "linux-filesystem",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "05aa960bbad451e36be4",
       "file": "tests/e2e/certops-adcs-gates-api-e2e.test.js",
       "line": 17,
       "name": "unqualified AD CS onboarding and dispatch gates through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "eae563654c30d58c0cc7",
       "file": "tests/e2e/certops-agent-alert-e2e.test.js",
       "line": 16,
       "name": "agent alert governance persists policy and rejects foreign groups and unauthorized roles",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "7b2ab3b4f83534cb1504",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 459,
       "name": "happy path: register, heartbeat, claim, verify, result, idempotent duplicate ack",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "3caaac79423f621511de",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 575,
       "name": "tamper: mutating a signed field fails agent-side verification",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "6429a45a3d220ddac5ba",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 589,
       "name": "bootstrap token reuse is rejected with 401",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "5858eb73c41787ba2fbf",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 607,
       "name": "bad agent credential is rejected with 401",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "95791b18f12fc411afa8",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 623,
       "name": "retired agent gets 410 on heartbeat, claim, and results",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "3a1aff6c52424cf713a9",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 658,
       "name": "workspace kill switch blocks claims with 409",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "dac270688885dadbf536",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 681,
       "name": "evidence is accepted; private key material is rejected with 422",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "8783b84579370930cc83",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 723,
       "name": "second claim returns no jobs while the lease is held",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "2d9f67c60fc3db22c132",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 745,
       "name": "lease reaper defers, then requeues once the claiming agent goes silent",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "536d9158d0e1632620bc",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 807,
       "name": "lease reaper fails an expired job with exhausted retry budget",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "cb85f5d48f404a1d5905",
       "file": "tests/e2e/certops-agent-e2e.test.js",
       "line": 862,
       "name": "sequence enforcement: monotonic accepted, regression 409, re-register resets the generation, sequence-less accepted",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-protocol-stack",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-protocol-stack"
     },
     {
       "id": "24b4753f8b3dd9e97a15",
       "file": "tests/e2e/certops-agent-lease-api-e2e.test.js",
       "line": 18,
       "name": "active claim force retirement fences real agent HTTP",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "c978c8144e5071a0153a",
       "file": "tests/e2e/certops-agent-log-boundaries-e2e.test.js",
       "line": 18,
       "name": "agent log size and ownership boundaries through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "9baef309303e005f3127",
       "file": "tests/e2e/certops-agent-log-order-e2e.test.js",
       "line": 18,
       "name": "actual agent telemetry ordering, conflict and final closure",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "ef2af40c8d26df183310",
       "file": "tests/e2e/certops-agent-log-quota-e2e.test.js",
       "line": 21,
       "name": "production fleet-log quota concurrency and workspace isolation",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "5e77fcd26694941a7dd5",
       "file": "tests/e2e/certops-agent-logs-api-e2e.test.js",
       "line": 17,
       "name": "registered agent log redaction and replay through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "51c6442f8e20e0e34017",
       "file": "tests/e2e/certops-audit-history-e2e.test.js",
       "line": 14,
       "name": "certificate profile audit history remains searchable scoped and role restricted",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "1b8e14c14335097db009",
       "file": "tests/e2e/certops-bootstrap-fences-e2e.test.js",
       "line": 17,
       "name": "unused bootstrap revocation, expiry and workspace ownership through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "28e392f09cd33762a2ea",
       "file": "tests/e2e/certops-bulk-eligible-e2e.test.js",
       "line": 13,
       "name": "mixed eligible bulk renewal shares issuance capacity and conserves replay",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "29bd8f4cf84d755d5542",
       "file": "tests/e2e/certops-ca-capacity-e2e.test.js",
       "line": 13,
       "name": "public issuance shares race-safe CA admission and terminal release",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "523141a2d8d7ef6c0f50",
       "file": "tests/e2e/certops-certificate-transfer-e2e.test.js",
       "line": 16,
       "name": "public certificate token transfer preserves workspace authority and atomic identity conflicts",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "40613936d85d32e0faf8",
       "file": "tests/e2e/certops-credentials-api-e2e.test.js",
       "line": 17,
       "name": "public machine credential and agent enrollment lifecycle",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "9d19d8c9a1808d00ecb4",
       "file": "tests/e2e/certops-csr-algorithms-e2e.test.js",
       "line": 20,
       "name": "external CSR algorithm compatibility through public API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "d5a62574778d6f00e618",
       "file": "tests/e2e/certops-csr-bound-observation-e2e.test.js",
       "line": 17,
       "name": "real TLS CSR observation preserves selected active identity and expiry until name review",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "90aaa59855ad6f6a7f6b",
       "file": "tests/e2e/certops-csr-chain-e2e.test.js",
       "line": 20,
       "name": "external signing chain lifecycle through public CSR API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "9baa47be32168b6220a7",
       "file": "tests/e2e/certops-csr-frozen-e2e.test.js",
       "line": 16,
       "name": "signed CSR material freezes review until explicit cancel and restart",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "75817ca15c8fa34e9b45",
       "file": "tests/e2e/certops-csr-lifecycle-e2e.test.js",
       "line": 25,
       "name": "CSR authenticated API lifecycle",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "86fcd5514e3de4a1d18a",
       "file": "tests/e2e/certops-csr-observation-e2e.test.js",
       "line": 17,
       "name": "real TLS CSR observation defers changed names then promotes through acknowledgement",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "6272ef5cd1943f6dac4d",
       "file": "tests/e2e/certops-csr-provisional-e2e.test.js",
       "line": 37,
       "name": "shared CSR ownership, cancellation and truthful installation evidence",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "4b826855e7e701db890e",
       "file": "tests/e2e/certops-decommission-e2e.test.js",
       "line": 27,
       "name": "decommission acknowledgement and factual rediscovery preserve operator lifecycle",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "0d8e07f560b3d7f255a2",
       "file": "tests/e2e/certops-derivation-failure-e2e.test.js",
       "line": 19,
       "name": "missing renewal derivation fields preserve real public certificate state",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "39885c86a8c4d543e35b",
       "file": "tests/e2e/certops-diagnostic-agent-e2e.test.js",
       "line": 16,
       "name": "diagnostic agent kind fences ordinary work and preserves bootstrap idempotency",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "d1471011b9b7bf098822",
       "file": "tests/e2e/certops-enrollment-policy-api-e2e.test.js",
       "line": 15,
       "name": "public AD CS enrollment policy bounds and immutable snapshots",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "494312abff4f0f054520",
       "file": "tests/e2e/certops-enrollment-recovery-api-e2e.test.js",
       "line": 20,
       "name": "AD CS installation retry through real API and PostgreSQL",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "0b87720d6ce348c52a69",
       "file": "tests/e2e/certops-first-issuance-admission-e2e.test.js",
       "line": 19,
       "name": "public first issuance retains period and fresh execution admission fences",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "587a24b873cd68a1da0f",
       "file": "tests/e2e/certops-governance-e2e.test.js",
       "line": 21,
       "name": "observed certificate governance through public API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "add1fc960c094070ef71",
       "file": "tests/e2e/certops-import-metadata-e2e.test.js",
       "line": 13,
       "name": "public reimport preserves operator contacts and group assignments",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "afef16116dc15fbe3ee4",
       "file": "tests/e2e/certops-integration-sources-e2e.test.js",
       "line": 22,
       "name": "certificate-producing integration source provenance survives authenticated import and replay",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "52f765c459832f9275ac",
       "file": "tests/e2e/certops-inventory-lifecycle-e2e.test.js",
       "line": 23,
       "name": "real TLS endpoint certificate inventory lifecycle",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "966f77c085c420a11089",
       "file": "tests/e2e/certops-job-decisions-e2e.test.js",
       "line": 19,
       "name": "real API approval rejection and protocol terminal transitions",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "c0e9776c40a61c3aa9bb",
       "file": "tests/e2e/certops-jobs-api-e2e.test.js",
       "line": 17,
       "name": "manual job approval and pause boundaries through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "c57fdcf8d82316248ac6",
       "file": "tests/e2e/certops-log-disabled-e2e.test.js",
       "line": 13,
       "name": "missing log capability produces explicit disabled offer without inventing job completion",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "2f9f7531658946706268",
       "file": "tests/e2e/certops-log-maintenance-e2e.test.js",
       "line": 27,
       "name": "actual log upload grace, abandoned stream and worker retention",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "prerequisite-review",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "f43440bfe8f197860603",
       "file": "tests/e2e/certops-log-pagination-e2e.test.js",
       "line": 13,
       "name": "agent log cursor polling preserves live append and reconnect order",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "1d40135f75cd3814a6ef",
       "file": "tests/e2e/certops-membership-fences-e2e.test.js",
       "line": 17,
       "name": "live workspace membership and machine workspace fences",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "7c3e0675067d51867663",
       "file": "tests/e2e/certops-multi-target-deploy-e2e.test.js",
       "line": 21,
       "name": "production multi-target coordinator preserves files and exposes uncertain rollback",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "6bd9e1c9d0000f95ba08",
       "file": "tests/e2e/certops-native-agent-e2e.test.js",
       "line": 33,
       "name": "real native agent signed gates durable outbox restart and observe-only behavior",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "prerequisite-review",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "d2c1d0eb1cec1a10a779",
       "file": "tests/e2e/certops-observe-only-e2e.test.js",
       "line": 16,
       "name": "observe-only polling preserves queued work until explicit execution advertisement",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "aae9e3fbe69a56c66390",
       "file": "tests/e2e/certops-pause-ingestion-e2e.test.js",
       "line": 21,
       "name": "workspace pause blocks new work while retaining owned result ingestion",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "29acf249784019f0683d",
       "file": "tests/e2e/certops-profile-issuer-switch-e2e.test.js",
       "line": 13,
       "name": "public renewal issuer changes retain runnable policy and atomic audit",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "64c51129c31f06b8a413",
       "file": "tests/e2e/certops-profile-permissions-e2e.test.js",
       "line": 17,
       "name": "public renewal profile permissions and immutable execution policy",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "2bfd008bc2b6756f6ed7",
       "file": "tests/e2e/certops-profiles-api-e2e.test.js",
       "line": 17,
       "name": "AD CS profile administration through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "e041894ee3c906686378",
       "file": "tests/e2e/certops-public-import-e2e.test.js",
       "line": 21,
       "name": "public certificate import parsing, refusal and identity conservation",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "96e36a1542fcb65ffeb3",
       "file": "tests/e2e/certops-queued-profile-snapshot-e2e.test.js",
       "line": 13,
       "name": "public queued renewal freezes profile across operator edits approval and signed claim",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "895b316367e873d8be33",
       "file": "tests/e2e/certops-renewal-admission-e2e.test.js",
       "line": 20,
       "name": "renewal admission preserves monitored-only and terminal certificate policy",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "93f33e2b94e60d82ca75",
       "file": "tests/e2e/certops-renewal-alert-worker-e2e.test.js",
       "line": 15,
       "name": "owned renewal failure outbox reaches actual delivery worker SMTP receipt",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "prerequisite-review",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "f1f402c8d2654796d4a3",
       "file": "tests/e2e/certops-renewal-key-facts-e2e.test.js",
       "line": 42,
       "name": "renewal certificate changes invalidate unproven predecessor key facts",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "71f62331bfc03a91eff6",
       "file": "tests/e2e/certops-renewal-toggle-e2e.test.js",
       "line": 17,
       "name": "disabled automatic renewal preserves manual admission and SQL batch fairness",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-exclusive-scheduler-api",
-      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml"
     },
     {
       "id": "2d3f16e1092344c1614c",
       "file": "tests/e2e/certops-result-fences-e2e.test.js",
       "line": 16,
       "name": "real result API rejects forged nonce and attempt before consuming an owned lease",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "644f3a4a7edadc0b7bab",
       "file": "tests/e2e/certops-retired-observation-e2e.test.js",
       "line": 22,
       "name": "fresh TLS observation cannot reactivate a retired identity",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "75423f2b138644a6bf37",
       "file": "tests/e2e/certops-retired-scheduler-e2e.test.js",
       "line": 38,
       "name": "automatic renewal cannot revive an authoritative retired identity behind a stale source",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-exclusive-scheduler-api",
-      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml"
     },
     {
       "id": "326c960757b083e31001",
       "file": "tests/e2e/certops-retirement-approval-e2e.test.js",
       "line": 36,
       "name": "operator retirement fences concurrent approvals and actual registered-agent dispatch",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "95a3a1ef54582e6edf86",
       "file": "tests/e2e/certops-scheduler-capacity-e2e.test.js",
       "line": 13,
       "name": "SQL clock scheduler shares public issuance capacity and pause fences",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-exclusive-scheduler-api",
-      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflow": ".github/workflows/certops-scheduler-capacity-qualification.yml"
     },
     {
       "id": "bd5ad2d047a123ce1bbb",
       "file": "tests/e2e/certops-shared-sources-e2e.test.js",
       "line": 22,
       "name": "shared served fingerprint keeps source history and management accounting",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "94e2bcb0b5057a56afe7",
       "file": "tests/e2e/certops-signing-rotation-native-e2e.test.js",
       "line": 67,
       "name": "isolated operator signing rotation adopts native pins and fences incomplete fleet completion",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "prerequisite-review",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "21e91652de4520082f93",
       "file": "tests/e2e/certops-terminal-renewal-e2e.test.js",
       "line": 39,
       "name": "public renew cannot revive retired fully profiled certificates after real rediscovery",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "0c14bc02d5f9753342d8",
       "file": "tests/e2e/certops-token-boundaries-e2e.test.js",
       "line": 17,
       "name": "scoped machine token expiry and revocation through executor HTTP",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "c5d6a2bbcf8996446f7e",
       "file": "tests/e2e/certops-trust-api-e2e.test.js",
       "line": 20,
       "name": "trust approval and workspace pause through real API",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "73ef780f3289ff37c0b2",
       "file": "tests/e2e/certops-trust-multiple-e2e.test.js",
       "line": 13,
       "name": "independent public trust anchors remain scoped through concurrent approval and retirement",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "9255a15020b9b0ea070c",
       "file": "tests/e2e/certops-unmanaged-discovery-e2e.test.js",
       "line": 20,
       "name": "quota-blocked real filesystem discovery preserves unmanaged visibility",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
-      "environment": "core-certificate-api",
-      "workflow": ".github/workflows/certops-qualification.yml",
-      "workflowStatus": "file-selected-not-qualified",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "environment": "core-certificate-api"
     },
     {
       "id": "de4f6cd9300734d5c6a4",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 50,
       "name": "(unknown - no enclosing it()/test() title found above this line)",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "cd4ee26b7a47c4973c83",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 135,
       "name": "sweepStaleAgents flips a real stale agent to offline and queues exactly one real down alert_queue row",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "b7c64ac5ed3043cfc6ae",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 177,
       "name": "a second sweep tick over the same still-offline agent does not queue a duplicate down alert (transition, not level)",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "658252e111cf0d1eec02",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 205,
       "name": "respects a real downtime_alerts_enabled = false agent: still flips offline, queues no alert",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "b92e4ca428d72f28b838",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 239,
       "name": "sweepAgentRecoveries queues a real recovered alert and deletes the down row, but ONLY once the down alert reached status='sent'",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "fc07449b50cc65e88e0c",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 322,
       "name": "an agent with no open down alert_queue row at all is not a recovery candidate",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "317a395ab2457e05d86e",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 349,
       "name": "PATCH alert-settings persists downtimeAlertsEnabled/contactGroupId on a real agent row, and GET /agents reflects it",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "5aa667ade15727138718",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 392,
       "name": "rejects an unknown contactGroupId with 400 and leaves the real agent row unchanged",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "dd863e018bf3109c0336",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 406,
       "name": "rejects an empty body with 400 (at least one of downtimeAlertsEnabled/contactGroupId is required)",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "fd27d091724a265ac1ab",
       "file": "tests/integration/certops-agent-health-alerts-worker-cron.test.js",
       "line": 420,
       "name": "a real downtimeAlertsEnabled=false set via the route is actually honored by the worker cron down-alert sweep",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "0e825348d371caf21846",
       "file": "tests/integration/certops-workspace-kill-switch-api.test.js",
       "line": 482,
       "name": "rejects internal worker credentials from reading or changing settings",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "7f3e4d6b61c888a6f08e",
       "file": "tests/integration/certops-workspace-kill-switch-api.test.js",
       "line": 523,
       "name": "rejects worker settings key material before the session-user denial",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "4d70eae554788226718b",
       "file": "tests/integration/certops-workspace-kill-switch-api.test.js",
       "line": 672,
       "name": "keeps a same-request idempotent manual-job replay to one audit",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "55de559d7a9e41720b63",
       "file": "tests/integration/certops-workspace-kill-switch-api.test.js",
       "line": 774,
       "name": "keeps machine event and evidence ingestion available for pre-existing work while paused",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     },
     {
       "id": "df8e7559ebe8d2a67386",
       "file": "tests/integration/certops-workspace-kill-switch-api.test.js",
       "line": 904,
       "name": "serializes real PostgreSQL pause and manual-job races in both commit orders",
-      "kind": "dynamic (this.skip() / t.skip())",
-      "reason": "no-host",
       "environment": "core-postgres-integration",
       "workflow": null,
-      "workflowStatus": "exact-site-execution-not-configured",
-      "executionStatus": "not-qualified",
-      "classificationStatus": "candidate-needs-review"
+      "workflowStatus": "exact-site-execution-not-configured"
     }
-  ]
+  ],
+  "siteDefaults": {
+    "kind": "dynamic (this.skip() / t.skip())",
+    "reason": "no-host",
+    "workflow": ".github/workflows/certops-qualification.yml",
+    "workflowStatus": "file-selected-not-qualified",
+    "executionStatus": "not-qualified",
+    "classificationStatus": "candidate-needs-review"
+  }
 }

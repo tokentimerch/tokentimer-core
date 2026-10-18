@@ -3,7 +3,34 @@
 // same independent, expanded slots used by report and fingerprint verification.
 const assert = require("node:assert/strict");
 function expand(input) {
-  const { sourceGroups = {}, environmentGroups = {}, suiteDefinitions, capabilityGroups = {}, ...manifest } = structuredClone(input);
+  const { sourceGroups = {}, environmentGroups = {}, suiteDefinitions, capabilityGroups = {}, testGroups = {}, ...manifest } = structuredClone(input);
+  // A suite's OS/language variants share requirements, but remain independent
+  // ordered slots at every runtime and report-verification boundary.
+  assert.ok(testGroups && typeof testGroups === "object" && !Array.isArray(testGroups));
+  assert.ok(Object.keys(testGroups).length <= 512);
+  for (const [name, tests] of Object.entries(testGroups)) {
+    assert.match(name, /^[a-z0-9][a-z0-9-]{0,127}$/);
+    assert.ok(Array.isArray(tests) && tests.length > 0 && tests.length <= 256 && tests.every(id => typeof id === "string" && id.length > 0) && new Set(tests).size === tests.length);
+  }
+  if (manifest.slots) {
+    assert.ok(Array.isArray(manifest.slots) && manifest.slots.length <= 512);
+    manifest.slots = manifest.slots.flatMap(slot => {
+      if (!Object.hasOwn(slot, "environmentVariants")) return [slot];
+      const {environmentVariants, ...common} = slot;
+      assert.ok(!Object.hasOwn(slot, "id") && !Object.hasOwn(slot, "environment") && !Object.hasOwn(slot, "environmentGroup"), "Conflicting slot variants");
+      assert.ok(environmentVariants && typeof environmentVariants === "object" && !Array.isArray(environmentVariants));
+      const entries = Object.entries(environmentVariants);
+      assert.ok(entries.length > 0 && entries.length <= 512);
+      return entries.map(([id, environmentGroup]) => {
+        assert.ok(id.length > 0 && id.length <= 128);
+        assert.equal(typeof environmentGroup, "string");
+        return {...structuredClone(common), id, environmentGroup};
+      });
+    });
+    assert.ok(manifest.slots.length <= 512);
+    const ids = manifest.slots.filter(slot => Object.hasOwn(slot, "id")).map(slot => slot.id);
+    assert.equal(new Set(ids).size, ids.length, "Duplicate slot identity");
+  }
   assert.ok(capabilityGroups && typeof capabilityGroups === "object" && !Array.isArray(capabilityGroups));
   assert.ok(Object.keys(capabilityGroups).length <= 512);
   for (const [name, values] of Object.entries(capabilityGroups)) {
@@ -75,6 +102,12 @@ function expand(input) {
     assert.ok(environment && typeof environment === "object" && !Array.isArray(environment) && Object.keys(environment).length > 0);
   }
   for (const slot of manifest.slots || []) {
+    if (Object.hasOwn(slot, "requiredTestGroup")) {
+      assert.ok(!Object.hasOwn(slot, "requiredTests"), "Conflicting test declarations");
+      assert.ok(typeof slot.requiredTestGroup === "string" && Object.hasOwn(testGroups, slot.requiredTestGroup), "Unknown test group");
+      slot.requiredTests = [...testGroups[slot.requiredTestGroup]];
+      delete slot.requiredTestGroup;
+    }
     if (Object.hasOwn(slot, "environmentGroup")) {
       assert.ok(!Object.hasOwn(slot, "environment"), "Conflicting environment declarations");
       assert.ok(typeof slot.environmentGroup === "string" && Object.hasOwn(environmentGroups, slot.environmentGroup), "Unknown environment group");

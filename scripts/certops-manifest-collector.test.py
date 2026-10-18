@@ -85,5 +85,19 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(expand({"slots": [{"requiredSources": ["a"]}]}), {"slots": [{"requiredSources": ["a"]}]})
 
 
+    def test_environment_variants_and_test_groups_preserve_independent_slots(self):
+        value = {"testGroups": {"shared": ["one", "two"]}, "environmentGroups": {"first": {"os": "a"}, "second": {"os": "b"}}, "slots": [{"suite": "sample", "requiredTestGroup": "shared", "environmentVariants": {"first-slot": "first", "second-slot": "second"}}]}
+        result = expand(value)
+        self.assertEqual(result["slots"], [{"suite": "sample", "id": "first-slot", "environment": {"os": "a"}, "requiredTests": ["one", "two"]}, {"suite": "sample", "id": "second-slot", "environment": {"os": "b"}, "requiredTests": ["one", "two"]}])
+        result["slots"][0]["requiredTests"].append("changed")
+        result["slots"][0]["environment"]["os"] = "changed"
+        self.assertEqual(result["slots"][1]["requiredTests"], ["one", "two"])
+        self.assertEqual(result["slots"][1]["environment"]["os"], "b")
+        self.assertEqual(len(value["slots"]), 1)
+        for patch in ({"testGroups": None}, {"testGroups": {"shared": []}}, {"testGroups": {"shared": ["one", "one"]}}, {"testGroups": {"shared": [False]}}, {"slots": [{"environmentVariants": {}}]}, {"slots": [{"id": "conflict", "environmentVariants": {"first": "first"}}]}, {"slots": [{"environment": {}, "environmentVariants": {"first": "first"}}]}, {"slots": [{"environmentVariants": {"first": False}}]}, {"slots": [{"environmentVariants": {"first": "absent"}}]}, {"slots": [{"id": "same"}, {"id": "same"}]}, {"slots": [{"requiredTestGroup": "absent"}]}, {"slots": [{"requiredTestGroup": "shared", "requiredTests": ["one"]}]}):
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                expand({**value, **patch})
+
+
 if __name__ == "__main__":
     unittest.main()

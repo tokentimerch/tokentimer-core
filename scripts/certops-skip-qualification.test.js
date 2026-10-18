@@ -155,3 +155,15 @@ test("native benign containment prerequisite routes to its actual Windows regres
   assert.equal(result.workflowStatus, "file-selected-not-qualified");
   assert.equal(result.executionStatus, "not-qualified");
 });
+test("stored skip defaults preserve all facts and cannot conceal routing or qualification drift", () => {
+  const {compact, expand} = require("./certops-skip-qualification");
+  const current = generate(); const stored = compact(current);
+  assert.deepEqual(expand(stored), current); assert.deepEqual(check(stored, current), []);
+  assert.equal(current.sites[0].reason, "no-host");
+  for (const field of ["reason", "workflow", "workflowStatus", "executionStatus", "classificationStatus"]) {
+    const changed = structuredClone(stored); changed.siteDefaults[field] = "changed";
+    assert.ok(check(changed, current).length);
+  }
+  const missing = {sites: [{kind: "one"}, {}]}; assert.deepEqual(expand(compact(missing)), missing);
+  for (const siteDefaults of [null, [], {id: "foreign"}]) assert.throws(() => expand({...stored, siteDefaults}));
+});

@@ -73,16 +73,42 @@ function generate(sites = scanner.buildInventory()) {
   }) };
 }
 function check(committed, current = generate()) {
-  return JSON.stringify(committed) === JSON.stringify(current) ? [] : ["Skip qualification mapping drift: review prerequisites and regenerate with --write"];
+  return require("node:util").isDeepStrictEqual(expand(committed), current) ? [] : ["Skip qualification mapping drift: review prerequisites and regenerate with --write"];
+}
+// Only storage repeats these routing/classification facts. Runtime callers still
+// receive every explicit site; defaults never establish execution evidence.
+const DEFAULT_FIELDS = ["kind", "reason", "workflow", "workflowStatus", "executionStatus", "classificationStatus"];
+function compact(value) {
+  const result = structuredClone(value);
+  result.siteDefaults = {};
+  for (const key of DEFAULT_FIELDS) {
+    if (!result.sites.every(site => Object.hasOwn(site, key))) continue;
+    const counts = new Map();
+    for (const site of result.sites) {
+      const encoded = JSON.stringify(site[key]);
+      if (encoded !== undefined) counts.set(encoded, (counts.get(encoded) || 0) + 1);
+    }
+    if (!counts.size) continue;
+    const selected = JSON.parse([...counts].sort((a, b) => b[1] - a[1])[0][0]);
+    result.siteDefaults[key] = selected;
+    for (const site of result.sites) if (site[key] === selected) delete site[key];
+  }
+  return result;
+}
+function expand(value) {
+  const {siteDefaults = {}, ...result} = structuredClone(value);
+  require("node:assert/strict").ok(siteDefaults && typeof siteDefaults === "object" && !Array.isArray(siteDefaults) && Object.keys(siteDefaults).every(key => DEFAULT_FIELDS.includes(key)), "Invalid skip site defaults");
+  result.sites = result.sites.map(site => ({...siteDefaults, ...site}));
+  return result;
 }
 if (require.main === module) {
   try {
     const current = generate();
     const problems = scanner.validateReasons(current.sites);
-    if (process.argv.includes("--write")) { fs.writeFileSync(output, JSON.stringify(current, null, 2) + "\n"); }
+    if (process.argv.includes("--write")) { fs.writeFileSync(output, JSON.stringify(compact(current), null, 2) + "\n"); }
     else problems.push(...check(JSON.parse(fs.readFileSync(output, "utf8")), current));
     if (problems.length) { console.error(problems.join("\n")); process.exitCode = 1; }
     else console.log(`Skip qualification mapping: ${current.sites.length} sites, none asserted qualified`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = { generate, check, environmentFor };
+module.exports = { generate, check, environmentFor, compact, expand };

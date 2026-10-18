@@ -24,7 +24,7 @@ test("ambiguous missing and malformed groups cannot hide source obligations", ()
 });
 test("every expanded committed slot retains a bounded unique source list", () => {
   const raw = require("../docs/certops/qualification-suites.json");
-  assert.equal(manifest.slots.length, raw.slots.length);
+  assert.equal(manifest.slots.length, raw.slots.reduce((count, slot) => count + (slot.environmentVariants ? Object.keys(slot.environmentVariants).length : 1), 0));
   assert.deepEqual(manifest.scenarios, raw.scenarios);
   for (const slot of manifest.slots) {
     assert.ok(!Object.hasOwn(slot, "requiredSourceGroup"));
@@ -90,4 +90,13 @@ test("shared capability sets remain independent and reject conflicting declarati
   result.requiredCapabilities.first.push("changed");
   assert.deepEqual(result.requiredCapabilities.second, ["windows", "system"]);
   for (const patch of [{capabilityGroups: null}, {capabilityGroups: {windows: []}}, {capabilityGroups: {windows: [false]}}, {capabilityGroups: {windows: ["windows", "windows"]}}, {suiteDefinitions: {first: {...suite, capabilities: ["windows"]}}}, {suiteDefinitions: {first: {...suite, capabilityGroup: "missing"}}}]) assert.throws(() => expand({...input, ...patch}));
+});
+test("environment variants and test groups expand to independent ordered slot obligations", () => {
+  const input = {testGroups: {shared: ["one", "two"]}, environmentGroups: {first: {os: "a"}, second: {os: "b"}}, slots: [{suite: "sample", requiredTestGroup: "shared", environmentVariants: {"first-slot": "first", "second-slot": "second"}}]};
+  const result = expand(input);
+  assert.deepEqual(result.slots, [{suite: "sample", id: "first-slot", environment: {os: "a"}, requiredTests: ["one", "two"]}, {suite: "sample", id: "second-slot", environment: {os: "b"}, requiredTests: ["one", "two"]}]);
+  result.slots[0].requiredTests.push("changed"); result.slots[0].environment.os = "changed";
+  assert.deepEqual(result.slots[1].requiredTests, ["one", "two"]); assert.equal(result.slots[1].environment.os, "b");
+  assert.equal(input.slots.length, 1); assert.equal(input.testGroups.shared.length, 2);
+  for (const patch of [{testGroups: null}, {testGroups: {shared: []}}, {testGroups: {shared: ["one", "one"]}}, {testGroups: {shared: [false]}}, {slots: [{environmentVariants: {}}]}, {slots: [{id: "conflict", environmentVariants: {first: "first"}}]}, {slots: [{environment: {}, environmentVariants: {first: "first"}}]}, {slots: [{environmentVariants: {first: false}}]}, {slots: [{environmentVariants: {first: "absent"}}]}, {slots: [{id: "same"}, {id: "same"}]}, {slots: [{requiredTestGroup: "absent"}]}, {slots: [{requiredTestGroup: "shared", requiredTests: ["one"]}]}]) assert.throws(() => expand({...input, ...patch}));
 });

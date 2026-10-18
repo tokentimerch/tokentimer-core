@@ -168,24 +168,9 @@
       "suite": "real-agent-windows-acme-iis/rsa-2048",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentGroup": "windows-host-2022-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2022-rsa-3072",
@@ -193,24 +178,9 @@
       "suite": "real-agent-windows-acme-iis/rsa-3072",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentGroup": "windows-host-2022-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2022-rsa-4096",
@@ -218,24 +188,9 @@
       "suite": "real-agent-windows-acme-iis/rsa-4096",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentGroup": "windows-host-2022-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2022-ec-p256",
@@ -243,24 +198,9 @@
       "suite": "real-agent-windows-acme-iis/ec-p256",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentGroup": "windows-host-2022-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2022-ec-p384",
@@ -268,24 +208,9 @@
       "suite": "real-agent-windows-acme-iis/ec-p384",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentGroup": "windows-host-2022-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-host-2025",
@@ -301,24 +226,9 @@
       "suite": "real-agent-windows-acme-iis/rsa-2048",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentGroup": "windows-host-2025-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2025-rsa-3072",
@@ -326,24 +236,9 @@
       "suite": "real-agent-windows-acme-iis/rsa-3072",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentGroup": "windows-host-2025-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2025-rsa-4096",
@@ -351,24 +246,9 @@
       "suite": "real-agent-windows-acme-iis/rsa-4096",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentGroup": "windows-host-2025-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2025-ec-p256",
@@ -376,24 +256,9 @@
       "suite": "real-agent-windows-acme-iis/ec-p256",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentGroup": "windows-host-2025-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
       "id": "windows-acme-2025-ec-p384",
@@ -401,96 +266,26 @@
       "suite": "real-agent-windows-acme-iis/ec-p384",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "windows-installed-credential-startup-refusals",
-        "windows-installed-retention-policy-startup-refusals",
-        "windows-installed-public-idle-retirement",
-        "windows-installed-config-encoding-refusals",
-        "windows-installed-scm-control-contract",
-        "windows-installed-unicode-spaces-literal-brackets",
-        "windows-installed-public-iis-deploy-refusal",
-        "windows-acme-public-key-reuse-refusal",
-        "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
-        "windows-installed-scm-controls-active-certificate-phase",
-        "windows-public-multi-target-admission-refusal",
-        "windows-installed-public-renewal-verify-rollback",
-        "windows-installed-signing-pin-startup-refusals",
-        "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
-      ],
       "requiredSourceGroup": "real-agent-windows-acme-iis-rsa-2048",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentGroup": "windows-host-2025-environment",
+      "requiredTestGroup": "real-agent-windows-acme-iis-rsa-2048-cases"
     },
     {
-      "id": "adcs-2019-en-US",
       "kind": "host",
       "suite": "enterprise-adcs-real",
       "source": "tests/e2e/certops-adcs-real-e2e.test.js",
       "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2019-en-us-environment"
-    },
-    {
-      "id": "adcs-2019-de-DE",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2019-de-de-environment"
-    },
-    {
-      "id": "adcs-2019-fr-FR",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2019-fr-fr-environment"
-    },
-    {
-      "id": "adcs-2022-en-US",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2022-en-us-environment"
-    },
-    {
-      "id": "adcs-2022-de-DE",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2022-de-de-environment"
-    },
-    {
-      "id": "adcs-2022-fr-FR",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2022-fr-fr-environment"
-    },
-    {
-      "id": "adcs-2025-en-US",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2025-en-us-environment"
-    },
-    {
-      "id": "adcs-2025-de-DE",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2025-de-de-environment"
-    },
-    {
-      "id": "adcs-2025-fr-FR",
-      "kind": "host",
-      "suite": "enterprise-adcs-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-real",
-      "environmentGroup": "adcs-2025-fr-fr-environment"
+      "environmentVariants": {
+        "adcs-2019-en-US": "adcs-2019-en-us-environment",
+        "adcs-2019-de-DE": "adcs-2019-de-de-environment",
+        "adcs-2019-fr-FR": "adcs-2019-fr-fr-environment",
+        "adcs-2022-en-US": "adcs-2022-en-us-environment",
+        "adcs-2022-de-DE": "adcs-2022-de-de-environment",
+        "adcs-2022-fr-FR": "adcs-2022-fr-fr-environment",
+        "adcs-2025-en-US": "adcs-2025-en-us-environment",
+        "adcs-2025-de-DE": "adcs-2025-de-de-environment",
+        "adcs-2025-fr-FR": "adcs-2025-fr-fr-environment"
+      }
     },
     {
       "id": "linux-real-acme",
@@ -538,7 +333,6 @@
       "environmentGroup": "job-decisions-api-environment"
     },
     {
-      "id": "linux-systemd-22.04",
       "kind": "stack",
       "suite": "real-agent-linux-systemd",
       "source": "tests/e2e/certops-agent-e2e.test.js",
@@ -546,18 +340,10 @@
       "requiredTests": [
         "real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart"
       ],
-      "environmentGroup": "linux-systemd-22-04-environment"
-    },
-    {
-      "id": "linux-systemd-24.04",
-      "kind": "stack",
-      "suite": "real-agent-linux-systemd",
-      "source": "tests/e2e/certops-agent-e2e.test.js",
-      "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "real Linux systemd: installer registers non-root agent protects credentials recovers and retires without restart"
-      ],
-      "environmentGroup": "linux-systemd-24-04-environment"
+      "environmentVariants": {
+        "linux-systemd-22.04": "linux-systemd-22-04-environment",
+        "linux-systemd-24.04": "linux-systemd-24-04-environment"
+      }
     },
     {
       "id": "kubernetes-controller-api",
@@ -721,47 +507,21 @@
       "suite": "real-agent-acmesh-filesystem",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
-        "real ACME: manual and default scheduler renewals reuse the same local key",
-        "real-acme-new-order-transport-refusal",
-        "real-acme-finalize-transport-refusal",
-        "real ACME: production worker default minute cron renews twice"
-      ],
       "requiredSourceGroup": "real-agent-acmesh-filesystem",
-      "environmentGroup": "job-decisions-api-environment"
+      "environmentGroup": "job-decisions-api-environment",
+      "requiredTestGroup": "real-agent-acmesh-filesystem-cases"
     },
     {
-      "id": "filesystem-linux-22.04",
       "kind": "host",
       "suite": "filesystem-host",
       "source": "scripts/certops-filesystem-host.js",
       "requiredSourceGroup": "filesystem-host",
-      "environmentGroup": "filesystem-linux-22-04-environment"
-    },
-    {
-      "id": "filesystem-linux-24.04",
-      "kind": "host",
-      "suite": "filesystem-host",
-      "source": "scripts/certops-filesystem-host.js",
-      "requiredSourceGroup": "filesystem-host",
-      "environmentGroup": "filesystem-linux-24-04-environment"
-    },
-    {
-      "id": "filesystem-windows-2022",
-      "kind": "host",
-      "suite": "filesystem-host",
-      "source": "scripts/certops-filesystem-host.js",
-      "requiredSourceGroup": "filesystem-host",
-      "environmentGroup": "windows-host-2022-environment"
-    },
-    {
-      "id": "filesystem-windows-2025",
-      "kind": "host",
-      "suite": "filesystem-host",
-      "source": "scripts/certops-filesystem-host.js",
-      "requiredSourceGroup": "filesystem-host",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentVariants": {
+        "filesystem-linux-22.04": "filesystem-linux-22-04-environment",
+        "filesystem-linux-24.04": "filesystem-linux-24-04-environment",
+        "filesystem-windows-2022": "windows-host-2022-environment",
+        "filesystem-windows-2025": "windows-host-2025-environment"
+      }
     },
     {
       "id": "linux-csr-observation-api",
@@ -771,20 +531,14 @@
       "environmentGroup": "job-decisions-api-environment"
     },
     {
-      "id": "nginx-ubuntu-22.04",
       "kind": "host",
       "suite": "nginx-host",
       "source": "scripts/certops-nginx-host.js",
       "requiredSourceGroup": "nginx-host",
-      "environmentGroup": "filesystem-linux-22-04-environment"
-    },
-    {
-      "id": "nginx-ubuntu-24.04",
-      "kind": "host",
-      "suite": "nginx-host",
-      "source": "scripts/certops-nginx-host.js",
-      "requiredSourceGroup": "nginx-host",
-      "environmentGroup": "filesystem-linux-24-04-environment"
+      "environmentVariants": {
+        "nginx-ubuntu-22.04": "filesystem-linux-22-04-environment",
+        "nginx-ubuntu-24.04": "filesystem-linux-24-04-environment"
+      }
     },
     {
       "id": "linux-observe-only-api",
@@ -958,36 +712,24 @@
       "environmentGroup": "job-decisions-api-environment"
     },
     {
-      "id": "apache-ubuntu-22.04",
       "kind": "host",
       "suite": "apache-host",
       "source": "scripts/certops-nginx-host.js",
       "requiredSourceGroup": "nginx-host",
-      "environmentGroup": "filesystem-linux-22-04-environment"
+      "environmentVariants": {
+        "apache-ubuntu-22.04": "filesystem-linux-22-04-environment",
+        "apache-ubuntu-24.04": "filesystem-linux-24-04-environment"
+      }
     },
     {
-      "id": "apache-ubuntu-24.04",
-      "kind": "host",
-      "suite": "apache-host",
-      "source": "scripts/certops-nginx-host.js",
-      "requiredSourceGroup": "nginx-host",
-      "environmentGroup": "filesystem-linux-24-04-environment"
-    },
-    {
-      "id": "haproxy-ubuntu-22.04",
       "kind": "host",
       "suite": "haproxy-host",
       "source": "scripts/certops-nginx-host.js",
       "requiredSourceGroup": "nginx-host",
-      "environmentGroup": "filesystem-linux-22-04-environment"
-    },
-    {
-      "id": "haproxy-ubuntu-24.04",
-      "kind": "host",
-      "suite": "haproxy-host",
-      "source": "scripts/certops-nginx-host.js",
-      "requiredSourceGroup": "nginx-host",
-      "environmentGroup": "filesystem-linux-24-04-environment"
+      "environmentVariants": {
+        "haproxy-ubuntu-22.04": "filesystem-linux-22-04-environment",
+        "haproxy-ubuntu-24.04": "filesystem-linux-24-04-environment"
+      }
     },
     {
       "id": "linux-native-agent-api",
@@ -1064,15 +806,9 @@
       "suite": "real-agent-acme-eab-filesystem",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
-        "real ACME: manual and default scheduler renewals reuse the same local key",
-        "real-acme-new-order-transport-refusal",
-        "real-acme-finalize-transport-refusal",
-        "real ACME: production worker default minute cron renews twice"
-      ],
       "requiredSourceGroup": "real-agent-acmesh-filesystem",
-      "environmentGroup": "job-decisions-api-environment"
+      "environmentGroup": "job-decisions-api-environment",
+      "requiredTestGroup": "real-agent-acmesh-filesystem-cases"
     },
     {
       "id": "linux-real-acmesh-eab",
@@ -1080,15 +816,9 @@
       "suite": "real-agent-acmesh-eab-filesystem",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
-        "real ACME: manual and default scheduler renewals reuse the same local key",
-        "real-acme-new-order-transport-refusal",
-        "real-acme-finalize-transport-refusal",
-        "real ACME: production worker default minute cron renews twice"
-      ],
       "requiredSourceGroup": "real-agent-acmesh-filesystem",
-      "environmentGroup": "job-decisions-api-environment"
+      "environmentGroup": "job-decisions-api-environment",
+      "requiredTestGroup": "real-agent-acmesh-filesystem-cases"
     },
     {
       "id": "linux-profile-issuer-switch-api",
@@ -1115,15 +845,9 @@
       "suite": "real-agent-alpine-acmesh",
       "source": "tests/e2e/certops-agent-e2e.test.js",
       "requiredInventory": "tests/e2e/agent-protocol-required-tests.json",
-      "requiredTests": [
-        "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
-        "real ACME: manual and default scheduler renewals reuse the same local key",
-        "real-acme-new-order-transport-refusal",
-        "real-acme-finalize-transport-refusal",
-        "real ACME: production worker default minute cron renews twice"
-      ],
       "requiredSourceGroup": "real-agent-acmesh-filesystem",
-      "environmentGroup": "alpine-real-acme-certbot-environment"
+      "environmentGroup": "alpine-real-acme-certbot-environment",
+      "requiredTestGroup": "real-agent-acmesh-filesystem-cases"
     },
     {
       "id": "linux-ca-capacity-api",
@@ -1205,74 +929,21 @@
       "environmentGroup": "linux-systemd-24-04-environment"
     },
     {
-      "id": "windows-adoption-2022-rsa-2048",
       "kind": "host",
       "suite": "windows-adoption-retention-real",
       "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2022-rsa-2048-environment"
-    },
-    {
-      "id": "windows-adoption-2022-rsa-3072",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2022-rsa-3072-environment"
-    },
-    {
-      "id": "windows-adoption-2022-rsa-4096",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2022-rsa-4096-environment"
-    },
-    {
-      "id": "windows-adoption-2022-ec-p256",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2022-ec-p256-environment"
-    },
-    {
-      "id": "windows-adoption-2022-ec-p384",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2022-ec-p384-environment"
-    },
-    {
-      "id": "windows-adoption-2025-rsa-2048",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2025-rsa-2048-environment"
-    },
-    {
-      "id": "windows-adoption-2025-rsa-3072",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2025-rsa-3072-environment"
-    },
-    {
-      "id": "windows-adoption-2025-rsa-4096",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2025-rsa-4096-environment"
-    },
-    {
-      "id": "windows-adoption-2025-ec-p256",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2025-ec-p256-environment"
-    },
-    {
-      "id": "windows-adoption-2025-ec-p384",
-      "kind": "host",
-      "suite": "windows-adoption-retention-real",
-      "source": "tests/e2e/windows-adoption-retention-journey.js",
-      "environmentGroup": "windows-adoption-2025-ec-p384-environment"
+      "environmentVariants": {
+        "windows-adoption-2022-rsa-2048": "windows-adoption-2022-rsa-2048-environment",
+        "windows-adoption-2022-rsa-3072": "windows-adoption-2022-rsa-3072-environment",
+        "windows-adoption-2022-rsa-4096": "windows-adoption-2022-rsa-4096-environment",
+        "windows-adoption-2022-ec-p256": "windows-adoption-2022-ec-p256-environment",
+        "windows-adoption-2022-ec-p384": "windows-adoption-2022-ec-p384-environment",
+        "windows-adoption-2025-rsa-2048": "windows-adoption-2025-rsa-2048-environment",
+        "windows-adoption-2025-rsa-3072": "windows-adoption-2025-rsa-3072-environment",
+        "windows-adoption-2025-rsa-4096": "windows-adoption-2025-rsa-4096-environment",
+        "windows-adoption-2025-ec-p256": "windows-adoption-2025-ec-p256-environment",
+        "windows-adoption-2025-ec-p384": "windows-adoption-2025-ec-p384-environment"
+      }
     },
     {
       "id": "certificate-audit-api",
@@ -1336,18 +1007,13 @@
       "environmentGroup": "linux-systemd-24-04-environment"
     },
     {
-      "id": "linux-systemd-writepath-22.04",
       "kind": "host",
       "suite": "linux-systemd-writepath",
       "source": "tests/e2e/linux-systemd-real-journey.js",
-      "environmentGroup": "linux-systemd-22-04-environment"
-    },
-    {
-      "id": "linux-systemd-writepath-24.04",
-      "kind": "host",
-      "suite": "linux-systemd-writepath",
-      "source": "tests/e2e/linux-systemd-real-journey.js",
-      "environmentGroup": "linux-systemd-24-04-environment"
+      "environmentVariants": {
+        "linux-systemd-writepath-22.04": "linux-systemd-22-04-environment",
+        "linux-systemd-writepath-24.04": "linux-systemd-24-04-environment"
+      }
     },
     {
       "id": "dns-provider-errors",
@@ -1416,84 +1082,22 @@
       "environmentGroup": "job-decisions-api-environment"
     },
     {
-      "id": "windows-output-privacy-2022-rsa-2048",
       "kind": "host",
       "suite": "windows-native-child-output-privacy",
       "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
       "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2022-rsa-2048-environment"
-    },
-    {
-      "id": "windows-output-privacy-2022-rsa-3072",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2022-rsa-3072-environment"
-    },
-    {
-      "id": "windows-output-privacy-2022-rsa-4096",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2022-rsa-4096-environment"
-    },
-    {
-      "id": "windows-output-privacy-2022-ec-p256",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2022-ec-p256-environment"
-    },
-    {
-      "id": "windows-output-privacy-2022-ec-p384",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2022-ec-p384-environment"
-    },
-    {
-      "id": "windows-output-privacy-2025-rsa-2048",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2025-rsa-2048-environment"
-    },
-    {
-      "id": "windows-output-privacy-2025-rsa-3072",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2025-rsa-3072-environment"
-    },
-    {
-      "id": "windows-output-privacy-2025-rsa-4096",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2025-rsa-4096-environment"
-    },
-    {
-      "id": "windows-output-privacy-2025-ec-p256",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2025-ec-p256-environment"
-    },
-    {
-      "id": "windows-output-privacy-2025-ec-p384",
-      "kind": "host",
-      "suite": "windows-native-child-output-privacy",
-      "source": "tests/e2e/helpers/certops-windows-output-privacy.js",
-      "requiredSourceGroup": "windows-native-child-output-privacy",
-      "environmentGroup": "windows-adoption-2025-ec-p384-environment"
+      "environmentVariants": {
+        "windows-output-privacy-2022-rsa-2048": "windows-adoption-2022-rsa-2048-environment",
+        "windows-output-privacy-2022-rsa-3072": "windows-adoption-2022-rsa-3072-environment",
+        "windows-output-privacy-2022-rsa-4096": "windows-adoption-2022-rsa-4096-environment",
+        "windows-output-privacy-2022-ec-p256": "windows-adoption-2022-ec-p256-environment",
+        "windows-output-privacy-2022-ec-p384": "windows-adoption-2022-ec-p384-environment",
+        "windows-output-privacy-2025-rsa-2048": "windows-adoption-2025-rsa-2048-environment",
+        "windows-output-privacy-2025-rsa-3072": "windows-adoption-2025-rsa-3072-environment",
+        "windows-output-privacy-2025-rsa-4096": "windows-adoption-2025-rsa-4096-environment",
+        "windows-output-privacy-2025-ec-p256": "windows-adoption-2025-ec-p256-environment",
+        "windows-output-privacy-2025-ec-p384": "windows-adoption-2025-ec-p384-environment"
+      }
     },
     {
       "id": "browser-agent-console-ubuntu24",
@@ -1519,20 +1123,14 @@
       "environmentGroup": "job-decisions-api-environment"
     },
     {
-      "id": "linux-systemd-reapply-22.04",
       "kind": "host",
       "suite": "linux-systemd-reapply",
       "source": "tests/e2e/helpers/linux-systemd-reapply.js",
       "requiredSourceGroup": "linux-systemd-reapply",
-      "environmentGroup": "linux-systemd-22-04-environment"
-    },
-    {
-      "id": "linux-systemd-reapply-24.04",
-      "kind": "host",
-      "suite": "linux-systemd-reapply",
-      "source": "tests/e2e/helpers/linux-systemd-reapply.js",
-      "requiredSourceGroup": "linux-systemd-reapply",
-      "environmentGroup": "linux-systemd-24-04-environment"
+      "environmentVariants": {
+        "linux-systemd-reapply-22.04": "linux-systemd-22-04-environment",
+        "linux-systemd-reapply-24.04": "linux-systemd-24-04-environment"
+      }
     },
     {
       "id": "agent-log-maintenance-ubuntu24",
@@ -1547,36 +1145,24 @@
       "environmentGroup": "linux-systemd-24-04-environment"
     },
     {
-      "id": "windows-source-upgrade-2022",
       "kind": "host",
       "suite": "windows-historical-source-upgrade",
       "source": "tests/e2e/helpers/certops-windows-source-upgrade.js",
       "requiredSourceGroup": "windows-historical-source-upgrade",
-      "environmentGroup": "windows-source-upgrade-2022-environment"
+      "environmentVariants": {
+        "windows-source-upgrade-2022": "windows-source-upgrade-2022-environment",
+        "windows-source-upgrade-2025": "windows-source-upgrade-2025-environment"
+      }
     },
     {
-      "id": "windows-source-upgrade-2025",
-      "kind": "host",
-      "suite": "windows-historical-source-upgrade",
-      "source": "tests/e2e/helpers/certops-windows-source-upgrade.js",
-      "requiredSourceGroup": "windows-historical-source-upgrade",
-      "environmentGroup": "windows-source-upgrade-2025-environment"
-    },
-    {
-      "id": "linux-systemd-published-upgrade-22.04",
       "kind": "host",
       "suite": "linux-systemd-published-upgrade",
       "source": "tests/e2e/helpers/linux-systemd-published-upgrade.js",
       "requiredSourceGroup": "linux-systemd-published-upgrade",
-      "environmentGroup": "linux-systemd-22-04-environment"
-    },
-    {
-      "id": "linux-systemd-published-upgrade-24.04",
-      "kind": "host",
-      "suite": "linux-systemd-published-upgrade",
-      "source": "tests/e2e/helpers/linux-systemd-published-upgrade.js",
-      "requiredSourceGroup": "linux-systemd-published-upgrade",
-      "environmentGroup": "linux-systemd-24-04-environment"
+      "environmentVariants": {
+        "linux-systemd-published-upgrade-22.04": "linux-systemd-22-04-environment",
+        "linux-systemd-published-upgrade-24.04": "linux-systemd-24-04-environment"
+      }
     },
     {
       "id": "decommission-lifecycle-api-ubuntu24",
@@ -1625,84 +1211,22 @@
       "environmentGroup": "linux-systemd-24-04-environment"
     },
     {
-      "id": "windows-wrong-spki-2022-rsa-2048",
       "kind": "host",
       "suite": "windows-acme-wrong-spki",
       "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
       "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2022-rsa-2048-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2022-rsa-3072",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2022-rsa-3072-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2022-rsa-4096",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2022-rsa-4096-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2022-ec-p256",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2022-ec-p256-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2022-ec-p384",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2022-ec-p384-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2025-rsa-2048",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2025-rsa-2048-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2025-rsa-3072",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2025-rsa-3072-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2025-rsa-4096",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2025-rsa-4096-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2025-ec-p256",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2025-ec-p256-environment"
-    },
-    {
-      "id": "windows-wrong-spki-2025-ec-p384",
-      "kind": "host",
-      "suite": "windows-acme-wrong-spki",
-      "source": "tests/e2e/helpers/certops-windows-wrong-leaf.js",
-      "requiredSourceGroup": "windows-acme-wrong-spki",
-      "environmentGroup": "windows-adoption-2025-ec-p384-environment"
+      "environmentVariants": {
+        "windows-wrong-spki-2022-rsa-2048": "windows-adoption-2022-rsa-2048-environment",
+        "windows-wrong-spki-2022-rsa-3072": "windows-adoption-2022-rsa-3072-environment",
+        "windows-wrong-spki-2022-rsa-4096": "windows-adoption-2022-rsa-4096-environment",
+        "windows-wrong-spki-2022-ec-p256": "windows-adoption-2022-ec-p256-environment",
+        "windows-wrong-spki-2022-ec-p384": "windows-adoption-2022-ec-p384-environment",
+        "windows-wrong-spki-2025-rsa-2048": "windows-adoption-2025-rsa-2048-environment",
+        "windows-wrong-spki-2025-rsa-3072": "windows-adoption-2025-rsa-3072-environment",
+        "windows-wrong-spki-2025-rsa-4096": "windows-adoption-2025-rsa-4096-environment",
+        "windows-wrong-spki-2025-ec-p256": "windows-adoption-2025-ec-p256-environment",
+        "windows-wrong-spki-2025-ec-p384": "windows-adoption-2025-ec-p384-environment"
+      }
     },
     {
       "id": "retired-identity-scheduler-api-ubuntu24",
@@ -1713,20 +1237,14 @@
       "environmentGroup": "linux-systemd-24-04-environment"
     },
     {
-      "id": "windows-first-rename-refusal-2022",
       "kind": "host",
       "suite": "windows-installer-first-rename-refusal",
       "source": "tests/e2e/helpers/certops-windows-rename-refusal.js",
       "requiredSourceGroup": "windows-installer-first-rename-refusal",
-      "environmentGroup": "windows-adoption-2022-rsa-2048-environment"
-    },
-    {
-      "id": "windows-first-rename-refusal-2025",
-      "kind": "host",
-      "suite": "windows-installer-first-rename-refusal",
-      "source": "tests/e2e/helpers/certops-windows-rename-refusal.js",
-      "requiredSourceGroup": "windows-installer-first-rename-refusal",
-      "environmentGroup": "windows-adoption-2025-rsa-2048-environment"
+      "environmentVariants": {
+        "windows-first-rename-refusal-2022": "windows-adoption-2022-rsa-2048-environment",
+        "windows-first-rename-refusal-2025": "windows-adoption-2025-rsa-2048-environment"
+      }
     },
     {
       "id": "browser-retirement-ubuntu24",
@@ -1741,20 +1259,14 @@
       "environmentGroup": "browser-retirement-ubuntu24-environment"
     },
     {
-      "id": "windows-second-rename-2022-rsa-2048",
       "kind": "host",
       "suite": "windows-activation-second-rename",
       "source": "tests/e2e/helpers/certops-windows-second-rename.js",
       "requiredSourceGroup": "windows-activation-second-rename",
-      "environmentGroup": "windows-second-rename-2022-rsa-2048-environment"
-    },
-    {
-      "id": "windows-second-rename-2025-rsa-2048",
-      "kind": "host",
-      "suite": "windows-activation-second-rename",
-      "source": "tests/e2e/helpers/certops-windows-second-rename.js",
-      "requiredSourceGroup": "windows-activation-second-rename",
-      "environmentGroup": "windows-second-rename-2025-rsa-2048-environment"
+      "environmentVariants": {
+        "windows-second-rename-2022-rsa-2048": "windows-second-rename-2022-rsa-2048-environment",
+        "windows-second-rename-2025-rsa-2048": "windows-second-rename-2025-rsa-2048-environment"
+      }
     },
     {
       "id": "browser-certificate-audit-ubuntu24",
@@ -1772,84 +1284,22 @@
       "environmentGroup": "browser-retirement-ubuntu24-environment"
     },
     {
-      "id": "windows-two-renewals-2022-rsa-2048",
       "kind": "host",
       "suite": "windows-two-unattended-renewals",
       "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
       "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-second-rename-2022-rsa-2048-environment"
-    },
-    {
-      "id": "windows-two-renewals-2022-rsa-3072",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2022-rsa-3072-environment"
-    },
-    {
-      "id": "windows-two-renewals-2022-rsa-4096",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2022-rsa-4096-environment"
-    },
-    {
-      "id": "windows-two-renewals-2022-ec-p256",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2022-ec-p256-environment"
-    },
-    {
-      "id": "windows-two-renewals-2022-ec-p384",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2022-ec-p384-environment"
-    },
-    {
-      "id": "windows-two-renewals-2025-rsa-2048",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-second-rename-2025-rsa-2048-environment"
-    },
-    {
-      "id": "windows-two-renewals-2025-rsa-3072",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2025-rsa-3072-environment"
-    },
-    {
-      "id": "windows-two-renewals-2025-rsa-4096",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2025-rsa-4096-environment"
-    },
-    {
-      "id": "windows-two-renewals-2025-ec-p256",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2025-ec-p256-environment"
-    },
-    {
-      "id": "windows-two-renewals-2025-ec-p384",
-      "kind": "host",
-      "suite": "windows-two-unattended-renewals",
-      "source": "tests/e2e/helpers/certops-windows-two-renewals.js",
-      "requiredSourceGroup": "windows-two-unattended-renewals",
-      "environmentGroup": "windows-two-renewals-2025-ec-p384-environment"
+      "environmentVariants": {
+        "windows-two-renewals-2022-rsa-2048": "windows-second-rename-2022-rsa-2048-environment",
+        "windows-two-renewals-2022-rsa-3072": "windows-two-renewals-2022-rsa-3072-environment",
+        "windows-two-renewals-2022-rsa-4096": "windows-two-renewals-2022-rsa-4096-environment",
+        "windows-two-renewals-2022-ec-p256": "windows-two-renewals-2022-ec-p256-environment",
+        "windows-two-renewals-2022-ec-p384": "windows-two-renewals-2022-ec-p384-environment",
+        "windows-two-renewals-2025-rsa-2048": "windows-second-rename-2025-rsa-2048-environment",
+        "windows-two-renewals-2025-rsa-3072": "windows-two-renewals-2025-rsa-3072-environment",
+        "windows-two-renewals-2025-rsa-4096": "windows-two-renewals-2025-rsa-4096-environment",
+        "windows-two-renewals-2025-ec-p256": "windows-two-renewals-2025-ec-p256-environment",
+        "windows-two-renewals-2025-ec-p384": "windows-two-renewals-2025-ec-p384-environment"
+      }
     },
     {
       "id": "renewal-key-facts-api",
@@ -1867,116 +1317,42 @@
       "environmentGroup": "job-decisions-api-environment"
     },
     {
-      "id": "windows-canonical-root-2022",
       "kind": "host",
       "suite": "windows-canonical-root-lifecycle",
       "source": "tests/e2e/helpers/certops-windows-fixed-root.js",
       "requiredSourceGroup": "windows-canonical-root-lifecycle",
-      "environmentGroup": "windows-source-upgrade-2022-environment"
+      "environmentVariants": {
+        "windows-canonical-root-2022": "windows-source-upgrade-2022-environment",
+        "windows-canonical-root-2025": "windows-source-upgrade-2025-environment"
+      }
     },
     {
-      "id": "windows-canonical-root-2025",
-      "kind": "host",
-      "suite": "windows-canonical-root-lifecycle",
-      "source": "tests/e2e/helpers/certops-windows-fixed-root.js",
-      "requiredSourceGroup": "windows-canonical-root-lifecycle",
-      "environmentGroup": "windows-source-upgrade-2025-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2022-rsa-2048",
       "kind": "host",
       "suite": "windows-certificate-dry-run",
       "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
       "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-second-rename-2022-rsa-2048-environment"
+      "environmentVariants": {
+        "windows-certificate-dry-run-2022-rsa-2048": "windows-second-rename-2022-rsa-2048-environment",
+        "windows-certificate-dry-run-2022-rsa-3072": "windows-two-renewals-2022-rsa-3072-environment",
+        "windows-certificate-dry-run-2022-rsa-4096": "windows-two-renewals-2022-rsa-4096-environment",
+        "windows-certificate-dry-run-2022-ec-p256": "windows-two-renewals-2022-ec-p256-environment",
+        "windows-certificate-dry-run-2022-ec-p384": "windows-two-renewals-2022-ec-p384-environment",
+        "windows-certificate-dry-run-2025-rsa-2048": "windows-second-rename-2025-rsa-2048-environment",
+        "windows-certificate-dry-run-2025-rsa-3072": "windows-two-renewals-2025-rsa-3072-environment",
+        "windows-certificate-dry-run-2025-rsa-4096": "windows-two-renewals-2025-rsa-4096-environment",
+        "windows-certificate-dry-run-2025-ec-p256": "windows-two-renewals-2025-ec-p256-environment",
+        "windows-certificate-dry-run-2025-ec-p384": "windows-two-renewals-2025-ec-p384-environment"
+      }
     },
     {
-      "id": "windows-certificate-dry-run-2022-rsa-3072",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2022-rsa-3072-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2022-rsa-4096",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2022-rsa-4096-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2022-ec-p256",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2022-ec-p256-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2022-ec-p384",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2022-ec-p384-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2025-rsa-2048",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-second-rename-2025-rsa-2048-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2025-rsa-3072",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2025-rsa-3072-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2025-rsa-4096",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2025-rsa-4096-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2025-ec-p256",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2025-ec-p256-environment"
-    },
-    {
-      "id": "windows-certificate-dry-run-2025-ec-p384",
-      "kind": "host",
-      "suite": "windows-certificate-dry-run",
-      "source": "tests/e2e/helpers/certops-windows-certificate-dry-run.js",
-      "requiredSourceGroup": "windows-certificate-dry-run",
-      "environmentGroup": "windows-two-renewals-2025-ec-p384-environment"
-    },
-    {
-      "id": "windows-cli-second-rename-2022",
       "kind": "host",
       "suite": "windows-installer-cli-second-rename",
       "source": "tests/e2e/helpers/certops-windows-cli-second-rename.js",
       "requiredSourceGroup": "windows-installer-cli-second-rename",
-      "environmentGroup": "windows-source-upgrade-2022-environment"
-    },
-    {
-      "id": "windows-cli-second-rename-2025",
-      "kind": "host",
-      "suite": "windows-installer-cli-second-rename",
-      "source": "tests/e2e/helpers/certops-windows-cli-second-rename.js",
-      "requiredSourceGroup": "windows-installer-cli-second-rename",
-      "environmentGroup": "windows-source-upgrade-2025-environment"
+      "environmentVariants": {
+        "windows-cli-second-rename-2022": "windows-source-upgrade-2022-environment",
+        "windows-cli-second-rename-2025": "windows-source-upgrade-2025-environment"
+      }
     },
     {
       "id": "windows-arm64-cng-runtime",
@@ -2393,68 +1769,20 @@
       "environmentGroup": "linux-native-acme-browser-console-ubuntu24-certbot-environment"
     },
     {
-      "id": "enterprise-adcs-hierarchy-2019-en-US",
       "kind": "host",
       "suite": "enterprise-adcs-hierarchy-real",
       "source": "tests/e2e/certops-adcs-real-e2e.test.js",
       "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2019-en-us-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2019-de-DE",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2019-de-de-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2019-fr-FR",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2019-fr-fr-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2022-de-DE",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2022-de-de-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2022-fr-FR",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2022-fr-fr-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2025-en-US",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2025-en-us-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2025-de-DE",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2025-de-de-environment"
-    },
-    {
-      "id": "enterprise-adcs-hierarchy-2025-fr-FR",
-      "kind": "host",
-      "suite": "enterprise-adcs-hierarchy-real",
-      "source": "tests/e2e/certops-adcs-real-e2e.test.js",
-      "requiredSourceGroup": "enterprise-adcs-hierarchy-real",
-      "environmentGroup": "adcs-2025-fr-fr-environment"
+      "environmentVariants": {
+        "enterprise-adcs-hierarchy-2019-en-US": "adcs-2019-en-us-environment",
+        "enterprise-adcs-hierarchy-2019-de-DE": "adcs-2019-de-de-environment",
+        "enterprise-adcs-hierarchy-2019-fr-FR": "adcs-2019-fr-fr-environment",
+        "enterprise-adcs-hierarchy-2022-de-DE": "adcs-2022-de-de-environment",
+        "enterprise-adcs-hierarchy-2022-fr-FR": "adcs-2022-fr-fr-environment",
+        "enterprise-adcs-hierarchy-2025-en-US": "adcs-2025-en-us-environment",
+        "enterprise-adcs-hierarchy-2025-de-DE": "adcs-2025-de-de-environment",
+        "enterprise-adcs-hierarchy-2025-fr-FR": "adcs-2025-fr-fr-environment"
+      }
     },
     {
       "id": "linux-native-acme-browser-lifecycle-ubuntu24-certbot",
@@ -2524,20 +1852,14 @@
       "environmentGroup": "linux-native-acme-browser-console-ubuntu24-certbot-environment"
     },
     {
-      "id": "windows-webhosting-retention-2022",
       "kind": "host",
       "suite": "windows-webhosting-retention",
       "source": "scripts/certops-windows-webhosting-retention.js",
       "requiredSourceGroup": "windows-webhosting-retention",
-      "environmentGroup": "windows-host-2022-environment"
-    },
-    {
-      "id": "windows-webhosting-retention-2025",
-      "kind": "host",
-      "suite": "windows-webhosting-retention",
-      "source": "scripts/certops-windows-webhosting-retention.js",
-      "requiredSourceGroup": "windows-webhosting-retention",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentVariants": {
+        "windows-webhosting-retention-2022": "windows-host-2022-environment",
+        "windows-webhosting-retention-2025": "windows-host-2025-environment"
+      }
     },
     {
       "id": "linux-installed-file-discovery-22.04",
@@ -2561,52 +1883,34 @@
       "environmentGroup": "linux-real-acme-environment"
     },
     {
-      "id": "windows-installed-stop-offline-2022",
       "kind": "host",
       "suite": "windows-installed-stop-offline-renewal",
       "source": "scripts/certops-windows-stop-offline.js",
       "requiredSourceGroup": "windows-installed-stop-offline-renewal",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentVariants": {
+        "windows-installed-stop-offline-2022": "windows-host-2022-environment",
+        "windows-installed-stop-offline-2025": "windows-host-2025-environment"
+      }
     },
     {
-      "id": "windows-installed-stop-offline-2025",
-      "kind": "host",
-      "suite": "windows-installed-stop-offline-renewal",
-      "source": "scripts/certops-windows-stop-offline.js",
-      "requiredSourceGroup": "windows-installed-stop-offline-renewal",
-      "environmentGroup": "windows-host-2025-environment"
-    },
-    {
-      "id": "windows-installed-alive-grace-2022",
       "kind": "host",
       "suite": "windows-installed-alive-grace-renewal",
       "source": "scripts/certops-windows-alive-grace.js",
       "requiredSourceGroup": "windows-installed-alive-grace-renewal",
-      "environmentGroup": "windows-host-2022-environment"
+      "environmentVariants": {
+        "windows-installed-alive-grace-2022": "windows-host-2022-environment",
+        "windows-installed-alive-grace-2025": "windows-host-2025-environment"
+      }
     },
     {
-      "id": "windows-installed-alive-grace-2025",
-      "kind": "host",
-      "suite": "windows-installed-alive-grace-renewal",
-      "source": "scripts/certops-windows-alive-grace.js",
-      "requiredSourceGroup": "windows-installed-alive-grace-renewal",
-      "environmentGroup": "windows-host-2025-environment"
-    },
-    {
-      "id": "windows-installed-failed-rollback-2022",
       "kind": "host",
       "suite": "windows-installed-failed-rollback-renewal",
       "source": "scripts/certops-windows-failed-rollback.js",
       "requiredSourceGroup": "windows-installed-failed-rollback-renewal",
-      "environmentGroup": "windows-host-2022-environment"
-    },
-    {
-      "id": "windows-installed-failed-rollback-2025",
-      "kind": "host",
-      "suite": "windows-installed-failed-rollback-renewal",
-      "source": "scripts/certops-windows-failed-rollback.js",
-      "requiredSourceGroup": "windows-installed-failed-rollback-renewal",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentVariants": {
+        "windows-installed-failed-rollback-2022": "windows-host-2022-environment",
+        "windows-installed-failed-rollback-2025": "windows-host-2025-environment"
+      }
     },
     {
       "id": "distribution-agent-ordinary",
@@ -2862,20 +2166,14 @@
       "requiredSourceGroup": "windows-installed-bind-failure-rollback"
     },
     {
-      "id": "windows-installed-interruption-recovery",
       "kind": "host",
       "suite": "windows-installed-interruption-recovery",
       "source": "tests/e2e/helpers/certops-windows-interruption-native.js",
       "requiredSourceGroup": "windows-installed-stop-offline-renewal",
-      "environmentGroup": "windows-host-2022-environment"
-    },
-    {
-      "id": "windows-installed-interruption-recovery-2025",
-      "kind": "host",
-      "suite": "windows-installed-interruption-recovery",
-      "source": "tests/e2e/helpers/certops-windows-interruption-native.js",
-      "requiredSourceGroup": "windows-installed-stop-offline-renewal",
-      "environmentGroup": "windows-host-2025-environment"
+      "environmentVariants": {
+        "windows-installed-interruption-recovery": "windows-host-2022-environment",
+        "windows-installed-interruption-recovery-2025": "windows-host-2025-environment"
+      }
     },
     {
       "id": "windows-native-issuer-reassignment",
@@ -9606,6 +8904,31 @@
     "windows-fixed-root-unmodified-contract": [
       "windows",
       "elevated"
+    ]
+  },
+  "testGroups": {
+    "real-agent-windows-acme-iis-rsa-2048-cases": [
+      "windows-installed-credential-startup-refusals",
+      "windows-installed-retention-policy-startup-refusals",
+      "windows-installed-public-idle-retirement",
+      "windows-installed-config-encoding-refusals",
+      "windows-installed-scm-control-contract",
+      "windows-installed-unicode-spaces-literal-brackets",
+      "windows-installed-public-iis-deploy-refusal",
+      "windows-acme-public-key-reuse-refusal",
+      "real Windows: retained native handles interrupt the installed agent and fixture lease recovery preserves custody",
+      "windows-installed-scm-controls-active-certificate-phase",
+      "windows-public-multi-target-admission-refusal",
+      "windows-installed-public-renewal-verify-rollback",
+      "windows-installed-signing-pin-startup-refusals",
+      "real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence"
+    ],
+    "real-agent-acmesh-filesystem-cases": [
+      "real ACME: agent discovers public files registers claims issues renews deploys and persists independently verified certificate evidence",
+      "real ACME: manual and default scheduler renewals reuse the same local key",
+      "real-acme-new-order-transport-refusal",
+      "real-acme-finalize-transport-refusal",
+      "real ACME: production worker default minute cron renews twice"
     ]
   }
 }

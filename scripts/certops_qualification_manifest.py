@@ -6,6 +6,36 @@ import re
 
 def expand(value):
     manifest = copy.deepcopy(value)
+    test_groups = manifest.pop("testGroups", {})
+    if not isinstance(test_groups, dict) or len(test_groups) > 512:
+        raise ValueError("Invalid test groups")
+    for name, tests in test_groups.items():
+        if (not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", name)
+                or not isinstance(tests, list) or not 0 < len(tests) <= 256
+                or not all(isinstance(test, str) and test for test in tests)
+                or len(set(tests)) != len(tests)):
+            raise ValueError("Invalid test group")
+    if "slots" in manifest:
+        if not isinstance(manifest["slots"], list) or len(manifest["slots"]) > 512:
+            raise ValueError("Invalid slots")
+        slots = []
+        for slot in manifest["slots"]:
+            if "environmentVariants" not in slot:
+                slots.append(slot)
+                continue
+            variants = slot.pop("environmentVariants")
+            if (any(key in slot for key in ("id", "environment", "environmentGroup"))
+                    or not isinstance(variants, dict) or not 0 < len(variants) <= 512):
+                raise ValueError("Invalid or conflicting slot variants")
+            for name, environment in variants.items():
+                if (not isinstance(name, str) or not 0 < len(name) <= 128
+                        or not isinstance(environment, str)):
+                    raise ValueError("Invalid slot variant")
+                slots.append({**copy.deepcopy(slot), "id": name, "environmentGroup": environment})
+        ids = [slot["id"] for slot in slots if "id" in slot]
+        if len(slots) > 512 or len(set(ids)) != len(ids):
+            raise ValueError("Duplicate or oversized slots")
+        manifest["slots"] = slots
     capability_groups = manifest.pop("capabilityGroups", {})
     if not isinstance(capability_groups, dict) or len(capability_groups) > 512:
         raise ValueError("Invalid capability groups")
@@ -95,6 +125,12 @@ def expand(value):
                 or not isinstance(environment, dict) or not environment):
             raise ValueError("Invalid environment group")
     for slot in manifest.get("slots", []):
+        if "requiredTestGroup" in slot:
+            name = slot["requiredTestGroup"]
+            if "requiredTests" in slot or not isinstance(name, str) or name not in test_groups:
+                raise ValueError("Conflicting or unknown test group")
+            slot["requiredTests"] = list(test_groups[name])
+            del slot["requiredTestGroup"]
         if "environmentGroup" in slot:
             name = slot["environmentGroup"]
             if "environment" in slot or not isinstance(name, str) or name not in environments:
