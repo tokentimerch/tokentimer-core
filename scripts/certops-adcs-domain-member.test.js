@@ -9,6 +9,81 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+test("worker report collection uses the control plane and requires candidate-bound scheduled drainage", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "certops-worker-report-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const probe = path.join(directory, "probe.ps1");
+  fs.writeFileSync(probe, String.raw`
+$ErrorActionPreference='Stop'
+$ResourceGroup='tt-certops-1-1';$ReportKind='acceptance-worker';$env:GITHUB_SHA='a'*40
+Set-Location -LiteralPath $env:CERTOPS_PROBE_ROOT
+function Invoke-CertOpsVmRunCommand {
+ param($SubscriptionId,$ResourceGroup,$Machine,$Script,$RefreshAuthentication)
+ if($Machine -cne 'control-plane' -or -not $Script.Contains("Path('/opt/ttqualification/acceptance-worker-report.json')")){throw 'Wrong evidence source'}
+ $b=[Convert]::FromBase64String($env:CERTOPS_WORKER_PAYLOAD)
+ $hash=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-','').ToLowerInvariant()
+ @{value=@(@{message=('CERTOPS_REPORT_SHA256='+$hash+[Environment]::NewLine+'CERTOPS_REPORT_LENGTH='+$b.Length+[Environment]::NewLine+'CERTOPS_REPORT_CHUNK='+[Convert]::ToBase64String($b))})}
+}
+$LASTEXITCODE=0
+$source=[IO.File]::ReadAllText($env:CERTOPS_REPORT_SCRIPT)
+$source=$source.Substring($source.IndexOf('$bytes='))
+try {
+ & ([scriptblock]::Create($source))
+ if($env:CERTOPS_REPORT_VALID -ne '1'){throw 'Invalid proof accepted'}
+}catch{
+ if($env:CERTOPS_REPORT_VALID -eq '1' -or $_.Exception.Message -ne 'Production worker ownership or drain evidence incomplete'){throw}
+}
+Write-Output 'WORKER_COLLECTION_PASSED'
+`);
+  const valid = { candidateSha: "a".repeat(40), status: "passed", entrypoint: "src/runner.js certops", defaultCron: true, scheduledMaintenanceObserved: true, nativeDrained: true, exitCode: 0, scheduledStarts: 2, scheduledFinishes: 2 };
+  for (const [proof, accepted] of [[valid, true], [{ ...valid, candidateSha: "b".repeat(40) }, false], [{ ...valid, nativeDrained: false }, false], [{ ...valid, scheduledFinishes: 1 }, false]]) {
+    const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
+      encoding: "utf8", windowsHide: true, timeout: 15000,
+      env: { ...process.env, CERTOPS_PROBE_ROOT: directory, CERTOPS_REPORT_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/read-report.ps1"), CERTOPS_WORKER_PAYLOAD: Buffer.from(JSON.stringify(proof)).toString("base64"), CERTOPS_REPORT_VALID: accepted ? "1" : "0" },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /WORKER_COLLECTION_PASSED/);
+  }
+});
+
+test("native report collection preserves the stage failure but rejects missing evidence after success", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "certops-report-failure-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(directory, "read-report.ps1"), "param($ResourceGroup,$ReportKind)\nif($ReportKind -eq 'package-acceptance'){return}\nthrow 'TEST_REPORT_MISSING'\n");
+  const probe = path.join(directory, "probe.ps1");
+  fs.writeFileSync(probe, String.raw`
+$ErrorActionPreference='Stop'
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_PROVISION_SCRIPT,[ref]$null,[ref]$null)
+$blocks=@($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Extent.Text.Contains('# The focused CA oracle')},$true)|Sort-Object {$_.Extent.Text.Length})
+if($blocks.Count -eq 0){throw 'Native execution block missing'}
+$nativeExecutionFailure=$null
+$IssuerReassignment='0';$PendingElapsedQualification='0';$HierarchyRole='root';$WindowsVersion='2022';$Language='en-US';$ResponseLossExperiment='0';$JournalPhaseExperiment='none';$ResourceGroup='tt-certops-1-1';$testParameters=@();$password='unused'
+function Invoke-Stage {
+ param($Machine,$Script,$Marker,$Parameters)
+ if($env:CERTOPS_FAIL_STAGE -eq '1' -or ($env:CERTOPS_FAIL_STAGE -eq 'package' -and $Marker -eq 'CERTOPS_STAGE=operator-package-acceptance-passed')){throw 'TEST_ORIGINAL_STAGE_FAILURE'}
+ if($env:CERTOPS_FAIL_STAGE -eq 'package' -and $Marker -eq 'CERTOPS_STAGE=acceptance-worker-stopped'){throw 'TEST_SECONDARY_STOP_FAILURE'}
+}
+function Join-Path { param($Path,$ChildPath) [IO.Path]::Combine($env:CERTOPS_PROBE_ROOT,$ChildPath) }
+try { & ([scriptblock]::Create($blocks[0].Extent.Text));throw 'Expected failure' }
+catch {
+  if($env:CERTOPS_FAIL_STAGE -ne '0'){
+    if($_.Exception.Message -ne 'TEST_ORIGINAL_STAGE_FAILURE'){throw 'Original stage failure was masked'}
+  }else{
+    if($_.Exception.Message -notlike 'Guest execution report retrieval failed for:*'){throw ('Missing evidence did not fail closed: '+$_.Exception.Message)}
+  }
+}
+Write-Output 'NATIVE_FAILURE_PRESERVATION_PASSED'
+`);
+  for (const failStage of ["1", "0", "package"]) {
+    const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
+      encoding: "utf8", windowsHide: true, timeout: 15000,
+      env: { ...process.env, CERTOPS_PROVISION_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/provision-lab.ps1"), CERTOPS_PROBE_ROOT: directory, CERTOPS_FAIL_STAGE: failStage },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /NATIVE_FAILURE_PRESERVATION_PASSED/);
+  }
+});
+
 test("native CA exports retain the dotted certutil verb as one PowerShell argument", () => {
   // Unquoted -ca.cert parses as two arguments (-ca and .cert), so the native
   // program selects the unrelated -CA verb and exits before contacting the CA.

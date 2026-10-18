@@ -11,6 +11,17 @@ const net = require("node:net");
 const tls = require("node:tls");
 const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/adcs-enrollment");
 const { readCertificateTemplateOid } = require("../../../packages/agent/src/issuers/der-extensions");
+const { provisionSurvivorSource } = require("./certops-adcs-local-rules");
+
+// A signed initial job is claimable only for a managed source whose insert
+// trigger opened management. Do not substitute a random certificate UUID.
+async function provisionBoundaryEnrollment({ fixture, api, agentRowId, ownedCertificateIds, ownedEnrollmentIds }, { issuerId, domain, site, port }) {
+  const certificateId = await provisionSurvivorSource({ fixture, agentRowId, domain, site, port, ownedCertificateIds });
+  const created = await fixture.request(`${api}/enrollments`, "POST", { issuerId, certificateId, agentId: agentRowId, target: { type: "windows-iis", reference: domain, store: "My", binding: { site, port, sniHost: domain } }, authorizedDnsNames: [domain], keyAlgorithm: "rsa", keySize: 2048 });
+  assert.equal(created.status, 201);
+  ownedEnrollmentIds.push(created.body.enrollmentId);
+  return created;
+}
 
 async function qualifySubmissionBoundaries(context) {
   const { gate, fixture, api, agentRowId, configDir, workDir, run, preflight, ps, command, until, jobFinished, ownedSites, ownedCertificateIds, ownedEnrollmentIds, ownedThumbprints, ownedFirewallRules, pendingRecoveryFixtures, tlsAuthority } = context;
@@ -35,12 +46,12 @@ async function qualifySubmissionBoundaries(context) {
     ownedSites.push(site); ps(`Import-Module WebAdministration;New-Website -Name '${site}' -PhysicalPath '${directory.replace(/'/g, "''")}' -IPAddress '*' -Port ${port} -HostHeader '${domain}' -Ssl|Out-Null;Set-WebBinding -Name '${site}' -BindingInformation '*:${port}:${domain}' -PropertyName sslFlags -Value 1`);
     const rule = `TTQualification-Certreq-${run}-${crypto.randomBytes(4).toString("hex")}`;
     ps(`if(Get-NetFirewallRule -Name '${rule}' -ErrorAction SilentlyContinue){throw 'Refusing existing transport fault rule'};if(@(Get-NetFirewallProfile|Where-Object Enabled -ne True).Count){throw 'Native firewall profiles must enforce the scoped transport fault'}`);
-    const certificateId = crypto.randomUUID(); ownedCertificateIds.push(certificateId); let created, prepared; let primaryError, cleanupError;
+    let created, prepared; let primaryError, cleanupError;
     ownedFirewallRules.push(rule);
     try {
       ps(`New-NetFirewallRule -Name '${rule}' -DisplayName '${rule}' -Group '${rule}' -Direction Outbound -Action Block -Enabled True -Profile Any -Program "$env:SystemRoot\\System32\\certreq.exe" -RemoteAddress '10.64.0.4'|Out-Null;$r=Get-NetFirewallRule -Name '${rule}';$p=$r|Get-NetFirewallApplicationFilter;$a=$r|Get-NetFirewallAddressFilter;if($r.Action -ne 'Block' -or $r.Direction -ne 'Outbound' -or $r.Enabled -ne 'True' -or $p.Program -ine "$env:SystemRoot\\System32\\certreq.exe" -or @($a.RemoteAddress).Count -ne 1 -or [string]$a.RemoteAddress[0] -ne '10.64.0.4'){throw 'Actual native transport rule did not match required scope'}`);
       assert.equal(count(domain), 0);
-      created = await fixture.request(`${api}/enrollments`, "POST", { issuerId, certificateId, agentId: agentRowId, target: { type: "windows-iis", reference: domain, store: "My", binding: { site, port, sniHost: domain } }, authorizedDnsNames: [domain], keyAlgorithm: "rsa", keySize: 2048 }); assert.equal(created.status, 201); ownedEnrollmentIds.push(created.body.enrollmentId);
+      created = await provisionBoundaryEnrollment(context, { issuerId, domain, site, port });
       await until(async () => { const job = (await fixture.pool.query("SELECT status FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, created.body.jobId])).rows[0]; if (["succeeded", "rejected"].includes(job?.status)) throw new Error("Actual submit fault did not exercise the proven no-submit retry outcome"); return job?.status === "failed"; });
       const row = await getEnrollment(created.body.enrollmentId); assert.equal(row.state, "submitting"); assert.equal(row.last_error_code, "ADCS_CA_UNREACHABLE"); assert.equal(row.request_id, null); assert.ok(row.next_poll_at);
       prepared = readEnrollmentJournal(configDir, created.body.enrollmentId); assert.equal(prepared.kind, "valid"); assert.equal(prepared.journal.state, "prepared"); assert.ok(prepared.artifacts.csrPem?.includes("BEGIN CERTIFICATE REQUEST")); assert.equal(prepared.artifacts.leafPem, null); assert.equal(prepared.artifacts.chainPem, null);
@@ -66,9 +77,8 @@ async function qualifySubmissionBoundaries(context) {
 
   await gate.scenario("adcs-real-issued-template-mismatch-refuses-installation", async () => {
     const owned = pendingRecoveryFixtures.cancel; assert.ok(owned); const previous = await served(owned.port, owned.item.domain, owned.authority);
-    const certificateId = crypto.randomUUID(); ownedCertificateIds.push(certificateId);
-    const created = await fixture.request(`${api}/enrollments`, "POST", { issuerId: owned.issuerId, certificateId, agentId: agentRowId, target: { type: "windows-iis", reference: owned.item.domain, store: "My", binding: { site: owned.site, port: owned.port, sniHost: owned.item.domain } }, authorizedDnsNames: [owned.item.domain], keyAlgorithm: "rsa", keySize: 2048 }); assert.equal(created.status, 201);
-    const id = created.body.enrollmentId; ownedEnrollmentIds.push(id); let requestId; let primaryError, cleanupError;
+    const created = await provisionBoundaryEnrollment(context, { issuerId: owned.issuerId, domain: owned.item.domain, site: owned.site, port: owned.port });
+    const id = created.body.enrollmentId; let requestId; let primaryError, cleanupError;
     const nativeDisposition = () => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.resolve(__dirname, "../../../infra/certops-adcs/owned-request-observation.ps1"), "-CommonName", owned.item.domain, "-RequestId", String(requestId)]));
     try {
       const pending = await until(async () => { const row = await getEnrollment(id); return row?.state === "pending_issuance" && row.request_id ? row : null; }); requestId = pending.request_id;
@@ -90,4 +100,4 @@ async function qualifySubmissionBoundaries(context) {
     if (primaryError && cleanupError) throw new AggregateError([primaryError, cleanupError], "Native wrong-template refusal and owned request cleanup failed"); if (cleanupError) throw cleanupError; if (primaryError) throw primaryError;
   }, { evidenceLevel: "real-host", oracle: "native officer changes only an owned pending request to another real safe template, actual CA-issued signed leaf/SPKI/template inspected independently, frozen-template validator refuses before accept while prior trusted IIS binding survives" });
 }
-module.exports = { qualifySubmissionBoundaries };
+module.exports = { qualifySubmissionBoundaries, provisionBoundaryEnrollment };

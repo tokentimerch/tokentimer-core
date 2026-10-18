@@ -85,7 +85,7 @@ test("AD CS operator journey uses the verified package and documented installer"
       Object.assign(settings, { heartbeatIntervalMs: 5000, pollIntervalMs: 2000,
         windowsDiscovery: { enabled: true, intervalMs: 5000, stores: ["My"] }, declaredTargetSelectors: [domain],
         execution: { enabled: true, dryRun: true }, policy: { allowedPaths: [workDir], allowedCommands: {}, allowedCaEndpoints: [], allowedDnsZones: [], allowedDnsProviders: [] },
-        adcs: { enrollmentRules: [{ caConfig: "tt-ca.lab.certops.test\\TTQualificationRoot", template: "TTQualificationRSAShort", dnsScopes: ["example.test"], keyAlgorithms: ["rsa"], operatorAttested: false }] } });
+        adcs: { enrollmentRules: ["TTQualificationRSAShort","TTQualificationPending"].map(template=>({ caConfig: "tt-ca.lab.certops.test\\TTQualificationRoot", template, dnsScopes: ["example.test"], keyAlgorithms: ["rsa"], operatorAttested: false })) } });
       fs.writeFileSync(settingsFile, JSON.stringify(settings)); applyRestrictivePermissions(settingsFile);
       ps("Restart-Service TokenTimerAgent -Force");
       const created = await fixture.request(`${api}/jobs`, "POST", { operation: "noop", mode: "dry_run", assignedAgentId: agentRow.id });
@@ -119,6 +119,8 @@ test("AD CS operator journey uses the verified package and documented installer"
       jobFinished: id => until(async () => { const row = (await fixture.request(`${api}/jobs/${id}`)).body.job; assert.ok(!["failed", "rejected", "cancelled"].includes(row?.status)); return row?.status === "succeeded"; }),
       ps, command, tlsAuthority: () => [ca.toString(), new crypto.X509Certificate(Buffer.from(seed.pem, "base64")).toString()],
       ownedEnrollmentIds, ownedThumbprints, ownedBrowserResources, ownedBrowserPreflightJobIds, ownedTlsProbes });
+    stage = "manager-approved-worker-continuation";
+    await require("./helpers/certops-adcs-package-pending").qualifyPackagePending({gate,fixture:readonlyFixture,api,agentRowId:agentRow.id,configDir,domain,site,port,authority:ca,until,command,ownedEnrollmentIds,ownedThumbprints});
     await gate.scenario("adcs-package-service-restart-preserves-custody", async () => {
       ps("Restart-Service TokenTimerAgent -Force");
       assert.deepEqual(fs.readFileSync(path.join(configDir, "credential")), credential);

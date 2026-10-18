@@ -74,6 +74,8 @@ jobs:
           ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase
       - name: Assert mandatory native scenarios and candidate source evidence
         run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
+      - name: Verify production worker startup and graceful drainage
+        run: node scripts/certops-adcs-worker-deployment-report.js qualification-results/enterprise-adcs-acceptance-worker.json
       - name: Verify observed journal fault without release promotion
         if: inputs.fault_profile == 'submitting' || inputs.fault_profile == 'issued' || inputs.fault_profile == 'installing'
         run: node scripts/certops-adcs-journal-phase-report.js qualification-results/enterprise-adcs-journal-phase-experimental.json

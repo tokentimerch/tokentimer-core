@@ -44,7 +44,7 @@ module.exports=async function runJournalPhaseExperiment(context){
     recoveryPolicy=JSON.parse(ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{$owner=@($r.GetValue('Environment')|Where-Object {$_ -like 'TOKENTIMER_AGENT_CONFIG_DIR=*'});if($owner.Count -ne 1 -or $owner[0].Substring('TOKENTIMER_AGENT_CONFIG_DIR='.Length) -ine '${configDir.replace(/'/g,"''")}'){throw 'Foreign recovery policy'};$v=$r.GetValue('FailureActions');if($v -isnot [byte[]]){throw 'Native failure policy missing'};@{actions=[Convert]::ToBase64String($v);nonCrash=$r.GetValue('FailureActionsOnNonCrashFailures',$null)}|ConvertTo-Json -Compress}finally{$r.Dispose()}`));
     command("sc.exe",["failure","TokenTimerAgent","reset=","0","actions=",""]);report.ownedScmRecoveryTemporarilyDisabled=true;
     observer=startObserver({ownedDirectory:workDir,configDirectory:configDir,repositoryRoot:repoRoot,phase});await observer.ready;
-    const certificateId=crypto.randomUUID();ownedCertificateIds.push(certificateId);
+    const certificateId=await require("./certops-adcs-local-rules").provisionSurvivorSource({fixture,agentRowId,domain,site,port,ownedCertificateIds});
     const created=await fixture.request(`${api}/enrollments`,"POST",{issuerId,certificateId,agentId:agentRowId,target:{type:"windows-iis",reference:domain,store:"My",binding:{site,port,sniHost:domain}},authorizedDnsNames:[domain],keyAlgorithm:"rsa",keySize:2048});assert.equal(created.status,201);
     enrollmentId=created.body.enrollmentId;ownedEnrollmentIds.push(enrollmentId);
     fs.writeFileSync(path.join(workDir,"journal-phase-target.json"),JSON.stringify({enrollmentId,jobId:created.body.jobId,snapshotSha256:created.body.snapshotSha256,containerName:buildEnrollmentContainerName(enrollmentId)}));
@@ -81,13 +81,21 @@ module.exports=async function runJournalPhaseExperiment(context){
       await until(async()=> (await getEnrollment())?.state==="submission_uncertain");
       const recovered=readEnrollmentJournal(configDir,enrollmentId);assert.equal(recovered.kind,"valid");assert.equal(recovered.journal.state,"submission_uncertain");
       const native=observe();assert.equal(native.subjectRequestCount,nativeAtFault.subjectRequestCount,"Uncertain recovery submitted another CA request");
+      for(const field of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","caConfig","template"])
+        assert.equal(recovered.journal[field],stoppedJournal.journal[field],"Uncertain recovery changed frozen identity");
+      assert.equal(recovered.artifacts.csrPem,stoppedJournal.artifacts.csrPem);
+      assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(stoppedJournal.journal.containerName));
+      report.uncertainFrozenIdentityAndKeyPreserved=true;
       report.uncertainNoResubmitVerified=true;
       if(native.subjectRequestCount===0){
-        assert.equal((await fixture.request(`${api}/enrollments/${enrollmentId}/abandon`,"POST",{})).status,204);
-        const cleaned=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+1000)})).find(row=>row.enrollmentId===enrollmentId);assert.ok(cleaned);await jobFinished(cleaned.jobId);
-        assert.ok(!command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(stoppedJournal.journal.containerName));
-        report.outcome="uncertain-no-resubmit-abandoned-with-absent-key";report.caRequestsAfterRecovery=0;
-        report.abandonedKeyAbsent=true;
+        // A single absent CA row cannot rule out a late commit of the killed RPC.
+        // Retain the exact key/journal and require operator reconciliation instead
+        // of using absence as permission for terminal key cleanup.
+        report.outcome="uncertain-no-resubmit-operator-action-required";
+        report.caRequestsAfterRecovery=0;report.ownedProtectedKeyPreserved=true;
+        report.cleanupPendingOperatorReconciliation=true;
+        fs.writeFileSync(path.join(workDir,".preserve-adcs-journal-uncertainty.json"),JSON.stringify({enrollmentId,jobId:created.body.jobId}));
+        throw Object.assign(new Error("ADCS_SUBMISSION_RECONCILIATION_REQUIRED"),{code:"ADCS_SUBMISSION_RECONCILIATION_REQUIRED"});
       }else{
         assert.equal(native.subjectRequestCount,1);
         assert.equal((await fixture.request(`${api}/enrollments/${enrollmentId}/reconcile`,"POST",{requestId:native.requestId})).status,204);
@@ -124,4 +132,9 @@ module.exports=async function runJournalPhaseExperiment(context){
     try{fs.mkdirSync(path.dirname(reportPath),{recursive:true});fs.writeFileSync(reportPath,JSON.stringify(report,null,2));}catch(error){cleanup.push(error);}
     if(cleanup.length)throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanup],"Native journal experiment and finalization failed");
   }
+};
+
+module.exports.assertCleanupSafe=function assertCleanupSafe(workDir){
+  assert.equal(fs.existsSync(path.join(workDir,".preserve-adcs-journal-uncertainty.json")),false,
+    "Preserve key and durable journal: an absent CA row does not exclude a late submission commit");
 };

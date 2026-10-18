@@ -4,7 +4,7 @@ actual native CA state; revocation resolves the real serial number. Called by AD
 the temporary lab officer credential.
 #>
 param([Parameter(Mandatory)][ValidateRange(1,4294967295)][long]$RequestId,
-  [Parameter(Mandatory)][ValidateSet('approve','deny','revoke')][string]$Action,
+  [Parameter(Mandatory)][ValidateSet('approve','deny','revoke','delete-pending')][string]$Action,
   [Parameter(Mandatory)][ValidatePattern('^certops-adcs-[a-f0-9]+-[a-z0-9]+\.example\.test$')][string]$CommonName)
 $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Officer action requires isolated qualification forest'}
@@ -15,11 +15,12 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   $ErrorActionPreference='Stop'
   $view=New-Object -ComObject CertificateAuthority.View
   $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
-  $columnCount=if($Action -eq 'revoke'){3}else{2}
+  $columnCount=if($Action -in @('revoke','delete-pending')){3}else{2}
   $view.SetResultColumnCount($columnCount)
   $view.SetResultColumn($view.GetColumnIndex($false,'CommonName'))
   $view.SetResultColumn($view.GetColumnIndex($false,'RequesterName'))
   if($Action -eq 'revoke'){$view.SetResultColumn($view.GetColumnIndex($false,'SerialNumber'))}
+  if($Action -eq 'delete-pending'){$view.SetResultColumn($view.GetColumnIndex($false,'Request.Disposition'))}
   $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[uint32]$RequestId)
   $rows=$view.OpenView()
   if($rows.Next() -eq -1){throw 'Owned pending CA request not found'}
@@ -30,6 +31,11 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   if($rows.Next() -ne -1){throw 'Ambiguous request identity'}
   if($Action -eq 'approve'){& certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -resubmit "$RequestId" | Out-Null}
   elseif($Action -eq 'deny'){& certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -deny "$RequestId" | Out-Null}
+  elseif($Action -eq 'delete-pending'){
+    if([int]$found[2] -ne 9){throw 'Only an exact owned still-pending request may be deleted'}
+    # Exact numeric row only: no date ranges, wildcards or issued certificates.
+    & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -deleterow "$RequestId" Request | Out-Null
+  }
   else{
     $serial=([string]$found[2]).Replace(' ','')
     if($serial -notmatch '^[a-fA-F0-9]{2,128}$'){throw 'Owned issued request lacks a native certificate serial'}

@@ -22,6 +22,9 @@ test("AD CS package receipt rejects missing execution, skipped scenarios and rel
     candidateSha, packageSha256: artifact.sha256, qualificationStatus: "not-qualified", buildMode: artifact.buildMode,
     publishedReleaseQualified: false, certificateDatabaseInjection: false, workerDriven: true,
     cleanup: { status: "passed" }, requiredScenarios: [...ADCS_ACCEPTANCE_SCENARIOS],
+    packagePendingWorker: { scheduler: "deployed-production-runner", pollIntervalSeconds: 60,
+      enrollmentId: "11111111-1111-4111-8111-111111111111", initialJobId: "22222222-2222-4222-8222-222222222222", continuationJobId: "33333333-3333-4333-8333-333333333333", requestId: "42",
+      actualManagerApproval: true, claimBoundContinuation: true, originalCsrKeyAndSnapshotPreserved: true, trustedIisCutover: true, noSchedulerOrClockOverride: true },
     missingScenarios: [], missingCapabilities: [], scenarios: ADCS_ACCEPTANCE_SCENARIOS.map(id => ({ id, status: "passed" })),
   };
   assert.equal(verifyAdcsAcceptance(report, artifact, candidateSha), true);
@@ -31,6 +34,7 @@ test("AD CS package receipt rejects missing execution, skipped scenarios and rel
     r => { r.packageSha256 = "c".repeat(64); }, r => { r.workerDriven = false; },
     r => { r.certificateDatabaseInjection = true; }, r => { r.publishedReleaseQualified = true; },
     r => { r.missingCapabilities.push("adcs-enroll-v1"); }, r => { r.qualificationStatus = "qualified"; },
+    r => { delete r.packagePendingWorker; }, r => { r.packagePendingWorker.noSchedulerOrClockOverride = false; },
   ]) {
     const invalid = structuredClone(report); change(invalid);
     assert.throws(() => verifyAdcsAcceptance(invalid, artifact, candidateSha));

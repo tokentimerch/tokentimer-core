@@ -50,7 +50,7 @@ async function qualifyIssuedSanBoundary(context) {
     const matches = ownedEnrollmentIds.map(id => readEnrollmentJournal(configDir, id)).filter(value => value.kind === "valid" && value.journal.state === "installed" && value.artifacts.leafPem && new crypto.X509Certificate(value.artifacts.leafPem).fingerprint256 === previous.fingerprint256);
     assert.equal(matches.length, 1, "Served positive control must match exactly one registered native installed journal"); const previousJournal = matches[0];
     const before = custody(previousThumbprint, previousJournal.journal.containerName);
-    const certificateId = crypto.randomUUID(); ownedCertificateIds.push(certificateId);
+    const certificateId = await require("./certops-adcs-local-rules").provisionSurvivorSource({ fixture, agentRowId, domain, site: owned.site, port: owned.port, ownedCertificateIds });
     const receipt = registerOwnedUnacceptedEnrollment({ certificateId, domain }); assert.ok(receipt && Array.isArray(receipt.enrollmentIds));
     let id, requestId, continuationJobId, primary, cleanup;
     try {

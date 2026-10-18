@@ -58,6 +58,31 @@ function recoveryWaitBudget(leaseExpiresAt, measuredAt) {
   return { leaseRemainingAtFaultMs, recoveryWaitBudgetMs };
 }
 
+// The observer needs the owned service to remain stopped. Restore through SCM
+// (not registry writes), then compare its exact installer policy independently.
+function createOwnedRecoverySuspension({ readPolicy, command }) {
+  let baseline;
+  return {
+    suspend() {
+      assert.equal(baseline, undefined, "Recovery suspension already owns a policy");
+      const observed = readPolicy(); // Also verifies the exact service config owner.
+      assert.equal(typeof observed.actions, "string", "Installed SCM recovery policy required");
+      assert.ok(observed.actions.length > 0);
+      assert.equal(observed.nonCrash, 1, "Production installer failure flag required");
+      baseline = observed; // Retain ownership even if the SCM mutation fails.
+      command("sc.exe", ["failure", "TokenTimerAgent", "reset=", "0", "actions=", ""]);
+    },
+    restore() {
+      if (!baseline) return false;
+      readPolicy(); // Refuse a service whose ownership changed during the fault.
+      command("sc.exe", ["failure", "TokenTimerAgent", "reset=", "86400", "actions=", "restart/5000"]);
+      assert.deepEqual(readPolicy(), baseline, "SCM recovery must match its captured installer bytes");
+      baseline = undefined;
+      return true;
+    },
+  };
+}
+
 function assertProof(value) {
   const allowed = new Set(["scope", "resolvedIssuingCaAddress", "leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs", "ownedObserverDrained", "ownedTransportBlock", "observedSubmittingTermination", "actualLeaseExpiry", "acknowledgedPublicRecovery", "sameCsrAndKey", "noAutomaticResubmit", "publicAbandonAudited", "unacceptedKeyRemoved", "originalOrphanPreserved", "recoveryPolicyUnchanged", "caRequestsAtFault", "caRequestsAfterRecovery", "caRequestsAfterAbandon"]);
   for (const key of Object.keys(value)) assert.ok(allowed.has(key), "Unexpected native proof field");
@@ -105,9 +130,10 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
   const keyIdentity = container => ps(`$k=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);$sha=[Security.Cryptography.SHA256]::Create();try{if($k.KeyName -ne '${container}' -or -not $k.IsMachineKey -or $k.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None){throw 'Owned native key custody changed'};[Convert]::ToBase64String($sha.ComputeHash($k.Export([Security.Cryptography.CngKeyBlobFormat]::GenericPublicBlob)))}finally{$sha.Dispose();$k.Dispose()}`);
   const observe = () => JSON.parse(command("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.join(root, "infra/certops-adcs/owned-request-observation.ps1"), "-CommonName", domain, "-Discover"]));
   const getJob = async id => (await fixture.pool.query("SELECT status,lease_expires_at,lease_renewed_at,needs_operator_reconciliation,NOW() AS measured_at FROM certificate_jobs WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, id])).rows[0];
-  let observer, created, stopped, primaryError, recoveryPolicy;
+  let observer, created, stopped, primaryError;
   const enrollment = async () => (await fixture.pool.query("SELECT state,request_id FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2", [fixture.workspaceId, created.body.enrollmentId])).rows[0];
   const policy = () => JSON.parse(ps(`$r=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent');try{$o=@($r.GetValue('Environment')|Where-Object {$_ -like 'TOKENTIMER_AGENT_CONFIG_DIR=*'});if($o.Count -ne 1 -or $o[0].Substring('TOKENTIMER_AGENT_CONFIG_DIR='.Length) -ine '${configDir.replace(/'/g, "''")}'){throw 'Foreign service recovery policy'};@{actions=$(if($null -eq $r.GetValue('FailureActions')){$null}else{[Convert]::ToBase64String($r.GetValue('FailureActions'))});nonCrash=$r.GetValue('FailureActionsOnNonCrashFailures',$null)}|ConvertTo-Json -Compress}finally{$r.Dispose()}`));
+  const recoverySuspension = createOwnedRecoverySuspension({ readPolicy: policy, command });
   try {
     assert.equal(observe().subjectRequestCount, 0);
     let issuerId;
@@ -129,12 +155,11 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
     ownedFirewallRules.push(rule);
     ps(`New-NetFirewallRule -Name '${rule}' -DisplayName '${rule}' -Group '${rule}' -Direction Outbound -Action Block -Enabled True -Profile Any -Program "$env:SystemRoot\\System32\\certreq.exe" -RemoteAddress '${caAddress}'|Out-Null;$r=Get-NetFirewallRule -Name '${rule}';$p=$r|Get-NetFirewallApplicationFilter;$a=$r|Get-NetFirewallAddressFilter;if($r.Action -ne 'Block' -or $r.Direction -ne 'Outbound' -or $r.Enabled -ne 'True' -or $p.Program -ine "$env:SystemRoot\\System32\\certreq.exe" -or @($a.RemoteAddress).Count -ne 1 -or [string]$a.RemoteAddress[0] -ne '${caAddress}'){throw 'Transport fault scope invalid'}`);
     proof.ownedTransportBlock = true;
-    recoveryPolicy = policy();
-    assert.equal(recoveryPolicy.actions, null, "Owned manually created service must have no automatic SCM recovery");
+    recoverySuspension.suspend();
     observer = startObserver({ ownedDirectory: workDir, configDirectory: configDir, repositoryRoot: root, phase: "submitting" });
     ownedPhaseObservers.push(observer);
     await observer.ready;
-    const certificateId = crypto.randomUUID(); ownedCertificateIds.push(certificateId);
+    const certificateId = await require("./certops-adcs-local-rules").provisionSurvivorSource({ fixture, agentRowId, domain, site, port, ownedCertificateIds });
     created = await fixture.request(`${api}/enrollments`, "POST", { issuerId, certificateId, agentId: agentRowId, target: { type: "windows-iis", reference: domain, store: "My", binding: { site, port, sniHost: domain } }, authorizedDnsNames: [domain], keyAlgorithm: "rsa", keySize: 2048 });
     assert.equal(created.status, 201); ownedEnrollmentIds.push(created.body.enrollmentId);
     fs.writeFileSync(targetReceipt, JSON.stringify({ enrollmentId: created.body.enrollmentId, jobId: created.body.jobId, snapshotSha256: created.body.snapshotSha256, containerName: `tokentimer-enr-${created.body.enrollmentId}` }));
@@ -200,7 +225,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
     const errors = [];
     try { if (observer) { await observer.stopAndDrain(); proof.ownedObserverDrained = true; } } catch (error) { errors.push(error); }
     try { ps(`$r=Get-NetFirewallRule -Name '${rule}' -ErrorAction SilentlyContinue;if($r){if($r.Group -ne '${rule}' -or $r.DisplayName -ne '${rule}'){throw 'Foreign firewall rule'};Remove-NetFirewallRule -Name '${rule}'};if(Get-NetFirewallRule -Name '${rule}' -ErrorAction SilentlyContinue){throw 'Owned transport fault remains'}`); } catch (error) { errors.push(error); }
-    try { if (recoveryPolicy) { assert.deepEqual(policy(), recoveryPolicy); proof.recoveryPolicyUnchanged = true; } } catch (error) { errors.push(error); }
+    try { assert.equal(observer?.hasLiveChild() ?? false, false, "Drain the exact phase observer before restoring automatic recovery"); if (recoverySuspension.restore()) proof.recoveryPolicyUnchanged = true; } catch (error) { errors.push(error); }
     try { assert.equal(observer?.hasLiveChild() ?? false, false, "Never restart while the exact native phase observer remains active"); if (stopped || ps("(Get-Service TokenTimerAgent).Status") === "Stopped") ps("Start-Service TokenTimerAgent -ErrorAction Stop"); } catch (error) { errors.push(error); }
     try { if (created && fs.existsSync(targetReceipt)) { assert.equal(observer?.hasLiveChild(), false, "Retain observer ownership receipt until its exact child drains"); const receipt = JSON.parse(fs.readFileSync(targetReceipt, "utf8")); assert.equal(receipt.enrollmentId, created.body.enrollmentId); assert.equal(receipt.jobId, created.body.jobId); fs.unlinkSync(targetReceipt); } } catch (error) { errors.push(error); }
     if (errors.length) throw new AggregateError([...(primaryError ? [primaryError] : []), ...errors], "Uncertain abandon and owned fault restoration failed");
@@ -210,6 +235,6 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
   else { assertProof(proof); gate.report.nativeUncertainAbandon = proof; }
 }
 function qualifyUncertainAbandon(context) { return qualifyUncertainScenario(context, "abandon"); }
-module.exports = { qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, REQUIRED_SOURCES };
+module.exports = { qualifyUncertainScenario, qualifyUncertainAbandon, assertProof, validateDisposableCaAddress, recoveryWaitBudget, createOwnedRecoverySuspension, REQUIRED_SOURCES };
 // Local fail-closed abandon contract. This file remains the forest journey.
 module.exports.localContract = require("../../../scripts/certops-adcs-uncertain-abandon");

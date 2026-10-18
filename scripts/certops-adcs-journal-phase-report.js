@@ -32,10 +32,11 @@ function verify(report){
     assert.equal(report.caRequestsAtFault,0);assert.equal(report.caRequestsAfterRecovery,0);
   }else if(report.phase==="submitting"){
     assert.equal(report.uncertainNoResubmitVerified,true);
-    assert.ok(["uncertain-no-resubmit-abandoned-with-absent-key","uncertain-no-resubmit-operator-reconciled"].includes(report.outcome));
+    assert.equal(report.uncertainFrozenIdentityAndKeyPreserved,true);
+    assert.equal(report.outcome,"uncertain-no-resubmit-operator-reconciled");
     assert.equal(report.caRequestsAfterRecovery,report.caRequestsAtFault);
-    if(report.outcome==="uncertain-no-resubmit-abandoned-with-absent-key"){assert.equal(report.caRequestsAfterRecovery,0);assert.equal(report.abandonedKeyAbsent,true);}
-    else {assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);assert.equal(report.sameKeyAndCsrIdentityPreserved,true);}
+    assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);
+    assert.equal(report.sameKeyAndCsrIdentityPreserved,true);
   }else{assert.equal(report.outcome,"same-key-installation-recovered");assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);assert.equal(report.sameKeyAndCsrIdentityPreserved,true);}
   return true;
 }

@@ -36,7 +36,9 @@ Expand-Archive "$root\candidate.zip" "$root\source"
 $source="$root\source\tokentimer-core-$CandidateSha"
 if (-not (Test-Path "$source\package.json")) { throw 'Candidate archive layout did not match commit' }
 Set-Location $source
-& "$root\tools\pnpm\pnpm.cmd" install --frozen-lockfile --filter '@tokentimer/api...' --filter '@tokentimer/agent...' | Out-Null
+# The focused native journey starts the production worker entry point, whose
+# workspace dependencies are separate from the API and installed agent.
+& "$root\tools\pnpm\pnpm.cmd" install --frozen-lockfile --filter '@tokentimer/api...' --filter '@tokentimer/agent...' --filter '@tokentimer/worker...' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Locked candidate dependencies failed to install' }
 & "$nodeDirectory\node.exe" packages/agent/scripts/build-windows-service-host.js | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Native Windows service host build failed' }

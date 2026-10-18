@@ -11,6 +11,7 @@ const ADCS_ACCEPTANCE_SCENARIOS = Object.freeze([
   "adcs-package-checksum-and-extraction", "adcs-package-documented-default-root-install", "adcs-package-local-policy-and-signed-dry-run",
   "adcs-real-browser-issuer-native-preflight", "adcs-real-browser-confirmed-ca-pin", "adcs-real-browser-profile-attachment",
   "adcs-real-browser-automation-native-enrollment", "adcs-real-browser-installed-enrollment-visible", "adcs-real-browser-owned-cleanup",
+  "adcs-package-approved-request-production-worker-continuation",
   "adcs-package-service-restart-preserves-custody", "adcs-package-documented-uninstall-preserves-state",
 ]);
 function verifyAdcsAcceptance(report, artifact, expectedSha) {
@@ -24,6 +25,7 @@ function verifyAdcsAcceptance(report, artifact, expectedSha) {
   assert.equal(report.qualificationStatus, "not-qualified"); assert.equal(report.publishedReleaseQualified, false);
   assert.equal(report.certificateDatabaseInjection, false); assert.equal(report.workerDriven, true);
   assert.equal(report.cleanup?.status, "passed");
+  require("../tests/e2e/helpers/certops-adcs-package-pending").verifyProof(report.packagePendingWorker);
   assert.deepEqual(report.requiredScenarios, ADCS_ACCEPTANCE_SCENARIOS);
   assert.deepEqual(report.missingScenarios, []); assert.deepEqual(report.missingCapabilities, []);
   for (const id of ADCS_ACCEPTANCE_SCENARIOS) {

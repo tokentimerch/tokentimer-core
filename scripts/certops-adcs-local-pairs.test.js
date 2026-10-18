@@ -70,3 +70,30 @@ test("survivor initial enrollment must be claimed by its installed agent for its
  for(const patch of [{claim_id:null},{subject_id:"other"},{assigned_agent_id:"other"},{status:"queued"},{subject_type:"other"}])assert.throws(()=>helper.assertSurvivorInitialClaim({...job,...patch},expected));
  assert.throws(()=>helper.assertSurvivorInitialClaim(undefined,expected));
 });
+
+test("submission boundary enrollment admits the persisted eligible source and exact IIS target",async()=>{
+ const {provisionBoundaryEnrollment}=require("../tests/e2e/helpers/certops-adcs-submission-boundaries");
+ const certificateId="11111111-1111-4111-8111-111111111111",periodId="22222222-2222-4222-8222-222222222222",ownedCertificateIds=[],ownedEnrollmentIds=[];
+ const events=[];
+ const fixture={workspaceId:"workspace",pool:{query:async(sql,values)=>{
+  if(sql.startsWith("INSERT")){events.push("source");assert.equal(values[2],"boundary.example.test");assert.equal(values[4],"winstore://My/owned-site:8443");return {rows:[{id:certificateId}]};}
+  events.push("eligibility");assert.deepEqual(values,["workspace",certificateId]);return {rows:[{id:periodId,eligible:true}]};
+ }},request:async(route,method,body)=>{
+  events.push("enrollment");assert.equal(route,"/certops/enrollments");assert.equal(method,"POST");assert.equal(body.certificateId,certificateId);assert.equal(body.agentId,"agent");assert.equal(body.issuerId,"issuer");
+  assert.deepEqual(body.target,{type:"windows-iis",reference:"boundary.example.test",store:"My",binding:{site:"owned-site",port:8443,sniHost:"boundary.example.test"}});
+  assert.deepEqual(body.authorizedDnsNames,["boundary.example.test"]);return {status:201,body:{enrollmentId:"enrollment"}};
+ }};
+ const result=await provisionBoundaryEnrollment({fixture,api:"/certops",agentRowId:"agent",ownedCertificateIds,ownedEnrollmentIds},{issuerId:"issuer",domain:"boundary.example.test",site:"owned-site",port:8443});
+ assert.equal(result.body.enrollmentId,"enrollment");assert.deepEqual(events,["source","eligibility","enrollment"]);assert.deepEqual(ownedCertificateIds,[certificateId]);assert.deepEqual(ownedEnrollmentIds,["enrollment"]);
+});
+
+test("submission boundary refuses dispatch when management is absent, duplicated or ineligible",async()=>{
+ const {provisionBoundaryEnrollment}=require("../tests/e2e/helpers/certops-adcs-submission-boundaries");
+ const id="11111111-1111-4111-8111-111111111111";
+ for(const rows of [[],[{id,eligible:true},{id,eligible:true}],[{id,eligible:false}]]){
+  let requested=false;const ownedCertificateIds=[],ownedEnrollmentIds=[];
+  const fixture={workspaceId:"workspace",pool:{query:async(sql)=>({rows:sql.startsWith("INSERT")?[{id}]:rows})},request:async()=>{requested=true;throw Error("Unexpected enrollment");}};
+  await assert.rejects(()=>provisionBoundaryEnrollment({fixture,api:"/certops",agentRowId:"agent",ownedCertificateIds,ownedEnrollmentIds},{issuerId:"issuer",domain:"owned.example.test",site:"owned",port:443}));
+  assert.equal(requested,false);assert.deepEqual(ownedCertificateIds,[id]);assert.deepEqual(ownedEnrollmentIds,[]);
+ }
+});
