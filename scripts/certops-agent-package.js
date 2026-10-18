@@ -54,20 +54,24 @@ function inventory(root) {
   return files;
 }
 function extractVerified({ tarball, expectedSha256, destination }) {
+  tarball = path.resolve(tarball);
+  destination = path.resolve(destination);
+  // GNU tar interprets a Windows drive colon as a remote archive separator.
+  const archiveName = path.basename(tarball), archiveOptions = { cwd: path.dirname(tarball) };
   assert.match(expectedSha256 || "", /^[a-f0-9]{64}$/);
   assert.equal(digest(tarball), expectedSha256, "Agent archive checksum mismatch");
-  const entries = run("tar", ["-tzf", tarball]).trim().split(/\r?\n/);
+  const entries = run("tar", ["-tzf", archiveName], archiveOptions).trim().split(/\r?\n/);
   assert.ok(entries.length > 0);
   for (const entry of entries) {
     assert.ok(entry.startsWith("package/") && !entry.includes("\\") && !entry.includes(":"), "Invalid package path");
     assert.ok(!entry.split("/").includes(".."), "Package traversal refused");
   }
   // Reject links before extraction, rather than discovering an escaped link later.
-  for (const line of run("tar", ["-tvzf", tarball]).trim().split(/\r?\n/)) {
+  for (const line of run("tar", ["-tvzf", archiveName], archiveOptions).trim().split(/\r?\n/)) {
     assert.ok(line[0] === "-" || line[0] === "d", "Package links and special files refused");
   }
   fs.mkdirSync(destination);
-  run("tar", ["-xzf", tarball, "-C", destination]);
+  run("tar", ["-xzf", archiveName, "-C", destination], archiveOptions);
   const root = path.join(destination, "package");
   const files = inventory(root);
   for (const required of ["bin/tokentimer-agent.js", "scripts/install-agent.ps1", "scripts/install-agent.sh", "package.json"]) {

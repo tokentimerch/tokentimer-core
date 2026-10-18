@@ -11,7 +11,7 @@ function fixture(t) {
     fs.writeFileSync(path.join(root, file), file.endsWith("json") ? "{}" : "fixture-only");
   }
   const archive = path.join(root, "agent.tgz");
-  assert.equal(spawnSync("tar", ["-czf", archive, "-C", root, "package"]).status, 0);
+  assert.equal(spawnSync("tar", ["-czf", "agent.tgz", "package"], { cwd: root }).status, 0);
   return { root, archive };
 }
 
@@ -55,13 +55,13 @@ test("acceptance refuses reused extraction roots and incomplete packages", t => 
   fs.mkdirSync(destination);
   assert.throws(() => extractVerified({ tarball: archive, expectedSha256: digest(archive), destination }));
   fs.unlinkSync(path.join(root, "package/scripts/install-agent.ps1"));
-  assert.equal(spawnSync("tar", ["-czf", archive, "-C", root, "package"]).status, 0);
+  assert.equal(spawnSync("tar", ["-czf", "agent.tgz", "package"], { cwd: root }).status, 0);
   assert.throws(() => extractVerified({ tarball: archive, expectedSha256: digest(archive), destination: path.join(root, "incomplete") }));
 });
 test("acceptance rejects hard links before extracting an otherwise valid package", t => {
   const { root, archive } = fixture(t);
   fs.linkSync(path.join(root, "package/bin/tokentimer-agent.js"), path.join(root, "package/bin/linked.js"));
-  assert.equal(spawnSync("tar", ["-czf", archive, "-C", root, "package"]).status, 0);
+  assert.equal(spawnSync("tar", ["-czf", "agent.tgz", "package"], { cwd: root }).status, 0);
   assert.throws(() => extractVerified({ tarball: archive, expectedSha256: digest(archive), destination: path.join(root, "links") }));
   assert.equal(fs.existsSync(path.join(root, "links")), false);
 });
