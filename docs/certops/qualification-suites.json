@@ -12746,7 +12746,9 @@
         "tests/e2e/helpers/certops-windows-stop-offline-proof.js",
         "tests/e2e/helpers/certops-windows-stop-offline-reaper.js",
         "tests/e2e/helpers/certops-windows-stop-offline.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -12859,7 +12861,9 @@
         "tests/e2e/helpers/certops-windows-stop-offline-proof.js",
         "tests/e2e/helpers/certops-windows-stop-offline-reaper.js",
         "tests/e2e/helpers/certops-windows-stop-offline.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -12976,7 +12980,9 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -13093,7 +13099,9 @@
         "apps/api/middleware/agent-auth.js",
         "apps/api/services/certops/evidence.js",
         "apps/api/services/certops/protocolSchemaValidation.js",
-        "packages/contracts/certops/agent-protocol.schema.json"
+        "packages/contracts/certops/agent-protocol.schema.json",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -13205,7 +13213,9 @@
         "tests/e2e/helpers/certops-windows-stop-observer.js",
         "tests/e2e/helpers/certops-windows-stop-observer.ps1",
         "tests/e2e/helpers/certops-windows-stop-offline.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -13317,7 +13327,9 @@
         "tests/e2e/helpers/certops-windows-stop-observer.js",
         "tests/e2e/helpers/certops-windows-stop-observer.ps1",
         "tests/e2e/helpers/certops-windows-stop-offline.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -13832,7 +13844,9 @@
         "scripts/certops-windows-bind-failure-native.js",
         "scripts/certops-windows-bind-failure-native-sources.js",
         "scripts/certops-windows-bind-interposer-compile.test.ps1",
-        ".github/workflows/certops-windows-installed-bind-failure.yml"
+        ".github/workflows/certops-windows-installed-bind-failure.yml",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -13956,7 +13970,9 @@
         "scripts/certops-windows-bind-failure-native.js",
         "scripts/certops-windows-bind-failure-native-sources.js",
         "scripts/certops-windows-bind-interposer-compile.test.ps1",
-        ".github/workflows/certops-windows-installed-bind-failure.yml"
+        ".github/workflows/certops-windows-installed-bind-failure.yml",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -14069,7 +14085,9 @@
         "tests/e2e/helpers/certops-windows-stop-offline-proof.js",
         "tests/e2e/helpers/certops-windows-stop-offline-reaper.js",
         "tests/e2e/helpers/certops-windows-stop-offline.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {
@@ -14182,7 +14200,9 @@
         "tests/e2e/helpers/certops-windows-stop-offline-proof.js",
         "tests/e2e/helpers/certops-windows-stop-offline-reaper.js",
         "tests/e2e/helpers/certops-windows-stop-offline.js",
-        "tests/e2e/windows-real-journey.js"
+        "tests/e2e/windows-real-journey.js",
+        "scripts/certops-windows-installed-producer.js",
+        "scripts/certops-windows-installed-sources.js"
       ]
     },
     {

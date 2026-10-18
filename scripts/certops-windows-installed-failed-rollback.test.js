@@ -52,86 +52,96 @@ test("actual producer uses the separate finite native scope and waits for fixtur
     actualRequire = createRequire(file),
     module = { exports: {} };
   const calls = [];
-  vm.runInNewContext(
-    fs.readFileSync(file, "utf8"),
-    {
-      module,
-      exports: module.exports,
-      __filename: file,
-      __dirname: path.dirname(file),
-      Buffer,
-      console,
-      process: {
-        platform: "win32",
-        arch: "x64",
-        execPath: process.execPath,
-        env: {
-          CERTOPS_WINDOWS_FAILED_ROLLBACK_REQUIRED: "1",
-          CERTOPS_WINDOWS_KEY_PROFILE: "rsa-2048",
-        },
-      },
-      require(name) {
-        if (name === "node:fs")
-          return {
-            ...fs,
-            mkdirSync() {},
-            existsSync() {
-              return false;
-            },
-          };
-        if (name === "node:child_process")
-          return {
-            spawnSync(_exe, _args, options) {
-              calls.push({
-                timeout: options.timeout,
-                scope: options.env.CERTOPS_REPORT_SCOPE,
-              });
-              return { status: 0 };
-            },
-          };
-        if (
-          name ===
-          "../tests/e2e/helpers/certops-windows-installed-verify-rollback"
-        )
-          return {
-            readOwned() {
-              return { bytes: Buffer.from(JSON.stringify(fixture())) };
-            },
-          };
-        if (name === "../packages/agent/scripts/host-gate")
-          return {
-            createHostGate() {
-              return {
-                report: {
-                  qualificationEnvironment: { osVersion: "2022" },
-                  capabilities: {},
-                },
-                async preflight() {
-                  await Promise.resolve();
-                  return true;
-                },
-                async scenario(_id, run) {
-                  await run();
-                },
-                async finish() {
-                  await Promise.resolve();
-                  calls.push("finish");
-                },
-              };
-            },
-          };
-        if (name === "./certops-real-acme")
-          return {
-            async withPebble(run) {
-              await run({});
-              calls.push("pebble-closed");
-            },
-          };
-        return actualRequire(name);
+  const context = {
+    module,
+    exports: module.exports,
+    __filename: file,
+    __dirname: path.dirname(file),
+    Buffer,
+    console,
+    process: {
+      platform: "win32",
+      arch: "x64",
+      execPath: process.execPath,
+      env: {
+        CERTOPS_WINDOWS_FAILED_ROLLBACK_REQUIRED: "1",
+        CERTOPS_WINDOWS_KEY_PROFILE: "rsa-2048",
       },
     },
-    { filename: file },
-  );
+    require(name) {
+      if (name === "./certops-windows-installed-producer") {
+        const nested = { exports: {} };
+        vm.runInNewContext(
+          fs.readFileSync(
+            path.join(__dirname, "certops-windows-installed-producer.js"),
+            "utf8",
+          ),
+          { ...context, module: nested, exports: nested.exports },
+        );
+        return nested.exports;
+      }
+      if (name === "node:fs")
+        return {
+          ...fs,
+          mkdirSync() {},
+          existsSync() {
+            return false;
+          },
+        };
+      if (name === "node:child_process")
+        return {
+          spawnSync(_exe, _args, options) {
+            calls.push({
+              timeout: options.timeout,
+              scope: options.env.CERTOPS_REPORT_SCOPE,
+            });
+            return { status: 0 };
+          },
+        };
+      if (
+        name ===
+        "../tests/e2e/helpers/certops-windows-installed-verify-rollback"
+      )
+        return {
+          readOwned() {
+            return { bytes: Buffer.from(JSON.stringify(fixture())) };
+          },
+        };
+      if (name === "../packages/agent/scripts/host-gate")
+        return {
+          createHostGate() {
+            return {
+              report: {
+                qualificationEnvironment: { osVersion: "2022" },
+                capabilities: {},
+              },
+              async preflight() {
+                await Promise.resolve();
+                return true;
+              },
+              async scenario(_id, run) {
+                await run();
+              },
+              async finish() {
+                await Promise.resolve();
+                calls.push("finish");
+              },
+            };
+          },
+        };
+      if (name === "./certops-real-acme")
+        return {
+          async withPebble(run) {
+            await run({});
+            calls.push("pebble-closed");
+          },
+        };
+      return actualRequire(name);
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(file, "utf8"), context, {
+    filename: file,
+  });
   await module.exports.main();
   assert.deepEqual(calls, [
     { timeout: 1320000, scope: "real-agent-windows-failed-rollback/rsa-2048" },
