@@ -49,3 +49,27 @@ test("old destructive pending proofs and missing installed-key protection cannot
  for(const patch of [{firstError:"Local policy refusal could not free the protected enrollment key; retry required"},{signedRetrievalInstalled:false},{originalKeyUsableAfterReconciliation:false},{installedKeyProtectedFromCleanup:false},{installedReferenceSurvivesSecondaryRemoval:false}])assert.throws(()=>helper.verifySurvivorProof({...survivorProof(),...patch}));
  const contract=require("../docs/certops/qualification-suites.json");for(const suite of ["enterprise-adcs-real","enterprise-adcs-hierarchy-real"]){assert.ok(contract.suites[suite].includes(helper.tighteningScenario));assert.ok(contract.suites[suite].includes(helper.survivorScenario));assert.ok(!contract.suites[suite].includes("adcs-real-local-rule-tightening-frees-pending-key"));assert.ok(!contract.suites[suite].includes("adcs-real-pending-key-survivor-protects-local-policy-cleanup"));}
 });
+
+test("survivor setup creates a real source and opens eligible management before enrollment",async()=>{
+ const certificateId="11111111-1111-4111-8111-111111111111",periodId="22222222-2222-4222-8222-222222222222",ownedCertificateIds=[],calls=[];
+ const fixture={workspaceId:"workspace",pool:{query:async(sql,values)=>{
+  calls.push(sql);
+  if(sql.startsWith("INSERT")){assert.equal(values[0],"workspace");assert.equal(values[6],"agent");assert.match(sql,/'provisioning','agent_issuance'/);return {rows:[{id:certificateId}]};}
+  assert.deepEqual(values,["workspace",certificateId]);assert.match(sql,/certops_is_initial_provisioning/);assert.match(sql,/ended_at IS NULL/);return {rows:[{id:periodId,eligible:true}]};
+ }},request:async(url,method,body)=>{
+  assert.deepEqual(ownedCertificateIds,[certificateId],"Register ownership before lifecycle API can fail");
+  assert.equal(url,`/certops/sources/${certificateId}/readd`);assert.equal(method,"POST");assert.deepEqual(body,{renewalProfileId:null,automationEnabled:false});calls.push("management");return {status:201,body:{periodId}};
+ }};
+ assert.equal(await helper.provisionSurvivorSource({fixture,api:"/certops",agentRowId:"agent",domain:"owned.example.test",site:"owned",port:443,ownedCertificateIds}),certificateId);
+ assert.equal(calls.length,3);assert.equal(calls[1],"management");
+ fixture.pool.query=async(sql)=>({rows:sql.startsWith("INSERT")?[{id:certificateId}]:[{id:periodId,eligible:false}]});
+ await assert.rejects(()=>helper.provisionSurvivorSource({fixture:{...fixture,request:async()=>({status:201,body:{periodId}})},api:"/certops",agentRowId:"agent",domain:"owned.example.test",site:"owned",port:443,ownedCertificateIds:[]}),/eligible/);
+});
+
+test("survivor initial enrollment must be claimed by its installed agent for its managed source",()=>{
+ const expected={certificateId:"certificate",agentRowId:"agent"};
+ const job={subject_type:"managed_certificate",subject_id:"certificate",assigned_agent_id:"agent",claim_id:"claim",status:"awaiting_issuer"};
+ helper.assertSurvivorInitialClaim(job,expected);
+ for(const patch of [{claim_id:null},{subject_id:"other"},{assigned_agent_id:"other"},{status:"queued"},{subject_type:"other"}])assert.throws(()=>helper.assertSurvivorInitialClaim({...job,...patch},expected));
+ assert.throws(()=>helper.assertSurvivorInitialClaim(undefined,expected));
+});
