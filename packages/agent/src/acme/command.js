@@ -47,7 +47,10 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env, signal) {
 
     function finish(error, stdout = "", stderr = "") {
       if (settled) return;
-      error = error || stoppedError;
+      // taskkill (or a signal handler) can turn our cancellation into exit 1.
+      // Preserve the reason we stopped the tree instead of reporting that as
+      // an unexplained client failure.
+      error = stoppedError || error;
       // A quick leader exit may finish before the escalation timer. Reap its
       // owned group immediately rather than allowing detached hook children.
       if (group && (error || signal?.aborted)) {
@@ -78,7 +81,8 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env, signal) {
           : childProcess.spawn(argv[0], argv.slice(1), {detached: true, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"]});
         if (windowsJob) {
           child.stdin.on("error", () => {}); // Spawn/close handlers report wrapper failure.
-          child.stdin.end(JSON.stringify({executable: argv[0], arguments: argv.slice(1)}));
+          // One framed request avoids waiting for Windows pipe EOF before startup.
+          child.stdin.end(JSON.stringify({executable: argv[0], arguments: argv.slice(1)}) + "\n");
         }
         const stdout = [], stderr = [];
         let bytes = 0;

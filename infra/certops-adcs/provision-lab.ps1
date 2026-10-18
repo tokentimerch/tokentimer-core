@@ -18,7 +18,8 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$RetentionCadenceNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
-  [string]$Location = 'westeurope')
+  [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
+  [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
@@ -27,6 +28,7 @@ if($ResponseLossExperiment -ne '0' -and $JournalPhaseExperiment -ne 'none'){thro
 if($PendingElapsedQualification -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Elapsed pending qualification requires its isolated four-hour Server2022 en-US profile'}
 if($Retention24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Retention24h requires explicit isolated four-hour Server2022 en-US preparation'}
 if($AdcsTtl24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $AdcsTtl24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Default ADCS TTL requires explicit isolated four-hour Server2022 en-US preparation'}
+& (Join-Path $PSScriptRoot 'assert-lab-capacity.ps1') -Location $Location -VmSize $VmSize
 $password = 'Tt!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) + 'a1'
 Write-Output "::add-mask::$password"
 $createdAt = [DateTimeOffset]::UtcNow
@@ -51,6 +53,15 @@ $publicStageData=@{}
 function Refresh-LabAuthentication {
   if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}
 }
+function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath, [string]$Destination) {
+  # The public descriptor already exceeds 8 KiB as base64. Ship it in the
+  # Run Command script body, not in the guest's Windows command-line arguments.
+  # The temporary forest password remains a parameter; it is never baked in.
+  $payload=[Convert]::ToBase64String([IO.File]::ReadAllBytes($DescriptorPath))
+  $body=[IO.File]::ReadAllText($TemplatePath)
+  $source='param([Parameter(Mandatory)][string]$DomainPassword)' + "`n& {`n" + $body + "`n} -DomainPassword `$DomainPassword -SafetyCasesBase64 '$payload'`n"
+  [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
+}
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
   $arguments = @('vm','run-command','invoke','--resource-group',$ResourceGroup,'--name',$Machine,'--command-id','RunPowerShellScript','--scripts',"@$Script",'-o','json')
   if ($Parameters.Count) { $arguments += @('--parameters'); $arguments += $Parameters }
@@ -59,7 +70,11 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
   if ($LASTEXITCODE -ne 0) { throw "Native lab stage failed for $Machine" }
   $response = $text | ConvertFrom-Json
   $message = ($response.value | ForEach-Object message) -join "`n"
-  if (-not $message.Contains($Marker)) { throw "Expected stage receipt absent for $Machine" }
+  if (-not $message.Contains($Marker)) {
+    $diagnostic=[regex]::Match($message,'(?m)^CERTOPS_TEMPLATE_FAILURE=(descriptor|remoting|definitions|directory|create-oid|create-template|commit-template|template-acl|publish-template|ca-hardening):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
+    throw "Expected stage receipt $Marker absent for $Machine ($([IO.Path]::GetFileName($Script)))"
+  }
   foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT')){
     $match=[regex]::Match($message,"(?m)^$field=([A-Za-z0-9+/=]+)\s*$")
     if($match.Success){$publicStageData[$field]=$match.Groups[1].Value}
@@ -101,7 +116,7 @@ try {
   if($RetentionCadencePrepare -eq '1'){$initialTags+=@('cadencePrepareKind=certops-native-installed-retention-cadence',"cadencePrepareNonce=$RetentionCadenceNonce","cadencePrepareRunId=$env:GITHUB_RUN_ID","cadencePrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
   az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
   if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
-  @{ expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
+  @{ vmSize=@{value=$VmSize}; expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
   az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" -o none
   if ($LASTEXITCODE -ne 0) { throw 'Private lab deployment failed' }
   if($Language -ne 'en-US'){
@@ -126,8 +141,11 @@ try {
     if(-not $publicStageData.CERTOPS_SUBORDINATE_CERT){throw 'Signed subordinate public certificate missing'}
     Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'hierarchy-subordinate.ps1') 'CERTOPS_STAGE=enterprise-subordinate-service-running' @("DomainPassword=$password","RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)","SubordinateCertificateBase64=$($publicStageData.CERTOPS_SUBORDINATE_CERT)")
   }else{Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-ca.ps1') 'CERTOPS_STAGE=enterprise-ca-service-running' @("DomainPassword=$password")}
-  $safetyCasesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'safety-cases.json')))
-  Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'templates.ps1') 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password","SafetyCasesBase64=$safetyCasesBase64")
+  $templateStagePath=Join-Path $env:RUNNER_TEMP ("certops-templates-{0}.ps1" -f [Guid]::NewGuid().ToString('N'))
+  try {
+    New-TemplateStageScript (Join-Path $PSScriptRoot 'templates.ps1') (Join-Path $PSScriptRoot 'safety-cases.json') $templateStagePath
+    Invoke-Stage 'domain-ca' $templateStagePath 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password")
+  } finally { Remove-Item -LiteralPath $templateStagePath -Force -ErrorAction SilentlyContinue }
   Start-ControlPlane
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){
     Refresh-LabAuthentication

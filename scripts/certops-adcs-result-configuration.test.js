@@ -8,7 +8,9 @@ const test = require("node:test"),
   path = require("node:path");
 const subject = require("../tests/e2e/helpers/certops-adcs-result-configuration");
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "certops-result-config-")),
+  // Hosted Windows TEMP may use an 8.3 alias; supply the canonical namespace
+  // required by the owner without relaxing its reparse/file-identity checks.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "certops-result-config-"))),
     configDir = path.join(root, "agent"),
     file = path.join(configDir, "config.json");
   fs.mkdirSync(configDir);
@@ -29,7 +31,7 @@ function fixture() {
     original,
     expectedIdentity,
     remove: () => {
-      assert.equal(path.dirname(path.resolve(root)),path.resolve(os.tmpdir()));
+      assert.equal(path.dirname(path.resolve(root)),fs.realpathSync.native(os.tmpdir()));
       assert.ok(path.basename(root).startsWith("certops-result-config-"));
       const current=fs.lstatSync(root,{bigint:true});assert.ok(current.isDirectory()&&!current.isSymbolicLink()&&current.dev===rootStat.dev&&current.ino===rootStat.ino);
       fs.rmSync(root, { recursive: true, force: true });

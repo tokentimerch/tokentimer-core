@@ -61,6 +61,8 @@ import certops_adcs_browser_enrollment_proof as browser_enrollment_proof
 import certops_adcs_uncertain_abandon_proof as uncertain_abandon_proof
 
 ROOT = Path(__file__).resolve().parent.parent
+CI_WORKFLOW = '.github/workflows/ci.yml'
+CI_API_SUITES = {'adcs-enrollment-policy-api', 'adcs-installation-recovery-api', 'adcs-api-release-gates'}
 WORKFLOWS = {
     ".github/workflows/" + name for name in (
         "certops-qualification.yml", "certops-real-acme.yml", "certops-acme-native-console.yml", "certops-acme-browser-lifecycle.yml",
@@ -89,6 +91,7 @@ WORKFLOWS = {
         "certops-migration-upgrade.yml",
     )
 }
+WORKFLOWS.add(CI_WORKFLOW)
 MAX_ARCHIVE = 20 * 1024 * 1024
 MAX_REPORT = 2 * 1024 * 1024
 MAX_TOTAL_DOWNLOAD = 512 * 1024 * 1024
@@ -194,6 +197,15 @@ def migration_evidence(value):
         result[name] = value[name]
     return result
 
+
+def collectable_artifact(run, artifact):
+    # Normal CI also uploads logs, JUnit and other unrelated artifacts. Only its
+    # dedicated sanitized AD CS report collection belongs in qualification.
+    return run.get('path') != CI_WORKFLOW or artifact.get('name') == 'certops-adcs-api'
+
+def validate_report_workflow(report, workflow):
+    if workflow == CI_WORKFLOW and (not isinstance(report, dict) or report.get('suite') not in CI_API_SUITES):
+        raise ValueError('Normal CI may supply only AD CS API qualification reports')
 
 def declared_sources():
     slots = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"]
@@ -2301,6 +2313,8 @@ def main(arguments=()):
             if data.get("total_count", 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError("Artifact inventory exceeds explicit bound")
             for artifact in data.get("artifacts", []):
+                if not collectable_artifact(run, artifact):
+                    continue
                 archive_count += 1
                 if archive_count > limits["archives"]:
                     raise ValueError("Collection artifact count exceeds limit")
@@ -2340,6 +2354,7 @@ def main(arguments=()):
                     return True
                 reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
+                    validate_report_workflow(report, run.get("path"))
                     verify_webhosting_retention_workflow(report, run.get("path"))
                     verify_alive_grace_workflow(report, run.get("path"))
                     verify_bind_failure_native_workflow(report, run.get("path"))

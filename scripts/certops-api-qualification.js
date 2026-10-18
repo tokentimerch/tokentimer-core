@@ -1,6 +1,6 @@
 /**
  * Run the supporting public-API/PostgreSQL suites and verify each current-source report.
- * Invoked by certops-qualification.yml against its disposable stack; requires
+ * Invoked by normal CI against its existing disposable integration stack; requires
  * CERTOPS_CSR_API_URL and explicit disposable-stack authorization. Protocol fixtures
  * exercise server admission and persistence; native certificate deployment has separate suites. */
 "use strict";
@@ -70,6 +70,13 @@ function verifySource(report, file, root = path.resolve(__dirname, "..")) {
   const digest = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.join(root, expectedPath))).digest("hex");
   return report?.fixtureSource?.file === expectedPath && report.fixtureSource.sha256 === digest;
 }
+// Normal product CI owns the three AD CS API suites; the supporting stack
+// retains the complete inventory, including unfinished cross-platform work.
+function selectSuites(scope = process.env.CERTOPS_API_QUALIFICATION_SCOPE || "all") {
+  if (scope === "all") return suites;
+  if (scope !== "adcs") throw new Error("Unknown API qualification scope");
+  return suites.filter(([name]) => ["adcs-enrollment-policy-api", "adcs-installation-recovery-api", "adcs-api-release-gates"].includes(name));
+}
 function run() {
   if (!process.env.CERTOPS_CSR_API_URL || process.env.CERTOPS_CSR_DISPOSABLE_STACK !== "1") throw new Error("Explicit disposable API URL and stack authorization are required");
   if (!/^[a-f0-9]{40}$/i.test(process.env.GITHUB_SHA || "")) throw new Error("Candidate baseline GITHUB_SHA is required for verifiable reports");
@@ -77,7 +84,7 @@ function run() {
   const outputDirectory = path.resolve(process.env.CERTOPS_API_REPORTS_DIR || path.join(root, "qualification-results", "api"));
   fs.mkdirSync(outputDirectory, { recursive: true });
   const failures = [];
-  for (const [name, file, reportVariable] of suites) {
+  for (const [name, file, reportVariable] of selectSuites()) {
     const reportPath = path.join(outputDirectory, `${name}.json`);
     // Remove an older result so a crashed current process cannot accidentally
     // qualify using a report from a previous candidate or invocation.
@@ -99,4 +106,4 @@ if (require.main === module) {
   try { run(); }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-module.exports = { suites, run, verifySource };
+module.exports = { suites, run, verifySource, selectSuites };

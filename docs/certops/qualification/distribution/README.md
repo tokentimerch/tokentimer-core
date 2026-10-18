@@ -5,6 +5,8 @@ qualification suites and their obligations remain mandatory. Distribution is
 still outside the shipped agent capability manifest. Passing a source-mounted
 lab is supporting E2E evidence, not a production capability release approval.
 
+The workflow runs only through manual dispatch on main; pushes and pull requests do not start it. Core product CI remains separate.
+
 ## Reproduce the supporting runs
 
 Use Node 24, locked pnpm dependencies, Docker and Chromium. Run from this checkout:

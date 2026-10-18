@@ -5229,7 +5229,8 @@
       "tests/e2e/helpers/certops-adcs-pending-ca-renewal.js",
       {
         "sourceGroup": "shared-certops-adcs-preflight-cohorts-6"
-      }
+      },
+      "infra/certops-adcs/assert-lab-capacity.ps1"
     ],
     "kubernetes-controller-api": [
       "scripts/certops-kubernetes-runtime.js"

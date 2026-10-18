@@ -2,6 +2,16 @@ name: "CertOps / Disposable enterprise AD CS native qualification"
 on:
   workflow_dispatch:
     inputs:
+      location:
+        description: Azure region available to the lab subscription
+        type: string
+        default: swedencentral
+        required: true
+      vm_size:
+        description: VM size available to the lab subscription (three two-vCPU machines)
+        type: choice
+        options: ['Standard_D2s_v5', 'Standard_D2as_v5']
+        default: Standard_D2s_v5
       lab_hours:
         description: Maximum resource lifetime in hours
         type: choice
@@ -29,6 +39,8 @@ jobs:
     env:
       LAB_GROUP: tt-certops-${{ github.run_id }}-${{ github.run_attempt }}
       LAB_HOURS: ${{ inputs.lab_hours }}
+      LAB_LOCATION: ${{ inputs.location }}
+      LAB_VM_SIZE: ${{ inputs.vm_size }}
       WINDOWS_VERSION: ${{ inputs.windows_version }}
       WINDOWS_LANGUAGE: ${{ inputs.language }}
       CERTOPS_WINDOWS_LANGUAGE_ASSETS: ${{ secrets.CERTOPS_WINDOWS_LANGUAGE_ASSETS }}
@@ -49,7 +61,7 @@ jobs:
         run: ./infra/certops-adcs/login-oidc.ps1
       - name: Provision isolated domain CA control plane and member and execute real scenarios
         shell: pwsh
-        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE
+        run: ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE
       - name: Assert mandatory native scenarios and candidate source evidence
         run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
       - name: Destroy owned temporary resources

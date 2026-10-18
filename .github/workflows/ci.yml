@@ -356,6 +356,25 @@ jobs:
           DB_PASSWORD: password
         run: pnpm run certops:integrity-check
 
+      - name: Run AD CS API qualification on the existing test stack
+        env:
+          CERTOPS_API_QUALIFICATION_SCOPE: adcs
+          CERTOPS_ENABLED: 'true'
+          CERTOPS_E2E_REQUIRED: '1'
+          CERTOPS_CSR_DISPOSABLE_STACK: '1'
+          CERTOPS_CSR_API_URL: http://localhost:4000
+          CERTOPS_API_REPORTS_DIR: qualification-results/api
+          CERTOPS_API_WORKER_FIXTURE_KEY: test-session-secret-key
+          CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: tokentimer
+          DB_USER: tokentimer
+          DB_PASSWORD: password
+        run: node scripts/certops-api-qualification.js
+
       - name: Run integration tests (Mocha + JUnit)
         env:
           TEST_API_URL: http://localhost:4000
@@ -363,6 +382,14 @@ jobs:
         run: |
           mkdir -p test-results
           pnpm run test:ci
+
+      - name: Preserve verified AD CS API reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: certops-adcs-api
+          path: qualification-results/api/
+          if-no-files-found: error
 
       - name: Capture docker logs
         if: always()
@@ -425,6 +452,15 @@ jobs:
           node-version: "24"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Generate isolated test-only CertOps encryption keys
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          for (const name of ['CERTOPS_SIGNING_ENCRYPTION_KEY', 'CERTOPS_REGISTRATION_ENCRYPTION_KEY']) {
+            fs.appendFileSync(process.env.GITHUB_ENV, `${name}=${crypto.randomBytes(32).toString('hex')}\n`);
+          }
+          NODE
       - name: Migrate dedicated empty test database
         run: node apps/api/migrations/migrate.js
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
@@ -670,6 +706,10 @@ jobs:
 
       # Native cases start PowerShell/C# wrappers; bound concurrency so cold
       # starts do not compete with every other test file on the hosted runner.
+      - name: Verify native Windows ACME startup before the full agent suite
+        working-directory: packages/agent
+        run: node --test --test-name-pattern="native command preserves quoted and empty arguments" src/acme/command.test.js
+
       - name: Run agent package tests (Windows ACL/durability/platform suite)
         working-directory: packages/agent
         run: node --test --test-concurrency=2 "src/**/*.test.js" "scripts/**/*.test.js"

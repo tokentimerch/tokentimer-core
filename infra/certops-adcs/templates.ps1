@@ -5,13 +5,26 @@ must independently observe these actual LDAP values.
 #>
 param([Parameter(Mandatory)][string]$DomainPassword,[Parameter(Mandatory)][string]$SafetyCasesBase64)
 $ErrorActionPreference = 'Stop'
+$step='descriptor'
+trap {
+  Write-Output ('CERTOPS_TEMPLATE_FAILURE={0}:{1}:{2}' -f $step,$_.InvocationInfo.ScriptLineNumber,$_.Exception.HResult)
+  throw 'Owned template setup failed'
+}
 $safetyCases=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($SafetyCasesBase64)) | ConvertFrom-Json
 if($safetyCases.schemaVersion -ne 1 -or $safetyCases.templateCases.Count -lt 14 -or $safetyCases.caFlagCases.Count -lt 3){throw 'Complete public template safety fixture descriptor required'}
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Template fixtures require isolated qualification forest' }
 $credential = [PSCredential]::new('TTQUAL\tt-lab-admin', (ConvertTo-SecureString $DomainPassword -AsPlainText -Force))
+$step='remoting'
 Invoke-Command -ComputerName localhost -Credential $credential -ArgumentList $safetyCases -ScriptBlock {
   param($SafetyCases)
   $ErrorActionPreference = 'Stop'
+  $step='definitions'
+  trap {
+    # Export only a fixed stage, line number and numeric HRESULT, never the
+    # exception message/arguments (which can contain the temporary credential).
+    Write-Output ('CERTOPS_TEMPLATE_FAILURE={0}:{1}:{2}' -f $step,$_.InvocationInfo.ScriptLineNumber,$_.Exception.HResult)
+    throw 'Owned template provisioning failed'
+  }
   $serverAuth='1.3.6.1.5.5.7.3.1'
   $definitions=@(
     @{Name='TTQualificationRSA';Bits=2048;Schema=2;Pending=0;Eku=@($serverAuth)},
@@ -30,6 +43,7 @@ Invoke-Command -ComputerName localhost -Credential $credential -ArgumentList $sa
   foreach($case in $SafetyCases.templateCases){$definitions+=@{Name=$case.name;Bits=2048;Schema=[int]$case.schema;Pending=0;Eku=@($case.eku);ApplicationPolicies=@($case.applicationPolicies)}}
   foreach($case in $SafetyCases.caFlagCases){$definitions+=@{Name=$case.template;Bits=2048;Schema=2;Pending=0;Eku=@($serverAuth)}}
   if(@($definitions.Name | Select-Object -Unique).Count -ne $definitions.Count){throw 'Duplicate owned template safety fixture'}
+  $step='directory'
   $config=([ADSI]'LDAP://RootDSE').configurationNamingContext
   $services="CN=Public Key Services,CN=Services,$config"
   $container=[ADSI]"LDAP://CN=Certificate Templates,$services"
@@ -42,6 +56,7 @@ Invoke-Command -ComputerName localhost -Credential $credential -ArgumentList $sa
   if(-not(Get-ADGroup -Identity $computerSid.Value)){throw 'Owned domain computer group missing'}
   $computers=$computerSid
   foreach ($definition in $definitions) {
+    $step='create-oid'
     if ($container.Children | Where-Object { $_.Properties['cn'].Value -eq $definition.Name }) { throw "Existing fixture template $($definition.Name)" }
     $oid="$forestOid.$(Get-Random -Minimum 1000000 -Maximum 99999999).$(Get-Random -Minimum 1000000 -Maximum 99999999)"
     $oidObject=$oids.Create('msPKI-Enterprise-Oid',"CN=$([Guid]::NewGuid().ToString('N'))")
@@ -49,6 +64,7 @@ Invoke-Command -ComputerName localhost -Credential $credential -ArgumentList $sa
     $oidObject.Put('displayName',$definition.Name)
     $oidObject.Put('flags',1)
     $oidObject.SetInfo()
+    $step='create-template'
     $template=$container.Create('pKICertificateTemplate',"CN=$($definition.Name)")
     foreach ($attribute in @('flags','pKIKeyUsage','pKIExpirationPeriod','pKIOverlapPeriod')) { $template.Put($attribute,$source.Properties[$attribute].Value) }
     if($definition.ValidityDays){
@@ -67,12 +83,15 @@ Invoke-Command -ComputerName localhost -Credential $credential -ArgumentList $sa
       $algorithm=$definition.Algorithm
       $template.Put('msPKI-RA-Application-Policies',"msPKI-Asymmetric-Algorithm``PZPWSTR``$algorithm``msPKI-Hash-Algorithm``PZPWSTR``SHA256``msPKI-Key-Usage``DWORD``16777215``msPKI-Symmetric-Algorithm``PZPWSTR``3DES``msPKI-Symmetric-Key-Length``DWORD``168``")
     }
+    $step='commit-template'
     $template.SetInfo()
+    $step='template-acl'
     $template.ObjectSecurity.AddAccessRule([DirectoryServices.ActiveDirectoryAccessRule]::new($computers,'GenericRead','Allow'))
     $enrollmentAccess=if($definition.NoEnroll){'Deny'}else{'Allow'}
     $template.ObjectSecurity.AddAccessRule([DirectoryServices.ActiveDirectoryAccessRule]::new($computers,'ExtendedRight',$enrollmentAccess,[Guid]'0e10c968-78fb-11d2-90d4-00c04f79dc55'))
     $template.CommitChanges()
     if (-not $definition.Unpublished) {
+      $step='publish-template'
       $published=$false
       for($attempt=0;$attempt -lt 6;$attempt++){
         & certutil.exe -SetCATemplates "+$($definition.Name)" | Out-Null
@@ -82,6 +101,7 @@ Invoke-Command -ComputerName localhost -Credential $credential -ArgumentList $sa
       if(-not $published){throw "Fixture template publication failed: $($definition.Name)"}
     }
   }
+  $step='ca-hardening'
   & certutil.exe -setreg CA\InterfaceFlags +IF_ENFORCEENCRYPTICERTREQUEST | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'CA encrypted request enforcement failed' }
   & certutil.exe -setreg policy\EditFlags -EDITF_ATTRIBUTESUBJECTALTNAME2 | Out-Null

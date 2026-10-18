@@ -1,9 +1,21 @@
 # Own one ACME command tree. The child is suspended until assigned to a
 # kill-on-close Job Object, so launcher exit or wrapper termination cannot orphan it.
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+$PSModuleAutoLoadingPreference = 'None'
+$stage='read-request'
 try {
-  $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  # Read one newline-framed request, not an unbounded pipe-to-EOF stream.
+  # Use the redirected byte stream directly. Console.In depends on the host's
+  # console/code-page initialization, which service-hosted runners do not own.
+  $inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false), $false)
+  $requestJson = $inputReader.ReadLine()
+  $stage='load-utility'
+  # Resolve only the signed built-in module. Automatic discovery scans the
+  # hosted machine's installed modules and can stall before JSON parsing.
+  Import-Module ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
+  $stage='parse-request'
+  $request = ConvertFrom-Json -InputObject $requestJson
+  $stage='compile-owner'
   Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -35,7 +47,14 @@ public static class OwnedAcmeCommand {
   [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr job,uint code);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int kind);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool DuplicateHandle(IntPtr sourceProcess,IntPtr source,IntPtr targetProcess,out IntPtr target,uint access,bool inherit,uint options);
   static void Check(bool ok) { if(!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+  static IntPtr InheritableStdHandle(int kind) {
+    IntPtr copy; IntPtr self=GetCurrentProcess();
+    Check(DuplicateHandle(self,GetStdHandle(kind),self,out copy,0,true,2));
+    return copy;
+  }
   // Windows argv quoting: backslashes are doubled only before a quote or the closing quote.
   static string Quote(string value) {
     var s=new StringBuilder("\""); int slashes=0;
@@ -49,12 +68,15 @@ public static class OwnedAcmeCommand {
   }
   public static int Run(string executable,string[] args) {
     IntPtr job=CreateJobObject(IntPtr.Zero,null); Check(job!=IntPtr.Zero);
-    var process=new ProcessInfo(); bool assigned=false;
+    var process=new ProcessInfo(); var startup=new Startup(); bool assigned=false;
     try {
       var limits=new Extended(); limits.basic.flags=0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
       Check(SetInformationJobObject(job,9,ref limits,Marshal.SizeOf(typeof(Extended))));
-      var startup=new Startup(); startup.cb=Marshal.SizeOf(typeof(Startup)); startup.flags=0x100;
-      startup.input=GetStdHandle(-10); startup.output=GetStdHandle(-11); startup.error=GetStdHandle(-12);
+      startup.cb=Marshal.SizeOf(typeof(Startup)); startup.flags=0x100;
+      // Service hosts may supply non-inheritable standard pipes. CreateProcess
+      // requires inheritable handles even with STARTF_USESTDHANDLES; duplicate
+      // only these handles instead of changing the host's handle flags.
+      startup.input=InheritableStdHandle(-10); startup.output=InheritableStdHandle(-11); startup.error=InheritableStdHandle(-12);
       var command=new StringBuilder(Quote(executable)); foreach(string arg in args) command.Append(' ').Append(Quote(arg));
       Check(CreateProcess(null,command,IntPtr.Zero,IntPtr.Zero,true,0x4|0x08000000,IntPtr.Zero,null,ref startup,out process));
       Check(AssignProcessToJobObject(job,process.process)); assigned=true;
@@ -66,13 +88,21 @@ public static class OwnedAcmeCommand {
       else if(process.process!=IntPtr.Zero) TerminateProcess(process.process,1);
       if(process.thread!=IntPtr.Zero) CloseHandle(process.thread);
       if(process.process!=IntPtr.Zero) CloseHandle(process.process);
+      if(startup.input!=IntPtr.Zero) CloseHandle(startup.input);
+      if(startup.output!=IntPtr.Zero) CloseHandle(startup.output);
+      if(startup.error!=IntPtr.Zero) CloseHandle(startup.error);
       CloseHandle(job);
     }
   }
 }
 '@
+  $stage='execute-client'
   exit [OwnedAcmeCommand]::Run([string]$request.executable, [string[]]$request.arguments)
 } catch {
-  [Console]::Error.WriteLine('Owned ACME command wrapper failed')
+  $failure=$_.Exception.GetBaseException()
+  $code=if($failure -is [ComponentModel.Win32Exception]){$failure.NativeErrorCode}else{$failure.HResult}
+  # Numeric failure codes and fixed phases are useful without exposing argv,
+  # client credentials, compiler input, or arbitrary exception messages.
+  [Console]::Error.WriteLine("Owned ACME command wrapper failed at $stage (code $code)")
   exit 1
 }
