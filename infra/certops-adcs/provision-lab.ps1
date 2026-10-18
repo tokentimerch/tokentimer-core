@@ -54,6 +54,15 @@ $publicStageData=@{}
 function Refresh-LabAuthentication {
   if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}
 }
+function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath, [string]$Destination) {
+  # The public descriptor already exceeds 8 KiB as base64. Ship it in the
+  # Run Command script body, not in the guest's Windows command-line arguments.
+  # The temporary forest password remains a parameter; it is never baked in.
+  $payload=[Convert]::ToBase64String([IO.File]::ReadAllBytes($DescriptorPath))
+  $body=[IO.File]::ReadAllText($TemplatePath)
+  $source='param([Parameter(Mandatory)][string]$DomainPassword)' + "`n& {`n" + $body + "`n} -DomainPassword `$DomainPassword -SafetyCasesBase64 '$payload'`n"
+  [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
+}
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
   $arguments = @('vm','run-command','invoke','--resource-group',$ResourceGroup,'--name',$Machine,'--command-id','RunPowerShellScript','--scripts',"@$Script",'-o','json')
   if ($Parameters.Count) { $arguments += @('--parameters'); $arguments += $Parameters }
@@ -62,7 +71,11 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
   if ($LASTEXITCODE -ne 0) { throw "Native lab stage failed for $Machine" }
   $response = $text | ConvertFrom-Json
   $message = ($response.value | ForEach-Object message) -join "`n"
-  if (-not $message.Contains($Marker)) { throw "Expected stage receipt absent for $Machine" }
+  if (-not $message.Contains($Marker)) {
+    $diagnostic=[regex]::Match($message,'(?m)^CERTOPS_TEMPLATE_FAILURE=(descriptor|remoting|definitions|directory|create-oid|create-template|commit-template|template-acl|publish-template|ca-hardening):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
+    throw "Expected stage receipt $Marker absent for $Machine ($([IO.Path]::GetFileName($Script)))"
+  }
   foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT')){
     $match=[regex]::Match($message,"(?m)^$field=([A-Za-z0-9+/=]+)\s*$")
     if($match.Success){$publicStageData[$field]=$match.Groups[1].Value}
@@ -129,8 +142,11 @@ try {
     if(-not $publicStageData.CERTOPS_SUBORDINATE_CERT){throw 'Signed subordinate public certificate missing'}
     Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'hierarchy-subordinate.ps1') 'CERTOPS_STAGE=enterprise-subordinate-service-running' @("DomainPassword=$password","RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)","SubordinateCertificateBase64=$($publicStageData.CERTOPS_SUBORDINATE_CERT)")
   }else{Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-ca.ps1') 'CERTOPS_STAGE=enterprise-ca-service-running' @("DomainPassword=$password")}
-  $safetyCasesBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'safety-cases.json')))
-  Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'templates.ps1') 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password","SafetyCasesBase64=$safetyCasesBase64")
+  $templateStagePath=Join-Path $env:RUNNER_TEMP ("certops-templates-{0}.ps1" -f [Guid]::NewGuid().ToString('N'))
+  try {
+    New-TemplateStageScript (Join-Path $PSScriptRoot 'templates.ps1') (Join-Path $PSScriptRoot 'safety-cases.json') $templateStagePath
+    Invoke-Stage 'domain-ca' $templateStagePath 'CERTOPS_STAGE=isolated-template-matrix-published' @("DomainPassword=$password")
+  } finally { Remove-Item -LiteralPath $templateStagePath -Force -ErrorAction SilentlyContinue }
   Start-ControlPlane
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){
     Refresh-LabAuthentication

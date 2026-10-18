@@ -1,10 +1,12 @@
 # Own one ACME command tree. The child is suspended until assigned to a
 # kill-on-close Job Object, so launcher exit or wrapper termination cannot orphan it.
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
 try {
   # Read one newline-framed request, not an unbounded pipe-to-EOF stream.
-  $request = [Console]::In.ReadLine() | ConvertFrom-Json
+  # Use the redirected byte stream directly. Console.In depends on the host's
+  # console/code-page initialization, which service-hosted runners do not own.
+  $inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false), $false)
+  $request = $inputReader.ReadLine() | ConvertFrom-Json
   Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;

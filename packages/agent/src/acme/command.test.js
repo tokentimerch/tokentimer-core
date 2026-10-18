@@ -31,7 +31,7 @@ for(const mode of ["abort","timeout"])test(`owned command ${mode} drains a leade
  const stubborn="process.on('SIGTERM',()=>{});require('fs').writeFileSync(process.argv[1],JSON.stringify({parent:process.ppid,child:process.pid}));setInterval(()=>{},1000);";
  const leader="process.on('SIGTERM',()=>process.exit(0));require('child_process').spawn(process.execPath,['-e',process.argv[1],process.argv[2]],{stdio:['ignore','inherit','inherit']});setInterval(()=>{},1000);";
  const began=Date.now(),running=execWithoutShell(cp.execFile,[process.execPath,"-e",leader,stubborn,receipt],mode==="timeout"?(windows?commandBudget:1200):(windows?commandBudget:10000),{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},ac.signal);
- try{await until(()=>fs.existsSync(receipt));proof=JSON.parse(fs.readFileSync(receipt));if(mode==="abort")ac.abort();const result=await running;assert.ok(result.execError,"Cancellation or timeout cannot become success when the leader exits zero");assert.ok(Date.now()-began<(windows?35000:7000),"Whole tree drain must remain bounded");for(const pid of [proof.parent,proof.child])await until(()=>{try{process.kill(pid,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});}
+ try{await until(()=>fs.existsSync(receipt));proof=JSON.parse(fs.readFileSync(receipt));if(mode==="abort")ac.abort();const result=await running;assert.ok(result.execError,"Cancellation or timeout cannot become success when the leader exits zero");assert.match(result.execError.message,mode==="timeout"?/timed out/:/cancelled/);assert.ok(Date.now()-began<(windows?35000:7000),"Whole tree drain must remain bounded");for(const pid of [proof.parent,proof.child])await until(()=>{try{process.kill(pid,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});}
  finally{ac.abort();await running;fs.rmSync(directory,{recursive:true});}
 });
 
@@ -42,7 +42,7 @@ test("native excessive-output command fails bounded and terminates its actual pr
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-output-")),receipt=path.join(directory,"pid"),ac=new AbortController();let proof;
  const script="require('fs').writeFileSync(process.argv[1],String(process.pid));const chunk=Buffer.alloc(65536,65);setInterval(()=>{for(let i=0;i<8;i++)process.stdout.write(chunk);},1);";
  const running=execWithoutShell(cp.execFile,[process.execPath,"-e",script,receipt],commandBudget,{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},ac.signal);
- try{await until(()=>fs.existsSync(receipt));const pid=Number(fs.readFileSync(receipt,"utf8"));proof={parent:pid,child:pid};const result=await running;assert.ok(result.execError);assert.ok(Buffer.byteLength(result.stdout)+Buffer.byteLength(result.stderr)<=10*1024*1024);await until(()=>{try{process.kill(pid,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});}
+ try{await until(()=>fs.existsSync(receipt));const pid=Number(fs.readFileSync(receipt,"utf8"));proof={parent:pid,child:pid};const result=await running;assert.ok(result.execError);assert.match(result.execError.message,/output exceeded its bound/);assert.ok(Buffer.byteLength(result.stdout)+Buffer.byteLength(result.stderr)<=10*1024*1024);await until(()=>{try{process.kill(pid,0);return false;}catch(error){if(error.code==="ESRCH")return true;throw error;}});}
  finally{ac.abort();await boundedDrain(running,proof);fs.rmSync(directory,{recursive:true});}
 });
 
@@ -68,7 +68,7 @@ test("native command preserves quoted and empty arguments", {timeout:testBudget}
         ["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",path.join(__dirname,"windows-command.ps1")],
         {windowsHide:true,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},stdio:["pipe","pipe","pipe"]});
       let output="",diagnostic="";
-      const timer=setTimeout(()=>{wrapper.kill();reject(new Error("Framed Windows request waited for stdin EOF"));},commandBudget);
+      const timer=setTimeout(()=>{wrapper.kill();reject(new Error("Windows wrapper did not finish the framed request within its deadline"));},commandBudget);
       wrapper.stdout.on("data",chunk=>{output+=chunk;});wrapper.stderr.on("data",chunk=>{diagnostic+=chunk;});
       wrapper.stdin.on("error",()=>{});
       wrapper.once("error",error=>{clearTimeout(timer);reject(error);});

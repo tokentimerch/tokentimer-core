@@ -10,7 +10,10 @@ const BOOT_TIMEOUT_MS = 45_000;
 const API_BOOT_TIMEOUT_MS = 25_000;
 
 const IMAGE_REF_PATTERN = /^[A-Za-z0-9_.:/-]+$/;
-const MISSING_MODULE_RE = /Cannot find module|MODULE_NOT_FOUND/i;
+const MISSING_MODULE_RE =
+  /Cannot find module|Cannot find package|(?:ERR_)?MODULE_NOT_FOUND/i;
+const RUNTIME_FAILURE_RE =
+  /\b(?:SyntaxError|ReferenceError|TypeError|ERR_DLOPEN_FAILED|ERR_UNKNOWN_FILE_EXTENSION)\b/;
 const API_IMPORTED_RE =
   /Waiting for database|Database connection attempt|Startup configuration error|Startup failed/;
 
@@ -69,6 +72,25 @@ function rejectMissingModule(output, label, image) {
   }
 }
 
+// These probes deliberately omit PostgreSQL. A database refusal proves imports
+// ran; an arbitrary nonzero exit (including an ESM import failure) does not.
+function workerBootFailure(result, output) {
+  if (result.error || result.signal || result.status === null)
+    return "did not complete";
+  if (MISSING_MODULE_RE.test(output) || RUNTIME_FAILURE_RE.test(output))
+    return "failed runtime startup";
+  if (
+    result.status !== 0 &&
+    !(
+      /\bECONNREFUSED\b/.test(output) &&
+      /pg-pool|\/apps\/worker\/src\/db\.js/.test(output)
+    )
+  ) {
+    return `exited ${result.status} without the expected PostgreSQL refusal`;
+  }
+  return null;
+}
+
 function bootWorker(image) {
   assertImageRef(image);
   for (const entry of WORKER_IMAGE_ENTRYPOINTS) {
@@ -90,6 +112,8 @@ function bootWorker(image) {
         `entrypoint ${entry} failed to start in ${image}: ${result.error.message}`,
       );
     }
+    const failure = workerBootFailure(result, output);
+    if (failure) fail(`entrypoint ${entry} ${failure} in ${image}`);
   }
   console.log(
     `boot-published-images: worker ok (${WORKER_IMAGE_ENTRYPOINTS.length} entrypoints)`,
@@ -206,5 +230,6 @@ module.exports = {
   bootController,
   bootDashboard,
   bootWorker,
+  workerBootFailure,
   main,
 };
