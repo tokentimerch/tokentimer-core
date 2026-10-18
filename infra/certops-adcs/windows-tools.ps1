@@ -46,6 +46,10 @@ foreach ($module in @('adcs-chain','adcs-cmc','verifier')) {
   & "$nodeDirectory\node.exe" "packages/agent/reference/$module/build.cjs" | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Native $module helper build failed" }
 }
+# Test the actual runtime lookups before enrolling: a successful Go build is
+# insufficient when its output name cannot be resolved by the service.
+& "$nodeDirectory\node.exe" -e "const i=require('./packages/agent/src/issuers');for(const name of ['resolveAdcsChainHelperPath','resolveAdcsCmcHelperPath']){const r=i[name]();if(r.error||!require('node:fs').statSync(r.path).isFile())throw new Error(name+' did not resolve a built native helper')}"
+if ($LASTEXITCODE -ne 0) { throw 'Native AD CS runtime helper readiness failed' }
 # Compile a distinct qualification build. The checked-in release manifest is
 # never edited or promoted by this lab and this package is never published.
 $inputPath="$root\qualification-capabilities.json"

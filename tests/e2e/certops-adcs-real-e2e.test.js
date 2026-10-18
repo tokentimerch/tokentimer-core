@@ -23,9 +23,40 @@ function nativeCommandEnvironment(file, additions = {}) {
   if (path.basename(file).toLowerCase() === "powershell.exe") for (const name of Object.keys(env)) if (name.toLowerCase() === "psmodulepath") delete env[name];
   return env;
 }
+// Only fixed diagnostic categories cross the native-command boundary. Never
+// attach argv, stdout, stderr, exception messages or absolute stack paths.
+function boundedJobErrorCode(row) {
+  for(const code of [row?.enrollment_error_code,row?.error_code]){
+    if(typeof code==="string" && /^(?:ADCS|CERTOPS)_[A-Z0-9_]{1,80}$/.test(code))return code;
+  }
+}
+function boundedFailureMetadata(error, report, phase, depth=0) {
+  const knownClasses=new Set(["Error","AssertionError","TypeError","RangeError","AggregateError"]);
+  const result={errorClass:knownClasses.has(error?.constructor?.name)?error.constructor.name:"Error"};
+  if(typeof error?.code==="string" && /^(?:ADCS|CERTOPS)_[A-Z0-9_]{1,80}$/.test(error.code))result.errorCode=error.code;
+  const failed=report?.scenarios?.findLast(row=>row.status==="failed" && row.id!=="adcs-real-owned-cleanup");
+  if(phase==="cleanup")result.scenario="adcs-real-owned-cleanup";
+  else if(typeof failed?.id==="string" && /^adcs-[a-z0-9-]{1,120}$/.test(failed.id))result.scenario=failed.id;
+  const line=typeof error?.stack==="string" ? error.stack.match(/certops-adcs-real-e2e\.test\.js:(\d{1,6}):(\d{1,5})/) : null;
+  if(line)result.sourceLine=Number(line[1]);
+  if(error?.qualificationCommand){
+    const detail=error.qualificationCommand;
+    const executables=new Set(["powershell.exe","certutil.exe","certreq.exe","sc.exe","netsh.exe","node.exe","icacls.exe"]);
+    result.command={executable:executables.has(detail.executable)?detail.executable:"other",exitStatus:Number.isInteger(detail.exitStatus)?detail.exitStatus:null};
+    const codes=new Set(["NamedParameterNotFound","ParameterBindingException","ParameterArgumentValidationError","PathNotFound","ItemNotFoundException","CommandNotFoundException","PermissionDenied","UnauthorizedAccessException","NativeCommandError","InvalidOperationException","InvokeMethodOnNull","NoMatchingEventsFound"]);
+    if(codes.has(detail.powerShellCode))result.command.powerShellCode=detail.powerShellCode;
+  }
+  if(depth===0 && Array.isArray(error?.errors))result.causes=error.errors.slice(0,4).map(child=>boundedFailureMetadata(child,null,undefined,1));
+  return result;
+}
 function command(file, args) {
   const result = spawnSync(file, args, { encoding: "utf8", timeout: 180000, env: nativeCommandEnvironment(file) });
-  assert.ifError(result.error); assert.equal(result.status, 0, `${file} failed with status ${result.status}`);
+  if(result.error || result.status!==0){
+    const error=Object.assign(new Error("Native qualification command failed"),{code:"CERTOPS_NATIVE_COMMAND_FAILED"});
+    const fqid=typeof result.stderr==="string" ? result.stderr.match(/FullyQualifiedErrorId\s*:\s*([^,\r\n]+)/) : null;
+    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim()};
+    throw error;
+  }
   return result.stdout.trim();
 }
 function ps(script) { return command("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference='Stop'; ${script}`]); }
@@ -137,7 +168,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
   let serviceOwned = false;
   let agentRowId;
   const api = `/api/v1/workspaces/${fixture.workspaceId}/certops`;
-  async function jobFinished(id) { return until(async () => { const row = (await fixture.pool.query("SELECT status FROM certificate_jobs WHERE id=$1 AND workspace_id=$2", [id, fixture.workspaceId])).rows[0]; if (["failed", "rejected", "cancelled"].includes(row?.status)) throw new Error(`Native AD CS job terminated ${row.status}`); return row?.status === "succeeded"; }); }
+  async function jobFinished(id) { return until(async () => { const row = (await fixture.pool.query("SELECT status,error_code,result_metadata->'enrollmentResult'->>'errorCode' AS enrollment_error_code FROM certificate_jobs WHERE id=$1 AND workspace_id=$2", [id, fixture.workspaceId])).rows[0]; if (["failed", "rejected", "cancelled"].includes(row?.status)) throw Object.assign(new Error("Native AD CS job did not succeed"),{code:boundedJobErrorCode(row)}); return row?.status === "succeeded"; }); }
   const preflightCache=new Map();
   let primaryPreflightCount=0;
   const preflightCohorts=require("./helpers/certops-adcs-preflight-cohorts").createNativePreflightCohorts({baseUrl:url.href,configDir,workDir,caConfig,until,ps,report:gate.report});
@@ -626,7 +657,11 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
     else await require("./helpers/certops-adcs-journal-phase-experiment")({fixture,api,caConfig,agentRowId,configDir,workDir,run,preflight,jobFinished,until,ps,command,ownedSites,ownedCertificateIds,ownedEnrollmentIds,ownedThumbprints,tlsAuthority,gate,serviceOwned});
     await browserJourney.qualifyAdcsBrowserJourney({ownedTlsProbes,gate,fixture,api,agentRowId,configDir,workDir,run,renewalFixture,until,jobFinished,ps,command,tlsAuthority,ownedEnrollmentIds,ownedThumbprints,ownedBrowserResources,ownedBrowserPreflightJobIds});
     }
+  } catch(error) {
+    gate.report.originalFailure=boundedFailureMetadata(error,gate.report);
+    throw Object.assign(new Error("Native AD CS qualification failed; inspect bounded report"),{code:"CERTOPS_NATIVE_QUALIFICATION_FAILED"});
   } finally {
+    try {
     await gate.scenario("adcs-real-owned-cleanup", async () => {
       // This must precede SCM/site/key/API cleanup on every error path.
       require("./helpers/certops-adcs-journal-phase-experiment").assertCleanupSafe(workDir);
@@ -698,6 +733,12 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       browserEnrollment.writeReport("C:\\ttqualification\\browser-enrollment-native.json",browserEnrollment.createNativeReport(gate.report));
       const nativeAbandon=require("../../scripts/certops-adcs-uncertain-abandon-native");
       browserEnrollment.writeReport("C:\\ttqualification\\uncertain-abandon-native.json",nativeAbandon.createNativeReport(gate.report));
+    }
+    } catch(error) {
+      gate.report.cleanupFailure=boundedFailureMetadata(error,gate.report,"cleanup");
+      gate.report.cleanup={status:"failed"};gate.report.status="failed";gate.report.finishedAt=new Date().toISOString();
+      if(process.env.CERTOPS_ADCS_REPORT)fs.writeFileSync(process.env.CERTOPS_ADCS_REPORT,JSON.stringify(gate.report,null,2));
+      throw Object.assign(new Error("Native AD CS qualification or cleanup failed; inspect bounded report"),{code:"CERTOPS_NATIVE_QUALIFICATION_FAILED"});
     }
   }
 });
