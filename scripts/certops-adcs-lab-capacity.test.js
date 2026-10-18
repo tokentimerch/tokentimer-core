@@ -52,6 +52,11 @@ Invoke-Stage 'domain-ca' $env:CERTOPS_TEMPLATE_SCRIPT 'CERTOPS_STAGE=isolated-te
  assert.notEqual(failed.status,0);assert.match(failed.stdout,/CERTOPS_TEMPLATE_FAILURE=directory:42:-2147467259/,failed.stderr);assert.match(failed.stderr,/templates.ps1/);assert.doesNotMatch(failed.stdout+failed.stderr,/private-credential-needle/);
  const unsafe=invoke("CERTOPS_TEMPLATE_FAILURE=directory:42:-1 private-credential-needle");
  assert.notEqual(unsafe.status,0);assert.doesNotMatch(unsafe.stdout+unsafe.stderr,/private-credential-needle/);
+ const member=invoke("private-credential-needle\nCERTOPS_MEMBER_FAILURE=domain-join:25:-2147467259\n");
+ assert.notEqual(member.status,0);assert.match(member.stdout,/CERTOPS_MEMBER_FAILURE=domain-join:25:-2147467259/);assert.doesNotMatch(member.stdout+member.stderr,/private-credential-needle/);
+ for(const message of ["CERTOPS_MEMBER_FAILURE=domain-join:25:-1 private-credential-needle","CERTOPS_MEMBER_FAILURE=private-credential-needle:25:-1"]){
+  const rejected=invoke(message);assert.notEqual(rejected.status,0);assert.doesNotMatch(rejected.stdout+rejected.stderr,/private-credential-needle/);
+ }
  const passed=invoke("private-credential-needle\nCERTOPS_STAGE=isolated-template-matrix-published");
  assert.equal(passed.status,0,passed.stderr);assert.equal(passed.stdout.trim(),"CERTOPS_STAGE=isolated-template-matrix-published");
 });
