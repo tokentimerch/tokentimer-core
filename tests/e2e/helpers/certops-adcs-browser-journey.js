@@ -77,7 +77,7 @@ const FLAGS = Object.freeze([
   "otherProfilePoliciesRestored",
 ]);
 const SCOPE = "browser-issuer-profile-default-scheduler-native-adcs";
-function verifyProof(proof) {
+function verifyProof(proof, { workerDriven = false } = {}) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
   assert.deepEqual(
     Object.keys(proof).sort(),
@@ -105,7 +105,7 @@ function verifyProof(proof) {
   );
   assert.equal(
     proof.scheduler,
-    "production-default-sweep-not-background-worker-loop",
+    workerDriven ? "production-maintenance-worker" : "production-default-sweep-not-background-worker-loop",
   );
   assert.equal(proof.browserEngine, "chromium");
   assert.equal(proof.browserMutationCount, 6);
@@ -939,7 +939,7 @@ async function qualifyAdcsBrowserJourney(context) {
       throw error;
     }
   }
-  verifyProof(facts);
+  verifyProof(facts, { workerDriven: context.workerDriven === true });
   gate.report.nativeBrowserAdcs = facts;
 }
 module.exports = {
