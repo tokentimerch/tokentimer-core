@@ -48,3 +48,22 @@ Sign in, check the inventory and workspace recipients, run the SMTP test, and in
 ## Recover a failed upgrade
 
 Stop and inspect migration and application logs. Reverting an image or running `helm rollback` does not undo database migrations. Use the release's recovery instructions and a matching database/configuration backup; do not start an older binary against a changed schema unless that transition is explicitly supported.
+
+## Dashboard errors after deployment
+
+An open browser tab can still reference lazy page chunks from an older Vite
+build after a deployment replaces those assets. The dashboard recognizes known
+dynamic import and CSS preload failures and offers a refresh with an unsaved
+changes warning. It never refreshes automatically, because a failed navigation
+can occur while an operator is editing a form. Optional import failures show a non-destructive notice that keeps the current page and unsaved form state mounted until the operator chooses to refresh.
+
+A tab-scoped session marker remembers a refresh attempt for one minute. If a
+loader failure recurs during that interval, the error screen explains that the
+refresh did not resolve the problem. Refresh remains an explicit user action,
+including when session storage is unavailable, so recovery cannot loop.
+Unrelated application errors retain the normal error boundary message.
+
+If refreshing does not help, check connectivity and ensure the deployment serves
+the current HTML and its referenced assets consistently. Retaining previous
+hashed assets during a rollout can keep older tabs working. Loader failures can
+also indicate network problems; they do not prove that a deployment occurred.
