@@ -2,7 +2,7 @@
 // Expand explicitly selected manual qualification dimensions from committed
 // allowlists. Defaults run one cell; only 'all' requests the complete matrix.
 const assert=require("node:assert/strict"),fs=require("node:fs"),{spawnSync}=require("node:child_process");
-const GROUPS=Object.keys(require("../tests/integration/certops-qualification-groups.json"));
+const GROUPS=Object.keys(require("./certops-integration-inventory").groups);
 const DEFINITIONS=Object.freeze({integration:{group:{values:GROUPS,default:"adcs"}},"linux-acme":{client:{values:["certbot","acme.sh"],default:"certbot"},eab:{values:["none","required"],default:"none"}},server:{os:{values:["ubuntu-22.04","ubuntu-24.04"],default:"ubuntu-24.04"},service:{values:["nginx","apache","haproxy"],default:"nginx"}}});
 function matrixFor(kind,requested={}){
  assert.ok(Object.hasOwn(DEFINITIONS,kind),"Unknown manual qualification matrix");assert.ok(requested&&typeof requested==="object"&&!Array.isArray(requested));const definition=DEFINITIONS[kind];for(const key of Object.keys(requested))assert.ok(Object.hasOwn(definition,key),"Unknown matrix dimension");let include=[{}];

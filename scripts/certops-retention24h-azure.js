@@ -395,14 +395,11 @@ function guest(lease, script) {
   assert.ok(bytes.length > 0 && bytes.length <= 2048);
   return JSON.parse(bytes.toString("utf8"));
 }
-function readGuestFile(lease, name) {
-  assert.ok(["prepare", "result"].includes(name));
-  const file =
-    name === "prepare"
-      ? "C:\\ttqualification\\retention24h-prepare-public.json"
-      : `C:\\ttqualification\\retention24h\\${lease.nonce}\\resident-result.json`;
-  return readGuestJson(lease, `$b=[IO.File]::ReadAllBytes('${file}');`);
-}
+const {readGuestJson, readOwnedObservation} = createGuestReader({campaign: "retention24h", marker: "CERTOPS_RETENTION_PUBLIC", snapshotEnvironment: "TOKENTIMER_RETENTION_SNAPSHOT", verifyLease: contract.verifyLease, exact: exactKeys, guest});
+/** Shared chunked public observations: execute once, pin native identity and
+ * bytes, then remove only the exact verified snapshot. Campaign leases and
+ * public protocol markers are supplied by their existing controllers. */
+function createGuestReader({campaign, marker, snapshotEnvironment, verifyLease, exact, guest}) {
 function readGuestJson(lease, producer, execute = guest) {
   const chunks = [];
   let length, hash;
@@ -413,7 +410,7 @@ function readGuestJson(lease, producer, execute = guest) {
   ) {
     const part = execute(
       lease,
-      `${producer}if($b.Length -gt 65536){throw 'Public receipt bound'};$h=([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b))).Replace('-','').ToLowerInvariant();$o=@{length=$b.Length;sha256=$h;chunk=[Convert]::ToBase64String($b,${offset},[Math]::Min(1024,$b.Length-${offset}))};'CERTOPS_RETENTION_PUBLIC='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($o|ConvertTo-Json -Compress)))`,
+      `${producer}if($b.Length -gt 65536){throw 'Public receipt bound'};$h=([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b))).Replace('-','').ToLowerInvariant();$o=@{length=$b.Length;sha256=$h;chunk=[Convert]::ToBase64String($b,${offset},[Math]::Min(1024,$b.Length-${offset}))};'${marker}='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($o|ConvertTo-Json -Compress)))`,
     );
     assert.ok(
       Number.isInteger(part.length) && part.length > 0 && part.length <= 65536,
@@ -441,9 +438,9 @@ function readOwnedObservation(
     requestNonce = crypto.randomBytes(32).toString("hex"),
   } = {},
 ) {
-  contract.verifyLease(lease);
+  verifyLease(lease);
   assert.match(requestNonce, /^[a-f0-9]{64}$/);
-  const directory = `C:\\ttqualification\\retention24h\\${lease.nonce}`;
+  const directory = `C:\\ttqualification\\${campaign}\\${lease.nonce}`;
   const file = `${directory}\\controller-observation-${requestNonce}.json`;
   // Only fixed public task JSON enters this private, exclusive snapshot. Dynamic
   // native checks execute once; later Azure calls read those same exact bytes.
@@ -455,11 +452,11 @@ while($ancestor){if(!$ancestor.PSIsContainer -or ($ancestor.Attributes -band [IO
 function Get-SnapshotIdentity {
  param([Parameter(Mandatory)][string]$LiteralFile)
  if(-not [IO.Path]::IsPathRooted($LiteralFile)){throw 'Snapshot identity requires absolute path'};
- $prior=$env:TOKENTIMER_RETENTION_SNAPSHOT;$options=$env:NODE_OPTIONS;$nodePath=$env:NODE_PATH;
- try{$env:TOKENTIMER_RETENTION_SNAPSHOT=$LiteralFile;[Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process');[Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process');
- $identity=& $r.node -p '(()=>{const s=require(''node:fs'').lstatSync(process.env.TOKENTIMER_RETENTION_SNAPSHOT,{bigint:true});if(!s.isFile()||s.isSymbolicLink())throw Error(''nonregular snapshot'');return s.dev.toString()+'':''+s.ino.toString()})()';
+ $prior=$env:${snapshotEnvironment};$options=$env:NODE_OPTIONS;$nodePath=$env:NODE_PATH;
+ try{$env:${snapshotEnvironment}=$LiteralFile;[Environment]::SetEnvironmentVariable('NODE_OPTIONS',$null,'Process');[Environment]::SetEnvironmentVariable('NODE_PATH',$null,'Process');
+ $identity=& $r.node -p '(()=>{const s=require(''node:fs'').lstatSync(process.env.${snapshotEnvironment},{bigint:true});if(!s.isFile()||s.isSymbolicLink())throw Error(''nonregular snapshot'');return s.dev.toString()+'':''+s.ino.toString()})()';
  if($LASTEXITCODE -ne 0 -or [string]$identity -notmatch '^\\d+:[1-9]\\d*$'){throw 'Snapshot file identity unavailable'};return ([string]$identity).Trim()
- }finally{[Environment]::SetEnvironmentVariable('TOKENTIMER_RETENTION_SNAPSHOT',$prior,'Process');[Environment]::SetEnvironmentVariable('NODE_OPTIONS',$options,'Process');[Environment]::SetEnvironmentVariable('NODE_PATH',$nodePath,'Process')}
+ }finally{[Environment]::SetEnvironmentVariable('${snapshotEnvironment}',$prior,'Process');[Environment]::SetEnvironmentVariable('NODE_OPTIONS',$options,'Process');[Environment]::SetEnvironmentVariable('NODE_PATH',$nodePath,'Process')}
 };`;
   let receipt, originalError;
   let receiptVerified = false;
@@ -473,9 +470,9 @@ if(!$b -or $b.Length -gt 65536){throw 'Public observation bound'};
 $stream=[IO.File]::Open('${file}',[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read);
 try{$stream.Write($b,0,$b.Length);$stream.Flush($true)}finally{$stream.Dispose()};
 $o=@{length=$b.Length;sha256=([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b))).Replace('-','').ToLowerInvariant();fileIdentity=(Get-SnapshotIdentity -LiteralFile '${file}')};
-'CERTOPS_RETENTION_PUBLIC='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($o|ConvertTo-Json -Compress)))`,
+'${marker}='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($o|ConvertTo-Json -Compress)))`,
     );
-    exactKeys(receipt, ["length", "sha256", "fileIdentity"]);
+    exact(receipt, ["length", "sha256", "fileIdentity"]);
     assert.ok(
       Number.isInteger(receipt.length) &&
         receipt.length > 0 &&
@@ -507,9 +504,9 @@ $item=Get-Item -LiteralPath '${file}' -Force -ErrorAction Stop;
 if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or (Get-SnapshotIdentity -LiteralFile '${file}') -cne '${receipt.fileIdentity}' -or $item.Length -ne ${receipt.length} -or (Get-FileHash -LiteralPath '${file}' -Algorithm SHA256).Hash.ToLowerInvariant() -cne '${receipt.sha256}'){throw 'Snapshot cleanup ownership changed'};
 Remove-Item -LiteralPath '${file}' -Force -ErrorAction Stop;
 if(Test-Path -LiteralPath '${file}'){throw 'Owned snapshot cleanup incomplete'};
-'CERTOPS_RETENTION_PUBLIC='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"removed":true}'))`,
+'${marker}='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"removed":true}'))`,
         );
-        exactKeys(cleanup, ["removed"]);
+        exact(cleanup, ["removed"]);
         assert.equal(cleanup.removed, true);
       } catch (error) {
         if (originalError)
@@ -522,6 +519,19 @@ if(Test-Path -LiteralPath '${file}'){throw 'Owned snapshot cleanup incomplete'};
     }
   }
 }
+return {readGuestJson, readOwnedObservation};
+}
+
+function readGuestFile(lease, name) {
+  assert.ok(["prepare", "result"].includes(name));
+  const file =
+    name === "prepare"
+      ? "C:\\ttqualification\\retention24h-prepare-public.json"
+      : `C:\\ttqualification\\retention24h\\${lease.nonce}\\resident-result.json`;
+  return readGuestJson(lease, `$b=[IO.File]::ReadAllBytes('${file}');`);
+}
+
+
 function observe(lease, receipt, mode) {
   assert.ok(["Observe", "Finalize"].includes(mode));
   assert.match(receipt.configSha256, /^[a-f0-9]{64}$/);
@@ -1540,6 +1550,7 @@ async function scan(mode) {
     throw new Error("Owned retention controller could not finish every group");
 }
 module.exports = {
+  createGuestReader,
   verifyAzure,
   leaseTags,
   verifyPreparedReceipt,

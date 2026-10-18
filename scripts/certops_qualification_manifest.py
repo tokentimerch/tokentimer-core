@@ -28,3 +28,24 @@ def expand(value):
 
 def load(file):
     return expand(json.loads(file.read_text()))
+
+
+def load_groups(file):
+    groups = json.loads(file.read_text())
+    for definition in groups.values():
+        if "requiredTestsByFile" not in definition:
+            continue
+        parts = definition.pop("requiredTestsByFile")
+        if "requiredTests" in definition or not isinstance(parts, list) or not parts:
+            raise ValueError("Conflicting case inventories")
+        tests = []
+        for part in parts:
+            names, source = part.get("names"), part.get("file")
+            if (source not in definition["files"] or not isinstance(names, list)
+                    or not names or not all(isinstance(name, str) and name for name in names)):
+                raise ValueError("Invalid mandatory case source or names")
+            tests.extend({"file": source, "name": name} for name in names)
+        if len({(row["file"], row["name"]) for row in tests}) != len(tests):
+            raise ValueError("Duplicate mandatory case")
+        definition["requiredTests"] = tests
+    return groups

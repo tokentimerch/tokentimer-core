@@ -199,7 +199,7 @@ def declared_sources():
     slots = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"]
     declared = {source for slot in slots for source in slot.get("requiredSources", [])}
     declared.update(slot["source"] for slot in slots if "source" in slot)
-    groups = json.loads((ROOT / "tests/integration/certops-qualification-groups.json").read_text())
+    groups = qualification_manifest.load_groups(ROOT / "tests/integration/certops-qualification-groups.json")
     declared.update("tests/integration/" + file for group in groups.values() for file in group["files"])
     return declared
 
@@ -2080,7 +2080,7 @@ def committed_case_names(scope, kind):
     slots = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"]
     matching = [slot for slot in slots if slot["kind"] == kind and slot["suite"] == scope]
     if kind == "database":
-        groups = json.loads((ROOT / "tests/integration/certops-qualification-groups.json").read_text())
+        groups = qualification_manifest.load_groups(ROOT / "tests/integration/certops-qualification-groups.json")
         return {(case["file"], case["name"]) for slot in matching
                 for case in groups[slot["requiredGroup"]]["requiredTests"]}
     names = set()

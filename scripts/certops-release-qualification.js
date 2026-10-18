@@ -59,10 +59,10 @@ function validateMatrix(specification = matrix) {
     if (identities.has(identity)) errors.push(`${slot.id}: duplicate suite/environment specification`); identities.add(identity);
     if (slot.kind === "host" && !require("../docs/certops/qualification-suites.json").suites[slot.suite]) errors.push(`${slot.id}: unknown mandatory suite`);
     if (slot.kind === "stack" && !slot.requiredInventory && !slot.requiredTests?.length) errors.push(`${slot.id}: mandatory tests are missing`);
-    if (slot.kind === "database" && !require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
+    if (slot.kind === "database" && !require("./certops-integration-inventory").groups[slot.requiredGroup]) errors.push(`${slot.id}: unknown mandatory database group`);
   }
   for (const suite of Object.keys(require("../docs/certops/qualification-suites.json").suites)) if (!specification.slots.some((slot) => slot.kind === "host" && slot.suite === suite)) errors.push(`Mandatory suite has no release environment: ${suite}`);
-  for (const group of Object.keys(require("../tests/integration/certops-qualification-groups.json"))) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
+  for (const group of Object.keys(require("./certops-integration-inventory").groups)) if (!specification.slots.some((slot) => slot.kind === "database" && slot.requiredGroup === group)) errors.push(`Mandatory database group has no release environment: ${group}`);
   return errors;
 }
 
@@ -442,7 +442,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         const required = slot.requiredInventory ? require(path.join(root, slot.requiredInventory)).requiredTests : [];
         verifyStack(entries.map((entry) => JSON.stringify(entry)).join("\n"), [...required, ...(slot.requiredTests || [])], path.basename(slot.source), slot.suite, candidateSha);
       } else if (slot.kind === "database") {
-        const definition = require("../tests/integration/certops-qualification-groups.json")[slot.requiredGroup];
+        const definition = require("./certops-integration-inventory").groups[slot.requiredGroup];
         if (!definition || artifact.report.evidenceLevel !== "integration") throw new Error("Unknown database evidence classification");
         if (!Array.isArray(artifact.report.fixtureSources) || artifact.report.fixtureSources.length !== definition.files.length) throw new Error("Database source inventory mismatch");
         for (const file of definition.files) {

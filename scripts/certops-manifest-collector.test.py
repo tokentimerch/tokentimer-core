@@ -3,12 +3,16 @@ import json
 from pathlib import Path
 import subprocess
 import unittest
-from certops_qualification_manifest import expand, load
+from certops_qualification_manifest import expand, load, load_groups
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class ManifestTests(unittest.TestCase):
+    def test_grouped_cases_match_node_without_changing_order(self):
+        result = subprocess.run(["node", "-e", "console.log(JSON.stringify(require('./scripts/certops-integration-inventory').groups))"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30)
+        self.assertEqual(load_groups(ROOT / "tests/integration/certops-qualification-groups.json"), json.loads(result.stdout))
+
     def test_committed_python_and_node_slots_are_identical(self):
         result = subprocess.run(["node", "-e", "console.log(JSON.stringify(require('./scripts/certops-qualification-manifest')))"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30)
         self.assertEqual(load(ROOT / "docs/certops/qualification-suites.json"), json.loads(result.stdout))

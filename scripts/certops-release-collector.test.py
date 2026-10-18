@@ -1111,7 +1111,7 @@ class CollectorTests(unittest.TestCase):
         self.assertNotIn("sentinel", json.dumps(result))
         parent = collector.sanitized_report([{"scope": scope, "name": "CertOps agent surface E2E", "type": "test:pass"}], set(), {scope})
         self.assertEqual(parent[0]["type"], "test:pass")
-        group = json.loads((collector.ROOT / "tests/integration/certops-qualification-groups.json").read_text())["adcs"]
+        group = qualification_manifest.load_groups(collector.ROOT / "tests/integration/certops-qualification-groups.json")["adcs"]
         case = group["requiredTests"][0]
         report = {"scope": "adcs-database-integration", "tests": [
             {**case, "status": "pass"},

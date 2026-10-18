@@ -8,7 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const group = process.env.CERTOPS_INTEGRATION_GROUP || "adcs";
-const definition = require("../tests/integration/certops-qualification-groups.json")[group];
+const definition = require("./certops-integration-inventory").groups[group];
 if (!definition) throw new Error("Unknown CertOps integration qualification group");
 const required = definition.requiredTests;
 const scope = `${group}-database-integration`;

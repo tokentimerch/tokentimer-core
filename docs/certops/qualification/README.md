@@ -13,40 +13,11 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 
 ## API, inventory and worker behavior
 
-- [Native certificate dry-run and independent side-effect controls](api/native-certificate-dry-run.md)
-- [Fleet execution-log quotas](api/fleet-log-quota.md)
-- [Actual elapsed log abandonment and worker retention](api/log-maintenance.md)
+- [API, browser and worker qualification](api/README.md)
 
-- [Issuance admission and workspace pause qualification](api/admission-and-pause-qualification.md)
-- [Certificate audit history qualification](api/audit-history-qualification.md)
-- [Certificate audit filtering and attribution in Chromium](api/browser-certificate-audit.md)
-- [Decommission acknowledgement and factual rediscovery](api/decommission-lifecycle.md)
-- [Certificate workspace transfer and CSR lineage](api/certificate-transfer-qualification.md)
-- [Browser console authorization and reconnects](api/browser-console.md)
-- [Retired certificate filters and factual browser details](api/browser-retirement-visibility.md)
-- [Mixed eligible bulk renewal admission](api/bulk-eligible-qualification.md)
-- [Public CA capacity admission qualification](api/ca-capacity-qualification.md)
-- [CSR observation qualification](api/csr-observation-qualification.md)
-- [Shared CSR ownership and truthful installation evidence](api/csr-provisional-qualification.md)
-- [Certificate import metadata preservation](api/import-metadata-qualification.md)
-- [Retirement through fresh and concurrent TLS observations](api/retired-observation.md)
-- [Public certificate import and private container refusal](api/public-import-qualification.md)
-- [Certificate-producing integration source qualification](api/integration-source-qualification.md)
-- [Public renewal issuer switch policy](api/issuer-switch-qualification.md)
 - [Native AD CS issuer reassignment](adcs/native-issuer-reassignment.md): confirmed public switch, then one production scheduler renewal. Manual dispatch only. A missing forest fails closed and the native cell stays pending.
 - [AD CS browser enrollment contract](../adcs/browser-enrollment.md), [installation interruption](../adcs/install-interruption.md), [lost submit](../adcs/lost-submit.md), [uncertain abandon](adcs/uncertain-abandon.md), [CMC renewal](../adcs/cmc-renewal.md), [safety variants](../adcs/safety-variants.md), and [crash experiments](../adcs/crash-experiments.md): local contracts only. A missing forest fails closed. Crash experiments cannot satisfy release qualification.
 - [Cross-platform local contracts](../cross/acme-key-reuse.md): ACME path and key reuse, DNS interruption, issuer adoption capacity, Linux upgrade rollback, filesystem symlink rollback, trust-store concurrency, Kubernetes RBAC, and browser audit redaction. A missing lab fails closed. Live DNS, a reboot, and a Kubernetes cluster stay unqualified.
-- [Multi-target filesystem deployment qualification](api/multi-target-deployment-qualification.md)
-- [Queued renewal profile snapshot qualification](api/queued-profile-snapshot-qualification.md)
-- [Renewal outbox and SMTP qualification](api/renewal-alert-qualification.md)
-- [Renewal path topology qualification](api/renewal-health-qualification.md)
-- [Scheduler and public admission capacity](api/scheduler-capacity-qualification.md)
-- [Renewal public-key metadata correctness](api/renewal-key-facts.md)
-- [Terminal certificate renewal admission](api/terminal-renewal-admission.md)
-- [Authoritative retirement and automatic renewal](api/retired-scheduler-admission.md)
-- [Retirement, approval and dispatch races](api/retirement-approval-qualification.md)
-- [Native signing key rotation qualification](api/signing-rotation-qualification.md)
-- [Unmanaged discovery qualification](api/unmanaged-discovery-qualification.md)
 
 ## Windows and AD CS
 
@@ -165,7 +136,6 @@ Machine-readable specifications retain their stable locations: [scenario catalog
 - [Skip qualification ownership](reporting/skip-qualification.md)
 - [Supporting CertOps integration qualification](reporting/supporting-integration-qualification.md)
 
-- [Completed-console authority withdrawal](api/browser-completed-console.md)
 
 The [operator-created uncertain ambiguity journey](adcs/operator-created-uncertain-ambiguity.md) exercises public ambiguous-candidate refusal and explicit RequestId recovery after a real zero-request interruption. Its two real operator submissions are distinct from the nonqualified lost-response experiment.
 

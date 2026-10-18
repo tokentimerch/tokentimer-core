@@ -658,7 +658,7 @@ test("Windows native stack slots require public admission proof beyond service-c
 });
 
 test("database matrix requires every committed case and source digest without promoting supporting evidence", () => {
-  const definition = require("../tests/integration/certops-qualification-groups.json").adcs;
+  const definition = require("./certops-integration-inventory").groups.adcs;
   const suite = "adcs-database-integration";
   const sources = definition.files.map((file) => ({ file: `tests/integration/${file}`, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, "tests/integration", file))).digest("hex") }));
   const report = { scope: suite, candidateSha, evidenceLevel: "integration", qualificationEnvironment: { ...environment, measurement: "native" }, artifactQualification: "workflow-checkout-source", fixtureSources: sources, tests: definition.requiredTests.map((test) => ({ ...test, status: "pass" })) };
