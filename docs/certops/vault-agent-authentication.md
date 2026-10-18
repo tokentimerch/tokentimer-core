@@ -70,7 +70,7 @@ On the issuer host use `/etc/tokentimer/vault-issuer`; on the consumer use
 TokenTimer agent as the same dedicated, unprivileged OS account. Provision the
 credential directory and `/run/tokentimer-vault/issuer` (or `consumer-a`) with
 owner-only access. Set role/SecretID files to 0600 and their directories to 0700;
-ensure the service account owns them. Recreate the `/run` directory at boot.
+ensure the service account owns them. Recreate the `/run` directory at boot. Set `HOME` to the service account's own accessible home directory when starting Vault Agent; do not inherit `/root` from a privileged provisioning shell.
 
 As that service account, test an issuer login without printing the token:
 

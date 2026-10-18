@@ -20,7 +20,8 @@ function audit(project, output, publishedVersions = []) {
       windowsHide: true,
       maxBuffer: 32 * 1024 * 1024,
     });
-    assert.equal(r.status, 0, "Owned privacy audit subprocess failed");
+    const diagnostic = String(r.stderr || "").match(/^CERTOPS_PRIVACY_FAILURE=(?:inventory|history|coverage|scan):[0-9]{1,8}:[0-9]{1,8}:[0-9]{1,8}$/m)?.[0];
+    assert.equal(r.status, 0, "Owned privacy audit subprocess failed" + (diagnostic ? ` (${diagnostic})` : ""));
     return r.stdout;
   };
   for (const service of ["postgres", "api", "worker", "customers"]) {
