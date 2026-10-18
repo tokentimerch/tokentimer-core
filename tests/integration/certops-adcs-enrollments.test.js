@@ -100,6 +100,28 @@ describe("CertOps AD CS enrollments (real database)", function () {
     }
   });
 
+  it("survivor fixture uses the insert-trigger management period and creates eligible enrollment work", async () => {
+    const assert = require("node:assert/strict");
+    const { provisionSurvivorSource } = require("../e2e/helpers/certops-adcs-local-rules");
+    const ownedCertificateIds = [];
+    const certificateId = await provisionSurvivorSource({
+      fixture: { workspaceId, pool, request: async () => { throw new Error("Unexpected readd of an open source"); } },
+      agentRowId, domain: "app.example.com", site: "Survivor", port: 443, ownedCertificateIds,
+    });
+    assert.deepEqual(ownedCertificateIds, [certificateId]);
+    const periods = await pool.query("SELECT id, ended_at, current_identity_id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2", [workspaceId, certificateId]);
+    assert.equal(periods.rows.length, 1);
+    assert.equal(periods.rows[0].ended_at, null);
+    assert.equal(periods.rows[0].current_identity_id, null);
+    const enrollment = await createEnrollment(enrollmentInput({ certificateId }));
+    const job = await pool.query(`SELECT j.subject_id,
+      certops_is_initial_provisioning(j.workspace_id,j.subject_id::uuid,j.operation,j.executor_kind,j.source) AS eligible
+      FROM certificate_jobs j WHERE j.workspace_id=$1 AND j.id=$2`, [workspaceId, enrollment.jobId]);
+    assert.equal(job.rows.length, 1);
+    assert.equal(job.rows[0].subject_id, certificateId);
+    assert.equal(job.rows[0].eligible, true);
+  });
+
   function enrollmentInput(overrides = {}) {
     return {
       client: pool,

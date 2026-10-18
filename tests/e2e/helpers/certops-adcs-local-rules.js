@@ -14,9 +14,9 @@ const survivorScenario="adcs-real-pending-key-survivor-preserves-retrieval-and-i
 const survivorScope="native-pending-key-policy-change-retrieval-install-and-survivor-protection";
 const survivorMarker=".preserve-adcs-pending-key-survivor.json",activeSurvivors=new Set();
 const survivorFlags=Object.freeze(["actualOwnedPendingRequest","actualOwnedCaLeafSameCsrSpki","exactWebHostingAssociationAndProtectedKey","nativeSurvivorReferenceObserved","signedRetrievalInstalled","frozenEnrollmentIdentityPreserved","originalKeyUsableAfterReconciliation","installedKeyProtectedFromCleanup","installedReferenceSurvivesSecondaryRemoval","noAdditionalCaRequest","exactPublicAssociationOnlyRemoved","predecessorCustodyIisTlsPreserved","configurationCredentialRestored","ownedCaLeafRevoked","ownershipGuardReleased"]);
-// Seed only the fixture-owned provisioning source; use the public lifecycle API
-// to open management, then check the same initial-provisioning predicate as claims.
-async function provisionSurvivorSource({fixture,api,agentRowId,domain,site,port,ownedCertificateIds}) {
+// The managed-certificate insert trigger opens management automatically. Check
+// that period and the production initial-provisioning predicate before enrollment.
+async function provisionSurvivorSource({fixture,agentRowId,domain,site,port,ownedCertificateIds}) {
  const result=await fixture.pool.query(`INSERT INTO managed_certificates (
   workspace_id,status,source,source_ref,name,common_name,subject_alt_names,
   key_mode,key_reference,public_metadata,deployed_cert_path,deployed_agent_id
@@ -26,14 +26,12 @@ async function provisionSurvivorSource({fixture,api,agentRowId,domain,site,port,
  JSON.stringify({issuance:{requestedAt:new Date().toISOString(),target:{type:"windows-iis",store:"My",binding:{site,port,sniHost:domain}}}}),agentRowId]);
  const certificateId=result.rows[0].id;
  ownedCertificateIds.push(certificateId);
- const management=await fixture.request(`${api}/sources/${certificateId}/readd`,"POST",{renewalProfileId:null,automationEnabled:false});
- assert.equal(management.status,201);
  const eligibility=await fixture.pool.query(`SELECT p.id,
   certops_is_initial_provisioning($1,$2,'renew','agent','api') AS eligible
   FROM certops_management_periods p WHERE p.workspace_id=$1
   AND p.managed_certificate_id=$2 AND p.ended_at IS NULL`,[fixture.workspaceId,certificateId]);
  assert.equal(eligibility.rows.length,1,"Survivor source needs one open management period");
- assert.equal(eligibility.rows[0].id,management.body.periodId);
+ assert.match(eligibility.rows[0].id,/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
  assert.equal(eligibility.rows[0].eligible,true,"Survivor source must be eligible for its initial agent claim");
  return certificateId;
 }
@@ -159,7 +157,7 @@ async function qualifyLocalRules({gate,fixture,api,agentRowId,renewalFixture,con
   assert.equal(ps(`Import-Module WebAdministration;[bool](Test-Path 'IIS:\\Sites\\${survivorSite}')`),"False");
   fs.mkdirSync(survivorDirectory);fs.writeFileSync(path.join(survivorDirectory,"index.html"),"owned key survivor");ownedSites.push(survivorSite);
   ps(`Import-Module WebAdministration;if(Test-Path 'IIS:\\Sites\\${survivorSite}'){throw 'Owned survivor site already exists'};New-Website -Name '${survivorSite}' -PhysicalPath '${survivorDirectory.replace(/'/g,"''")}' -IPAddress '*' -Port ${survivorPort} -HostHeader '${item.domain}' -Ssl|Out-Null;Set-WebBinding -Name '${survivorSite}' -BindingInformation '*:${survivorPort}:${item.domain}' -PropertyName sslFlags -Value 1`);
-  const survivorCertificateId=await provisionSurvivorSource({fixture,api,agentRowId,domain:item.domain,site:survivorSite,port:survivorPort,ownedCertificateIds});
+  const survivorCertificateId=await provisionSurvivorSource({fixture,agentRowId,domain:item.domain,site:survivorSite,port:survivorPort,ownedCertificateIds});
   const created=await fixture.request(`${api}/enrollments`,"POST",{...admittedInput(pendingSafetyIssuer),certificateId:survivorCertificateId,target:{type:"windows-iis",reference:item.domain,store:"My",binding:{site:survivorSite,port:survivorPort,sniHost:item.domain}}});assert.equal(created.status,201);const id=created.body.enrollmentId;ownedEnrollmentIds.push(id);
   const row=async()=>(await fixture.pool.query("SELECT state,request_id,next_poll_at,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,id])).rows[0];
   const pending=await until(async()=>{const r=await row();return r.state==="pending_issuance"&&r.request_id&&r.next_poll_at?r:null;});

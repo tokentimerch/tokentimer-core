@@ -643,7 +643,7 @@ jobs:
   windows_agent_quality:
     name: Windows Agent Quality Checks
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -668,8 +668,11 @@ jobs:
       - name: Validate shipped agent sources (includes install-agent.ps1 parse + UTF-8-no-BOM check)
         run: pnpm run build:agent
 
+      # Native cases start PowerShell/C# wrappers; bound concurrency so cold
+      # starts do not compete with every other test file on the hosted runner.
       - name: Run agent package tests (Windows ACL/durability/platform suite)
-        run: pnpm run test:agent
+        working-directory: packages/agent
+        run: node --test --test-concurrency=2 "src/**/*.test.js" "scripts/**/*.test.js"
 
       - name: Dry-run install-agent.ps1
         shell: pwsh

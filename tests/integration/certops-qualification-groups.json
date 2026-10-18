@@ -77,6 +77,10 @@
       {
         "file": "certops-adcs-profile-issuer-switch.test.js",
         "name": "applies AD CS edit rules after an ACME-shaped Windows/IIS profile is moved to an AD CS issuer"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "survivor fixture uses the insert-trigger management period and creates eligible enrollment work"
       }
     ]
   }
