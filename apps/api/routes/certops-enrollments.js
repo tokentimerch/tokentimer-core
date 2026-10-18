@@ -16,9 +16,16 @@ const {
   listEnrollments,
   listIssuers,
   proposeReconcileRequestId,
+  retryEnrollmentInstallation,
+  recoverOrphanedEnrollment,
 } = require("../services/certops/certificateEnrollments");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requireRecoverySessionUser(req,res,next) {
+  if (req.isWorkerCall || !req.user?.id) return res.status(403).json({error:"Session user required for recovery",code:"INSUFFICIENT_ROLE"});
+  return next();
+}
 
 function fail(res, err) {
   const code = err?.code || "INTERNAL_ERROR";
@@ -31,6 +38,9 @@ function fail(res, err) {
   }
   if (code === "CERTOPS_PREFLIGHT_RATE_LIMITED") {
     return res.status(429).json({ error: err.message, code });
+  }
+  if (code === "CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED") {
+    return res.status(409).json({ error: err.message, code });
   }
   if (String(code).startsWith("CERTOPS_")) {
     return res.status(400).json({ error: err.message, code });
@@ -182,6 +192,10 @@ router.post(
         keyAlgorithm: req.body?.keyAlgorithm,
         keySize: req.body?.keySize,
         profileId: req.body?.profileId,
+        pollInterval: req.body?.pollInterval,
+        pendingTimeout: req.body?.pendingTimeout,
+        minimumRemainingValidity: req.body?.minimumRemainingValidity,
+        requireLaterNotAfter: req.body?.requireLaterNotAfter,
         actorUserId: req.user?.id || null,
       });
       return res.status(201).json(created);
@@ -227,6 +241,46 @@ router.post(
     } catch (err) {
       return fail(res, err);
     }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/enrollments/:enrollmentId/retry-installation",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireRecoverySessionUser,
+  authorize("certops.issuer.manage"),
+  async (req, res) => {
+    try {
+      if (!UUID.test(req.params.enrollmentId) ||
+          req.body === null || typeof req.body !== "object" || Array.isArray(req.body) ||
+          Object.keys(req.body || {}).length) {
+        return res.status(400).json({ error: "Retry accepts an enrollment identifier and an empty body", code: "CERTOPS_SNAPSHOT_INVALID" });
+      }
+      const result = await retryEnrollmentInstallation({ workspaceId: req.workspace.id,
+        enrollmentId: req.params.enrollmentId, actorUserId: req.user?.id || null });
+      return res.status(result.created ? 201 : 200).json(result);
+    } catch (err) { return fail(res, err); }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/certops/enrollments/:enrollmentId/recover",
+  getApiLimiter(),
+  requireCertOpsEnabled,
+  requireRecoverySessionUser,
+  authorize("certops.issuer.manage"),
+  async(req,res)=>{
+    try{
+      const body=req.body;
+      if (!UUID.test(req.params.enrollmentId) || !body || typeof body!=="object" || Array.isArray(body) ||
+          Object.keys(body).some(key=>!["orphanedJobId","acknowledgeUnknownEffect","reason"].includes(key)) || !UUID.test(String(body.orphanedJobId || ""))) {
+        return res.status(400).json({error:"Recovery accepts only the orphaned job identifier, acknowledgement and reason",code:"CERTOPS_SNAPSHOT_INVALID"});
+      }
+      const result=await recoverOrphanedEnrollment({workspaceId:req.workspace.id,enrollmentId:req.params.enrollmentId,
+        orphanedJobId:body.orphanedJobId,acknowledgeUnknownEffect:body.acknowledgeUnknownEffect,reason:body.reason,actorUserId:req.user.id});
+      return res.status(result.created?201:200).json(result);
+    }catch(error){return fail(res,error);}
   },
 );
 

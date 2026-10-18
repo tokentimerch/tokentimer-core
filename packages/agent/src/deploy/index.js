@@ -58,6 +58,7 @@ const fsp = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { fsyncDirectory } = require("../platform/durability.js");
+const { applyWindowsAcl } = require("../platform");
 
 // Mirrors discovery/index.js's PRIVATE_KEY_PEM_HEADER_PATTERN (which itself
 // mirrors apps/api/utils/secretMaterial.js). Duplicated, not imported, to
@@ -532,7 +533,7 @@ async function atomicWrite(
   fspImpl,
   destinationPath,
   content,
-  { mode = DEPLOYED_FILE_MODE, uid = null, gid = null } = {},
+  { mode = DEPLOYED_FILE_MODE, uid = null, gid = null, privateMaterial = false } = {},
 ) {
   const dirPath = path.dirname(destinationPath);
   const tempPath = path.join(
@@ -543,6 +544,9 @@ async function atomicWrite(
   let handle;
   try {
     handle = await fspImpl.open(tempPath, "wx", mode);
+    // Restrict the empty staging file before any secret bytes are written.
+    // chmod does not enforce a Windows DACL. Rename retains this verified ACL.
+    if (privateMaterial && process.platform === "win32") applyWindowsAcl(tempPath);
     await handle.writeFile(content);
     if (typeof handle.chmod === "function") {
       try {
@@ -622,7 +626,7 @@ function resolveOwnershipIds(owner, group) {
 
 /**
  * Builds the timestamped backup path for an existing destination file:
- * `<backupDir>/<basename>.<ISO-ts>.bak`, with colons replaced by "-" so the
+ * `<backupDir>/<basename>.<ISO-ts>.<destination-tag>.<nonce>.bak`, with colons replaced by "-" so the
  * name is valid on win32. Defaults backupDir to the destination's own
  * directory ("alongside destination").
  *
@@ -634,7 +638,20 @@ function resolveOwnershipIds(owner, group) {
 function backupPathFor(destinationPath, backupDir, now) {
   const timestamp = now.toISOString().replace(/:/g, "-");
   const dir = backupDir || path.dirname(destinationPath);
-  return path.join(dir, `${path.basename(destinationPath)}.${timestamp}.bak`);
+  // Distinct destinations may share a basename and clock ticks may repeat.
+  // Neither may overwrite a predecessor needed for post-deploy rollback.
+  const tag = backupDestinationTag(destinationPath);
+  return path.join(
+    dir,
+    `${path.basename(destinationPath)}.${timestamp}.${tag}.${crypto.randomBytes(16).toString("hex")}.bak`,
+  );
+}
+
+function backupDestinationTag(destinationPath) {
+  // Callers have already resolved the actual destination through native
+  // realpath. Preserve case for Windows directories with case sensitivity set.
+  const resolved = path.resolve(destinationPath);
+  return crypto.createHash("sha256").update(resolved).digest("hex").slice(0, 32);
 }
 
 const BACKUP_FILENAME_SUFFIX = ".bak";
@@ -643,9 +660,10 @@ const BACKUP_FILENAME_SUFFIX = ".bak";
  * Prunes old timestamped backups for one destination basename down to
  * `retentionCount`, keeping the most recent ones. Only ever deletes files
  * matching this module's OWN backup naming convention
- * (`<basename>.<ISO-ts-with-dashes>.bak`) inside the resolved backup
- * directory, so it can never remove an unrelated file an operator placed
- * there. Best-effort: ANY failure (readdir, unlink, anything unexpected) is
+ * including this destination's tag and a generation nonce, inside the resolved
+ * backup directory. Historical timestamp-only names cannot be attributed safely
+ * when destinations share a basename, so they remain for operator cleanup.
+ * Best-effort: ANY failure (readdir, unlink, anything unexpected) is
  * caught and swallowed internally rather than propagated -- backup
  * retention is disk-hygiene, not a correctness gate, and call sites invoke
  * this fire-and-forget after a deploy has already been reported successful,
@@ -657,10 +675,15 @@ const BACKUP_FILENAME_SUFFIX = ".bak";
  * @param {string|undefined|null} backupDir
  * @param {number|undefined|null} retentionCount when absent, no pruning
  *   happens (unbounded backups is the pre-existing default behavior)
- * @param {{ _fsOverrides?: object }} [options]
+ * @param {{ _fsOverrides?: object, preservePath?: string }} [options]
  * @returns {Promise<{ removed: string[] }>}
  */
-async function pruneDeployBackups(destinationPath, backupDir, retentionCount, { _fsOverrides } = {}) {
+async function pruneDeployBackups(
+  destinationPath,
+  backupDir,
+  retentionCount,
+  { _fsOverrides, preservePath } = {},
+) {
   if (!Number.isInteger(retentionCount) || retentionCount < 1) {
     return { removed: [] };
   }
@@ -669,6 +692,9 @@ async function pruneDeployBackups(destinationPath, backupDir, retentionCount, { 
     const dir = backupDir || path.dirname(destinationPath);
     const basename = path.basename(destinationPath);
     const prefix = `${basename}.`;
+    const ownedSuffix = new RegExp(
+      `^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}\\.\\d{3}Z\\.${backupDestinationTag(destinationPath)}\\.[a-f0-9]{32}\\.bak$`,
+    );
 
     let entries;
     try {
@@ -679,18 +705,26 @@ async function pruneDeployBackups(destinationPath, backupDir, retentionCount, { 
     }
 
     const candidates = entries.filter(
-      (name) => name.startsWith(prefix) && name.endsWith(BACKUP_FILENAME_SUFFIX),
+      (name) => name.startsWith(prefix) &&
+        name.endsWith(BACKUP_FILENAME_SUFFIX) &&
+        ownedSuffix.test(name.slice(prefix.length)),
     );
     if (candidates.length <= retentionCount) {
       return { removed: [] };
     }
 
     // Sort by the embedded timestamp (lexicographically sortable ISO-8601
-    // with dashes in place of colons), oldest first, so retention always
-    // keeps the most RECENT backups regardless of filesystem mtime
-    // resolution or clock skew between backup writes.
+    // with dashes in place of colons), oldest first. Filesystem mtime
+    // resolution cannot change that order; the current rollback backup
+    // is preserved explicitly even when timestamps tie or the clock shifts.
     const sorted = [...candidates].sort();
-    const toRemove = sorted.slice(0, sorted.length - retentionCount);
+    // Equal timestamps have no ordering guarantee between random nonces.
+    // Keep the just-created rollback backup regardless of its lexical rank.
+    const preserved = typeof preservePath === "string"
+      ? path.resolve(preservePath) : null;
+    const toRemove = sorted
+      .filter(name => path.resolve(dir, name) !== preserved)
+      .slice(0, sorted.length - retentionCount);
 
     const removed = [];
     for (const name of toRemove) {
@@ -823,8 +857,12 @@ async function deployCertificate({
     // roots is rejected even though the lexical path looked fine.
     let realDestination;
     let realChainDestination = null;
+    let realBackupDirectory;
     try {
       realDestination = await resolveRealDestination(fspImpl, destination);
+      if (target.backupDir) {
+        realBackupDirectory = await resolveRealDestination(fspImpl, path.resolve(target.backupDir));
+      }
       if (chainDestination !== null) {
         realChainDestination = await resolveRealDestination(
           fspImpl,
@@ -837,6 +875,7 @@ async function deployCertificate({
 
     for (const [label, realPath] of [
       ["certificate", realDestination],
+      ...(realBackupDirectory ? [["backup directory", realBackupDirectory]] : []),
       ...(realChainDestination
         ? [["chain", realChainDestination]]
         : []),
@@ -901,19 +940,21 @@ async function deployCertificate({
     let chainBackupPath = null;
     try {
       if (existingContent !== null) {
-        backupPath = backupPathFor(realDestination, target.backupDir, stamp);
+        backupPath = backupPathFor(realDestination, realBackupDirectory, stamp);
         await fspImpl.writeFile(backupPath, existingContent, {
           mode: DEPLOYED_FILE_MODE,
+          flag: "wx",
         });
       }
       if (realChainDestination !== null && existingChain !== null) {
         chainBackupPath = backupPathFor(
           realChainDestination,
-          target.backupDir,
+          realBackupDirectory,
           stamp,
         );
         await fspImpl.writeFile(chainBackupPath, existingChain, {
           mode: DEPLOYED_FILE_MODE,
+          flag: "wx",
         });
       }
     } catch (err) {
@@ -986,16 +1027,17 @@ async function deployCertificate({
     // affect the success result of a deploy that already happened.
     if (Number.isInteger(target.backupRetentionCount)) {
       if (backupPath !== null) {
-        await pruneDeployBackups(realDestination, target.backupDir, target.backupRetentionCount, {
+        await pruneDeployBackups(realDestination, realBackupDirectory, target.backupRetentionCount, {
           _fsOverrides,
+          preservePath: backupPath,
         });
       }
       if (chainBackupPath !== null && realChainDestination !== null) {
         await pruneDeployBackups(
           realChainDestination,
-          target.backupDir,
+          realBackupDirectory,
           target.backupRetentionCount,
-          { _fsOverrides },
+          { _fsOverrides, preservePath: chainBackupPath },
         );
       }
     }
@@ -1266,9 +1308,16 @@ async function deployCertificateAndKey({
     let realCertDestination;
     let realKeyDestination;
     let realChainDestination = null;
+    let realBackupDirectory;
     try {
       realCertDestination = await resolveRealDestination(fspImpl, certDestination);
       realKeyDestination = await resolveRealDestination(fspImpl, keyDestination);
+      // Backup writes include the predecessor private key. Resolve this
+      // directory before reading staging and use its approved native path for
+      // both backup creation and pruning, never the original linked spelling.
+      if (target.backupDir) {
+        realBackupDirectory = await resolveRealDestination(fspImpl, path.resolve(target.backupDir));
+      }
       if (chainDestination !== null) {
         realChainDestination = await resolveRealDestination(
           fspImpl,
@@ -1285,6 +1334,7 @@ async function deployCertificateAndKey({
     for (const [label, realPath] of [
       ["certificate", realCertDestination],
       ["key", realKeyDestination],
+      ...(realBackupDirectory ? [["backup directory", realBackupDirectory]] : []),
       ...(realChainDestination
         ? [["chain", realChainDestination]]
         : []),
@@ -1369,6 +1419,14 @@ async function deployCertificateAndKey({
       (existingChain !== null &&
         existingChain.equals(Buffer.from(chainPem, "utf8")));
     if (certUnchanged && keyUnchanged && chainUnchanged) {
+      if (process.platform === "win32") {
+        try { applyWindowsAcl(realKeyDestination); }
+        catch (error) {
+          if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
+          if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
+          return failure("permissions", "deploy: could not restrict unchanged private key: " + error.message);
+        }
+      }
       if (Buffer.isBuffer(keyContent)) keyContent.fill(0);
       if (Buffer.isBuffer(existingKey)) existingKey.fill(0);
       counters.idempotentSkips += 1;
@@ -1391,25 +1449,27 @@ async function deployCertificateAndKey({
     let chainBackupPath = null;
     try {
       if (existingCert !== null) {
-        certBackupPath = backupPathFor(realCertDestination, target.backupDir, stamp);
+        certBackupPath = backupPathFor(realCertDestination, realBackupDirectory, stamp);
         await fspImpl.writeFile(certBackupPath, existingCert, {
           mode: DEPLOYED_FILE_MODE,
+          flag: "wx",
         });
       }
       if (existingKey !== null) {
-        keyBackupPath = backupPathFor(realKeyDestination, target.backupDir, stamp);
-        await fspImpl.writeFile(keyBackupPath, existingKey, {
-          mode: DEPLOYED_FILE_MODE,
+        keyBackupPath = backupPathFor(realKeyDestination, realBackupDirectory, stamp);
+        await atomicWrite(fspImpl, keyBackupPath, existingKey, {
+          mode: DEPLOYED_FILE_MODE, privateMaterial: true,
         });
       }
       if (realChainDestination !== null && existingChain !== null) {
         chainBackupPath = backupPathFor(
           realChainDestination,
-          target.backupDir,
+          realBackupDirectory,
           stamp,
         );
         await fspImpl.writeFile(chainBackupPath, existingChain, {
           mode: DEPLOYED_FILE_MODE,
+          flag: "wx",
         });
       }
     } catch (err) {
@@ -1428,8 +1488,8 @@ async function deployCertificateAndKey({
           rolledBack = true;
         }
         if (keyBackupPath !== null && existingKey !== null) {
-          await fspImpl.writeFile(realKeyDestination, existingKey, {
-            mode: DEPLOYED_FILE_MODE,
+          await atomicWrite(fspImpl, realKeyDestination, existingKey, {
+            mode: DEPLOYED_FILE_MODE, privateMaterial: true,
           });
           rolledBack = true;
         }
@@ -1477,6 +1537,7 @@ async function deployCertificateAndKey({
         gid: ownership.gid,
       });
       await atomicWrite(fspImpl, realKeyDestination, keyContent, {
+        privateMaterial: true,
         mode: keyMode,
         uid: ownership.uid,
         gid: ownership.gid,
@@ -1526,6 +1587,7 @@ async function deployCertificateAndKey({
           // deletes the only remaining copy of the rotated key.
           const stagingKeyBytes = await fspImpl.readFile(normalizedPrivateKeyPath);
           await atomicWrite(fspImpl, custodyResolved, stagingKeyBytes, {
+            privateMaterial: true,
             mode: DEPLOYED_KEY_DEFAULT_MODE,
           });
           const promoted = await fspImpl.readFile(custodyResolved);
@@ -1606,25 +1668,25 @@ async function deployCertificateAndKey({
       if (certBackupPath !== null) {
         await pruneDeployBackups(
           realCertDestination,
-          target.backupDir,
+          realBackupDirectory,
           target.backupRetentionCount,
-          { _fsOverrides },
+          { _fsOverrides, preservePath: certBackupPath },
         );
       }
       if (keyBackupPath !== null) {
         await pruneDeployBackups(
           realKeyDestination,
-          target.backupDir,
+          realBackupDirectory,
           target.backupRetentionCount,
-          { _fsOverrides },
+          { _fsOverrides, preservePath: keyBackupPath },
         );
       }
       if (chainBackupPath !== null && realChainDestination !== null) {
         await pruneDeployBackups(
           realChainDestination,
-          target.backupDir,
+          realBackupDirectory,
           target.backupRetentionCount,
-          { _fsOverrides },
+          { _fsOverrides, preservePath: chainBackupPath },
         );
       }
     }

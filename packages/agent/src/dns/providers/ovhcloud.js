@@ -226,7 +226,10 @@ function createSolverImpl({ credentials, fetchImpl, timeoutMs, excerpt }) {
     }
 
     const ids = parseJson(listResponse.bodyText);
-    const recordIds = Array.isArray(ids) ? ids.filter((id) => Number.isInteger(id) || isNonEmptyString(id)) : [];
+    if (!Array.isArray(ids) || ids.some((id) => !Number.isInteger(id) && !isNonEmptyString(id))) {
+      return { ok: false, statusCode: listResponse.status, detail: excerpt("ovhcloud record lookup returned an invalid record list") };
+    }
+    const recordIds = ids;
     if (recordIds.length === 0) {
       // Nothing to delete: cleanup is idempotent, an already-absent record
       // is success, not failure.

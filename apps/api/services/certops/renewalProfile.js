@@ -398,6 +398,12 @@ function validateRenewalProfile(raw) {
     );
   }
 
+  // A Windows IIS profile always maps to OS-store-managed CNG enrollment.
+  // Keep explicit stored intent visible: never silently turn reuse into rotation.
+  if (raw.target?.type === "windows-iis" && rotation.rotateOnRenew === false) {
+    throw profileError("WINDOWS_ACME_KEY_REUSE_UNSUPPORTED: windows-iis renewal requires keyRotationPolicy.rotateOnRenew=true");
+  }
+
   const preferredChain = optionalStringOrNull(
     raw.preferredChain,
     "preferredChain",
@@ -630,7 +636,8 @@ function resolveRenewalProfileSnapshot(certificate) {
   };
 
   // Fill keyRotationPolicy.rotateOnRenew from inventory key_mode when the
-  // live profile omits it: agent-local custody can rotate; others cannot.
+  // live profile omits it. Windows CNG enrollment requires a fresh key;
+  // an explicitly stored false above is preserved and rejected, never rewritten.
   if (
     !candidate.keyRotationPolicy ||
     typeof candidate.keyRotationPolicy !== "object"
@@ -638,7 +645,8 @@ function resolveRenewalProfileSnapshot(certificate) {
     const keyMode = certificate.key_mode || certificate.profile_key_mode;
     candidate.keyRotationPolicy = {
       rotateOnRenew:
-        keyMode === "agent-local" || keyMode === "proxy-agent-local",
+        keyMode === "agent-local" || keyMode === "proxy-agent-local" ||
+        (keyMode === "os-store-managed" && candidate.target?.type === "windows-iis"),
     };
   }
 

@@ -52,6 +52,7 @@ const CERTOPS_JOB_MODE_TERMINAL_INVALID =
   "CERTOPS_JOB_MODE_TERMINAL_INVALID";
 const CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE =
   "CERTOPS_CERTIFICATE_NOT_AGENT_DEPLOYABLE";
+const CERTOPS_CERTIFICATE_NOT_RENEWABLE = "CERTOPS_CERTIFICATE_NOT_RENEWABLE";
 const CERTOPS_RENEWAL_AUTO_RENEW_DISABLED = "CERTOPS_RENEWAL_AUTO_RENEW_DISABLED";
 const PRIVATE_KEY_MATERIAL_REJECTED = "PRIVATE_KEY_MATERIAL_REJECTED";
 
@@ -1409,6 +1410,14 @@ async function resolveManagedCertificateJobDefaults({
 
   const result = await db.query(
     `SELECT mc.key_mode,
+            mc.status,
+            CASE WHEN $3::boolean THEN (
+              SELECT identity.lifecycle_status
+                FROM certops_certificate_identities identity
+               WHERE identity.workspace_id = mc.workspace_id
+                 AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+               FOR SHARE
+            ) END AS identity_lifecycle_status,
             mc.source,
             mc.deployed_agent_id,
             mc.public_metadata->'controllerObservation'->>'agentId'
@@ -1420,10 +1429,26 @@ async function resolveManagedCertificateJobDefaults({
       WHERE mc.workspace_id = $1
         AND mc.id = $2::uuid
       LIMIT 1`,
-    [workspaceId, subjectId],
+    [workspaceId, subjectId, operation === "renew"],
   );
   const row = result.rows[0];
   if (!row) return { autoAssignedAgentId: null };
+
+  // A scan result is only a hint. Serialize final renewal admission against
+  // retirement on the authoritative identity, not its deliberately skippable
+  // source cache. Scheduler and AD CS enrollment callers retain this SHARE lock
+  // through their job/enrollment transaction; later retirement cancels queued
+  // jobs. Do not lock the source row: retirement intentionally skips busy caches.
+  if (operation === "renew" &&
+      ["revoked", "decommissioned"].includes(row.identity_lifecycle_status)) {
+    // Keep the immutable lifecycle refusal ahead of custody/profile checks,
+    // even while the source status cache is stale or locked by observation.
+    throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
+  }
+  if (operation === "renew" &&
+      ["revoked", "decommissioned"].includes(row.status)) {
+    throw serviceError("Retired certificates cannot be renewed", CERTOPS_CERTIFICATE_NOT_RENEWABLE);
+  }
 
   if (!isAgentDeployableKeyMode(row)) {
     throw serviceError(
@@ -1493,6 +1518,8 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
   if (!SUBJECT_ID_UUID_PATTERN.test(String(certificateId || ""))) return null;
   const result = await db.query(
     `SELECT mc.id, mc.workspace_id,
+            mc.status,
+            ci.lifecycle_status AS identity_lifecycle_status,
             mc.common_name,
             mc.subject_alt_names,
             mc.not_after,
@@ -1505,6 +1532,9 @@ async function loadManagedCertificateForRenewal({ db, workspaceId, certificateId
        FROM managed_certificates mc
        LEFT JOIN certificate_profiles cp
          ON cp.workspace_id = mc.workspace_id AND cp.id = mc.profile_id
+       LEFT JOIN certops_certificate_identities ci
+         ON ci.workspace_id = mc.workspace_id
+        AND ci.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
       WHERE mc.workspace_id = $1
         AND mc.id = $2::uuid
       LIMIT 1`,
@@ -1533,6 +1563,18 @@ async function materializeManualRenewalPayload({
   });
   if (!certificate) {
     throw serviceError("Certificate not found", CERTOPS_CERTIFICATE_NOT_FOUND);
+  }
+  // Identity lifecycle is authoritative: retirement intentionally skips a
+  // source-cache row held by a concurrent writer. A stale cache must not revive
+  // that identity, even before observation refreshes the source's status.
+  // Check before profile materialization for consistent manual/bulk refusal.
+  if ([certificate.status, certificate.identity_lifecycle_status].some(
+    status => ["revoked", "decommissioned"].includes(status),
+  )) {
+    throw serviceError(
+      "Retired certificates cannot be renewed",
+      CERTOPS_CERTIFICATE_NOT_RENEWABLE,
+    );
   }
   if (certificate.profile_issuer_id) {
     throw serviceError(

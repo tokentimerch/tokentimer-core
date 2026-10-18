@@ -5,8 +5,8 @@
  * Picks up configs where next_sync_at <= NOW() and enabled = TRUE,
  * runs the corresponding scan, imports results, and updates status.
  *
- * Core edition supports github and gitlab only. Enterprise replaces this
- * file via src/worker/auto-sync-worker.js in tokentimer-enterprise.
+ * Core supports github and gitlab only. Downstream compositions may replace
+ * this worker to schedule additional supported integration providers.
  */
 
 import { pool, withClient } from "./db.js";

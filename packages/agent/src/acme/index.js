@@ -543,38 +543,7 @@ function buildAdapterArgs(kind, {
  * @param {Record<string, string>} env
  * @returns {Promise<{ exitCode: number|null, stdout: unknown, stderr: unknown, execError: Error|null }>}
  */
-function execWithoutShell(execFileImpl, argv, timeoutMs, env) {
-  const [file, ...args] = argv;
-
-  return new Promise((resolve) => {
-    execFileImpl(
-      file,
-      args,
-      {
-        timeout: timeoutMs,
-        // Explicitly no `shell` option: arguments are passed as an array to
-        // the OS exec facility and are never interpreted by a shell.
-        windowsHide: true,
-        maxBuffer: 10 * 1024 * 1024,
-        // Explicit minimal environment: the agent's own env can hold the
-        // bootstrap token and other secrets that must never reach the ACME
-        // tool (or the hook children it spawns). CERTOPS_DNS_HOOK is a
-        // non-secret absolute path to the hook binary.
-        env,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          // error.code is the exit code for nonzero exits; null for kills
-          // (timeout => SIGTERM) and spawn failures (ENOENT etc.).
-          const exitCode = typeof error.code === "number" ? error.code : null;
-          resolve({ exitCode, stdout, stderr, execError: error });
-          return;
-        }
-        resolve({ exitCode: 0, stdout, stderr, execError: null });
-      },
-    );
-  });
-}
+const { execWithoutShell } = require("./command");
 
 /**
  * Creates an ACME exec adapter bound to one tool kind and one allowlisted
@@ -602,6 +571,7 @@ function createAcmeAdapter({
   kind,
   commandProfile,
   execFileImpl = childProcess.execFile,
+  signal = null,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   dnsHookPath = defaultDnsHookPath(),
   acmeDnsApiPath = defaultAcmeDnsApiPath(),
@@ -856,6 +826,7 @@ function createAcmeAdapter({
       argvUsed,
       timeoutMs,
       env,
+      signal,
     );
 
     // (5) Result. argvUsed is included for evidence: DNS credentials never

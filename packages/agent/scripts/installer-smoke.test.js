@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * B9 installer smoke test: package the agent, extract it OUTSIDE the monorepo,
+ * Installer smoke test: package the agent, extract it OUTSIDE the monorepo,
  * install production deps, and prove entrypoint imports resolve without any
  * monorepo-relative path layout.
  *
@@ -219,7 +219,7 @@ describe("installer packaging smoke (B9)", () => {
 /**
  * Windows service lifecycle smoke test (H-blocker regression guard).
  *
- * Registers a *real* "TokenTimerAgent" service pointed at the built
+ * Registers a *real* uniquely named disposable service pointed at the built
  * windows-service-host binary + a mock agent child, then asserts it
  * actually reaches the Running state and survives a Stop-Service /
  * Start-Service cycle. This is the regression the reviewer flagged: a
@@ -243,15 +243,17 @@ describe("installer packaging smoke (B9)", () => {
  * expected to run this as Administrator.
  */
 describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
-  const SERVICE_NAME = "TokenTimerAgent";
+  const SERVICE_NAME = `CertOpsQualification-${require("node:crypto").randomUUID()}`;
   const REG_KEY = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${SERVICE_NAME}`;
 
   function isWindowsElevated() {
     if (process.platform !== "win32") return false;
-    // `net session` requires Administrator and fails fast (no prompt) when
-    // run unelevated; this is the standard no-dependency elevation probe.
-    const probe = spawnSync("net", ["session"], { encoding: "utf8" });
-    return probe.status === 0;
+    // Inspect the actual token; `net session` also depends on the Server
+    // service being enabled and incorrectly rejects some elevated runners.
+    const probe = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+    ], { encoding: "utf8", timeout: 15000 });
+    return probe.status === 0 && probe.stdout.trim() === "True";
   }
 
   function getServiceStatus() {
@@ -297,10 +299,12 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
   let hostExe;
   let mockAgentJs;
   let serviceConfigDir;
+  let serviceOwned = false;
 
   before(() => {
     if (!isWindowsElevated()) {
       skipReason = "requires an elevated (Administrator) Windows process";
+      if (process.env.CERTOPS_QUALIFICATION_STRICT === "1") throw new Error(skipReason);
       return;
     }
     if (getServiceStatus() !== null) {
@@ -308,25 +312,37 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
       // a real dev install on this machine, and this test deletes the
       // service it creates when done.
       skipReason = `a "${SERVICE_NAME}" service already exists on this host; skipping rather than risk clobbering it`;
+      if (process.env.CERTOPS_QUALIFICATION_STRICT === "1") throw new Error(skipReason);
       return;
     }
 
-    const { main: buildWindowsServiceHost, hostBinaryName } = require("./build-windows-service-host.js");
-    buildWindowsServiceHost();
+    serviceConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "CertOps Qualification SCM "));
     const goarch = process.arch === "arm64" ? "arm64" : "amd64";
-    hostExe = path.join(packageRoot, "bin", hostBinaryName(goarch));
+    hostExe = path.join(serviceConfigDir, "qualification-service-host.exe");
+    const source = path.join(packageRoot, "windows-service-host", "service_windows.go");
+    const fixtureSource = path.join(serviceConfigDir, "service_windows.go");
+    const originalSource = fs.readFileSync(source, "utf8");
+    assert.ok(originalSource.includes('const serviceName = "TokenTimerAgent"'));
+    fs.writeFileSync(fixtureSource, originalSource.replace('const serviceName = "TokenTimerAgent"',
+      `const serviceName = "${SERVICE_NAME}"`));
+    const overlay = path.join(serviceConfigDir, "source-overlay.json");
+    fs.writeFileSync(overlay, JSON.stringify({ Replace: { [source]: fixtureSource } }));
+    const build = spawnSync("go", ["build", "-trimpath", "-buildvcs=false", `-overlay=${overlay}`,
+      "-ldflags=-s -w -H=windowsgui", "-o", hostExe, "."], {
+      cwd: path.join(packageRoot, "windows-service-host"), encoding: "utf8", timeout: 180000,
+      env: { ...process.env, GOOS: "windows", GOARCH: goarch },
+    });
+    assert.equal(build.status, 0, "qualification service host build failed");
     assert.ok(fs.existsSync(hostExe), `expected built host binary at ${hostExe}`);
 
     mockAgentJs = path.join(packageRoot, "windows-service-host", "testdata", "mock-agent.js");
     assert.ok(fs.existsSync(mockAgentJs), `expected mock agent fixture at ${mockAgentJs}`);
 
-    serviceConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentimer-agent-svc-state-"));
   });
 
   after(() => {
-    if (getServiceStatus() !== null) {
-      // The test body's own final assertion leaves the service RUNNING
-      // (it stops/starts it once to prove the restart cycle, then ends).
+    if (serviceOwned && getServiceStatus() !== null) {
+      // A failed assertion or interrupted uninstall may leave it RUNNING.
       // `sc.exe stop` only *requests* a stop and returns immediately - it
       // does not wait for the SCM to actually tear the process down - so
       // deleting serviceConfigDir right after it, with no wait, raced the
@@ -335,9 +351,15 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
       // ceiling the test body itself uses) before deleting the service.
       if (getServiceStatus() !== "STOPPED") {
         spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" });
-        waitForStatus("STOPPED", 15000);
+        assert.ok(waitForStatus("STOPPED", 15000), "owned service did not stop during cleanup");
       }
-      spawnSync("sc.exe", ["delete", SERVICE_NAME], { encoding: "utf8" });
+      const deleted = spawnSync("sc.exe", ["delete", SERVICE_NAME], { encoding: "utf8" });
+      assert.equal(deleted.status, 0, "owned service deletion failed");
+      const deletionDeadline = Date.now() + 15000;
+      while (getServiceStatus() !== null && Date.now() < deletionDeadline) {
+        spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
+      }
+      assert.equal(getServiceStatus(), null, "owned service remains after deletion");
     }
     if (serviceConfigDir) removeDirWithRetry(serviceConfigDir);
   });
@@ -363,6 +385,7 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
       "binPath=", binPath,
     ], { encoding: "utf8" });
     assert.equal(create.status, 0, `sc.exe create failed:\n${create.stdout}\n${create.stderr}`);
+    serviceOwned = true;
 
     // Mirrors Set-ServiceEnvironment in install-agent.ps1, including a
     // bootstrap-token-shaped value, so the Task 2 assertion below exercises
@@ -371,7 +394,10 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
       "add", REG_KEY,
       "/v", "Environment",
       "/t", "REG_MULTI_SZ",
-      "/d", `TOKENTIMER_AGENT_CONFIG_DIR=${serviceConfigDir}\\0TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_smoketest`,
+      "/d", [`TOKENTIMER_AGENT_CONFIG_DIR=${serviceConfigDir}`, "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=ttboot_smoketest",
+        "TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID=qualification-id", "QUALIFICATION_UNRELATED=preserved spaces",
+        "PATH=C:\\0sdk;C:\\Windows\\System32"].join("|"),
+      "/s", "|",
       "/f",
     ], { encoding: "utf8" });
     assert.equal(setEnv.status, 0, `reg.exe add failed:\n${setEnv.stdout}\n${setEnv.stderr}`);
@@ -390,8 +416,28 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
     // platform.test.js) against the Environment value the service is
     // actually running with.
     const { clearWindowsServiceBootstrapToken } = require("../src/platform/index.js");
-    const scrubResult = clearWindowsServiceBootstrapToken({ configDir: serviceConfigDir });
+    const registryCalls = [];
+    const ownedRegistry = (file, args, options) => {
+      // Keep released configuration fixed. Redirect only the registry target
+      // through the existing test seam; every result comes from real reg.exe.
+      assert.equal(file, "reg.exe");
+      assert.equal(args[1], "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent");
+      registryCalls.push(args[0]);
+      return spawnSync(file, [args[0], REG_KEY, ...args.slice(2)], options);
+    };
+    const beforeForeignScrub = spawnSync("reg.exe", ["query", REG_KEY, "/v", "Environment"], { encoding: "utf8" });
+    assert.equal(beforeForeignScrub.status, 0);
+    const foreignScrub = clearWindowsServiceBootstrapToken({ configDir: path.join(serviceConfigDir, "foreign-state"), spawn: ownedRegistry });
+    assert.equal(foreignScrub.cleared, false);
+    assert.equal(foreignScrub.reason, "service config directory does not match this agent");
+    assert.deepEqual(registryCalls, ["query"], "foreign config must not write an installed service's environment");
+    const afterForeignScrub = spawnSync("reg.exe", ["query", REG_KEY, "/v", "Environment"], { encoding: "utf8" });
+    assert.equal(afterForeignScrub.status, 0);
+    assert.equal(afterForeignScrub.stdout, beforeForeignScrub.stdout, "native environment must remain byte-identical after foreign scrub");
+    registryCalls.length = 0;
+    const scrubResult = clearWindowsServiceBootstrapToken({ configDir: serviceConfigDir, spawn: ownedRegistry });
     assert.deepEqual(scrubResult, { attempted: true, cleared: true });
+    assert.deepEqual(registryCalls, ["query", "query", "add"]);
 
     const queryAfterScrub = spawnSync(
       "reg.exe",
@@ -409,6 +455,13 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
       /TOKENTIMER_AGENT_CONFIG_DIR/,
       "scrub must preserve the non-secret config dir entry",
     );
+    assert.match(queryAfterScrub.stdout, /QUALIFICATION_UNRELATED=preserved spaces/);
+    assert.ok(queryAfterScrub.stdout.includes("PATH=C:\\0sdk;C:\\Windows\\System32"), "scrub must not reinterpret a literal backslash-zero path as a separator");
+    const typedEnvironment = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      `$ErrorActionPreference='Stop'; $k=Get-Item -LiteralPath 'HKLM:${REG_KEY.slice(4)}'; if ([string]$k.GetValueKind('Environment') -ne 'MultiString') { throw 'Unexpected native environment type' }; $v=$k.GetValue('Environment',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); ConvertTo-Json -InputObject @($v) -Compress`], { encoding: "utf8" });
+    assert.equal(typedEnvironment.status, 0, "independent typed registry observation failed");
+    assert.deepEqual(JSON.parse(typedEnvironment.stdout), [`TOKENTIMER_AGENT_CONFIG_DIR=${serviceConfigDir}`,
+      "QUALIFICATION_UNRELATED=preserved spaces", "PATH=C:\\0sdk;C:\\Windows\\System32"]);
 
     // --- Task 1 (SCM handshake) Stop/Start cycle assertion ---
     const stop = spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" });
@@ -421,5 +474,108 @@ describe("Windows service lifecycle smoke (H-blocker regression guard)", () => {
       waitForStatus("RUNNING", 15000),
       `service did not come back RUNNING after Stop-Service/Start-Service (last status: ${getServiceStatus()})`,
     );
+    // Configure real SCM recovery and trigger a nonzero child exit. The
+    // fresh child's receipt is stronger evidence than sampling RUNNING
+    // immediately after the crash trigger while the old child is still up.
+    const recovery = spawnSync("sc.exe", ["failure", SERVICE_NAME, "reset=", "60", "actions=", "restart/1000"], { encoding: "utf8" });
+    assert.equal(recovery.status, 0, `SCM recovery configuration failed: ${recovery.stderr}`);
+    const failureFlag = spawnSync("sc.exe", ["failureflag", SERVICE_NAME, "1"], { encoding: "utf8" });
+    assert.equal(failureFlag.status, 0);
+    const startsPath = path.join(serviceConfigDir, "fixture-starts.log");
+    const childReadyDeadline = Date.now() + 15000;
+    while ((!fs.existsSync(startsPath) || fs.readFileSync(startsPath, "utf8").trim().split(/\r?\n/).length < 2) && Date.now() < childReadyDeadline) {
+      spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
+    }
+    assert.ok(fs.existsSync(startsPath), "fixture child did not write startup receipt");
+    const startsBefore = fs.readFileSync(startsPath, "utf8").trim().split(/\r?\n/).length;
+    assert.ok(startsBefore >= 2, "restarted child did not write startup receipt");
+    fs.writeFileSync(path.join(serviceConfigDir, "fixture-exit-code.txt"), "17");
+    const recoveryDeadline = Date.now() + 30000;
+    let recovered = false;
+    while (Date.now() < recoveryDeadline) {
+      const startsNow = fs.readFileSync(startsPath, "utf8").trim().split(/\r?\n/).length;
+      if (startsNow > startsBefore && getServiceStatus() === "RUNNING") { recovered = true; break; }
+      spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
+    }
+    assert.ok(recovered, "SCM did not recover the host after child exit 17");
+    const startsAfterRecovery = fs.readFileSync(startsPath, "utf8");
+    fs.writeFileSync(path.join(serviceConfigDir, "fixture-exit-code.txt"), "86");
+    assert.ok(waitForStatus("STOPPED", 15000), "retired exit 86 did not stop the service");
+    // More than four times the configured recovery delay: verify the
+    // successful retired exit did not accidentally schedule a restart.
+    spawnSync(process.execPath, ["-e", "setTimeout(()=>{},5000)"], { timeout: 6000 });
+    assert.equal(getServiceStatus(), "STOPPED", "SCM restarted a retired agent");
+    assert.equal(fs.readFileSync(startsPath, "utf8"), startsAfterRecovery, "exit 86 created another child");
+    // Real shipped entrypoint failure through SCM: disable automatic recovery
+    // first so malformed configuration cannot create an unbounded restart loop.
+    const noRecovery = spawnSync("sc.exe", ["failure", SERVICE_NAME, "reset=", "60", "actions=", ""], { encoding: "utf8" });
+    assert.equal(noRecovery.status, 0, "could not disable owned service recovery");
+    const configPath = path.join(serviceConfigDir, "config.json");
+    const stateMarker = path.join(serviceConfigDir, "qualification-existing-state");
+    fs.writeFileSync(stateMarker, "existing-state-preserved");
+    fs.writeFileSync(configPath, "{");
+    const shippedEntry = path.join(packageRoot, "bin", "tokentimer-agent.js");
+    const badConfigPath = `${quotedHost} ${quotedNode} "${shippedEntry}"`;
+    const badConfig = spawnSync("sc.exe", ["config", SERVICE_NAME, "binPath=", badConfigPath], { encoding: "utf8" });
+    assert.equal(badConfig.status, 0, "could not select shipped entrypoint for owned service");
+    spawnSync("sc.exe", ["start", SERVICE_NAME], { encoding: "utf8" });
+    const badConfigDeadline = Date.now() + 15000;
+    const hostLog = path.join(serviceConfigDir, "host.log");
+    let rejectedConfig = false;
+    while (Date.now() < badConfigDeadline) {
+      if (getServiceStatus() === "STOPPED" && fs.existsSync(hostLog) &&
+          /failed to parse/.test(fs.readFileSync(hostLog, "utf8"))) { rejectedConfig = true; break; }
+      spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
+    }
+    assert.ok(rejectedConfig, "SCM must stop and retain explicit shipped configuration failure evidence");
+    assert.equal(fs.readFileSync(stateMarker, "utf8"), "existing-state-preserved");
+    // Recovery uses the real configuration loader followed by the bounded
+    // supporting child. This proves service/config repair, not API registration.
+    fs.writeFileSync(configPath, JSON.stringify({ serverUrl: "https://127.0.0.1:1" }));
+    const repairedEntry = path.join(serviceConfigDir, "repaired-config-child.js");
+    fs.writeFileSync(repairedEntry, `require(${JSON.stringify(path.join(packageRoot, "src/config"))}).loadAgentConfig();require(${JSON.stringify(mockAgentJs)});`);
+    const repairedPath = `${quotedHost} ${quotedNode} "${repairedEntry}"`;
+    assert.equal(spawnSync("sc.exe", ["config", SERVICE_NAME, "binPath=", repairedPath], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("sc.exe", ["start", SERVICE_NAME], { encoding: "utf8" }).status, 0);
+    assert.ok(waitForStatus("RUNNING", 15000), "repaired owned service did not recover");
+    const repairedDeadline = Date.now() + 15000;
+    while (fs.readFileSync(startsPath, "utf8") === startsAfterRecovery && Date.now() < repairedDeadline) {
+      spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
+    }
+    assert.notEqual(fs.readFileSync(startsPath, "utf8"), startsAfterRecovery, "repaired loader never reached the supporting child");
+    assert.equal(fs.readFileSync(stateMarker, "utf8"), "existing-state-preserved");
+    assert.equal(spawnSync("sc.exe", ["stop", SERVICE_NAME], { encoding: "utf8" }).status, 0);
+    assert.ok(waitForStatus("STOPPED", 15000));
+    // Run the actual product uninstall logic with only its fixed resource
+    // selectors mapped to this disposable fixture. No released configuration
+    // changes or production service paths are needed to test preservation.
+    const originalInstaller = fs.readFileSync(path.join(__dirname, "install-agent.ps1"), "utf8");
+    const originalRoot = '$InstallRoot = "C:\\ProgramData\\TokenTimerAgent"';
+    const originalService = '$ServiceName = "TokenTimerAgent"';
+    assert.ok(originalInstaller.includes(originalRoot));
+    assert.ok(originalInstaller.includes(originalService));
+    const installerFixture = path.join(serviceConfigDir, "qualification-uninstall.ps1");
+    fs.writeFileSync(installerFixture, "\uFEFF" + originalInstaller
+      .replace(originalRoot, `$InstallRoot = '${serviceConfigDir.replace(/'/g, "''")}'`)
+      .replace(originalService, `$ServiceName = '${SERVICE_NAME}'`));
+    const preservedState = path.join(serviceConfigDir, "state");
+    const removedApp = path.join(serviceConfigDir, "app");
+    fs.mkdirSync(preservedState);
+    fs.mkdirSync(removedApp);
+    const marker = "disposable-state-preservation-marker";
+    fs.writeFileSync(path.join(preservedState, "credential.fixture"), marker);
+    fs.writeFileSync(path.join(removedApp, "candidate.fixture"), "owned disposable app marker");
+    for (let replay = 0; replay < 2; replay++) {
+      const uninstall = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        "-File", installerFixture, "--uninstall"], { encoding: "utf8", timeout: 60000 });
+      assert.equal(uninstall.status, 0, "product fixture uninstall failed");
+      const deletionDeadline = Date.now() + 15000;
+      while (getServiceStatus() !== null && Date.now() < deletionDeadline) {
+        spawnSync(process.execPath, ["-e", "setTimeout(()=>{},300)"], { timeout: 1000 });
+      }
+      assert.equal(getServiceStatus(), null, "product uninstall must delete its owned service");
+      assert.equal(fs.existsSync(removedApp), false);
+      assert.equal(fs.readFileSync(path.join(preservedState, "credential.fixture"), "utf8"), marker);
+    }
   });
 });

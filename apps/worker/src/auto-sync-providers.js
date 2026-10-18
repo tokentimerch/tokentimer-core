@@ -1,8 +1,8 @@
 /**
  * Core auto-sync provider allowlist.
  *
- * Hardcoded to github/gitlab. Enterprise replaces this file via
- * src/worker/auto-sync-providers.js in tokentimer-enterprise.
+ * Core supports github/gitlab. A downstream composition may replace this
+ * module to extend its provider allowlist.
  */
 
 export const CORE_AUTO_SYNC_PROVIDERS = ["github", "gitlab"];
