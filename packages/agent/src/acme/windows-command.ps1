@@ -1,6 +1,7 @@
 # Own one ACME command tree. The child is suspended until assigned to a
 # kill-on-close Job Object, so launcher exit or wrapper termination cannot orphan it.
 $ErrorActionPreference = 'Stop'
+$PSModuleAutoLoadingPreference = 'None'
 $stage='read-request'
 try {
   # Read one newline-framed request, not an unbounded pipe-to-EOF stream.
@@ -8,6 +9,10 @@ try {
   # console/code-page initialization, which service-hosted runners do not own.
   $inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false), $false)
   $requestJson = $inputReader.ReadLine()
+  $stage='load-utility'
+  # Resolve only the signed built-in module. Automatic discovery scans the
+  # hosted machine's installed modules and can stall before JSON parsing.
+  Import-Module ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
   $stage='parse-request'
   $request = ConvertFrom-Json -InputObject $requestJson
   $stage='compile-owner'

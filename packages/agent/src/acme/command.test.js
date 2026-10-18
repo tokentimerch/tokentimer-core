@@ -72,7 +72,9 @@ for (const mode of ["abort", "timeout"]) test('exited launcher cannot orphan an 
 
 test("native command preserves quoted and empty arguments", {timeout:testBudget}, async () => {
   if (windows) {
-    const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-handles-")),driver=path.join(directory,"noninheritable.ps1"),probe=path.join(directory,"bootstrap.ps1"),receipt=path.join(directory,"stage.txt");
+    const directory=fs.mkdtempSync(path.join(os.tmpdir(),"certops-acme-handles-")),driver=path.join(directory,"noninheritable.ps1"),noAutoload=path.join(directory,"no-autoload.ps1"),probe=path.join(directory,"bootstrap.ps1"),receipt=path.join(directory,"stage.txt");
+    // Correct startup must not depend on discovering every installed host module.
+    fs.writeFileSync(noAutoload,"$PSModuleAutoLoadingPreference='None'\n& $env:CERTOPS_COMMAND_WRAPPER\nexit $LASTEXITCODE\n");
     // A test-only copy records fixed startup phases without mixing diagnostics
     // into client output or changing the production wrapper's inputs.
     let source=fs.readFileSync(path.join(__dirname,"windows-command.ps1"),"utf8").replace(/^([ \t]*\$stage='([a-z-]+)')\r?$/gm,(_line,assignment,stage)=>assignment+`\n  [IO.File]::WriteAllText($env:CERTOPS_STARTUP_RECEIPT,'${stage}')`);
@@ -81,11 +83,12 @@ test("native command preserves quoted and empty arguments", {timeout:testBudget}
       source=source.replace(anchor,`System.IO.File.WriteAllText(Environment.GetEnvironmentVariable("CERTOPS_STARTUP_RECEIPT"),"${stage}"); ${anchor}`);
     }
     fs.writeFileSync(probe,source);
-    function startupPhase(){try{const value=fs.readFileSync(receipt,"utf8");return ["read-request","parse-request","compile-owner","execute-client","create-job","create-process","assign-job","resume-client","wait-client"].includes(value)?value:"unknown";}catch{return "script-not-started";}}
+    function startupPhase(){try{const value=fs.readFileSync(receipt,"utf8");return ["read-request","load-utility","parse-request","compile-owner","execute-client","create-job","create-process","assign-job","resume-client","wait-client"].includes(value)?value:"unknown";}catch{return "script-not-started";}}
     // Model service hosts that do not mark their redirected handles inheritable.
     // Compile the production owner first so this isolates CreateProcess handle
     // inheritance from the separate CodeDOM compiler process.
     fs.writeFileSync(driver,`$ErrorActionPreference='Stop'
+Import-Module ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -103,7 +106,7 @@ foreach($kind in @(-10,-11,-12)) {
 & $env:CERTOPS_COMMAND_WRAPPER
 exit $LASTEXITCODE
 `);
-    try { for(const script of [probe,driver]) {
+    try { for(const script of [probe,noAutoload,driver]) {
     fs.rmSync(receipt,{force:true});
     // Keep stdin open after a complete frame. A ReadToEnd wrapper deadlocks here.
     await new Promise((resolve,reject)=>{
