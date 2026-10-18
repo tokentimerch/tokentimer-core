@@ -7,7 +7,9 @@ try {
   # Use the redirected byte stream directly. Console.In depends on the host's
   # console/code-page initialization, which service-hosted runners do not own.
   $inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false), $false)
-  $request = $inputReader.ReadLine() | ConvertFrom-Json
+  $requestJson = $inputReader.ReadLine()
+  $stage='parse-request'
+  $request = ConvertFrom-Json -InputObject $requestJson
   $stage='compile-owner'
   Add-Type -TypeDefinition @'
 using System;
