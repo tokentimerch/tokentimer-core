@@ -11,7 +11,8 @@ if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { thro
 $root='C:\ttqualification'
 if (Test-Path $root) { throw 'Refusing existing qualification workspace' }
 New-Item -ItemType Directory -Path "$root\tools" -Force | Out-Null
-$nodeRelease=Invoke-RestMethod 'https://nodejs.org/dist/index.json' | Where-Object { $_.version -match '^v24\.' -and $_.files -contains 'win-x64-zip' } | Select-Object -First 1
+# Enumerate REST arrays before filtering; Windows PowerShell otherwise pipes the whole array.
+$nodeRelease=(Invoke-RestMethod 'https://nodejs.org/dist/index.json') | Where-Object { $_.version -match '^v24\.' -and $_.files -contains 'win-x64-zip' } | Select-Object -First 1
 if (-not $nodeRelease) { throw 'Supported Node 24 Windows archive unavailable' }
 $nodeName="node-$($nodeRelease.version)-win-x64.zip"
 $sums=Invoke-RestMethod "https://nodejs.org/dist/$($nodeRelease.version)/SHASUMS256.txt"
@@ -21,7 +22,7 @@ Invoke-WebRequest "https://nodejs.org/dist/$($nodeRelease.version)/$nodeName" -O
 if ((Get-FileHash "$root\tools\node.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $nodeHash) { throw 'Node checksum mismatch' }
 Expand-Archive "$root\tools\node.zip" "$root\tools"
 $nodeDirectory="$root\tools\node-$($nodeRelease.version)-win-x64"
-$goRelease=Invoke-RestMethod 'https://go.dev/dl/?mode=json' | Where-Object stable | Select-Object -First 1
+$goRelease=(Invoke-RestMethod 'https://go.dev/dl/?mode=json') | Where-Object stable | Select-Object -First 1
 $goFile=$goRelease.files | Where-Object { $_.os -eq 'windows' -and $_.arch -eq 'amd64' -and $_.kind -eq 'archive' } | Select-Object -First 1
 if (-not $goFile) { throw 'Stable Go Windows archive unavailable' }
 Invoke-WebRequest "https://go.dev/dl/$($goFile.filename)" -OutFile "$root\tools\go.zip"
