@@ -3,8 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       location:
-        description: Azure region available to the lab subscription (for example northeurope)
+        description: Azure region available to the lab subscription
         type: string
+        default: swedencentral
         required: true
       vm_size:
         description: VM size available to the lab subscription (three two-vCPU machines)
