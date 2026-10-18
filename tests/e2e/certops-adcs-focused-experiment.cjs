@@ -47,26 +47,35 @@ function command(file,args){
 }
 const ps=script=>command("powershell.exe",["-NoProfile","-NonInteractive","-Command",`$ErrorActionPreference='Stop';${script}`]);
 async function until(check,timeout=180000){const deadline=Date.now()+timeout;while(Date.now()<deadline){const value=await check();if(value)return value;await new Promise(resolve=>setTimeout(resolve,500));}throw new Error("Owned journal experiment exceeded its deadline");}
-async function run(){
- assert.equal(process.platform,"win32");assert.equal(process.arch,"x64");assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB,"1");
+async function run({reportPath="C:\\ttqualification\\focused-journal-experiment.json"}={}){
+ let gate;let preflightStep="platform";const startedAt=new Date().toISOString();
+ try{
+ assert.equal(process.platform,"win32");assert.equal(process.arch,"x64");
+ preflightStep="profile";assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB,"1");
  const phase=process.env.CERTOPS_ADCS_JOURNAL_PHASE_EXPERIMENT;assert.ok(["issued","submitting"].includes(phase));
  assert.equal(process.env.CERTOPS_JOB_LEASE_SECONDS,"60");assert.equal(process.env.CERTOPS_LEASE_HARD_GRACE_MS,"60000");
+ preflightStep="native-identity";
  assert.equal(ps("(Get-CimInstance Win32_ComputerSystem).Domain"),"lab.certops.test");assert.equal(ps("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"),"S-1-5-18");
+ preflightStep="service-absence";
  assert.notEqual(spawnSync("sc.exe",["query","TokenTimerAgent"]).status,0,"Refuse an existing service");
  assert.equal(ps("@(Get-CimInstance Win32_Process|Where-Object {$_.CommandLine -like '*tokentimer-agent.js*'}).Count"),"0","Refuse existing agent descendants");
+ preflightStep="runtime-candidate";
  const runtime=JSON.parse(fs.readFileSync("C:\\ttqualification\\runtime.json","utf8"));assert.equal(runtime.candidateSha,process.env.GITHUB_SHA);assert.equal(runtime.buildMode,"qualification-only-not-release");assert.equal(runtime.nodeVersion,process.version);
  for(const key of ["nodeArchiveSha256","goArchiveSha256","sourceArchiveSha256","qualifiedModuleSha256"])assert.match(runtime[key],/^[a-f0-9]{64}$/i);
  assert.equal(runtime.qualifiedModuleSha256.toLowerCase(),crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT,"packages/agent/src/capabilities/qualified-capabilities.generated.js"))).digest("hex"));
+ preflightStep="native-helper-tools";
  assert.ok(require("../../packages/agent/src/capabilities/qualified-capabilities.generated").qualified.includes("adcs-enroll-v1"));
  assert.equal(require("../../packages/agent/src/issuers/chain-helper").resolveAdcsChainHelperPath().error,undefined);
  assert.equal(require("../../packages/agent/src/issuers/adcs-enrollment").resolveAdcsCmcHelperPath().error,undefined);
+ preflightStep="api-url";
  const url=new URL(process.env.CERTOPS_ADCS_API_URL);assert.equal(url.protocol,"https:");assert.equal(url.hostname,"10.64.0.6");
- const reportPath="C:\\ttqualification\\focused-journal-experiment.json";
- const gate=createHostGate({suite:"adcs-focused-journal-experiment",strict:true,reportPath,requiredCapabilities:["api"],probeCapabilities:async()=>({api:{available:(await fetch(new URL("/health",url),{signal:AbortSignal.timeout(10000)})).ok}})});
+ preflightStep="api-preflight";
+ gate=createHostGate({suite:"adcs-focused-journal-experiment",strict:true,reportPath,requiredCapabilities:["api"],probeCapabilities:async()=>({api:{available:(await fetch(new URL("/health",url),{signal:AbortSignal.timeout(10000)})).ok}})});
  Object.assign(gate.report,{phase,qualificationStatus:"not-qualified",experimental:true,baselineQualificationSatisfied:false,releaseQualificationSatisfied:false,fixtureSources:SOURCES.map(fingerprint)});
  gate.report.fixtureSource=fingerprint(SOURCES[0]);
  gate.report.buildProvenance=Object.fromEntries(["buildMode","nodeVersion","goVersion","nodeArchiveSha256","goArchiveSha256","sourceArchiveSha256","qualifiedModuleSha256"].map(key=>[key,runtime[key]]));
  await gate.preflight();
+ preflightStep="fixture-setup";
  const fixture=await createApiFixture(url.href),api=`/api/v1/workspaces/${fixture.workspaceId}/certops`;
  const workDir=fs.mkdtempSync(path.join(os.tmpdir(),"certops-domain-adcs-"));applyRestrictivePermissions(workDir,{kind:"directory"});
  const configDir=path.join(workDir,"agent");fs.mkdirSync(configDir);applyRestrictivePermissions(configDir,{kind:"directory"});
@@ -122,6 +131,22 @@ async function run(){
  if(primary)throw primary;
  verifyReport(gate.report,runtime.candidateSha);
  return gate.report;
+ }catch(error){
+  // Guards can fail before HostGate exists. Persist a failed, explicitly
+  // unexecuted receipt rather than leaving collection with no diagnosis.
+  if(!gate?.report?.scenarios?.length){
+   const knownClasses=new Set(["Error","AssertionError","TypeError","RangeError","SyntaxError"]);
+   const report=gate?.report || {schemaVersion:1,suite:"adcs-focused-journal-experiment",strict:true,startedAt,
+    candidateSha:/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA||"")?process.env.GITHUB_SHA:null,
+    requiredCapabilities:["api"],capabilities:{},missingCapabilities:["api"],scenarios:[]};
+   Object.assign(report,{status:"failed",finishedAt:new Date().toISOString(),qualificationStatus:"not-qualified",experimental:true,
+    baselineQualificationSatisfied:false,releaseQualificationSatisfied:false,nativeExecutionStarted:false,
+    requiredScenarios:[...SCENARIOS],missingScenarios:[...SCENARIOS],
+    preflightFailure:{step:preflightStep,errorClass:knownClasses.has(error?.constructor?.name)?error.constructor.name:"Error"}});
+   fs.mkdirSync(path.dirname(reportPath),{recursive:true});fs.writeFileSync(reportPath,JSON.stringify(report,null,2));
+  }
+  throw new Error("Focused journal experiment failed; inspect bounded report");
+ }
 }
 module.exports={run,verifyReport,SOURCES,SCENARIOS};
 if(require.main===module){

@@ -65,3 +65,21 @@ test("sanitized report collection selects only the standalone experiment report"
  assert.match(source,/\$ReportKind -eq 'focused-journal-experiment'\)\{'enterprise-adcs-focused-journal-experiment\.json'\}/);
  assert.match(source,/Reconstructed guest evidence checksum mismatch/);
 });
+
+test("an actual non-Windows early guard writes a bounded failed preflight receipt",async()=>{
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),"focused-preflight-failure-")),reportPath=path.join(directory,"failed.json");
+ const sourceFile=path.join(root,"tests/e2e/certops-adcs-focused-experiment.cjs"),module={exports:{}};
+ const actualRequire=require("node:module").createRequire(sourceFile);
+ vm.runInNewContext(fs.readFileSync(sourceFile,"utf8"),{module,__filename:sourceFile,__dirname:path.dirname(sourceFile),Buffer,console,
+  process:{platform:"linux",arch:"x64",env:{GITHUB_SHA:"a".repeat(40),PRIVATE_TOKEN:"SECRET_DO_NOT_EXPORT"}},require:actualRequire});
+ try{
+  await assert.rejects(module.exports.run({reportPath}),/inspect bounded report/);
+  const report=JSON.parse(fs.readFileSync(reportPath,"utf8"));
+  assert.equal(report.status,"failed");assert.equal(report.nativeExecutionStarted,false);
+  assert.deepEqual(report.preflightFailure,{step:"platform",errorClass:"AssertionError"});
+  assert.equal(report.qualificationStatus,"not-qualified");assert.equal(report.releaseQualificationSatisfied,false);assert.equal(report.baselineQualificationSatisfied,false);
+  assert.deepEqual(report.scenarios,[]);assert.deepEqual(report.missingScenarios,[...experiment.SCENARIOS]);
+  assert.throws(()=>experiment.verifyReport(report,"a".repeat(40)));
+  assert.doesNotMatch(JSON.stringify(report),/SECRET_DO_NOT_EXPORT|PRIVATE_TOKEN|message|argv|stack|linux/);
+ }finally{fs.rmSync(directory,{recursive:true});}
+});
