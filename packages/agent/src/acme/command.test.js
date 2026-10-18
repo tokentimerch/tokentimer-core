@@ -61,6 +61,21 @@ for (const mode of ["abort", "timeout"]) test('exited launcher cannot orphan an 
 });
 
 test("native command preserves quoted and empty arguments", {timeout:testBudget}, async () => {
+  if (windows) {
+    // Keep stdin open after a complete frame. A ReadToEnd wrapper deadlocks here.
+    await new Promise((resolve,reject)=>{
+      const wrapper=cp.spawn(path.join(process.env.SystemRoot,"System32/WindowsPowerShell/v1.0/powershell.exe"),
+        ["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",path.join(__dirname,"windows-command.ps1")],
+        {windowsHide:true,env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},stdio:["pipe","pipe","pipe"]});
+      let output="",diagnostic="";
+      const timer=setTimeout(()=>{wrapper.kill();reject(new Error("Framed Windows request waited for stdin EOF"));},commandBudget);
+      wrapper.stdout.on("data",chunk=>{output+=chunk;});wrapper.stderr.on("data",chunk=>{diagnostic+=chunk;});
+      wrapper.stdin.on("error",()=>{});
+      wrapper.once("error",error=>{clearTimeout(timer);reject(error);});
+      wrapper.once("close",code=>{clearTimeout(timer);wrapper.stdin.destroy();try{assert.equal(code,0,diagnostic);assert.equal(output,"framed");resolve();}catch(error){reject(error);}});
+      wrapper.stdin.write(JSON.stringify({executable:process.execPath,arguments:["-e","process.stdout.write('framed')"]})+"\n");
+    });
+  }
   const args=["", "café/测试", "space value", 'embedded"quote', "trailing space \\"];
   const result=await execWithoutShell(cp.execFile,[process.execPath,"-e","process.stdout.write(JSON.stringify(process.argv.slice(1)))",...args],commandBudget,{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot});
   assert.equal(result.exitCode,0);assert.deepEqual(JSON.parse(result.stdout),args);

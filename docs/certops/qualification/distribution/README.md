@@ -2,7 +2,7 @@
 
 Run `certops-distribution-qualification.yml` from trusted main. It uses disposable Docker services rather than Azure and covers ordinary, SAN and wildcard certificate distribution, PostgreSQL state/authorization, Vault delivery, browser journeys and privacy checks.
 
-The workflow also runs for its listed main-branch paths; it has no PR trigger. Read the workflow's path filters before adding a new source dependency. Core product CI remains separate.
+The workflow runs only through manual dispatch on main; pushes and pull requests do not start it. Core product CI remains separate.
 
 A successful run must execute every required cohort with no missing prerequisites or hidden skips. Sanitized JSON reports identify the candidate and test counts; inspect failed cohort artifacts before rerunning. Private keys and credentials must stay out of console logs and uploaded artifacts.
 

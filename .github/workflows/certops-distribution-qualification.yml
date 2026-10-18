@@ -1,43 +1,5 @@
 name: "CertOps / Distribution supporting E2E"
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/api/services/certops/**'
-      - 'apps/api/routes/certops*.js'
-      - 'apps/api/src/shared/**'
-      - 'apps/api/db/**'
-      - 'apps/api/middleware/**'
-      - 'apps/api/config/**'
-      - 'apps/api/utils/**'
-      - 'apps/api/services/audit.js'
-      - 'apps/api/migrations/**'
-      - 'apps/api/package.json'
-      - 'apps/api/index.js'
-      - 'apps/api/app.js'
-      - 'apps/worker/package.json'
-      - 'apps/worker/src/certops*.js'
-      - 'apps/worker/src/index.js'
-      - 'apps/dashboard/src/components/certops/**'
-      - 'apps/dashboard/src/hooks/useCertOps*'
-      - 'apps/dashboard/package.json'
-      - 'apps/dashboard/vite.config.*'
-      - 'apps/dashboard/index.html'
-      - 'apps/dashboard/src/main.jsx'
-      - 'apps/dashboard/src/App.jsx'
-      - 'deploy/compose/Dockerfile.api'
-      - 'deploy/compose/Dockerfile.worker'
-      - '.dockerignore'
-      - 'packages/agent/**'
-      - 'packages/contracts/**'
-      - 'package.json'
-      - 'pnpm-workspace.yaml'
-      - '.npmrc'
-      - 'tests/wildcard-vault/**'
-      - 'scripts/certops-distribution-*'
-      - 'docs/certops/qualification-suites.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/certops-distribution-qualification.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -78,7 +78,8 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env, signal) {
           : childProcess.spawn(argv[0], argv.slice(1), {detached: true, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"]});
         if (windowsJob) {
           child.stdin.on("error", () => {}); // Spawn/close handlers report wrapper failure.
-          child.stdin.end(JSON.stringify({executable: argv[0], arguments: argv.slice(1)}));
+          // One framed request avoids waiting for Windows pipe EOF before startup.
+          child.stdin.end(JSON.stringify({executable: argv[0], arguments: argv.slice(1)}) + "\n");
         }
         const stdout = [], stderr = [];
         let bytes = 0;

@@ -3,7 +3,8 @@
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
 try {
-  $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  # Read one newline-framed request, not an unbounded pipe-to-EOF stream.
+  $request = [Console]::In.ReadLine() | ConvertFrom-Json
   Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;

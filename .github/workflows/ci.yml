@@ -425,6 +425,15 @@ jobs:
           node-version: "24"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Generate isolated test-only CertOps encryption keys
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          for (const name of ['CERTOPS_SIGNING_ENCRYPTION_KEY', 'CERTOPS_REGISTRATION_ENCRYPTION_KEY']) {
+            fs.appendFileSync(process.env.GITHUB_ENV, `${name}=${crypto.randomBytes(32).toString('hex')}\n`);
+          }
+          NODE
       - name: Migrate dedicated empty test database
         run: node apps/api/migrations/migrate.js
       - name: Exercise manual and fenced auto-sync cleanup through HTTP routes
