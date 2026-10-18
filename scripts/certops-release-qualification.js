@@ -229,6 +229,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-cmc-signature-copy").verifyProof(artifact.report.nativeCmcBoundaries);
           require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(artifact.report.nativeBrowserAdcs);
           require("../tests/e2e/helpers/certops-adcs-local-rules").verifyPairProof(artifact.report.nativeLocalRulePairs);
+          require("../tests/e2e/helpers/certops-adcs-local-rules").verifyTighteningProof(artifact.report.nativeLocalRuleTightening);
           require("../tests/e2e/helpers/certops-adcs-local-rules").verifySurvivorProof(artifact.report.nativePendingKeySurvivor);
           require("../tests/e2e/helpers/certops-adcs-native-reconcile").verifyForeignProof(artifact.report.nativeForeignSpkiCandidate);
           const browserDispatch = artifact.report.browserNativePreflightDispatch;

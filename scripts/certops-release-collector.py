@@ -1262,24 +1262,39 @@ def cmc_boundaries_fields(proof):
     return {**proof, "refusedVariants": list(variants)}
 
 
+def local_rule_tightening_fields(p):
+    flags = ["actualSignedRetrievalPending","originalCngKeyUsable","frozenContextPreserved","noAdditionalCaRequest","outgoingTrustedTlsPreserved","explicitTerminalCleanupAfterDenial"]
+    keys = {*flags, 'enrollmentId', 'continuationJobId', 'requestId', 'snapshotSha256', 'caRequestCounts'}
+    if not isinstance(p, dict) or set(p) != keys or any(p.get(k) is not True for k in flags):
+        raise ValueError('Native pending retrieval must preserve frozen context and original key')
+    for key in ('enrollmentId', 'continuationJobId'):
+        if not isinstance(p.get(key), str) or not re.fullmatch('[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', p[key]):
+            raise ValueError('Actual pending retrieval identities required')
+    if not isinstance(p.get('requestId'), str) or not re.fullmatch('[1-9][0-9]{0,9}', p['requestId']) or int(p['requestId']) > 4294967295 or not isinstance(p.get('snapshotSha256'), str) or not re.fullmatch('[a-f0-9]{64}', p['snapshotSha256']):
+        raise ValueError('Frozen pending request and snapshot required')
+    counts = p.get('caRequestCounts')
+    if not isinstance(counts, list) or len(counts) != 2 or any(type(n) is not int or not 0 < n <= 9007199254740991 or n != counts[0] for n in counts):
+        raise ValueError('Pending retrieval must not submit another request')
+    return {key: p[key] for key in keys}
+
+
 def pending_key_survivor_fields(p):
-    flags = ["actualOwnedPendingRequest","actualOwnedCaLeafSameCsrSpki","exactWebHostingAssociationAndProtectedKey","nativeSurvivorReferenceObserved","signedCleanupRefusedWhileReferenced","pendingJournalAndKeyPreserved","noAdditionalCaRequest","exactPublicAssociationOnlyRemoved","publicCancellationAcknowledged","signedTerminalCleanupCompleted","predecessorCustodyIisTlsPreserved","configurationCredentialRestored","ownedCaLeafRevoked","ownershipGuardReleased"]
-    fixed = dict(scope="native-pending-key-policy-refusal-then-public-cancellation", store="WebHosting", recovery="public-cancel-then-terminal-cleanup", firstError="Local policy refusal could not free the protected enrollment key; retry required")
-    keys = {*fixed, *flags, "enrollmentId", "requestId", "failedJobId", "cleanupJobId", "fingerprint", "csrSpkiSha256", "caRequestCounts", "automaticRetryQualified", "schedulerDefaultClockQualified"}
-    if (not isinstance(p, dict) or set(p) != keys or any(p.get(k) != v for k, v in fixed.items()) or any(p.get(k) is not True for k in flags)
-            or p.get("automaticRetryQualified") is not False or p.get("schedulerDefaultClockQualified") is not False):
-        raise ValueError("Native pending CNG survivor guard and public cancellation recovery required")
-    for key in ("enrollmentId", "failedJobId", "cleanupJobId"):
-        if not isinstance(p.get(key), str) or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", p[key]):
-            raise ValueError("Actual survivor enrollment and continuation identities required")
-    if (p["failedJobId"] == p["cleanupJobId"] or not isinstance(p.get("requestId"), str) or not re.fullmatch(r"[1-9][0-9]{0,9}", p["requestId"]) or int(p["requestId"]) > 0xffffffff):
-        raise ValueError("Distinct native survivor request and cleanup identities required")
-    for key in ("fingerprint", "csrSpkiSha256"):
-        if not isinstance(p.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", p[key]):
-            raise ValueError("Actual shared public leaf and CSR SPKI required")
-    counts = p.get("caRequestCounts")
+    flags = ["actualOwnedPendingRequest","actualOwnedCaLeafSameCsrSpki","exactWebHostingAssociationAndProtectedKey","nativeSurvivorReferenceObserved","signedRetrievalInstalled","frozenEnrollmentIdentityPreserved","originalKeyUsableAfterReconciliation","installedKeyProtectedFromCleanup","installedReferenceSurvivesSecondaryRemoval","noAdditionalCaRequest","exactPublicAssociationOnlyRemoved","predecessorCustodyIisTlsPreserved","configurationCredentialRestored","ownedCaLeafRevoked","ownershipGuardReleased"]
+    fixed = dict(scope="native-pending-key-policy-change-retrieval-install-and-survivor-protection", store='WebHosting', recovery='signed-retrieval-and-isolated-iis-installation')
+    keys = {*fixed, *flags, 'enrollmentId', 'requestId', 'continuationJobId', 'fingerprint', 'csrSpkiSha256', 'caRequestCounts'}
+    if not isinstance(p, dict) or set(p) != keys or any(p.get(k) != v for k,v in fixed.items()) or any(p.get(k) is not True for k in flags):
+        raise ValueError('Native survivor must preserve usable installed custody after retrieval')
+    for key in ('enrollmentId', 'continuationJobId'):
+        if not isinstance(p.get(key), str) or not re.fullmatch('[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', p[key]):
+            raise ValueError('Actual survivor enrollment and continuation identities required')
+    if not isinstance(p.get('requestId'), str) or not re.fullmatch('[1-9][0-9]{0,9}', p['requestId']) or int(p['requestId']) > 4294967295:
+        raise ValueError('Actual survivor request required')
+    for key in ('fingerprint', 'csrSpkiSha256'):
+        if not isinstance(p.get(key), str) or not re.fullmatch('[a-f0-9]{64}', p[key]):
+            raise ValueError('Actual shared public leaf and CSR SPKI required')
+    counts = p.get('caRequestCounts')
     if not isinstance(counts, list) or len(counts) != 3 or any(type(n) is not int or not 0 < n <= 9007199254740991 or n != counts[0] for n in counts):
-        raise ValueError("Native survivor cleanup cannot submit another CA request")
+        raise ValueError('Native survivor recovery cannot submit another CA request')
     return {key: p[key] for key in keys}
 
 
@@ -1710,6 +1725,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 seen_pairs.add(row["caseId"])
                 bounded_pairs.append({key: row[key] for key in ("caseId", *pair_flags)})
             result["nativeLocalRulePairs"] = bounded_pairs
+            result["nativeLocalRuleTightening"] = local_rule_tightening_fields(value.get("nativeLocalRuleTightening"))
             result["nativePendingKeySurvivor"] = pending_key_survivor_fields(value.get("nativePendingKeySurvivor"))
             result["nativeBrowserAdcs"] = browser_enrollment_proof.journey_fields(value.get("nativeBrowserAdcs"))
             uuid_pattern = r"[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}"

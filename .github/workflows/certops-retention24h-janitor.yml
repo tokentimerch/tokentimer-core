@@ -14,7 +14,7 @@ permissions:
   id-token: write
 jobs:
   janitor:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.CERTOPS_ADCS_LAB_ENABLED == 'true')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     # Cleanup identity must not require lab approval or depend on its running job.
     environment: certops-adcs-cleanup

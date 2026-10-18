@@ -136,4 +136,13 @@ test("ADCS TTL approval queues cannot delay cleanup and active preparation ends 
  assert.deepEqual(validateWorkflow(value,name),[]);assert.equal(value.jobs.prepare["timeout-minutes"],180);assert.ok(value.jobs.prepare["timeout-minutes"]*60000+5*60000<initial);
  for(const alteredGroup of ["certops-adcs-ttl24h-cleanup","foreign","certops-adcs-ttl24h-prepare-${{ github.run_id }}"]){const bad=structuredClone(value);bad.concurrency.group=alteredGroup;assert.ok(validateWorkflow(bad,name).length);}
  for(const mode of ["finalize","janitor"]){const name=`certops-adcs-ttl24h-${mode}.yml`,workflow=read(name);assert.deepEqual(validateWorkflow(workflow,name),[]);assert.notEqual(value.concurrency.group,workflow.concurrency.group);workflow.jobs[mode].environment="certops-adcs-lab";assert.ok(validateWorkflow(workflow,name).length);}
+
+});
+
+test("scheduled janitor remains enabled when new lab provisioning is disabled",()=>{
+ const fs=require("node:fs"),path=require("node:path"),yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml"),azure=require("./certops-azure-scope-policy");
+ const name="certops-adcs-lab-janitor.yml",workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,"../.github/workflows",name),"utf8"));
+ assert.ok(workflow.on.schedule.length);assert.equal(workflow.jobs.cleanup.if,"github.ref == 'refs/heads/main'");assert.equal(workflow.jobs.cleanup.environment,"certops-adcs-cleanup");assert.deepEqual(azure.validate(name,workflow),[]);assert.deepEqual(validateWorkflow(workflow,name),[]);
+ for(const condition of [azure.PROVISION_IF,"always()","github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'"]){const bad=structuredClone(workflow);bad.jobs.cleanup.if=condition;assert.ok(azure.validate(name,bad).length);}
+ assert.match(azure.PROVISION_IF,/CERTOPS_ADCS_LAB_ENABLED/);assert.doesNotMatch(azure.LIFECYCLE_IF,/CERTOPS_ADCS_LAB_ENABLED/);
 });
