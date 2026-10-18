@@ -28,7 +28,13 @@ if($Language -ne 'en-US'){
   try{
     $cab=Join-Path $directory 'language.cab'
     $phase='download'
-    Invoke-WebRequest -Uri $uri -OutFile $cab
+    # Windows PowerShell must not request an interactive HTML-parser decision
+    # or serialize download progress through Run Command. Bound acquisition.
+    $previousProgressPreference=$ProgressPreference
+    try {
+      $ProgressPreference='SilentlyContinue'
+      Invoke-WebRequest -UseBasicParsing -TimeoutSec 120 -Uri $uri -OutFile $cab
+    } finally { $ProgressPreference=$previousProgressPreference }
     $phase='digest'
     if((Get-FileHash -LiteralPath $cab -Algorithm SHA256).Hash -ine $PackageSha256){throw 'Language CAB digest mismatch'}
     $phase='package-install'
