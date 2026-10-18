@@ -204,3 +204,11 @@ test("package worker proof stays distinct from focused default-sweep qualificati
   assert.throws(() => helper.verifyProof(valid(), { workerDriven: true }));
   assert.throws(() => helper.verifyProof({ ...proof, scheduler: "background-worker-loop" }, { workerDriven: true }));
 });
+
+test("native CA isolation runs before package acceptance adds another pass's requests",()=>{
+  const provision=fs.readFileSync(path.resolve(__dirname,"../infra/certops-adcs/provision-lab.ps1"),"utf8");
+  const focused=provision.indexOf("'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'");
+  const packaged=provision.indexOf("'CERTOPS_STAGE=operator-package-acceptance-passed'");
+  assert.ok(focused>0 && focused<packaged);
+  assert.ok(fs.readFileSync(path.resolve(__dirname,"../infra/certops-adcs/owned-ca-checkpoint.ps1"),"utf8").includes("Foreign agent request encountered in isolated checkpoint"));
+});

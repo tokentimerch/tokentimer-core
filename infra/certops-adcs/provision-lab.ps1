@@ -186,15 +186,17 @@ try {
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
   $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
   try {
+    # The focused CA oracle requires an isolated request set. Package acceptance
+    # issues its own certificate and therefore runs afterward on the same member.
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
     try {
       Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-started' @('action=start')
-      # Package acceptance always runs without fault injection before the focused campaign.
+      # Package acceptance always runs without fault injection.
       try { Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=operator-package-acceptance-passed' @("DomainPassword=$password","Language=$Language",'Scope=acceptance') }
       finally { & (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind 'package-acceptance' }
     } finally {
       Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-stopped' @('action=stop')
     }
-    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
   }
   finally {
     $reportErrors=@();$kinds=if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')};if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
