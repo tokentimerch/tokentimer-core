@@ -45,6 +45,7 @@ function artifact(scope = "real-agent-acme-filesystem") {
       `${c.repeat(8)}-${c.repeat(4)}-4${c.repeat(3)}-8${c.repeat(3)}-${c.repeat(12)}`;
   main.nativeAcmeKeyReuse = {
     scope: reuse.scope,
+    materialPaths: {scope:reuse.MATERIAL_PATH_SCOPE,observedGenerations:3,spaceAndUnicodeInEveryPath:true,...Object.fromEntries(reuse.MATERIAL_PATH_FLAGS.map(flag=>[flag,true])),...Object.fromEntries(reuse.MATERIAL_PATH_LIMITS.map(flag=>[flag,false]))},
     client,
     ...Object.fromEntries(reuse.fields.map((key) => [key, true])),
     fingerprints: ["a", "b", "c"].map((c) => c.repeat(64)),

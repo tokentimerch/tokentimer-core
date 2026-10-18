@@ -811,6 +811,7 @@ class CollectorTests(unittest.TestCase):
         for scope in scopes:
             client = "acme.sh" if "acmesh" in scope else "certbot"
             proof = {"scope": "real-linux-manual-and-default-scheduler-csr-key-reuse", "client": client, **dict.fromkeys(fields, True), "fingerprints": [letter * 64 for letter in "abc"], "serials": ["A1", "B2", "C3"], "spkiFingerprint": "d" * 64, "jobIds": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"], "sourceProfileId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "sourceProfileFingerprint": "e" * 64}
+            proof["materialPaths"] = {"scope":"actual-linux-acme-space-unicode-config-state-material-paths", "observedGenerations":3, **dict.fromkeys("ownedDirectoryIdentityStable canonicalAncestorsWithoutAliases configAndClientStateObserved privateCustodyAndCertificateObserved signedProfilePathPreserved spaceAndUnicodeInEveryPath".split(),True), **dict.fromkeys("clientExecutablePathQualified repositoryOrHookPathQualified otherPlatformsQualified".split(),False)}
             baseline_source = "const reuse=" + json.dumps(proof) + ";process.stdout.write(JSON.stringify({nativeAcmeBackgroundRenewals:require('./scripts/test-support/acme-background-proof.cjs').proof(reuse.client,reuse),nativeAcmeStageFaults:require('./scripts/test-support/acme-stage-proof.cjs').proof(reuse.client)}))"
             baseline = json.loads(subprocess.check_output(["node","-e",baseline_source],cwd=collector.ROOT))
             if scope == "real-agent-acme-filesystem":

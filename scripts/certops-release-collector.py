@@ -840,6 +840,15 @@ def acme_key_reuse_fields(event):
         if not isinstance(value.get(field), str) or not re.fullmatch(pattern, value[field]):
             raise ValueError("Invalid native ACME key reuse source identity")
         result[field] = value[field]
+    paths = value.get("materialPaths")
+    path_flags = "ownedDirectoryIdentityStable canonicalAncestorsWithoutAliases configAndClientStateObserved privateCustodyAndCertificateObserved signedProfilePathPreserved spaceAndUnicodeInEveryPath".split()
+    path_limits = "clientExecutablePathQualified repositoryOrHookPathQualified otherPlatformsQualified".split()
+    if (not isinstance(paths, dict) or set(paths) != {"scope", "observedGenerations", *path_flags, *path_limits}
+            or paths.get("scope") != "actual-linux-acme-space-unicode-config-state-material-paths"
+            or type(paths.get("observedGenerations")) is not int or paths["observedGenerations"] != 3
+            or any(paths.get(flag) is not True for flag in path_flags) or any(paths.get(flag) is not False for flag in path_limits)):
+        raise ValueError("Invalid actual ACME material-path observations")
+    result["materialPaths"] = dict(paths)
     return {"nativeAcmeKeyReuse": result}
 
 

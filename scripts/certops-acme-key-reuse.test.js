@@ -36,7 +36,7 @@ test("positive CSR reuse verifier stays separate from the local gate", () => {
   assert.equal(typeof journey.qualifyKeyReuse, "function");
   assert.equal(journey.scope, "real-linux-manual-and-default-scheduler-csr-key-reuse");
   const proof = {
-    scope: journey.scope,
+    scope: journey.scope,materialPaths:{scope:journey.MATERIAL_PATH_SCOPE,observedGenerations:3,spaceAndUnicodeInEveryPath:true,...Object.fromEntries(journey.MATERIAL_PATH_FLAGS.map(flag=>[flag,true])),...Object.fromEntries(journey.MATERIAL_PATH_LIMITS.map(flag=>[flag,false]))},
     client: "certbot",
     ...Object.fromEntries(journey.fields.map((field) => [field, true])),
     fingerprints: ["a", "b", "c"].map((value) => value.repeat(64)),

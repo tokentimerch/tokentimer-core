@@ -29,6 +29,27 @@ class AcmeStageProjection(unittest.TestCase):
             self.assertEqual(actual[proof.FIELD], main[proof.FIELD])
             self.assertNotIn("must-not-survive", json.dumps(projected))
 
+    def test_actual_material_paths_roundtrip_and_strict_scope_limits(self):
+        scopes = sorted(proof.SCOPES)
+        for scope in scopes:
+            value = events(scope)
+            projected = collector.sanitized_report(value, set(), proof.SCOPES)
+            main = next(e for e in projected if "nativeAcmeKeyReuse" in e)
+            check = "const f=require('./scripts/test-support/acme-stage-artifact.cjs'),a=f.artifact(" + json.dumps(scope) + ");a.events=JSON.parse(require('fs').readFileSync(0,'utf8'));const slot=require('./docs/certops/release-qualification-matrix.json').slots.find(x=>x.suite===a.suite);const e=require('./scripts/certops-release-qualification').verifyMatrix([a],{candidateSha:'a'.repeat(40),specification:{schemaVersion:1,slots:[slot]}});if(e.length)throw new Error(e.join(';'));"
+            subprocess.run(["node", "-e", check], cwd=ROOT, input=json.dumps(projected), text=True, check=True)
+            original = main["nativeAcmeKeyReuse"]["materialPaths"]
+            for key, current in original.items():
+                for wrong in (None, 1 if type(current) is bool else True):
+                    bad = copy.deepcopy(value)
+                    next(e for e in bad if "nativeAcmeKeyReuse" in e)["nativeAcmeKeyReuse"]["materialPaths"][key] = wrong
+                    with self.assertRaises(ValueError):
+                        collector.sanitized_report(bad, set(), proof.SCOPES)
+            for key in ("clientExecutablePathQualified", "repositoryOrHookPathQualified", "otherPlatformsQualified"):
+                bad = copy.deepcopy(value)
+                next(e for e in bad if "nativeAcmeKeyReuse" in e)["nativeAcmeKeyReuse"]["materialPaths"][key] = True
+                with self.assertRaises(ValueError):
+                    collector.sanitized_report(bad, set(), proof.SCOPES)
+
     def test_causal_counts_identity_client_and_closed_scope_are_mandatory(self):
         original = next(e for e in events("real-agent-acme-filesystem") if e["name"] == proof.JOURNEY)
         for flag in proof.FLAGS:

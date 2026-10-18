@@ -236,6 +236,7 @@ test("parent drains independent consumers but preserves records on worker or bro
     "publicSession",
     "barrierDirectory",
     "workDir",
+    "workDirIdentity",
     "fs",
     "path",
     "os",
@@ -262,6 +263,8 @@ test("parent drains independent consumers but preserves records on worker or bro
     const unresolved =
       state.worker || state.browser || state.closeFails || state.discovery || state.bulk || state.adoption || state.profile || state.restart || state.lease || state.agentClose===false;
     const calls = [];
+    const workDir = "/tmp/certops real acme ü-owned";
+    const workDirIdentity = {dev:1n,ino:2n};
     const agent = {
       exitCode: null,
       signalCode: null,
@@ -335,8 +338,9 @@ test("parent drains independent consumers but preserves records on worker or bro
       ["job"],
       [],
       null,
-      "/tmp/certops-real-acme-owned/barrier",
-      "/tmp/certops-real-acme-owned",
+      workDir + "/barrier",
+      workDir,
+      workDirIdentity,
       {
         readdirSync() {
           return [];
@@ -355,7 +359,13 @@ test("parent drains independent consumers but preserves records on worker or bro
       async (check) => {
         assert.equal(await check(), true);
       },
-      () => ({
+      (name) => name === "./helpers/certops-acme-key-reuse" ? {
+        assertOwnedMaterialRoot(root, identity) {
+          calls.push("material-root-guard");
+          assert.equal(root,workDir);
+          assert.equal(identity,workDirIdentity);
+        },
+      } : ({
         assertCleanupSafe() {
           calls.push("guard");
           if (state.worker) throw Error("controlled unresolved marker");
@@ -379,7 +389,9 @@ test("parent drains independent consumers but preserves records on worker or bro
       assert.ok(calls.includes(name), name);
     assert.equal(calls.includes("database"), !unresolved);
     assert.equal(calls.includes("private-delete"), !unresolved);
+    assert.equal(calls.includes("material-root-guard"), !unresolved);
     if (!unresolved) {
+      assert.ok(calls.indexOf("private-delete") > calls.indexOf("material-root-guard"));
       assert.ok(calls.indexOf("database") > calls.indexOf("browser-guard"));
       assert.ok(calls.indexOf("database") > calls.indexOf("guard"));
     }

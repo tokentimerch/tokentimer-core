@@ -782,7 +782,7 @@ test("second-rename evidence cannot claim full CLI rollback or omit native owner
 
 function acmeReuseProof(client) {
   const helper=require("../tests/e2e/helpers/certops-acme-key-reuse");
-  return {scope:helper.scope,client,...Object.fromEntries(helper.fields.map(field=>[field,true])),fingerprints:["a","b","c"].map(value=>value.repeat(64)),serials:["A1","B2","C3"],spkiFingerprint:"d".repeat(64),jobIds:[crypto.randomUUID(),crypto.randomUUID()],sourceProfileId:crypto.randomUUID(),sourceProfileFingerprint:"e".repeat(64)};
+  return {scope:helper.scope,client,materialPaths:{scope:helper.MATERIAL_PATH_SCOPE,observedGenerations:3,spaceAndUnicodeInEveryPath:true,...Object.fromEntries(helper.MATERIAL_PATH_FLAGS.map(flag=>[flag,true])),...Object.fromEntries(helper.MATERIAL_PATH_LIMITS.map(flag=>[flag,false]))},...Object.fromEntries(helper.fields.map(field=>[field,true])),fingerprints:["a","b","c"].map(value=>value.repeat(64)),serials:["A1","B2","C3"],spkiFingerprint:"d".repeat(64),jobIds:[crypto.randomUUID(),crypto.randomUUID()],sourceProfileId:crypto.randomUUID(),sourceProfileFingerprint:"e".repeat(64)};
 }
 
 test("Linux ACME key reuse requires exact client-bound native proof and current sources", () => {
@@ -807,6 +807,10 @@ test("Linux ACME key reuse requires exact client-bound native proof and current 
     if(slot.suite==="real-agent-acme-filesystem") reject(event=>{delete event.nativeAcmeRenewalAlert;});
     for(const field of helper.fields){for(const invalid of [false,1,null,"true"])reject(event=>{event.nativeAcmeKeyReuse[field]=invalid;});reject(event=>{delete event.nativeAcmeKeyReuse[field];});}
     for(const change of [{scope:"windows-native-reuse"},{scope:"background-worker-loop"},{client:client==="certbot"?"acme.sh":"certbot"},{fingerprints:["a".repeat(64),"a".repeat(64),"b".repeat(64)]},{serials:["AA","AA","BB"]},{jobIds:[main.nativeAcmeKeyReuse.jobIds[0],main.nativeAcmeKeyReuse.jobIds[0].toUpperCase()]},{sourceProfileId:"foreign"},{sourceProfileFingerprint:"bad"},{spkiFingerprint:"bad"},{windowsQualified:true},{workerLoopQualified:true}])reject(event=>Object.assign(event.nativeAcmeKeyReuse,change));
+    reject(event=>{delete event.nativeAcmeKeyReuse.materialPaths;});
+    for(const flag of helper.MATERIAL_PATH_FLAGS)reject(event=>{event.nativeAcmeKeyReuse.materialPaths[flag]=false;});
+    for(const flag of helper.MATERIAL_PATH_LIMITS)reject(event=>{event.nativeAcmeKeyReuse.materialPaths[flag]=true;});
+    reject(event=>{event.nativeAcmeKeyReuse.materialPaths.rawPath="private";});
     reject(event=>{delete event.nativeAcmeKeyReuse;});
     reject((event,bad)=>{bad.events[0].fixtureSources[0].sha256="0".repeat(64);});
     reject((event,bad)=>{bad.events=bad.events.filter(row=>row.name!==helper.scenarioName);});

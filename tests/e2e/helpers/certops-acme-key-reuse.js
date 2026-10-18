@@ -8,9 +8,70 @@ const scope = "real-linux-manual-and-default-scheduler-csr-key-reuse";
 const scenarioName = "real ACME: manual and default scheduler renewals reuse the same local key";
 const fields = ["publicProfilePolicyChanged", "manualRenewalSucceeded", "defaultSqlNowRenewalSucceeded", "claimBoundVerification", "unchangedPrivateCustody", "privateMaterialStayedLocal", "unchangedSpki", "distinctCaLeavesAndSerials", "advancingExpiry", "trustedTlsEachGeneration", "dnsCleanEachGeneration", "stableReuseProfile"];
 const requiredSources = ["tests/e2e/helpers/certops-acme-key-reuse.js", "tests/e2e/acme-real-journey.js", "packages/agent/src/index.js", "packages/agent/src/keys/index.js", "packages/agent/src/acme/index.js", "packages/agent/src/signing/index.js", "apps/api/services/certops/renewalProfileAdmin.js", "apps/api/services/certops/renewalProfile.js", "apps/api/services/certops/renewalScheduler.js", "apps/api/services/certops/agentDispatch.js"];
+const MATERIAL_PATH_SCOPE = "actual-linux-acme-space-unicode-config-state-material-paths";
+const MATERIAL_PATH_FLAGS = ["ownedDirectoryIdentityStable", "canonicalAncestorsWithoutAliases", "configAndClientStateObserved", "privateCustodyAndCertificateObserved", "signedProfilePathPreserved"];
+const MATERIAL_PATH_LIMITS = ["clientExecutablePathQualified", "repositoryOrHookPathQualified", "otherPlatformsQualified"];
+function verifyMaterialPaths(proof) {
+  assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
+  assert.deepEqual(Object.keys(proof).sort(), ["scope", "observedGenerations", "spaceAndUnicodeInEveryPath", ...MATERIAL_PATH_FLAGS, ...MATERIAL_PATH_LIMITS].sort());
+  assert.equal(proof.scope, MATERIAL_PATH_SCOPE); assert.equal(proof.observedGenerations, 3);
+  assert.equal(proof.spaceAndUnicodeInEveryPath, true);
+  for (const flag of MATERIAL_PATH_FLAGS) assert.equal(proof[flag], true);
+  for (const flag of MATERIAL_PATH_LIMITS) assert.equal(proof[flag], false);
+  return true;
+}
+// Reads only paths owned by the caller's disposable native journey. It never
+// records paths, account data or private bytes in public qualification evidence.
+function assertOwnedMaterialRoot(workDir, identity) {
+  const root=fs.lstatSync(workDir,{bigint:true});
+  assert.ok(identity && root.isDirectory() && !root.isSymbolicLink() && root.dev === identity.dev && root.ino === identity.ino);
+  assert.equal(fs.realpathSync(workDir),workDir);
+}
+function materialPathObserver({workDir, configDir, certPath, keyPath, acmeKind, workDirIdentity}) {
+  assert.ok(["certbot", "acme.sh"].includes(acmeKind));
+  assert.ok(path.isAbsolute(workDir) && path.resolve(workDir) === workDir);
+  const identity = workDirIdentity;
+  assertOwnedMaterialRoot(workDir,identity);
+  assert.ok(identity.isDirectory() && !identity.isSymbolicLink());
+  assert.equal(fs.realpathSync(workDir), workDir);
+  const stateDir = path.join(configDir, "acme", acmeKind === "certbot" ? "certbot" : "acme.sh");
+  const nodes = [[configDir,true], [path.join(configDir,"config.json"),false], [stateDir,true], [certPath,false], [keyPath,false]];
+  const directories = new Map(); let observations = 0;
+  return {
+    observe() {
+      assertOwnedMaterialRoot(workDir,identity);
+      for (const [file,isDirectory] of nodes) {
+        assert.ok(file.startsWith(workDir + path.sep) && path.resolve(file) === file);
+        assert.ok(file.includes(" ") && /[^\x00-\x7f]/.test(file));
+        let current = workDir;
+        for (const part of path.relative(workDir,file).split(path.sep)) {
+          current = path.join(current,part);
+          const node = fs.lstatSync(current,{bigint:true}); assert.equal(node.isSymbolicLink(),false);
+          assert.equal(fs.realpathSync(current),current);
+          if (node.isDirectory()) {
+            const original = directories.get(current);
+            if (original) assert.ok(node.dev === original.dev && node.ino === original.ino);
+            else directories.set(current,node);
+          }
+        }
+        const node = fs.lstatSync(file,{bigint:true});
+        assert.equal(node.isDirectory(),isDirectory);
+        assert.equal(node.uid,BigInt(process.getuid()));
+        if (!isDirectory) assert.ok(node.isFile() && node.nlink === 1n && node.size > 0n && (node.mode & 0o777n) === 0o600n);
+      }
+      assert.ok(fs.readdirSync(stateDir).length > 0, "Actual ACME client-state directory must exist after native issuance");
+      observations++;
+    },
+    proof() {
+      const proof = {scope:MATERIAL_PATH_SCOPE,observedGenerations:observations,spaceAndUnicodeInEveryPath:true,...Object.fromEntries(MATERIAL_PATH_FLAGS.map(flag=>[flag,true])),...Object.fromEntries(MATERIAL_PATH_LIMITS.map(flag=>[flag,false]))};
+      verifyMaterialPaths(proof); return proof;
+    },
+  };
+}
 function verifyProof(proof) {
   assert.ok(proof && typeof proof === "object" && !Array.isArray(proof));
-  assert.deepEqual(Object.keys(proof).sort(), [...fields, "scope", "client", "fingerprints", "serials", "spkiFingerprint", "jobIds", "sourceProfileId", "sourceProfileFingerprint"].sort());
+  assert.deepEqual(Object.keys(proof).sort(), [...fields, "scope", "client", "fingerprints", "serials", "spkiFingerprint", "jobIds", "sourceProfileId", "sourceProfileFingerprint", "materialPaths"].sort());
+  verifyMaterialPaths(proof.materialPaths);
   assert.equal(proof.scope, scope); assert.ok(["certbot", "acme.sh"].includes(proof.client));
   for (const field of fields) assert.equal(proof[field], true, field);
   for (const name of ["fingerprints", "serials"]) {
@@ -25,7 +86,7 @@ function verifyProof(proof) {
   for (const id of proof.jobIds) assert.match(id, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i);
   assert.equal(new Set(proof.jobIds.map(id => id.toLowerCase())).size, 2); return true;
 }
-async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind }) {
+async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity }) {
   assert.equal(process.platform, "linux"); assert.ok(["certbot", "acme.sh"].includes(acmeKind));
   const query = (sql, args = []) => pool.query(sql, args);
   const profile = async () => (await query("SELECT cp.id, cp.public_metadata, cp.renew_before_days, cp.status, cp.updated_at FROM managed_certificates mc JOIN certificate_profiles cp ON cp.workspace_id=mc.workspace_id AND cp.id=mc.profile_id WHERE mc.workspace_id=$1 AND mc.id=$2", [workspaceId, certificateId])).rows[0];
@@ -38,7 +99,9 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
   const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
   const spki = leaf => sha(leaf.publicKey.export({ type: "spki", format: "der" }));
   const leaves = [], jobs = [];
+  const paths = materialPathObserver({workDir,configDir,certPath,keyPath,acmeKind,workDirIdentity});
   const observe = async () => {
+    paths.observe();
     const stat = fs.lstatSync(keyPath); assert.equal(stat.isFile(), true); assert.equal(stat.isSymbolicLink(), false);
     assert.equal(stat.mode & 0o777, 0o600); assert.equal(stat.uid, process.getuid()); assert.equal(stat.nlink, 1);
     assert.ok(fs.readFileSync(keyPath).equals(privateBytes), "Actual local private key bytes must remain unchanged");
@@ -91,7 +154,7 @@ async function qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certif
     for (const job of admitted) { ownedJobIds.push(job.id); jobs.push(job); }
   }
   assert.equal(sweep.errors.length, 0); assert.equal(jobs.length, 2); assert.equal(jobs[1].source, "automation"); await complete(jobs[1]);
-  const proof = { scope, client: acmeKind, ...Object.fromEntries(fields.map(field => [field, true])), fingerprints: leaves.map(leaf => sha(leaf.raw)), serials: leaves.map(leaf => leaf.serialNumber), spkiFingerprint: spki(leaves[0]), jobIds: jobs.map(job => job.id), sourceProfileId: stable.id, sourceProfileFingerprint: sha(JSON.stringify(stable)) };
+  const proof = { scope, client: acmeKind, materialPaths: paths.proof(), ...Object.fromEntries(fields.map(field => [field, true])), fingerprints: leaves.map(leaf => sha(leaf.raw)), serials: leaves.map(leaf => leaf.serialNumber), spkiFingerprint: spki(leaves[0]), jobIds: jobs.map(job => job.id), sourceProfileId: stable.id, sourceProfileFingerprint: sha(JSON.stringify(stable)) };
   verifyProof(proof); return proof;
 }
 
@@ -322,4 +385,4 @@ const variants = {
   contained, refuseBlanketReset, assertClientPath, createRun, registerKey, submitOrder, deleteKey, spkiOf,
   verifyProof: verifyVariantProof, localProof, assessLab, closedReport, writeReport, run,
 };
-module.exports = { qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };
+module.exports = { assertOwnedMaterialRoot, MATERIAL_PATH_SCOPE, MATERIAL_PATH_FLAGS, MATERIAL_PATH_LIMITS, verifyMaterialPaths, materialPathObserver, qualifyKeyReuse, verifyProof, scope, scenarioName, fields, requiredSources, variants };

@@ -49,7 +49,9 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
   const upstreamCaEndpoint = localEndpoint(process.env.CERTOPS_PEBBLE_DIRECTORY, "https:");
   let caEndpoint = upstreamCaEndpoint;
   const dnsEndpoint = localEndpoint(process.env.CERTOPS_PEBBLE_DNS_API, "http:");
-  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-real-acme-"));
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops real acme ü-"));
+  const workDirIdentity = fs.lstatSync(workDir,{bigint:true});
+  require("./helpers/certops-acme-key-reuse").assertOwnedMaterialRoot(workDir,workDirIdentity);
   const domain = `certops-${crypto.randomBytes(6).toString("hex")}.example.test`;
   const requestedNames = [domain, `*.${domain}`, `alternate.${domain}`];
   const verifyNames = (leaf) => assert.deepEqual(leaf.subjectAltName.split(/,\s*/).map((name) => name.replace(/^DNS:/, "")).sort(), [...requestedNames].sort(), "Issued leaf must preserve exactly the requested apex wildcard and additional SAN");
@@ -385,7 +387,7 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     });
     const reuse = require("./helpers/certops-acme-key-reuse");
     await runScenario(reuse.scenarioName, async () => {
-      const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind });
+      const proof = await reuse.qualifyKeyReuse({ pool, workspaceId, agent, publicSession, certificateId, certPath, keyPath, ownedJobIds, waitUntil, verifyDnsCleanup, verifyNames, servedFingerprint, repoRoot, acmeKind, workDir, configDir, workDirIdentity });
       fs.mkdirSync(path.dirname(reuseProofPath), { recursive: true }); fs.writeFileSync(reuseProofPath, JSON.stringify(proof), { mode: 0o600 });
     });
     if(process.env.CERTOPS_REPORT_SCOPE===bulkReport.SCOPE){
@@ -489,8 +491,9 @@ module.exports = async function qualifyAcme({ pool, baseUrl, workspaceId, create
     await cleanup(async () => { if (publicSession) await publicSession.cleanup(); });
     await cleanup(() => {
       assert.equal(path.dirname(path.resolve(workDir)), path.resolve(os.tmpdir()));
-      assert.ok(path.basename(workDir).startsWith("certops-real-acme-"));
+      assert.ok(path.basename(workDir).startsWith("certops real acme ü-"));
       if(barrierDirectory){for(const entry of fs.readdirSync("/proc")){if(!/^\d+$/.test(entry))continue;let argv;try{argv=fs.readFileSync(`/proc/${entry}/cmdline`,"utf8").split("\0");}catch(error){if(["ENOENT","ESRCH","EACCES"].includes(error.code))continue;throw error;}assert.ok(!(argv.includes(path.join(repoRoot,"tests/e2e/helpers/certops-acme-command-barrier.js"))&&argv.includes(barrierDirectory)),"Refusing state removal while an owned command barrier remains alive");}}
+      require("./helpers/certops-acme-key-reuse").assertOwnedMaterialRoot(workDir,workDirIdentity);
       fs.rmSync(workDir, { recursive: true, force: true });
     });
     if (cleanupErrors.length) throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors], "Real ACME journey or owned fixture cleanup failed");
