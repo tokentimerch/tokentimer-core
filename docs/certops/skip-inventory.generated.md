@@ -7,11 +7,12 @@ Every skip below must carry a `// skip-reason: <tag>` comment immediately above 
 - `no-host`: skipped because it needs real hardware/OS/IIS not available in CI
 - `unimplemented`: skipped because the feature does not exist yet
 
-Total skips found: 70
+Total skips found: 71
 
 | File | Line | Test/suite name | Kind | Reason |
 |---|---|---|---|---|
 | `packages/agent/scripts/installer-smoke.test.js` | 370 | reaches Running and survives a Stop-Service / Start-Service cycle | dynamic (this.skip() / t.skip()) | `no-host` |
+| `packages/agent/src/acme/acme.test.js` | 250 | POSIX hook executes non-executable archive bytes with spaces and quotes in the path | test(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 121 | sets 0700 permissions on non-win32 platforms | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 129 | re-asserts 0700 on every call even if the mode was loosened | it(..., { skip }) option-object | `no-host` |
 | `packages/agent/src/config/config.test.js` | 139 | applies a real restricted ACL on win32 | it(..., { skip }) option-object | `no-host` |

@@ -51,5 +51,11 @@ $manifest=Get-Content packages/agent/src/capabilities/qualified-capabilities.jso
 & "$nodeDirectory\node.exe" -e "require('./packages/agent/scripts/build-qualified-capabilities').main({inputPath:process.argv[1]})" $inputPath | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Isolated qualification capability compilation failed' }
 [IO.File]::WriteAllBytes("$root\api-public.pem",[Convert]::FromBase64String($ApiPublicPemBase64))
-@{candidateSha=$CandidateSha;source=$source;windowsVersion=$WindowsVersion;node="$nodeDirectory\node.exe";nodeVersion=$nodeRelease.version;nodeArchiveSha256=$nodeHash;goVersion=$goRelease.version;goArchiveSha256=$goFile.sha256;sourceArchiveSha256=(Get-FileHash "$root\candidate.zip" -Algorithm SHA256).Hash;qualifiedModuleSha256=(Get-FileHash packages/agent/src/capabilities/qualified-capabilities.generated.js -Algorithm SHA256).Hash;path=$env:PATH;buildMode='qualification-only-not-release'} | ConvertTo-Json | Set-Content "$root\runtime.json"
+& "$nodeDirectory\node.exe" scripts/certops-agent-package.js "$source\packages\agent" "$root\package-candidate" $CandidateSha 'adcs-enroll-v1' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Canonical agent package creation failed' }
+$packageReceiptPath="$root\package-candidate\artifact.json"
+$packageReceipt=Get-Content $packageReceiptPath -Raw | ConvertFrom-Json
+$packageArchive="$root\package-candidate\artifacts\$($packageReceipt.archive)"
+if((Get-FileHash $packageArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $packageReceipt.sha256){throw 'Candidate package checksum mismatch'}
+@{agentPackage=$packageArchive;agentPackageReceipt=$packageReceiptPath;candidateSha=$CandidateSha;source=$source;windowsVersion=$WindowsVersion;node="$nodeDirectory\node.exe";nodeVersion=$nodeRelease.version;nodeArchiveSha256=$nodeHash;goVersion=$goRelease.version;goArchiveSha256=$goFile.sha256;sourceArchiveSha256=(Get-FileHash "$root\candidate.zip" -Algorithm SHA256).Hash;qualifiedModuleSha256=(Get-FileHash packages/agent/src/capabilities/qualified-capabilities.generated.js -Algorithm SHA256).Hash;path=$env:PATH;buildMode='qualification-only-not-release'} | ConvertTo-Json | Set-Content "$root\runtime.json"
 Write-Output 'CERTOPS_STAGE=isolated-candidate-windows-tools-built'

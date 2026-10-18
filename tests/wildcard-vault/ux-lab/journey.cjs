@@ -344,6 +344,20 @@ async function setup() {
     state.agents[name] = enrolled;
     save();
     await customer("stop", name);
+    if (process.env.TT_UX_PACKAGE_ACCEPTANCE === "1") {
+      await customer("prepare-signed-dry-run", name);
+      const preview = await owner.request(api() + "/jobs", "POST", {
+        operation: "noop", mode: "dry_run", assignedAgentId: enrolled.id, requiresApproval: true,
+      }, 201);
+      assert.equal(preview.job.payload.mode, "dry_run", "The public API must persist the requested preview mode");
+      await approve(preview.job.id);
+      await wait("signed package dry run " + name, async () => {
+        const row = await job(preview.job.id);
+        assert.ok(!["failed", "rejected", "cancelled", "succeeded"].includes(row.status));
+        return row.status === "dry_run_complete";
+      });
+      await customer("stop", name);
+    }
   }
   check(
     "normal admin bootstrap, email invitation/verification and three enrolled agents",
@@ -928,6 +942,13 @@ async function main() {
     },
     60000,
   );
+  await wait("customer host startup", async () => {
+    try {
+      const response = await fetch(controlBase, { signal: AbortSignal.timeout(2000) });
+      const ready = await response.json();
+      return response.ok && ready.lab === "wildcard-ux" && ready.databaseAccess === false;
+    } catch { return false; }
+  }, 60000);
   await owner.login("owner@wildcard.test", "LabOwner-2026!Only");
   if (state.approverRegistered)
     await approver.login(state.approverEmail, "LabApprover-2026!Only");
@@ -1082,6 +1103,10 @@ async function main() {
         "; workspace " +
         state.workspaceId,
     );
+    if (gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1") {
+      gate.report.packageAcceptance = await customer("package-proof", "issuer");
+      assert.equal(gate.report.packageAcceptance.candidateSha, process.env.TT_UX_CORE_COMMIT);
+    }
     if (gate) await gate.finish({requiredScenarios:qualification.PHASES.map(p=>"distribution-"+p)});
   }
 }

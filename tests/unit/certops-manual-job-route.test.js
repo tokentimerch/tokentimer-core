@@ -161,6 +161,34 @@ async function invokeAfterEarlyGlobalGate(
   return res;
 }
 
+describe("CertOps manual-job route preserves explicit execution mode", () => {
+  for (const mode of ["dry_run", "real", undefined, "invalid-mode"]) {
+    it(`persists or rejects the requested mode: ${mode}`, async () => {
+      const pool = createTransactionalPool();
+      const handler = certOpsRouter._test.createManualCertificateJobHandler({
+        manualJobCreator: options => createManualCertificateJob({
+          ...options, dbPool: pool, certOpsEnabledResolver: async () => true,
+        }),
+      });
+      const req = { workspace: { id: "workspace-1" }, user: { id: 42 },
+        authz: { workspaceRole: "workspace_manager" }, body: { operation: "noop", ...(mode === undefined ? {} : { mode }) } };
+      const res = responseRecorder();
+      await handler(req, res);
+      if (mode === "invalid-mode") {
+        assert.equal(res.statusCode, 400);
+        assert.equal(res.body.code, "CERTOPS_JOB_MODE_INVALID");
+        assert.equal(pool.jobs.length, 0);
+      } else {
+        assert.equal(res.statusCode, 201);
+        assert.equal(pool.jobs.length, 1);
+        assert.equal(pool.jobs[0].mode, mode || "real");
+        assert.equal(pool.jobs[0].payload.mode, mode || "real");
+        assert.equal(res.body.job.payload.mode, mode || "real");
+      }
+    });
+  }
+});
+
 describe("CertOps manual-job route transactional gate errors", () => {
   it("hides a global disable that occurs after the early middleware check", async () => {
     const pool = createTransactionalPool();

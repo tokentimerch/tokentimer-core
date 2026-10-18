@@ -64,7 +64,8 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
   [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
-  $arguments = @('vm','run-command','invoke','--resource-group',$ResourceGroup,'--name',$Machine,'--command-id','RunPowerShellScript','--scripts',"@$Script",'-o','json')
+  $commandId=if($Machine -eq 'control-plane'){'RunShellScript'}else{'RunPowerShellScript'}
+  $arguments = @('vm','run-command','invoke','--resource-group',$ResourceGroup,'--name',$Machine,'--command-id',$commandId,'--scripts',"@$Script",'-o','json')
   if ($Parameters.Count) { $arguments += @('--parameters'); $arguments += $Parameters }
   Refresh-LabAuthentication
   $text = az @arguments
@@ -72,10 +73,15 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
   $response = $text | ConvertFrom-Json
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains($Marker)) {
+    foreach($exportDiagnostic in [regex]::Matches($message,'(?m)^CERTOPS_CA_EXPORT_(?:EXIT=-?[0-9]{1,11}|HRESULT=0X[0-9A-F]{8})\s*$')){
+      Write-Output $exportDiagnostic.Value.Trim()
+    }
     $diagnostic=[regex]::Match($message,'(?m)^CERTOPS_TEMPLATE_FAILURE=(descriptor|remoting|definitions|directory|create-oid|create-template|commit-template|template-acl|publish-template|ca-hardening):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
     $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($memberDiagnostic.Success){Write-Output $memberDiagnostic.Value.Trim()}
+    $verifyDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_VERIFY_FAILURE=(membership|secure-channel|ca-rpc|ca-export|ca-identity|root-trust):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
+    if($verifyDiagnostic.Success){Write-Output $verifyDiagnostic.Value.Trim()}
     throw "Expected stage receipt $Marker absent for $Machine ($([IO.Path]::GetFileName($Script)))"
   }
   foreach($field in @('CERTOPS_ROOT_CERT','CERTOPS_SUBORDINATE_REQUEST','CERTOPS_SUBORDINATE_CERT')){
@@ -175,7 +181,16 @@ try {
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
   $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
-  try { Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters }
+  try {
+    try {
+      Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-started' @('action=start')
+      try { Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=operator-package-acceptance-passed' ($testParameters+@('Scope=acceptance')) }
+      finally { & (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind 'package-acceptance' }
+    } finally {
+      Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-stopped' @('action=stop')
+    }
+    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
+  }
   finally {
     $reportErrors=@();$kinds=if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')};if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
     if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}

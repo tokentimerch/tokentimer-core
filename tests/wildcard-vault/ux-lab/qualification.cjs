@@ -63,7 +63,7 @@ function createGate({ root, candidateSha, mode }) {
     experimental: true,
     qualificationStatus: "not-qualified",
     databaseInjection: false,
-    qualificationScope: "source-mounted-enrolled-agent-lab",
+    qualificationScope: process.env.TT_UX_PACKAGE_ACCEPTANCE === "1" ? "packaged-enrolled-agent-lab" : "source-mounted-enrolled-agent-lab",
     allFeaturesQualified: false,
   });
   gate.report.qualificationEnvironment.certificateMode = mode;

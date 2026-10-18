@@ -3,7 +3,7 @@ Guest SYSTEM test entry point called only by provision-lab.ps1 after domain/tool
 the exact candidate runtime and test-only controller keys, selects the dedicated report, and invokes
 the real API-agent/native harness. It clears the officer password after execution.
 #>
-param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt)
+param([ValidateSet('acceptance','focused')][string]$Scope='focused',[Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt)
 $ErrorActionPreference = 'Stop'
 if($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0'){throw 'Extended campaigns are deferred'}
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
@@ -41,10 +41,14 @@ $env:CERTOPS_ADCS_HIERARCHY=$HierarchyRole
 $env:CERTOPS_ADCS_HIERARCHY_ROOT_CERT=$RootCertificateBase64
 Set-Location $runtime.source
 try {
-  & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js
+  if($Scope -eq 'acceptance'){ & $runtime.node --test tests/e2e/certops-adcs-package-acceptance.test.js }else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }
   $testExitCode=$LASTEXITCODE
 } finally {
   $env:CERTOPS_ADCS_OFFICER_PASSWORD=$null
 }
 if ($testExitCode -ne 0) { throw 'Native enterprise AD CS scenarios failed' }
-Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'
+if($Scope -eq 'acceptance'){
+  & $runtime.node scripts/certops-agent-package.js verify-adcs 'C:\ttqualification\adcs-package-acceptance.json' $runtime.agentPackageReceipt $runtime.candidateSha
+  if($LASTEXITCODE -ne 0){throw 'Package acceptance evidence is incomplete or mismatched'}
+}
+if($Scope -eq 'acceptance'){Write-Output 'CERTOPS_STAGE=operator-package-acceptance-passed'}else{Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'}

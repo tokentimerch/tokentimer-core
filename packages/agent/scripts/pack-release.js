@@ -16,6 +16,7 @@ const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { main: buildWindowsServiceHost } = require("./build-windows-service-host.js");
 const { main: buildWindowsChainHelper } = require("./build-windows-chain-helper.js");
+const { buildOne: buildWindowsHelper, TARGET_ARCHES } = require("./build-windows-chain-helper.js");
 
 const packageRoot = path.resolve(__dirname, "..");
 const pkg = JSON.parse(
@@ -140,6 +141,10 @@ function main(argv = process.argv.slice(2)) {
   // Rebuild the chain/store-survivor helper for each shipped architecture too.
   // Source-tree reference/dist executables are never distribution inputs.
   buildWindowsChainHelper([]);
+  for (const arch of TARGET_ARCHES) buildWindowsHelper(arch, path.join(packageRoot, "bin"), {
+    sourceDir: path.join(packageRoot, "reference/adcs-cmc"),
+    outputName: `tokentimer-adcs-cmc-${arch}.exe`,
+  });
 
   const pack = spawnSync(
     "npm",

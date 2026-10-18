@@ -310,7 +310,7 @@ async function qualifyAdcsBrowserJourney(context) {
     facts = {
       scope: SCOPE,
       lifecycle: "renew-existing-inventory-not-first-issue-or-manual-job",
-      scheduler: "production-default-sweep-not-background-worker-loop",
+      scheduler: context.workerDriven ? "production-maintenance-worker" : "production-default-sweep-not-background-worker-loop",
       browserEngine: "chromium",
       browserMutationCount: 6,
       successfulEnrollments: 1,
@@ -649,6 +649,14 @@ async function qualifyAdcsBrowserJourney(context) {
       REQUIRED_SCENARIOS[3],
       async () => {
         stage = "default-sweep-native-enrollment";
+        if (context.workerDriven) {
+          // The package acceptance lane has the real control-plane maintenance
+          // worker running. Observe its work; never invoke a scheduler in-process.
+          job = await until(async () => (await query(
+            "SELECT id,status,claim_id,source,mode FROM certificate_jobs WHERE workspace_id=$1 AND subject_id=$2 AND source='automation' AND operation='renew' ORDER BY created_at DESC LIMIT 1",
+            [fixture.workspaceId, selectedSource.id],
+          )).rows[0]);
+        } else {
         const scheduler = require("../../../apps/api/services/certops/renewalScheduler");
         const due = await scheduler.findCertificatesDueForRenewal({
           db: fixture.pool,
@@ -694,6 +702,7 @@ async function qualifyAdcsBrowserJourney(context) {
               )
             ).rows[0],
         );
+        }
         enrollment = (
           await query(
             "SELECT id FROM certificate_enrollments WHERE workspace_id=$1 AND current_job_id=$2",
@@ -806,7 +815,7 @@ async function qualifyAdcsBrowserJourney(context) {
       {
         evidenceLevel: "real-host",
         oracle:
-          "One unmodified default SQL-NOW scheduler sweep admits the real UI-enabled native source, followed by independent CA request, protected CNG key, exact IIS SNI, trusted TLS and claim-bound evidence; not a continuously running worker loop",
+          context.workerDriven ? "The production maintenance worker admits the UI-enabled source; the packaged installed agent performs enrollment, with independent CA/CNG/IIS/TLS and claim-bound evidence" : "One unmodified default SQL-NOW scheduler sweep admits the real UI-enabled native source, followed by independent CA request, protected CNG key, exact IIS SNI, trusted TLS and claim-bound evidence; not a continuously running worker loop",
       },
     );
     await gate.scenario(

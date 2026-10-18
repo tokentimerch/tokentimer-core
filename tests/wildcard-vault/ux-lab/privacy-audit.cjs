@@ -27,7 +27,7 @@ function visit(dir) {
     if (item.isSymbolicLink()) continue;
     if (item.isDirectory()) {
       if (
-        !["experimental-agent", "acme"].includes(
+        !["experimental-agent", "packaged-agent", "acme"].includes(
           item.name,
         )
       )
@@ -36,7 +36,7 @@ function visit(dir) {
     }
     const size = fs.statSync(file).size;
     if (size > 4 * 1024 * 1024) continue;
-    if (item.name === "material-token" || item.name.endsWith(".vault-token")) {
+    if (["material-token", "role-id", "secret-id"].includes(item.name) || item.name.endsWith(".vault-token") || item.name.endsWith(".secret-id")) {
       needles.add(fs.readFileSync(file, "utf8").trim());
       credentials++;
       if (item.name.endsWith(".vault-token")) historicalCredentials++;

@@ -86,6 +86,42 @@ jobs:
           if test -f ".scratch/$LAB_PROJECT/qualification.json"; then
             cp ".scratch/$LAB_PROJECT/qualification.json" qualification-results/distribution/
           fi
+      - name: Stop focused lab before package acceptance
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Stop -Project $env:LAB_PROJECT
+      - name: Run packaged agent and Vault AppRole operator acceptance
+        shell: pwsh
+        run: |
+          $images=Get-Content ".scratch/$env:LAB_PROJECT/runtime-images.json" -Raw | ConvertFrom-Json
+          $env:TT_UX_API_IMAGE=$images.api
+          $env:TT_UX_WORKER_IMAGE=$images.worker
+          $env:TT_UX_CUSTOMER_IMAGE=$images.customers
+          $packageProject="$env:LAB_PROJECT-package"
+          ./tests/wildcard-vault/ux-lab/run.ps1 -Action Up -Project $packageProject -BasePort 60800 -CertificateMode $env:CERTIFICATE_MODE -PackageAcceptance
+          ./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $packageProject
+          node scripts/certops-distribution-report.js ".scratch/$packageProject/qualification.json"
+          if($LASTEXITCODE -ne 0){throw 'Package acceptance report verification failed'}
+      - name: Copy only package acceptance public receipts
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p qualification-results/operator-package
+          for file in qualification.json privacy.json agent-package/artifact.json; do
+            if test -f ".scratch/$LAB_PROJECT-package/$file"; then
+              cp ".scratch/$LAB_PROJECT-package/$file" qualification-results/operator-package/
+            fi
+          done
+      - name: Preserve package acceptance public receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: operator-acceptance-vault-${{ matrix.certificate-mode }}
+          path: qualification-results/operator-package/
+          if-no-files-found: warn
+      - name: Stop the owned package lab
+        if: always()
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Stop -Project "$env:LAB_PROJECT-package"
       - name: Stop only the owned lab
         if: always()
         shell: pwsh

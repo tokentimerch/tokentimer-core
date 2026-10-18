@@ -174,9 +174,9 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
     "dns",
     "--manual",
     "--manual-auth-hook",
-    `${DNS_HOOK_PATH} present`,
+    `/usr/bin/env '/usr/bin/node' '${DNS_HOOK_PATH}' present`,
     "--manual-cleanup-hook",
-    `${DNS_HOOK_PATH} cleanup`,
+    `/usr/bin/env '/usr/bin/node' '${DNS_HOOK_PATH}' cleanup`,
     "--csr",
     CSR_PATH,
     "--server",
@@ -210,20 +210,20 @@ test("certbot adapter builds the documented argv (dryRun: false)", async () => {
 // shell, and a bare ".js" path has no useful Windows file association)
 // ---------------------------------------------------------------------------
 
-test("buildDnsHookCommand uses '<hookPath> <mode>' on POSIX", () => {
+test("buildDnsHookCommand explicitly invokes Node on POSIX without requiring executable hook files", () => {
   assert.equal(
     buildDnsHookCommand(DNS_HOOK_PATH, "present", {
       platform: "linux",
       nodeExecPath: "/usr/bin/node",
     }),
-    `${DNS_HOOK_PATH} present`,
+    `/usr/bin/env '/usr/bin/node' '${DNS_HOOK_PATH}' present`,
   );
   assert.equal(
     buildDnsHookCommand(DNS_HOOK_PATH, "cleanup", {
       platform: "darwin",
       nodeExecPath: "/usr/bin/node",
     }),
-    `${DNS_HOOK_PATH} cleanup`,
+    `/usr/bin/env '/usr/bin/node' '${DNS_HOOK_PATH}' cleanup`,
   );
 });
 
@@ -244,6 +244,22 @@ test("buildDnsHookCommand quotes and prefixes the node executable on win32", () 
     }),
     `"${winNodePath}" "${winHookPath}" cleanup`,
   );
+});
+
+// skip-reason: no-host - requires a POSIX shell; Linux CI executes the real hook
+test("POSIX hook executes non-executable archive bytes with spaces and quotes in the path", { skip: process.platform === "win32" }, t => {
+  const { spawnSync } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "certops hook '"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const hook = path.join(dir, "hook.js");
+  fs.writeFileSync(hook, "process.stdout.write(process.argv[2]);", { mode: 0o600 });
+  for (const mode of ["present", "cleanup"]) {
+    const command = buildDnsHookCommand(hook, mode);
+    assert.equal(command.split(/\s/, 1)[0], "/usr/bin/env", "Certbot's unparsed executable probe must succeed");
+    const result = spawnSync("/bin/sh", ["-c", command], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, mode);
+  }
 });
 
 test("certbot adapter builds win32-formatted --manual-auth-hook/--manual-cleanup-hook when platform is win32", async () => {

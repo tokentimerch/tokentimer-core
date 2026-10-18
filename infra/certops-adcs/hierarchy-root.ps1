@@ -28,7 +28,7 @@ if($Action -eq 'prepare'){
   Restart-Service CertSvc
   certutil.exe -crl | Out-Null
   if($LASTEXITCODE){throw 'Root CRL publication failed'}
-  certutil.exe -ca.cert (Join-Path $directory 'root.cer') | Out-Null
+  certutil.exe '-ca.cert' (Join-Path $directory 'root.cer') | Out-Null
   if($LASTEXITCODE){throw 'Root public certificate export failed'}
   Copy-Item -LiteralPath (Join-Path $directory 'root.cer') -Destination (Join-Path $directory "$($env:COMPUTERNAME)_TTQualificationOfflineRoot.crt")
   Import-Module WebAdministration

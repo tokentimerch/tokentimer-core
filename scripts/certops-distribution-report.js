@@ -16,7 +16,21 @@ function verifyScope(report, root = path.resolve(__dirname, "..")) {
     "Source-mounted capability-enabled artifact must remain experimental",
   );
   assert.equal(report.qualificationStatus, "not-qualified");
-  assert.equal(report.qualificationScope, "source-mounted-enrolled-agent-lab");
+  assert.ok(["source-mounted-enrolled-agent-lab", "packaged-enrolled-agent-lab"].includes(report.qualificationScope));
+  if (report.qualificationScope === "packaged-enrolled-agent-lab") {
+    const proof = report.packageAcceptance;
+    assert.equal(proof?.candidateSha, report.candidateSha);
+    assert.match(proof.packageSha256, /^[a-f0-9]{64}$/);
+    assert.equal(proof.buildMode, "qualification-only-not-release");
+    for (const field of ["packageFilesUnmodified", "vaultTlsVerified", "separateRolesAndSinks", "rolePermissionsChecked", "roleIsolationChecked"]) assert.equal(proof[field], true);
+    assert.equal(proof.authentication, "vault-agent-approle");
+    assert.equal(proof.supervision, "documented-node-process");
+    assert.equal(proof.agentAccountUid, 10001);
+    assert.equal(proof.vaultAgentUid, 10001);
+    assert.equal(proof.systemdQualified, false);
+    assert.equal(proof.publishedReleaseQualified, false);
+    assert.ok(Number.isInteger(proof.credentialRotationCount) && proof.credentialRotationCount > 0);
+  }
   assert.equal(report.allFeaturesQualified, false);
   assert.equal(report.databaseInjection, false);
   assert.ok(

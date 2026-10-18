@@ -196,6 +196,8 @@ function defaultAcmeDnsApiPath() {
  *
  * certbot runs this string through a shell (subprocess `shell=True`), which
  * on POSIX resolves a bare executable path via its shebang + execute bit.
+ * Archives created on Windows may not preserve that bit, so explicitly use
+ * the running Node executable on both platforms; do not mutate installed bytes.
  * On win32 that never works: `certops-dns-hook.js` has no meaningful
  * Windows file association as a "command" (a bare `.js` path is not
  * Node -- it is Windows Script Host at best, nothing at worst), so the
@@ -216,7 +218,10 @@ function buildDnsHookCommand(
   if (platform === "win32") {
     return `"${nodeExecPath}" "${dnsHookPath}" ${mode}`;
   }
-  return `${dnsHookPath} ${mode}`;
+  const quote = (value) => `'${value.replace(/'/g, `'"'"'`)}'`;
+  // Certbot validates the first whitespace-delimited token without shell
+  // parsing. Keep env unquoted, then quote the exact Node and hook paths.
+  return `/usr/bin/env ${quote(nodeExecPath)} ${quote(dnsHookPath)} ${mode}`;
 }
 
 /**

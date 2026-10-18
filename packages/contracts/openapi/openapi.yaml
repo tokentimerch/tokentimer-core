@@ -10172,6 +10172,11 @@ components:
         certops.trust_anchor.manage permission rather than the workspace
         manager role that every other operation accepts.
       properties:
+        mode:
+          type: string
+          enum: [real, dry_run]
+          default: real
+          description: Signed execution mode. dry_run performs checks without effects and terminates as dry_run_complete, never succeeded.
         operation:
           type: string
           enum: [renew, deploy, deploy-from-store, reload, revoke, noop, issue, distribute-trust, revoke-trust]

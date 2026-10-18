@@ -9,10 +9,13 @@ const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
 const { spawn, spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
-const root = "/lab",
-  build = "/lab/experimental-agent";
+const root = "/lab";
+let build = "/lab/experimental-agent", acceptance;
+const packageMode = process.env.TT_UX_PACKAGE_ACCEPTANCE === "1";
 const source = "/repo/packages/agent";
 const agents = new Map();
+const agentAccounts = new Set();
+const processAccount = packageMode ? { uid: 10001, gid: 10001 } : {};
 const scannerRequests = [];
 // Retain only genuine signed dispatches, in customer memory. The adversarial
 // transport re-delivers these bytes; it never signs jobs or fabricates results.
@@ -33,9 +36,11 @@ function json(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 });
   fs.chmodSync(file, 0o600);
+  if (packageMode) { fs.chownSync(path.dirname(file), 10001, 10001); fs.chownSync(file, 10001, 10001); }
 }
 function run(command, args) {
-  const r = spawnSync(command, args, { encoding: "utf8" });
+  const service = command === process.execPath && args[0] === "/repo/tests/wildcard-vault/ux-lab/reload.cjs";
+  const r = spawnSync(command, args, { encoding: "utf8", ...(service ? processAccount : {}) });
   if (r.status !== 0) throw new Error(command + ": " + r.stderr);
   return r.stdout;
 }
@@ -154,6 +159,7 @@ async function stopAgent(name) {
 async function startAgent(name, token) {
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
   await stopAgent(name);
+  if (acceptance) acceptance.verify(build);
   const dir = path.join(root, name),
     out = fs.openSync(path.join(dir, "agent.log"), "a", 0o600);
   const env = {
@@ -161,12 +167,19 @@ async function startAgent(name, token) {
     TOKENTIMER_AGENT_CONFIG_DIR: dir,
     NODE_EXTRA_CA_CERTS: "/lab/transport.crt",
     REQUESTS_CA_BUNDLE: "/lab-input/pebble-ca.pem",
+    ...(packageMode ? { HOME: dir } : {}),
   };
   if (token) env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = token;
   const child = spawn(process.execPath, [build + "/bin/tokentimer-agent.js"], {
     env,
     stdio: ["ignore", out, out],
+    ...processAccount,
   });
+  if (packageMode) {
+    fs.fchownSync(out, 10001, 10001);
+    assert.match(fs.readFileSync(`/proc/${child.pid}/status`, "utf8"), /^Uid:\s+10001\s+10001\s+10001\s+10001$/m);
+    agentAccounts.add(name);
+  }
   fs.closeSync(out);
   agents.set(name, child);
   return { started: true, name };
@@ -193,7 +206,7 @@ function config(name, extra = {}) {
           argv: [
             "node",
             "/repo/tests/wildcard-vault/ux-lab/certbot-record.cjs",
-            "--no-verify-ssl",
+            ...(packageMode ? [] : ["--no-verify-ssl"]),
             "--agree-tos",
             "--register-unsafely-without-email",
           ],
@@ -202,7 +215,7 @@ function config(name, extra = {}) {
     },
     execution: {
       enabled: false,
-      dryRun: false,
+      dryRun: packageMode,
       keysDir: dir + "/custom-issuer-custody",
     },
     dnsProviders: {
@@ -234,7 +247,7 @@ function store(workspaceId, groupId, wireId, issuer, name) {
       groups: {
         [groupId]: {
           workspaceId,
-          prefix: workspaceId + "/" + groupId,
+          prefix: (packageMode ? "tokentimer/" : "") + workspaceId + "/" + groupId,
           sans: certificateSans,
           keyAlgorithm: "ec",
           ...(issuer
@@ -258,6 +271,7 @@ async function vaultApi(route, method, body) {
   return response.status===204 ? {} : response.json();
 }
 async function rotateMaterialToken(name, workspaceId, groupId) {
+  if (acceptance) return acceptance.rotate(name, workspaceId, groupId);
   const policy="qualification-"+name+"-"+crypto.randomUUID();
   const capabilities=name.includes("issuer") ? ["create","read"] : ["read"];
   await vaultApi("/sys/policies/acl/"+policy,"PUT",{policy:`path "secret/data/${workspaceId}/${groupId}/bundles/*" { capabilities = ${JSON.stringify(capabilities)} }`});
@@ -271,6 +285,11 @@ async function rotateMaterialToken(name, workspaceId, groupId) {
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
+  if (action === "package-proof") {
+    assert.ok(acceptance, "Package acceptance was not requested");
+    assert.ok(["issuer", "nginx", "haproxy"].every(role => agentAccounts.has(role)));
+    return { ...acceptance.proof(build), agentAccountUid: 10001 };
+  }
   if (action === "transport-fault") {
     assert.ok(["signature", "payload", "replay", "foreign-agent"].includes(body.mode));
     assert.ok(["nginx", "haproxy"].includes(name));
@@ -318,7 +337,18 @@ async function control(body) {
     return { stopped: true };
   }
   if (action === "start") return startAgent(name);
+  if (action === "prepare-signed-dry-run") {
+    assert.ok(acceptance, "Signed operator preview is package acceptance only");
+    await stopAgent(name);
+    const credential = fs.readFileSync(path.join(root, name, "credential"));
+    const old = config(name);
+    config(name, { execution: { ...old.execution, enabled: true, dryRun: true } });
+    await startAgent(name);
+    assert.deepEqual(fs.readFileSync(path.join(root, name, "credential")), credential);
+    return { prepared: true };
+  }
   if (action === "revoke-material-token") {
+    if (acceptance) { await acceptance.revoke(name); return { revoked: true }; }
     await vaultApi("/auth/token/revoke","POST",{token:fs.readFileSync("/lab/"+name+"/material-token","utf8")});
     return {revoked:true};
   }
@@ -343,6 +373,7 @@ async function control(body) {
     await stopAgent(name);
     const result = spawnSync(process.execPath, [build + "/bin/reconcile-material-binding.js", body.bindingId], {
       encoding: "utf8", env: { ...process.env, TOKENTIMER_AGENT_CONFIG_DIR: dir },
+      ...processAccount,
     });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
@@ -362,7 +393,7 @@ async function control(body) {
         name.includes("issuer"),
         name,
       ),
-      execution: { ...old.execution, enabled: true },
+      execution: { ...old.execution, enabled: true, dryRun: false },
     };
     if (!name.includes("issuer")) {
       const { bindingId, authorizationRevision = 1 } = body;
@@ -493,6 +524,22 @@ async function control(body) {
 }
 async function main() {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  if (packageMode) fs.chownSync(root, 10001, 10001);
+  if (packageMode) {
+    const receiptPath = "/lab-input/agent-package/artifact.json";
+    assert.equal(JSON.parse(fs.readFileSync(receiptPath, "utf8")).candidateSha, process.env.TT_UX_CORE_COMMIT);
+    acceptance = require("./package-acceptance.cjs").create({ root, build: "/lab/packaged-agent", receiptPath, artifactsRoot: "/lab-input/agent-package/artifacts" });
+    build = acceptance.prepare();
+    // Administrative host preparation precedes all unprivileged processes.
+    // The ACME subprocess intentionally does not inherit arbitrary CA env vars.
+    for (let attempt = 0; !fs.existsSync("/lab-input/pebble-ca.pem"); attempt++) {
+      assert.ok(attempt < 60, "Owned ACME transport CA was not delivered");
+      await sleep(1000);
+    }
+    fs.copyFileSync("/lab-input/pebble-ca.pem", "/usr/local/share/ca-certificates/tt-owned-pebble.crt");
+    run("update-ca-certificates", []);
+    run("setcap", ["cap_ipc_lock=+ep", "/usr/local/bin/vault"]);
+  } else {
   // Disposable artifact only. The repository/shipped capability files are read-only.
   if (!fs.existsSync(build))
     fs.cpSync(source, build, {
@@ -510,6 +557,7 @@ async function main() {
       "deploy-from-store-v1",
     ]),
   );
+  }
   if (!fs.existsSync(root + "/transport.crt"))
     run("openssl", [
       "req",
@@ -648,5 +696,6 @@ main().catch((e) => {
 });
 process.on("SIGTERM", async () => {
   for (const name of agents.keys()) await stopAgent(name);
+  if (acceptance) await acceptance.close();
   process.exit(0);
 });

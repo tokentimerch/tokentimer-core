@@ -119,12 +119,13 @@ function mapSnapshotKeyAlgorithm(snapshot) {
 }
 
 /**
- * Resolves tokentimer-adcs-cmc next to this package's reference build output.
+ * Resolves the packaged architecture-specific CMC helper, with source builds as
+ * a development fallback. Never execute an AMD64 helper on an ARM64 host.
  * @param {object} [opts]
  * @param {string} [opts.overridePath]
  * @param {string} [opts.packageRoot] defaults to packages/agent
  */
-function resolveAdcsCmcHelperPath({ overridePath, packageRoot } = {}) {
+function resolveAdcsCmcHelperPath({ overridePath, packageRoot, platform = process.platform, arch = process.arch } = {}) {
   if (typeof overridePath === "string" && overridePath.length > 0) {
     if (!fs.existsSync(overridePath)) {
       return { error: `AD CS CMC helper not found at ${overridePath}` };
@@ -135,17 +136,18 @@ function resolveAdcsCmcHelperPath({ overridePath, packageRoot } = {}) {
     typeof packageRoot === "string" && packageRoot.length > 0
       ? packageRoot
       : path.join(__dirname, "..", "..");
-  const name = process.platform === "win32" ? "tokentimer-adcs-cmc.exe" : "tokentimer-adcs-cmc";
-  const candidates = [
-    path.join(root, "reference", "adcs-cmc", "dist", name),
-    path.join(root, "reference", "adcs-cmc", "dist", "tokentimer-adcs-cmc-windows-amd64.exe"),
-  ];
+  const windowsArch = { x64: "amd64", arm64: "arm64" }[arch];
+  const candidates = platform === "win32" ? (windowsArch ? [
+    path.join(root, "bin", `tokentimer-adcs-cmc-${windowsArch}.exe`),
+    path.join(root, "reference", "adcs-cmc", "dist", `tokentimer-adcs-cmc-windows-${windowsArch}.exe`),
+    ...(arch === process.arch ? [path.join(root, "reference", "adcs-cmc", "dist", "tokentimer-adcs-cmc.exe")] : []),
+  ] : []) : [path.join(root, "reference", "adcs-cmc", "dist", "tokentimer-adcs-cmc")];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return { path: candidate };
   }
   return {
     error:
-      "tokentimer-adcs-cmc helper binary is not installed under packages/agent/reference/adcs-cmc/dist",
+      "tokentimer-adcs-cmc helper for the current architecture is not installed under package/bin",
   };
 }
 

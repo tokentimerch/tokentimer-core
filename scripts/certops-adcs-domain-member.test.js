@@ -9,6 +9,24 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
+test("native CA exports retain the dotted certutil verb as one PowerShell argument", () => {
+  // Unquoted -ca.cert parses as two arguments (-ca and .cert), so the native
+  // program selects the unrelated -CA verb and exits before contacting the CA.
+  for (const file of ["domain-verify.ps1", "issuer-destination.ps1", "hierarchy-root.ps1"]) {
+    const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-Command", String.raw`
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_EXPORT_SCRIPT,[ref]$null,[ref]$null)
+$commands=@($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'certutil.exe' -and $node.Extent.Text -match '-ca\.cert'},$true))
+if($commands.Count -ne 1){throw 'Expected one public CA export command'}
+foreach($command in $commands){
+  $verbs=@($command.CommandElements | Where-Object {$_ -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $_.Value -eq '-ca.cert'})
+  if($verbs.Count -ne 1){throw 'Dotted certutil verb was split by PowerShell'}
+}
+`], { encoding: "utf8", windowsHide: true, timeout: 15000,
+      env: { ...process.env, CERTOPS_EXPORT_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs", file) } });
+    assert.equal(result.status, 0, `${file}: ${result.stdout}${result.stderr}`);
+  }
+});
+
 function run(t, failure = "") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-member-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
