@@ -11,7 +11,7 @@ const childProcess = require("node:child_process");
  * A native POSIX child owns a fresh process group: its PGID cannot be reused
  * while any descendant remains. This lets cancellation drain that exact group
  * even when the original tool has already exited. Windows termination targets
- * the child handle's live PID and its descendants before killing the leader.
+ * a wrapper's live PID; its Job Object owns descendants even after launcher exit.
  */
 function execWithoutShell(execFileImpl, argv, timeoutMs, env, signal) {
   if (signal?.aborted) {
@@ -25,6 +25,7 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env, signal) {
     let stoppedError;
     const native = execFileImpl === childProcess.execFile;
     const group = native && process.platform !== "win32";
+    const windowsJob = native && process.platform === "win32";
 
     function terminate(force) {
       if (!child?.pid) return;
@@ -69,10 +70,16 @@ function execWithoutShell(execFileImpl, argv, timeoutMs, env, signal) {
     }
 
     try {
-      if (group) {
-        // execFile does not forward detached to spawn. Use native spawn here
-        // so the POSIX group is actually created and independently killable.
-        child = childProcess.spawn(argv[0], argv.slice(1), {detached: true, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"]});
+      if (group || windowsJob) {
+        // POSIX uses a process group; Windows assigns a suspended child to a
+        // kill-on-close Job Object before allowing it to execute.
+        child = windowsJob
+          ? childProcess.spawn(require("node:path").join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", require("node:path").join(__dirname, "windows-command.ps1")], {windowsHide: true, env, stdio: ["pipe", "pipe", "pipe"]})
+          : childProcess.spawn(argv[0], argv.slice(1), {detached: true, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"]});
+        if (windowsJob) {
+          child.stdin.on("error", () => {}); // Spawn/close handlers report wrapper failure.
+          child.stdin.end(JSON.stringify({executable: argv[0], arguments: argv.slice(1)}));
+        }
         const stdout = [], stderr = [];
         let bytes = 0;
         const collect = target => chunk => {

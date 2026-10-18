@@ -828,7 +828,6 @@ async function runRenewalSchedulerSweep({
       } catch (error) {
         // Retirement may commit after the due-list snapshot. Job creation
         // rejects it; the sweep treats that operator decision as a skip.
-        if (error?.code === "CERTOPS_CERTIFICATE_RETIRED") continue;
         if (
           error?.code === CERTOPS_WORKSPACE_PAUSED ||
           error?.code === CERTOPS_DISABLED
@@ -839,7 +838,7 @@ async function runRenewalSchedulerSweep({
         // Retirement may commit after the scan but before final transactional
         // admission. Only that exact policy refusal is a normal skip; unrelated
         // database or executor failures remain in errors below.
-        if (error?.code === "CERTOPS_CERTIFICATE_NOT_RENEWABLE") {
+        if (["CERTOPS_CERTIFICATE_NOT_RENEWABLE", "CERTOPS_CERTIFICATE_RETIRED"].includes(error?.code)) {
           summary.skippedRetired += 1;
           continue;
         }
