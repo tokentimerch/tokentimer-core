@@ -22,57 +22,66 @@ function verifyForScope(proof, scope, environment) {
   }
   return true;
 }
-function readProof(scope, name, root = path.resolve(__dirname, "..")) {
-  if (scope !== SCOPE || name !== MAIN) return undefined;
-  const file = path.join(root, SIDECAR),
-    original = fs.lstatSync(file, { bigint: true });
-  assert.ok(
-    original.isFile() &&
-      !original.isSymbolicLink() &&
-      original.ino > 0n &&
-      original.nlink === 1n &&
-      original.size > 0n &&
-      original.size <= 32768n,
-  );
-  const fd = fs.openSync(
-      file,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
-    ),
-    bytes = Buffer.alloc(32769);
-  let length = 0;
-  try {
-    const opened = fs.fstatSync(fd, { bigint: true });
+// Shared bounded sidecar reader; each journey retains its own verifier and failure text.
+function createProofReader(sidecar, verify, changedMessage) {
+  return function readProof(scope, name, root = path.resolve(__dirname, "..")) {
+    if (scope !== SCOPE || name !== MAIN) return undefined;
+    const file = path.join(root, sidecar),
+      original = fs.lstatSync(file, { bigint: true });
     assert.ok(
-      opened.isFile() &&
-        opened.dev === original.dev &&
-        opened.ino === original.ino,
+      original.isFile() &&
+        !original.isSymbolicLink() &&
+        original.ino > 0n &&
+        original.nlink === 1n &&
+        original.size > 0n &&
+        original.size <= 32768n,
     );
-    while (length < bytes.length) {
-      const n = fs.readSync(fd, bytes, length, bytes.length - length, null);
-      if (!n) break;
-      length += n;
+    const fd = fs.openSync(
+        file,
+        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
+      ),
+      bytes = Buffer.alloc(32769);
+    let length = 0;
+    try {
+      const opened = fs.fstatSync(fd, { bigint: true });
+      assert.ok(
+        opened.isFile() &&
+          opened.dev === original.dev &&
+          opened.ino === original.ino,
+      );
+      while (length < bytes.length) {
+        const n = fs.readSync(fd, bytes, length, bytes.length - length, null);
+        if (!n) break;
+        length += n;
+      }
+      const final = fs.fstatSync(fd, { bigint: true }),
+        current = fs.lstatSync(file, { bigint: true });
+      assert.ok(
+        length > 0 &&
+          length <= 32768 &&
+          BigInt(length) === opened.size &&
+          final.size === opened.size &&
+          final.mtimeNs === opened.mtimeNs &&
+          final.ctimeNs === opened.ctimeNs &&
+          current.dev === opened.dev &&
+          current.ino === opened.ino &&
+          !current.isSymbolicLink(),
+        changedMessage,
+      );
+    } finally {
+      fs.closeSync(fd);
     }
-    const final = fs.fstatSync(fd, { bigint: true }),
-      current = fs.lstatSync(file, { bigint: true });
-    assert.ok(
-      length > 0 &&
-        length <= 32768 &&
-        BigInt(length) === opened.size &&
-        final.size === opened.size &&
-        final.mtimeNs === opened.mtimeNs &&
-        final.ctimeNs === opened.ctimeNs &&
-        current.dev === opened.dev &&
-        current.ino === opened.ino &&
-        !current.isSymbolicLink(),
-      "Owned native bulk proof changed during read",
-    );
-  } finally {
-    fs.closeSync(fd);
-  }
-  const proof = JSON.parse(bytes.subarray(0, length).toString("utf8"));
-  verifyForScope(proof, scope);
-  return proof;
+    const proof = JSON.parse(bytes.subarray(0, length).toString("utf8"));
+    verify(proof, scope);
+    return proof;
+  };
 }
+const readProof = createProofReader(
+  SIDECAR,
+  verifyForScope,
+  "Owned native bulk proof changed during read",
+);
+
 function verifyCrossJourney(proof, reuse, background) {
   helper.verifyProof(proof);
   require("../tests/e2e/helpers/certops-acme-key-reuse").verifyProof(reuse);
@@ -106,6 +115,7 @@ module.exports = {
   FIELD,
   SIDECAR,
   readProof,
+  createProofReader,
   verifyForScope,
   verifyCrossJourney,
 };

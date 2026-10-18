@@ -70,3 +70,23 @@ test("actual streaming reporter emits every validated Linux native sidecar", asy
     if (name.startsWith("nativeAcme"))
       assert.deepEqual(JSON.parse(JSON.stringify(lines[0][name])), value, name);
 });
+
+test("shared sidecar reader preserves bounds, inode ownership and journey validation", () => {
+  const {createProofReader, SCOPE, MAIN} = require("./certops-acme-bulk-report");
+  const root = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "certops-reader-"));
+  const file = path.join(root, "proof.json");
+  const read = createProofReader("proof.json", value => assert.equal(value.valid, true), "changed proof");
+  try {
+    assert.equal(read("other", MAIN, root), undefined);
+    assert.equal(read(SCOPE, "other", root), undefined);
+    assert.throws(() => read(SCOPE, MAIN, root), {code: "ENOENT"});
+    for (const bytes of ["", "x".repeat(32769), "{", '{"valid":false}']) {
+      fs.writeFileSync(file, bytes);
+      assert.throws(() => read(SCOPE, MAIN, root));
+    }
+    fs.writeFileSync(file, '{"valid":true}');
+    assert.deepEqual(read(SCOPE, MAIN, root), {valid: true});
+    fs.linkSync(file, path.join(root, "alias.json"));
+    assert.throws(() => read(SCOPE, MAIN, root));
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});

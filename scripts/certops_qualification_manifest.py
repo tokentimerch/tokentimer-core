@@ -15,7 +15,20 @@ def expand(value):
                 or not all(isinstance(file, str) and file for file in sources)
                 or len(set(sources)) != len(sources)):
             raise ValueError("Invalid source group")
+    environments = manifest.pop("environmentGroups", {})
+    if not isinstance(environments, dict) or len(environments) > 512:
+        raise ValueError("Invalid environment groups")
+    for name, environment in environments.items():
+        if (not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", name)
+                or not isinstance(environment, dict) or not environment):
+            raise ValueError("Invalid environment group")
     for slot in manifest.get("slots", []):
+        if "environmentGroup" in slot:
+            name = slot["environmentGroup"]
+            if "environment" in slot or not isinstance(name, str) or name not in environments:
+                raise ValueError("Conflicting or unknown environment group")
+            slot["environment"] = copy.deepcopy(environments[name])
+            del slot["environmentGroup"]
         if "requiredSourceGroup" not in slot:
             continue
         name = slot["requiredSourceGroup"]

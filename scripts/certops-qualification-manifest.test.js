@@ -33,3 +33,20 @@ test("every expanded committed slot retains a bounded unique source list", () =>
     assert.equal(new Set(slot.requiredSources).size, slot.requiredSources.length);
   }
 });
+
+test("environment references reject ambiguity and expand into independent nested objects", () => {
+  const input = {environmentGroups: {ubuntu: {osFamily: "linux", nested: {version: "24.04"}}}, slots: [{environmentGroup: "ubuntu"}, {environmentGroup: "ubuntu"}]};
+  const result = expand(input);
+  result.slots[0].environment.nested.version = "changed";
+  assert.equal(result.slots[1].environment.nested.version, "24.04");
+  assert.equal(input.environmentGroups.ubuntu.nested.version, "24.04");
+  assert.deepEqual(expand({slots: [{environment: {osFamily: "linux"}}]}), {slots: [{environment: {osFamily: "linux"}}]});
+  for (const patch of [
+    {environmentGroups: null}, {environmentGroups: []},
+    {environmentGroups: {ubuntu: null}}, {environmentGroups: {ubuntu: []}},
+    {environmentGroups: {ubuntu: {}}}, {environmentGroups: {"../ubuntu": {osFamily: "linux"}}},
+    {slots: [{environmentGroup: "missing"}]},
+    {slots: [{environmentGroup: "ubuntu", environment: {}}]},
+    {slots: [{environmentGroup: ["ubuntu"]}]},
+  ]) assert.throws(() => expand({...input, ...patch}));
+});

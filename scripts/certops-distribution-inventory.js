@@ -4,20 +4,18 @@ const fs = require("node:fs"),
   path = require("node:path");
 function validate(root = path.resolve(__dirname, "..")) {
   const errors = [],
-    matrix = JSON.parse(
+    matrix = require("./certops-qualification-manifest").expand(JSON.parse(
       fs.readFileSync(
         path.join(root, "docs/certops/qualification-suites.json"),
       ),
-    );
+    ));
   const {
     PHASES,
     SUITE,
   } = require("../tests/wildcard-vault/ux-lab/qualification.cjs");
-  const q = JSON.parse(
-    fs.readFileSync(path.join(root, "docs/certops/qualification-suites.json")),
-  );
+
   if (
-    JSON.stringify(q.suites[SUITE]) !==
+    JSON.stringify(matrix.suites[SUITE]) !==
     JSON.stringify(PHASES.map((p) => "distribution-" + p))
   )
     errors.push("Distribution phase inventory differs from strict runner");

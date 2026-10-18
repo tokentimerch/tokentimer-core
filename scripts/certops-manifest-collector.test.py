@@ -30,6 +30,23 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 expand(value)
 
+    def test_environment_references_are_strict_and_independent(self):
+        value = {"environmentGroups": {"ubuntu": {"nested": {"version": "24.04"}}}, "slots": [{"environmentGroup": "ubuntu"}, {"environmentGroup": "ubuntu"}]}
+        result = expand(value)
+        result["slots"][0]["environment"]["nested"]["version"] = "changed"
+        self.assertEqual(result["slots"][1]["environment"]["nested"]["version"], "24.04")
+        self.assertEqual(value["environmentGroups"]["ubuntu"]["nested"]["version"], "24.04")
+        for patch in [
+            {"environmentGroups": None}, {"environmentGroups": []},
+            {"environmentGroups": {"ubuntu": None}}, {"environmentGroups": {"ubuntu": []}},
+            {"environmentGroups": {"ubuntu": {}}}, {"environmentGroups": {"../ubuntu": {"osFamily": "linux"}}},
+            {"slots": [{"environmentGroup": "missing"}]},
+            {"slots": [{"environmentGroup": "ubuntu", "environment": {}}]},
+            {"slots": [{"environmentGroup": ["ubuntu"]}]},
+        ]:
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                expand({**value, **patch})
+
     def test_groups_do_not_share_mutable_arrays(self):
         value = {"sourceGroups": {"shared": ["a"]}, "slots": [{"requiredSourceGroup": "shared"}, {"requiredSourceGroup": "shared"}]}
         result = expand(value)

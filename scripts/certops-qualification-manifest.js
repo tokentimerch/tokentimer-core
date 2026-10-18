@@ -3,7 +3,7 @@
 // same independent, expanded slots used by report and fingerprint verification.
 const assert = require("node:assert/strict");
 function expand(input) {
-  const { sourceGroups = {}, ...manifest } = structuredClone(input);
+  const { sourceGroups = {}, environmentGroups = {}, ...manifest } = structuredClone(input);
   assert.ok(sourceGroups && typeof sourceGroups === "object" && !Array.isArray(sourceGroups));
   assert.ok(Object.keys(sourceGroups).length <= 512);
   for (const [name, sources] of Object.entries(sourceGroups)) {
@@ -12,7 +12,20 @@ function expand(input) {
     assert.ok(sources.every(file => typeof file === "string" && file.length > 0));
     assert.equal(new Set(sources).size, sources.length);
   }
+  assert.ok(environmentGroups && typeof environmentGroups === "object" && !Array.isArray(environmentGroups));
+  assert.ok(Object.keys(environmentGroups).length <= 512);
+  for (const [name, environment] of Object.entries(environmentGroups)) {
+    assert.match(name, /^[a-z0-9][a-z0-9-]{0,127}$/);
+    assert.ok(environment && typeof environment === "object" && !Array.isArray(environment) && Object.keys(environment).length > 0);
+  }
   for (const slot of manifest.slots || []) {
+    if (Object.hasOwn(slot, "environmentGroup")) {
+      assert.ok(!Object.hasOwn(slot, "environment"), "Conflicting environment declarations");
+      assert.ok(typeof slot.environmentGroup === "string" && Object.hasOwn(environmentGroups, slot.environmentGroup), "Unknown environment group");
+      slot.environment = structuredClone(environmentGroups[slot.environmentGroup]);
+      delete slot.environmentGroup;
+    }
+
     if (!Object.hasOwn(slot, "requiredSourceGroup")) continue;
     assert.ok(!Object.hasOwn(slot, "requiredSources"), "Conflicting source declarations");
     assert.ok(typeof slot.requiredSourceGroup === "string" && Object.hasOwn(sourceGroups, slot.requiredSourceGroup), "Unknown source group");
