@@ -41,7 +41,7 @@ $ast=[Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_PROVISION_S
 $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-Stage'},$true)
 . ([scriptblock]::Create($definition.Extent.Text))
 function Refresh-LabAuthentication {}
-function az { $global:LASTEXITCODE=0; return ConvertTo-Json -Depth 5 @{value=@(@{message=$env:CERTOPS_STAGE_RESPONSE})} }
+function Invoke-CertOpsVmRunCommand { return [pscustomobject]@{value=@([pscustomobject]@{message=$env:CERTOPS_STAGE_RESPONSE})} }
 $ResourceGroup='tt-certops-123-1'
 $receipts=[Collections.Generic.List[string]]::new()
 $publicStageData=@{}

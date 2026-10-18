@@ -21,6 +21,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'arm-operation.ps1')
 if($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0'){throw 'Only the core AD CS lab is included; extended campaigns are deferred'}
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
@@ -64,13 +65,7 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
   [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
-  $commandId=if($Machine -eq 'control-plane'){'RunShellScript'}else{'RunPowerShellScript'}
-  $arguments = @('vm','run-command','invoke','--resource-group',$ResourceGroup,'--name',$Machine,'--command-id',$commandId,'--scripts',"@$Script",'-o','json')
-  if ($Parameters.Count) { $arguments += @('--parameters'); $arguments += $Parameters }
-  Refresh-LabAuthentication
-  $text = az @arguments
-  if ($LASTEXITCODE -ne 0) { throw "Native lab stage failed for $Machine" }
-  $response = $text | ConvertFrom-Json
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $Machine -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains($Marker)) {
     foreach($exportDiagnostic in [regex]::Matches($message,'(?m)^CERTOPS_CA_EXPORT_(?:EXIT=-?[0-9]{1,11}|HRESULT=0X[0-9A-F]{8})\s*$')){
@@ -93,18 +88,34 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
   $receipts.Add($Marker)
 }
 function Wait-Agent([string]$Machine) {
-  Refresh-LabAuthentication
   for ($attempt=0; $attempt -lt 30; $attempt++) {
+    Refresh-LabAuthentication
     $state = az vm get-instance-view -g $ResourceGroup -n $Machine --query "instanceView.vmAgent.statuses[0].code" -o tsv
     if ($LASTEXITCODE -eq 0 -and $state -eq 'ProvisioningState/succeeded') { return }
     Start-Sleep -Seconds 10
   }
   throw "Guest agent did not become ready after reboot: $Machine"
 }
+function Restart-LabMachine([string]$Machine) {
+  $uri="https://management.azure.com/subscriptions/$env:AZURE_SUBSCRIPTION_ID/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$Machine/restart?api-version=2024-07-01"
+  $null=Invoke-CertOpsArmOperation -Uri $uri -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -RefreshAuthentication ${function:Refresh-LabAuthentication} -TimeoutSeconds 900
+  Wait-Agent $Machine
+}
+function Wait-LabDeployment {
+  $deadline=[DateTimeOffset]::UtcNow.AddMinutes(30)
+  do {
+    Refresh-LabAuthentication
+    $state=az deployment group show -g $ResourceGroup --name qualification --query properties.provisioningState -o tsv
+    if($LASTEXITCODE -ne 0){throw 'Could not inspect owned lab deployment'}
+    if($state -eq 'Succeeded'){return}
+    if($state -in 'Failed','Canceled','Cancelled'){throw 'Owned lab deployment failed'}
+    Start-Sleep -Seconds 15
+  }while([DateTimeOffset]::UtcNow -lt $deadline)
+  throw 'Owned lab deployment timed out'
+}
 function Start-ControlPlane() {
   Refresh-LabAuthentication
-  $response = az vm run-command invoke -g $ResourceGroup -n control-plane --command-id RunShellScript --scripts "@$(Join-Path $PSScriptRoot 'control-plane.sh')" --parameters "candidate=$candidateSha" "journal_phase=$JournalPhaseExperiment" "adcs_ttl24h=$AdcsTtl24hPrepare" -o json | ConvertFrom-Json
-  if ($LASTEXITCODE -ne 0) { throw 'Private control plane bootstrap failed' }
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'control-plane.sh'))) -Parameters @("candidate=$candidateSha","journal_phase=$JournalPhaseExperiment","adcs_ttl24h=$AdcsTtl24hPrepare") -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains('CERTOPS_STAGE=private-https-control-plane-running')) { throw 'Private HTTPS control plane receipt absent' }
   $match = [regex]::Match($message,'-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----')
@@ -126,22 +137,19 @@ try {
   az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
   if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
   @{ vmSize=@{value=$VmSize}; expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
-  az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" -o none
+  az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" --no-wait -o none
   if ($LASTEXITCODE -ne 0) { throw 'Private lab deployment failed' }
+  Wait-LabDeployment
   if($Language -ne 'en-US'){
     foreach($node in @('domain-ca','windows-agent')){
       $version=if($node -eq 'domain-ca'){'2022'}else{$WindowsVersion}
       $asset=$languageAssets["$version/$Language"]
       Invoke-Stage $node (Join-Path $PSScriptRoot 'language-pack.ps1') 'CERTOPS_STAGE=language-installed-reboot-required' @("Language=$Language","PackageUri=$($asset.uri)","PackageSha256=$($asset.sha256)")
-      az vm restart -g $ResourceGroup -n $node -o none
-      if($LASTEXITCODE -ne 0){throw 'Language installation reboot failed'}
-      Wait-Agent $node
+      Restart-LabMachine $node
     }
   }
   Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-forest.ps1') 'CERTOPS_STAGE=forest-created-reboot-required' @("DirectoryRecoveryPassword=$password")
-  az vm restart -g $ResourceGroup -n domain-ca -o none
-  if ($LASTEXITCODE -ne 0) { throw 'Domain controller restart failed' }
-  Wait-Agent 'domain-ca'
+  Restart-LabMachine 'domain-ca'
   if($HierarchyRole -eq 'subordinate'){
     Invoke-Stage 'offline-root' (Join-Path $PSScriptRoot 'hierarchy-root.ps1') 'CERTOPS_STAGE=offline-root-prepared' @('Action=prepare')
     Invoke-Stage 'domain-ca' (Join-Path $PSScriptRoot 'domain-ca.ps1') 'CERTOPS_STAGE=enterprise-subordinate-request-created' @("DomainPassword=$password",'HierarchyRole=subordinate')
@@ -158,19 +166,15 @@ try {
   Start-ControlPlane
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){
     Refresh-LabAuthentication
-    $browserResponse=az vm run-command invoke -g $ResourceGroup -n control-plane --command-id RunShellScript --scripts "@$(Join-Path $PSScriptRoot 'browser-control-plane.sh')" --parameters "candidate=$candidateSha" -o json | ConvertFrom-Json
+    $browserResponse=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine control-plane -Script ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'browser-control-plane.sh'))) -Parameters @("candidate=$candidateSha") -RefreshAuthentication ${function:Refresh-LabAuthentication}
     if($LASTEXITCODE -ne 0 -or -not (($browserResponse.value | ForEach-Object message) -join "`n").Contains('CERTOPS_STAGE=private-same-origin-dashboard-ready')){throw 'Private browser dashboard bootstrap failed'}
     $receipts.Add('CERTOPS_STAGE=private-same-origin-dashboard-ready')
   }
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'domain-member.ps1') 'CERTOPS_STAGE=member-joined-reboot-required' @("DomainPassword=$password")
-  az vm restart -g $ResourceGroup -n windows-agent -o none
-  if ($LASTEXITCODE -ne 0) { throw 'Domain member restart failed' }
-  Wait-Agent 'windows-agent'
+  Restart-LabMachine 'windows-agent'
   if($IssuerReassignment -eq '1'){
     Invoke-Stage 'destination-ca' (Join-Path $PSScriptRoot 'issuer-destination.ps1') 'CERTOPS_STAGE=destination-ca-joined-reboot-required' @("DomainPassword=$password",'Action=join')
-    az vm restart -g $ResourceGroup -n destination-ca -o none
-    if($LASTEXITCODE -ne 0){throw 'Destination member restart failed'}
-    Wait-Agent 'destination-ca'
+    Restart-LabMachine 'destination-ca'
     Invoke-Stage 'destination-ca' (Join-Path $PSScriptRoot 'issuer-destination.ps1') 'CERTOPS_STAGE=destination-enterprise-ca-running' @("DomainPassword=$password",'Action=install')
     Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'issuer-destination.ps1') 'CERTOPS_STAGE=destination-ca-trusted-by-member' @("DomainPassword=$password",'Action=trust')
   }

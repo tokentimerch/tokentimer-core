@@ -5,6 +5,7 @@ absent/incomplete reports as a passing qualification.
 #>
 param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][string]$ResourceGroup,[ValidateSet('package-acceptance','uncertain-abandon','browser-enrollment','issuer-switch','qualification','hierarchy','response-loss-experimental','journal-phase-experimental','pending-elapsed')][string]$ReportKind='qualification')
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'arm-operation.ps1')
 if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}
 $bytes=[Collections.Generic.List[byte]]::new()
 $length=$null
@@ -14,7 +15,7 @@ $guestFile=if($ReportKind -eq 'package-acceptance'){'adcs-package-acceptance.jso
 $outputFile=if($ReportKind -eq 'package-acceptance'){'enterprise-adcs-package-acceptance.json'}elseif($ReportKind -eq 'uncertain-abandon'){'enterprise-adcs-uncertain-abandon.json'}elseif($ReportKind -eq 'browser-enrollment'){'enterprise-adcs-browser-enrollment.json'}elseif($ReportKind -eq 'issuer-switch'){'native-issuer-reassignment.json'}elseif($ReportKind -eq 'pending-elapsed'){'enterprise-adcs-elapsed-pending-real.json'}elseif($ReportKind -eq 'qualification'){'enterprise-adcs-real.json'}elseif($ReportKind -eq 'hierarchy'){'enterprise-adcs-hierarchy-real.json'}elseif($ReportKind -eq 'response-loss-experimental'){'enterprise-adcs-response-loss-experimental.json'}else{'enterprise-adcs-journal-phase-experimental.json'}
 do {
   $script="`$b=[Text.Encoding]::UTF8.GetBytes([IO.File]::ReadAllText('C:\ttqualification\$guestFile')); `$hash=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(`$b)).Replace('-','').ToLowerInvariant(); Write-Output ('CERTOPS_REPORT_SHA256='+`$hash); Write-Output ('CERTOPS_REPORT_LENGTH='+`$b.Length); if (`$b.Length -gt $offset) { Write-Output ('CERTOPS_REPORT_CHUNK='+[Convert]::ToBase64String(`$b,$offset,[Math]::Min(2048,`$b.Length-$offset))) }"
-  $response=az vm run-command invoke -g $ResourceGroup -n windows-agent --command-id RunPowerShellScript --scripts $script -o json | ConvertFrom-Json
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine windows-agent -Script $script -RefreshAuthentication {if($env:GITHUB_ACTIONS -eq 'true'){& (Join-Path $PSScriptRoot 'login-oidc.ps1')}}
   if($LASTEXITCODE -ne 0){throw 'Could not retrieve sanitized guest execution evidence'}
   $message=($response.value|ForEach-Object message)-join "`n"
   $match=[regex]::Match($message,'CERTOPS_REPORT_LENGTH=([0-9]+)')
