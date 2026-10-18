@@ -31,7 +31,9 @@ import certops_native_issuer_reassignment_proof as issuer_reassignment_proof
 import certops_adcs_browser_enrollment_proof as browser_enrollment_proof
 import certops_adcs_uncertain_abandon_proof as uncertain_abandon_proof
 ROOT = Path(__file__).resolve().parent.parent
-WORKFLOWS = {'.github/workflows/certops-enterprise-adcs-qualification.yml', '.github/workflows/certops-distribution-qualification.yml', '.github/workflows/certops-qualification.yml'}
+CI_WORKFLOW = '.github/workflows/ci.yml'
+CI_API_SUITES = {'adcs-enrollment-policy-api', 'adcs-installation-recovery-api', 'adcs-api-release-gates'}
+WORKFLOWS = {CI_WORKFLOW, '.github/workflows/certops-enterprise-adcs-qualification.yml', '.github/workflows/certops-distribution-qualification.yml', '.github/workflows/certops-qualification.yml'}
 MAX_ARCHIVE = 20 * 1024 * 1024
 MAX_REPORT = 2 * 1024 * 1024
 MAX_TOTAL_DOWNLOAD = 512 * 1024 * 1024
@@ -74,6 +76,15 @@ def validate_matrix_summary(value, candidate, environments, coverage, selection=
 def validate_run(run, candidate, repository):
     if run.get('status') != 'completed' or run.get('conclusion') != 'success' or run.get('head_sha') != candidate or (run.get('head_branch') != 'main') or (run.get('repository', {}).get('full_name') != repository) or (run.get('head_repository', {}).get('full_name') != repository) or (run.get('path') not in WORKFLOWS) or (run.get('event') not in ('push', 'workflow_dispatch')):
         raise ValueError('Selected run is not successful trusted-main candidate qualification')
+
+def collectable_artifact(run, artifact):
+    # Normal CI also uploads logs, JUnit and other unrelated artifacts. Only its
+    # dedicated sanitized AD CS report collection belongs in qualification.
+    return run.get('path') != CI_WORKFLOW or artifact.get('name') == 'certops-adcs-api'
+
+def validate_report_workflow(report, workflow):
+    if workflow == CI_WORKFLOW and (not isinstance(report, dict) or report.get('suite') not in CI_API_SUITES):
+        raise ValueError('Normal CI may supply only AD CS API qualification reports')
 
 def declared_sources():
     slots = json.loads((ROOT / 'docs/certops/qualification-suites.json').read_text())['slots']
@@ -1021,6 +1032,8 @@ def main(arguments=()):
             if data.get('total_count', 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError('Artifact inventory exceeds explicit bound')
             for artifact in data.get('artifacts', []):
+                if not collectable_artifact(run, artifact):
+                    continue
                 archive_count += 1
                 if archive_count > limits['archives']:
                     raise ValueError('Collection artifact count exceeds limit')
@@ -1035,6 +1048,7 @@ def main(arguments=()):
                     raise ValueError('Collection total download size exceeds limit')
                 reports = extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
+                    validate_report_workflow(report, run.get('path'))
                     issuer_reassignment_proof.verify_workflow(report, run.get('path'))
                     browser_enrollment_proof.verify_workflow(report, run.get('path'))
                     uncertain_abandon_proof.verify_workflow(report, run.get('path'))

@@ -356,6 +356,24 @@ jobs:
           DB_PASSWORD: password
         run: pnpm run certops:integrity-check
 
+      - name: Run AD CS API qualification on the existing test stack
+        env:
+          CERTOPS_ENABLED: 'true'
+          CERTOPS_E2E_REQUIRED: '1'
+          CERTOPS_CSR_DISPOSABLE_STACK: '1'
+          CERTOPS_CSR_API_URL: http://localhost:4000
+          CERTOPS_API_REPORTS_DIR: qualification-results/api
+          CERTOPS_API_WORKER_FIXTURE_KEY: test-session-secret-key
+          CERTOPS_SIGNING_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          CERTOPS_REGISTRATION_ENCRYPTION_KEY: abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: tokentimer
+          DB_USER: tokentimer
+          DB_PASSWORD: password
+        run: node scripts/certops-api-qualification.js
+
       - name: Run integration tests (Mocha + JUnit)
         env:
           TEST_API_URL: http://localhost:4000
@@ -363,6 +381,14 @@ jobs:
         run: |
           mkdir -p test-results
           pnpm run test:ci
+
+      - name: Preserve verified AD CS API reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: certops-adcs-api
+          path: qualification-results/api/
+          if-no-files-found: error
 
       - name: Capture docker logs
         if: always()

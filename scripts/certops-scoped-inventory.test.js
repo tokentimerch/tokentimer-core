@@ -2,7 +2,7 @@
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os"),crypto=require("node:crypto"),{spawnSync}=require("node:child_process");
 const root=path.resolve(__dirname,".."),matrix=require("../docs/certops/qualification-suites.json");
 test("AD CS and Vault split inventories have exact implemented dependency files",()=>{const scopes=require("./certops-qualification-profiles"),allowed=new Set([...scopes.DOMAIN,...scopes.EXTENDED,"adcs-api-release-gates","adcs-database-integration","adcs-installation-recovery-api","adcs-enrollment-policy-api","distribution-agent-lab","distribution-vault-adapter","distribution-postgres-postgres","distribution-postgres-pr329-review","distribution-postgres-transfer"]);for(const slot of matrix.slots){assert.ok(allowed.has(slot.suite),slot.suite);if(!["enterprise-adcs-real","adcs-api-release-gates","adcs-database-integration","adcs-installation-recovery-api","adcs-enrollment-policy-api","distribution-agent-lab","distribution-vault-adapter","distribution-postgres-postgres","distribution-postgres-pr329-review","distribution-postgres-transfer"].includes(slot.suite))continue;for(const file of [slot.source,...(slot.requiredSources||[])])assert.ok(fs.statSync(path.join(root,file)).isFile(),file);}assert.deepEqual(require("./certops-api-qualification").suites.map(row=>row[0]).sort(),["adcs-api-release-gates","adcs-enrollment-policy-api","adcs-installation-recovery-api"]);});
-test("retained workflows enforce the scoped main reference and exact manual API boundary",()=>{const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml"),guard=require("./certops-workflow-security");assert.deepEqual(guard.check(),[]);const name="certops-qualification.yml",workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows",name),"utf8"));assert.deepEqual(guard.validateWorkflow(workflow,name),[]);for(const condition of ["always()","github.ref == 'refs/heads/foreign'","github.event_name == 'workflow_dispatch'"]){const bad=structuredClone(workflow);bad.jobs["adcs-api"].if=condition;assert.ok(guard.validateWorkflow(bad,name).length);}const discovered=require("./run-certops-tooling-tests").discover();assert.ok(discovered.length>50);assert.ok(discovered.every(file=>!/(?:acme|kubernetes|linux|arm64)/.test(file)));});
+test("retained workflows enforce the scoped main reference and exact manual integration boundary",()=>{const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml"),guard=require("./certops-workflow-security");assert.deepEqual(guard.check(),[]);const name="certops-qualification.yml",workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows",name),"utf8"));assert.deepEqual(guard.validateWorkflow(workflow,name),[]);for(const condition of ["always()","github.ref == 'refs/heads/foreign'","github.event_name == 'workflow_dispatch'"]){const bad=structuredClone(workflow);bad.jobs["integration"].if=condition;assert.ok(guard.validateWorkflow(bad,name).length);}const discovered=require("./run-certops-tooling-tests").discover();assert.ok(discovered.length>50);assert.ok(discovered.every(file=>!/(?:acme|kubernetes|linux|arm64)/.test(file)));});
 test("scoped JSONL reporter measures outcomes and exact source without raw assertions",t=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),"certops-scoped-reporter-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const source=path.join(dir,"public.test.cjs");fs.writeFileSync(source,"require('node:test')('bounded case',()=>require('node:assert/strict').equal('private-assertion-sentinel','different'));\n");const report=path.join(dir,"events.jsonl"),env={...process.env,GITHUB_ACTIONS:"true",GITHUB_SHA:"a".repeat(40),CERTOPS_REPORT_SCOPE:"distribution-vault-adapter"};delete env.NODE_TEST_CONTEXT;const child=spawnSync(process.execPath,["--test","--test-reporter="+require("node:url").pathToFileURL(path.join(__dirname,"certops-stack-reporter.js")).href,"--test-reporter-destination="+report,source],{env,encoding:"utf8",timeout:30000,windowsHide:true});assert.equal(child.status,1,child.stderr);const text=fs.readFileSync(report,"utf8"),events=text.trim().split(/\r?\n/).map(JSON.parse);assert.equal(events.length,1);assert.equal(events[0].type,"test:fail");assert.equal(events[0].artifactQualification,"workflow-checkout-source");assert.equal(events[0].fixtureSource.sha256,crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex"));assert.doesNotMatch(text,/private-assertion-sentinel|different/);assert.equal(events[0].qualificationEnvironment.measurement,"native");});
 
 test("distribution qualification requires explicit dispatch even for relevant main pushes",()=>{
@@ -14,11 +14,27 @@ test("distribution qualification requires explicit dispatch even for relevant ma
 
 test("supporting API container receives the qualification encryption keys",()=>{
  const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
- const workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows/certops-qualification.yml"),"utf8"));
+ const workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows/ci.yml"),"utf8"));
  const compose=yaml.load(fs.readFileSync(path.join(root,"deploy/compose/docker-compose.test.yml"),"utf8"));
  for(const name of ["CERTOPS_SIGNING_ENCRYPTION_KEY","CERTOPS_REGISTRATION_ENCRYPTION_KEY"]){
   const entry=compose.services.api.environment.find(value=>value.startsWith(name+"="));assert.ok(entry,`${name} must reach the API container`);
   const match=entry.slice(name.length+1).match(/^\$\{([^:]+):-([a-f0-9]{64})\}$/);assert.ok(match);assert.equal(match[1],name);
-  assert.match(workflow.jobs["adcs-api"].env[name],/^[a-f0-9]{64}$/);
+  assert.match(workflow.jobs.build_and_test.steps.find(step=>step.run==="node scripts/certops-api-qualification.js").env[name],/^[a-f0-9]{64}$/);
  }
+});
+
+test("normal CI runs AD CS API suites once on its existing stack and preserves verified reports",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
+ const ci=yaml.load(fs.readFileSync(path.join(root,".github/workflows/ci.yml"),"utf8"));
+ const supporting=yaml.load(fs.readFileSync(path.join(root,".github/workflows/certops-qualification.yml"),"utf8"));
+ const steps=ci.jobs.build_and_test.steps;
+ const starts=steps.filter(step=>/docker compose.* up .*--build/.test(step.run||""));assert.equal(starts.length,1);
+ const index=steps.findIndex(step=>step.run==="node scripts/certops-api-qualification.js");assert.ok(index>steps.indexOf(starts[0]));
+ assert.ok(index>steps.findIndex(step=>step.name==="Wait for backend readiness"));
+ assert.ok(index<steps.findIndex(step=>step.name==="Run integration tests (Mocha + JUnit)"));
+ const run=steps[index];assert.notEqual(run["continue-on-error"],true);assert.equal(run.env.CERTOPS_CSR_DISPOSABLE_STACK,"1");assert.equal(run.env.CERTOPS_CSR_API_URL,"http://localhost:4000");
+ const artifacts=steps.filter(step=>step.with?.name==="certops-adcs-api");assert.equal(artifacts.length,1);assert.equal(artifacts[0].if,"always()");assert.equal(artifacts[0].with.path,"qualification-results/api/");assert.equal(artifacts[0].with["if-no-files-found"],"error");
+ assert.equal(supporting.jobs["adcs-api"],undefined);
+ assert.ok(Object.values(supporting.jobs).every(job=>!(job.steps||[]).some(step=>(step.run||"").includes("scripts/certops-api-qualification.js"))));
+ assert.ok(!Object.hasOwn(ci.on,"pull_request"));
 });

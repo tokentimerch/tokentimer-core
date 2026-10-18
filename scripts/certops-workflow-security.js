@@ -15,7 +15,7 @@ function validateWorkflow(workflow,name="workflow"){
   if(permissions.contents!=="read")fail("contents read permission required");
   for(const [id,job] of Object.entries(workflow.jobs||{})){
     if(name==="certops-adcs-lab-janitor.yml"&&job.environment!=="certops-adcs-cleanup")fail(`${id} independent expiry cleanup requires its dedicated unattended environment`);
-    const scopedApi = name === "certops-qualification.yml" && ["adcs-api", "integration"].includes(id) && job.if === "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.lane != 'tooling'";
+    const scopedApi = name === "certops-qualification.yml" && id === "integration" && job.if === "github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.lane != 'tooling'";
     const scopedAggregate = name === "certops-distribution-qualification.yml" && id === "functional-summary" && JSON.stringify(job.needs) === JSON.stringify(["postgres", "agent-lab"]) && job.if === "${{ always() && github.ref == 'refs/heads/main' }}";
     if(job.if!=="github.ref == 'refs/heads/main'"&&!scopedApi&&!scopedAggregate&&!require("./certops-azure-scope-policy").allowedCondition(name,job.if))fail(`${id} must enforce the exact trusted main reference`);
     if(!Number.isInteger(job["timeout-minutes"])||job["timeout-minutes"]<1||job["timeout-minutes"]>180)fail(`${id} requires a bounded timeout`);

@@ -841,7 +841,22 @@ class CollectorTests(unittest.TestCase):
             for field, value in (('head_branch', 'feature'), ('head_sha', 'b' * 40), ('event', 'pull_request'), ('conclusion', 'cancelled')):
                 with self.subTest(workflow=workflow, field=field), self.assertRaises(ValueError):
                     collector.validate_run({**trusted, field: value}, 'a' * 40, 'owner/repo')
-        for field, value in (('head_sha', 'b' * 40), ('head_branch', 'other'), ('conclusion', 'failure'), ('path', '.github/workflows/ci.yml'), ('event', 'pull_request')):
+        for field, value in (('head_sha', 'b' * 40), ('head_branch', 'other'), ('conclusion', 'failure'), ('path', '.github/workflows/unreviewed.yml'), ('event', 'pull_request')):
+            with self.assertRaises(ValueError):
+                collector.validate_run({**run, field: value}, 'a' * 40, 'owner/repo')
+
+    def test_normal_ci_collects_only_dedicated_api_reports(self):
+        run = {'status': 'completed', 'conclusion': 'success', 'head_sha': 'a' * 40, 'head_branch': 'main', 'repository': {'full_name': 'owner/repo'}, 'head_repository': {'full_name': 'owner/repo'}, 'path': '.github/workflows/ci.yml', 'event': 'push'}
+        collector.validate_run(run, 'a' * 40, 'owner/repo')
+        self.assertTrue(collector.collectable_artifact(run, {'name': 'certops-adcs-api'}))
+        for name in ('docker-logs', 'junit-test-results', '', None):
+            self.assertFalse(collector.collectable_artifact(run, {'name': name}))
+        for suite in collector.CI_API_SUITES:
+            collector.validate_report_workflow({'suite': suite}, run['path'])
+        for suite in ('enterprise-adcs-real', 'distribution-agent-lab', None):
+            with self.assertRaises(ValueError):
+                collector.validate_report_workflow({'suite': suite}, run['path'])
+        for field, value in (('event', 'pull_request'), ('head_branch', 'feature'), ('conclusion', 'failure'), ('head_sha', 'b' * 40)):
             with self.assertRaises(ValueError):
                 collector.validate_run({**run, field: value}, 'a' * 40, 'owner/repo')
 

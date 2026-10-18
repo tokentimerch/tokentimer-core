@@ -4,7 +4,7 @@ Run local framework checks with `pnpm run test:certops:qualification` and collec
 
 ## Dispatch
 
-From trusted main, dispatch `certops-qualification.yml`: choose `tooling` for local checks or `stack`/`all` to include disposable API and PostgreSQL tests. No PR dispatch is enabled.
+Normal CI runs the three AD CS API suites on its existing integration stack and uploads verified reports. From trusted main, dispatch `certops-qualification.yml`: choose `tooling` for local checks or `stack`/`all` for the separate PostgreSQL qualification. No PR dispatch is enabled.
 
 For native enrollment, pending approval/denial, renewal, recovery, IIS/CNG custody and browser authorization, dispatch `certops-enterprise-adcs-qualification.yml`. Choose an Azure region and VM size available to the subscription, Server version and language explicitly. The lab checks SKU restrictions and six-vCPU regional/family quota before creating resources. This creates a temporary domain-backed lab; it requires repository variable `CERTOPS_ADCS_LAB_ENABLED=true` and protected environment `certops-adcs-lab` with Azure OIDC variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`. Non-English images also require `CERTOPS_WINDOWS_LANGUAGE_ASSETS`. Azure is used only for the domain lab.
 

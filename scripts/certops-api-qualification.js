@@ -1,6 +1,6 @@
 /**
  * Run the supporting public-API/PostgreSQL suites and verify each current-source report.
- * Invoked by certops-qualification.yml against its disposable stack; requires
+ * Invoked by normal CI against its existing disposable integration stack; requires
  * CERTOPS_CSR_API_URL and explicit disposable-stack authorization. Protocol fixtures
  * exercise server admission and persistence; native certificate deployment has separate suites. */
 "use strict";
