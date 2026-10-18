@@ -13,12 +13,16 @@ function verify(report){
   assert.equal(report.qualificationStatus,"not-qualified");assert.equal(report.status,"passed");
   assert.match(report.candidateSha,/^[a-f0-9]{40}$/i);assert.match(report.fixtureSource?.sha256,/^[a-f0-9]{64}$/i);
   assert.equal(report.fixtureSource.file,"tests/e2e/helpers/certops-adcs-journal-phase-experiment.js");
-  assert.ok(["keygen_intent","prepared","submitting","installing"].includes(report.phase));assert.equal(report.fault?.phase,report.phase);
+  assert.ok(["keygen_intent","prepared","submitting","issued","installing"].includes(report.phase));assert.equal(report.fault?.phase,report.phase);
   for(const field of ["observedDurablePhase","unchangedAfterTermination","ownedServiceTree"])assert.equal(report.fault[field],true);
   assert.equal(report.fault.nativeIdentity,"LocalSystem");assert.equal(report.actualRenewedLeaseObserved,true);assert.equal(report.actualOrphanedJobObserved,true);assert.equal(report.ownedScmRecoveryTemporarilyDisabled,true);assert.equal(report.ownedScmRecoveryRestored,true);
   assert.equal(report.operatorRecoveryAuditObserved,true);assert.equal(report.originalUnknownEffectEvidencePreserved,true);
   assert.equal(report.leaseSeconds,60);assert.equal(report.hardGraceMs,60000);assert.equal(report.clocks,"actual-host-and-database");
   assert.equal(report.databasePhaseRewritten,false);assert.equal(report.journalRewritten,false);assert.notEqual(report.cleanupFailed,true);
+  if(report.phase==="issued"){
+    assert.equal(report.caRequestsAtFault,1);
+    assert.equal(report.issuedRequestIdentityPreserved,true);
+  }
   if(report.phase==="keygen_intent"){
     assert.equal(report.outcome,"pre-csr-recovery-refused-owned-key-cancelled");
     for(const field of ["preCsrRecoveryRefused","ownedProtectedKeyPreserved","durableCsrAbsent","cancelledKeyAbsent"])assert.equal(report[field],true);

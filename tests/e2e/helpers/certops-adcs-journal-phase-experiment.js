@@ -16,7 +16,7 @@ const {readEnrollmentJournal}=require("../../../packages/agent/src/issuers/adcs-
 const startObserver=require("./certops-adcs-journal-phase");
 module.exports=async function runJournalPhaseExperiment(context){
   const phase=process.env.CERTOPS_ADCS_JOURNAL_PHASE_EXPERIMENT;if(!phase)return;
-  assert.ok(["keygen_intent","prepared","submitting","installing"].includes(phase));assert.equal(process.platform,"win32");
+  assert.ok(["keygen_intent","prepared","submitting","issued","installing"].includes(phase));assert.equal(process.platform,"win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB,"1");assert.equal(process.env.CERTOPS_JOB_LEASE_SECONDS,"60");
   assert.equal(context.serviceOwned,true);
   assert.equal(process.env.CERTOPS_LEASE_HARD_GRACE_MS,"60000");
@@ -53,6 +53,11 @@ module.exports=async function runJournalPhaseExperiment(context){
     const stoppedJournal=readEnrollmentJournal(configDir,enrollmentId);assert.equal(stoppedJournal.kind,"valid");assert.equal(stoppedJournal.journal.state,phase);
     assert.equal(stoppedJournal.journal.containerName,buildEnrollmentContainerName(enrollmentId));assert.equal(stoppedJournal.journal.snapshotSha256,created.body.snapshotSha256);
     const nativeAtFault=observe();report.caRequestsAtFault=nativeAtFault.subjectRequestCount;
+    if(phase==="issued"){
+      assert.equal(nativeAtFault.subjectRequestCount,1);
+      assert.equal(String(nativeAtFault.requestId),String(stoppedJournal.journal.requestId));
+      assert.ok(stoppedJournal.artifacts.csrPem,"Issued interruption requires the original durable CSR");
+    }
     assert.ok((await getJob(created.body.jobId)).lease_renewed_at,"Observed native fault requires an actual renewed lease");report.actualRenewedLeaseObserved=true;
     const worker=await import(pathToFileURL(path.join(repoRoot,"apps/worker/src/certops-worker.js")).href);
     await until(async()=>{const client=await fixture.pool.connect();try{await worker.reapExpiredLeases({client,hardGraceMs:60000,offlineAfterMs:60000,log:{debug(){},info(){},warn(){},error(){}}});}finally{client.release();}const job=await getJob(created.body.jobId);return job?.status==="orphaned_unknown_effect"&&job.needs_operator_reconciliation===true;},180000);
@@ -93,7 +98,8 @@ module.exports=async function runJournalPhaseExperiment(context){
       for(const field of ["csrSha256","csrSpkiSha256","snapshotSha256"])assert.equal(journal.journal[field],stoppedJournal.journal[field]);
       report.sameKeyAndCsrIdentityPreserved=true;
       const native=observe();assert.equal(native.subjectRequestCount,1);assert.equal(String(native.requestId),String(installed.request_id));report.caRequestsAfterRecovery=1;
-      if(phase==="installing")assert.equal(String(installed.request_id),String(stoppedJournal.journal.requestId));
+      if(["issued","installing"].includes(phase))assert.equal(String(installed.request_id),String(stoppedJournal.journal.requestId));
+      if(phase==="issued")report.issuedRequestIdentityPreserved=true;
       const leaf=await new Promise((resolve,reject)=>{const socket=tls.connect({host:"127.0.0.1",port,servername:domain,ca:tlsAuthority(authority),rejectUnauthorized:true},()=>{try{assert.equal(socket.authorized,true);resolve(new crypto.X509Certificate(socket.getPeerCertificate().raw));}catch(error){reject(error);}finally{socket.destroy();}});socket.setTimeout(10000,()=>socket.destroy(new Error("Recovered trusted native TLS timed out")));socket.once("error",reject);});assert.equal(leaf.checkHost(domain),domain);ownedThumbprints.add(leaf.fingerprint.replace(/:/g,""));report.trustedNativeTls=true;
     }
     const audits=(await fixture.pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='certops.enrollment.recovery_requested' AND metadata->>'enrollmentId'=$2",[fixture.workspaceId,enrollmentId])).rows;
