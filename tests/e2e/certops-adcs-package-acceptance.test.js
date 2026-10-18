@@ -38,7 +38,7 @@ test("AD CS operator journey uses the verified package and documented installer"
   const runtime = JSON.parse(fs.readFileSync("C:\\ttqualification\\runtime.json", "utf8"));
   const artifact = JSON.parse(fs.readFileSync(runtime.agentPackageReceipt, "utf8"));
   assert.equal(artifact.candidateSha, process.env.GITHUB_SHA);
-  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-package-acceptance-"));
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-domain-adcs-package-"));
   applyRestrictivePermissions(workDir, { kind: "directory" });
   const installedRoot = "C:\\ProgramData\\TokenTimerAgent", configDir = path.join(installedRoot, "state");
   assert.equal(fs.existsSync(installedRoot), false, "Refuse any pre-existing canonical installation");
