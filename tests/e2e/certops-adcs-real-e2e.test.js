@@ -184,14 +184,28 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       if(issuerSwitch){const file=path.join(configDir,"config.json");const settings=JSON.parse(fs.readFileSync(file,"utf8"));settings.adcs.enrollmentRules.push({caConfig:process.env.CERTOPS_ADCS_DESTINATION_CA_CONFIG,template:"TTQualificationRSAShort",dnsScopes:["example.test"],keyAlgorithms:["rsa"],operatorAttested:false});fs.writeFileSync(file,JSON.stringify(settings));}
       applyRestrictivePermissions(configDir, { kind: "dir" }); applyRestrictivePermissions(path.join(configDir, "config.json"));
       const originalConfigStat=fs.lstatSync(path.join(configDir,"config.json"),{bigint:true});assert.ok(originalConfigStat.isFile()&&!originalConfigStat.isSymbolicLink()&&originalConfigStat.dev>0n&&originalConfigStat.ino>0n);originalConfigurationIdentity=`${originalConfigStat.dev}:${originalConfigStat.ino}`;
+      gate.report.registrationCheckpoint="configuration-written";
       const root = path.resolve(__dirname, "../..");
       const host = path.join(root, "packages/agent/bin", hostBinaryName("amd64")); assert.ok(fs.existsSync(host));
       command("sc.exe", ["create", "TokenTimerAgent", "type=", "own", "start=", "demand", "obj=", "LocalSystem", "binPath=", `"${host}" "${process.execPath}" "${path.join(root, "packages/agent/bin/tokentimer-agent.js")}"`]); serviceOwned = true;
       command("reg.exe", ["add", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent", "/v", "Environment", "/t", "REG_MULTI_SZ", "/d", `TOKENTIMER_AGENT_CONFIG_DIR=${configDir}\\0TOKENTIMER_AGENT_BOOTSTRAP_TOKEN=${bootstrap.body.plaintextToken}\\0TOKENTIMER_AGENT_BOOTSTRAP_TOKEN_ID=${bootstrap.body.token.id}\\0NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS}\\0PATH=${process.env.PATH}`, "/f"]);
+      // Match the production installer's recovery policy before fault tests.
+      command("sc.exe", ["failureflag", "TokenTimerAgent", "1"]);
+      command("sc.exe", ["failure", "TokenTimerAgent", "reset=", "86400", "actions=", "restart/5000"]);
       command("sc.exe", ["start", "TokenTimerAgent"]);
+      gate.report.registrationCheckpoint="service-started";
       agentRowId = await until(async () => (await fixture.pool.query("SELECT id FROM certops_agents WHERE workspace_id=$1 AND agent_id=$2", [fixture.workspaceId, agentId])).rows[0]?.id);
+      gate.report.registrationCheckpoint="fleet-row-observed";
       assert.equal(ps("$s=Get-CimInstance Win32_Service -Filter \"Name='TokenTimerAgent'\"; $p=Get-CimInstance Win32_Process -Filter \"ProcessId=$($s.ProcessId)\"; (Invoke-CimMethod -InputObject $p -MethodName GetOwnerSid).Sid"), "S-1-5-18");
-      assert.doesNotMatch(command("reg.exe", ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent", "/v", "Environment"]), /TOKENTIMER_AGENT_BOOTSTRAP_TOKEN/);
+      gate.report.registrationCheckpoint="system-identity-verified";
+      await until(() => fs.existsSync(path.join(configDir, "credential")) &&
+        !/TOKENTIMER_AGENT_BOOTSTRAP_TOKEN/.test(command("reg.exe", ["query", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\TokenTimerAgent", "/v", "Environment"])));
+      // Registration atomically replaces configuration; later recovery compares
+      // the completed registration identity, never the bootstrap file's inode.
+      const registeredConfigStat=fs.lstatSync(path.join(configDir,"config.json"),{bigint:true});
+      assert.ok(registeredConfigStat.isFile()&&!registeredConfigStat.isSymbolicLink());
+      originalConfigurationIdentity=`${registeredConfigStat.dev}:${registeredConfigStat.ino}`;
+      gate.report.registrationCheckpoint="completed";
     });
     if(issuerSwitch){
       await issuerSwitchJourney.qualifyNativeIssuerReassignment({ownedTlsProbes,gate,fixture,api,agentRowId,caConfig,destinationCaConfig:process.env.CERTOPS_ADCS_DESTINATION_CA_CONFIG,command,ps,until,jobFinished,configDir,workDir,run,tlsAuthority,ownedEnrollmentIds,ownedCertificateIds,ownedSites,ownedThumbprints,registerOwnedStoreCertificate:value=>webHostingJourney.registerIssuerSwitchStoreCertificate(ownedIssuerSwitchStoreCertificates,value),reservePrimaryPreflights:count=>{assert.equal(count,4);assert.ok(primaryPreflightCount+count<=18);primaryPreflightCount+=count;}});
@@ -653,7 +667,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
       await cleanNative(async()=>{const rows=(await fixture.pool.query("SELECT e.id,e.workspace_id,e.certificate_id,e.state,ARRAY(SELECT j.id FROM certificate_jobs j WHERE j.workspace_id=e.workspace_id AND j.enrollment_id=e.id) AS job_ids FROM certificate_enrollments e WHERE e.workspace_id=$1 AND e.id=ANY($2::uuid[])",[fixture.workspaceId,ownedEnrollmentIds])).rows;webHostingJourney.refreshBackgroundEnrollmentOwnership(ownedBackgroundStoreCertificates,ownedEnrollmentIds,containerName=>require("../../packages/agent/src/windows-cert-store").readIssuedContainerRecord({stateDir:configDir,containerName}),{workspaceId:fixture.workspaceId,rows,readJournal:id=>require("../../packages/agent/src/issuers/adcs-enrollment").readEnrollmentJournal(configDir,id)});});
       await cleanNative(()=>webHostingJourney.cleanupBackground({receipts:ownedBackgroundStoreCertificates,configDir,ps,drain:webHostingServiceDrain}));
       for (const thumbprint of ownedThumbprints) await cleanNative(async()=>{nativeCleanupGuard.assertStateRemovable();unacceptedCleanup.assertComplete(ownedUnacceptedEnrollments);return ps(`if (Test-Path 'Cert:\\LocalMachine\\My\\${thumbprint}') {Remove-Item -LiteralPath 'Cert:\\LocalMachine\\My\\${thumbprint}' -DeleteKey}`);});
-      for(const item of [...cases,...pendingCases,...deniedCases,...safetyEnrollments,{domain:faultDomain},{domain:journalDomain},{domain:transportDomain}])await cleanNative(async()=>{nativeCleanupGuard.assertStateRemovable();unacceptedCleanup.assertComplete(ownedUnacceptedEnrollments);return ps(`Get-ChildItem Cert:\\LocalMachine\\My | Where-Object Subject -eq 'CN=${item.domain}' | Remove-Item -DeleteKey`);});
+      for(const item of [...cases,...pendingCases,...deniedCases,...safetyEnrollments,{domain:faultDomain},{domain:journalDomain},{domain:transportDomain}])await cleanNative(async()=>{nativeCleanupGuard.assertStateRemovable();unacceptedCleanup.assertComplete(ownedUnacceptedEnrollments);return ps(`foreach($certificate in @(Get-ChildItem Cert:\\LocalMachine\\My | Where-Object Subject -eq 'CN=${item.domain}')){Remove-Item -LiteralPath $certificate.PSPath -DeleteKey}`);});
       for(const id of ownedCertificateIds)await cleanNative(async()=>{
         assert.ok(!ownedUnacceptedEnrollments.some(receipt=>receipt.certificateId===id&&!receipt.cleanupCompleted),"Preserve unresolved unaccepted certificate ownership");
         assert.ok(![...ownedStoreCertificates,...ownedCapacityStoreCertificates,...ownedIssuerSwitchStoreCertificates,...ownedBackgroundStoreCertificates].some(receipt=>receipt.certificateId===id&&!receipt.cleanupCompleted),"Preserve native certificate identity while store ownership cleanup remains unresolved");

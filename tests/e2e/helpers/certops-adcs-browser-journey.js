@@ -517,12 +517,11 @@ async function qualifyAdcsBrowserJourney(context) {
         // or after confirmation. Use the existing Check again UI; never backdate
         // evidence or weaken the scheduler's freshness gate.
         const issuerName = `Browser native issuer ${run}`;
-        await page
-          .getByRole("button", { name: `Expand ${issuerName}`, exact: true })
-          .click();
-        const card = page
-          .getByRole("button", { name: `Collapse ${issuerName}`, exact: true })
-          .locator("xpath=..");
+        // The page automatically opens its first issuer after confirmation.
+        const toggle = page.getByRole("button", { name: new RegExp(`^(?:Expand|Collapse) ${issuerName}$`) });
+        await toggle.waitFor();
+        if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+        const card = toggle.locator("xpath=..");
         await card
           .getByRole("button", { name: "Check again", exact: true })
           .click();
@@ -861,6 +860,8 @@ async function qualifyAdcsBrowserJourney(context) {
     const code = /^[A-Z0-9_]{1,64}$/.test(error?.code || "")
       ? error.code
       : "UNCLASSIFIED";
+    gate.report.nativeBrowserFailure = { stage, code };
+    if ([200, 201, 204].includes(error?.expected) && Number.isInteger(error?.actual) && error.actual >= 100 && error.actual <= 599) gate.report.nativeBrowserFailure.httpStatus = error.actual;
     primary = new Error(
       `Native AD CS browser journey failed at ${stage} (${code})`,
     );
