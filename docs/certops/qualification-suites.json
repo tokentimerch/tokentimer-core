@@ -357,7 +357,8 @@
       "adcs-orphan-recovery-api-approval-and-rbac": "integration",
       "adcs-orphan-recovery-api-terminal-refusal": "integration",
       "adcs-original-enrollment-api-requester-approval": "integration",
-      "adcs-recovery-api-worker-principal-refused": "integration"
+      "adcs-recovery-api-worker-principal-refused": "integration",
+      "adcs-uncertain-retrieve-api-bounded-reconciliation": "integration"
     },
     "adcs-enrollment-policy-api": {
       "adcs-policy-api-immutable-defaults": "integration",
@@ -943,7 +944,8 @@
       "adcs-orphan-recovery-api-approval-and-rbac",
       "adcs-orphan-recovery-api-terminal-refusal",
       "adcs-original-enrollment-api-requester-approval",
-      "adcs-recovery-api-worker-principal-refused"
+      "adcs-recovery-api-worker-principal-refused",
+      "adcs-uncertain-retrieve-api-bounded-reconciliation"
     ],
     "adcs-enrollment-policy-api": [
       "adcs-policy-api-immutable-defaults",

@@ -237,7 +237,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
     expect(row.last_error_code).to.equal("ADCS_RETRIEVAL_RECONCILIATION_REQUIRED");
     expect(row.next_poll_at).to.equal(null);expect(row.operator_request_id).to.equal(null);
     const audit=await TestUtils.execQuery("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND metadata->>'enrollmentId'=$2",[workspaceId,id]);
-    expect(audit.rows.some(value=>value.metadata.reason==='pending_timeout_after_uncertain_retrieve')).to.equal(true);
+    expect(audit.rows.some(value=>value.metadata.reason==='pending_timeout_after_uncertain_retrieve' && String(value.metadata.requestId)==='4242')).to.equal(true);
     // Real public-service reconciliation remains possible after polling stops.
     await require("../../apps/api/services/certops/certificateEnrollments").proposeReconcileRequestId({client:pool,workspaceId,enrollmentId:id,requestId:4242,actorUserId:ownerId});
     const proposed=(await TestUtils.execQuery("SELECT operator_request_id,next_poll_at FROM certificate_enrollments WHERE id=$1",[id])).rows[0];

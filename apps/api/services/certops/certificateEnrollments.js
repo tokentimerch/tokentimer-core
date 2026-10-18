@@ -458,7 +458,7 @@ async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = 
   const result = await db.query(
     `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
-            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
+            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id, e.request_id,
             e.deploy_target, j.status AS job_status
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j

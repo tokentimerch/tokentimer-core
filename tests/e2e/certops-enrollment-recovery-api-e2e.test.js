@@ -73,6 +73,8 @@ test("AD CS installation retry through real API and PostgreSQL",{timeout:120000}
       const visible=listed.body.items.find(value=>value.id===row.id);assert.ok(visible);
       assert.equal(visible.state,"submission_uncertain");assert.equal(visible.lastErrorCode,"ADCS_RETRIEVAL_RECONCILIATION_REQUIRED");
       assert.equal(String(visible.requestId),"42");
+      const audit=(await fixture.pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ENROLLMENT_RETRIEVAL_RECONCILIATION_REQUIRED' AND metadata->>'enrollmentId'=$2",[fixture.workspaceId,row.id])).rows;
+      assert.equal(audit.length,1);assert.equal(String(audit[0].metadata.requestId),"42");
       assert.equal(Number((await fixture.pool.query("SELECT count(*)::int n FROM certificate_jobs WHERE enrollment_id=$1",[row.id])).rows[0].n),before);
       assert.equal((await fixture.request(`${api}/enrollments/${row.id}/reconcile`,"POST",{requestId:42})).status,204);
       const proposed=(await fixture.pool.query("SELECT operator_request_id,next_poll_at FROM certificate_enrollments WHERE id=$1",[row.id])).rows[0];
@@ -147,7 +149,8 @@ test("AD CS installation retry through real API and PostgreSQL",{timeout:120000}
       assert.equal(Number((await fixture.pool.query("SELECT count(*)::int AS n FROM certificate_jobs WHERE enrollment_id=$1",[orphan.id])).rows[0].n),1);
     });
   }catch(error){primaryError=error;throw error;}finally{
-    try{await gate.scenario(required[7],async()=>{for(const id of seed)await fixture.pool.query("DELETE FROM certificate_jobs WHERE enrollment_id=$1",[id]);await fixture.cleanup();});await gate.finish({requiredScenarios:required});}
+    try{await gate.scenario(required[7],async()=>{for(const id of seed)await fixture.pool.query("DELETE FROM certificate_jobs WHERE enrollment_id=$1",[id]);await fixture.cleanup();});await gate.finish({requiredScenarios:required});
+      assert.deepEqual(require("../../scripts/certops-qualification-report").verifyReport(gate.report),[],"Completed API report must satisfy the committed collector contract");}
     catch(error){if(primaryError)throw new AggregateError([primaryError,error],"Recovery API fixture and finalization failed");throw error;}
   }
 });
