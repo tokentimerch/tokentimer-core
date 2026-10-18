@@ -1,9 +1,0 @@
-# Browser cancellation before approval or CA submission
-
-The capacity fixture first completes two genuine approved AD CS installations. An optional browser actor then creates one additional sequential public renewal for the subject that was initially refused by the six-way capacity race and subsequently issued. That subject can be any capacity0 through capacity5: the concurrent race does not predetermine its index. The new renewal reuses its exact issuer, certificate identity, site, domain and parent cleanup registry while approval remains required.
-
-The additional job must be requested/pending approval, never claimed and without a CA RequestId, execution journal or native enrollment container. The genuine trusted dashboard Cancel enrollment button must post exactly one bodyless same-origin cancellation request and receive204. All CertOps write methods across workspaces are counted; unrelated writes fail qualification. Owned browser/process and temporary API trust cleanup must finish.
-
-Independent SQL and native observations require cancellation of only the new enrollment/job, one attributable human audit, no new journal/key or subject CA request, unchanged prior installed enrollment/job, exact protected CNG and IIS/SNI custody and fresh trusted TLS. Actual per-issuer in-flight capacity must fall from5to4. The additional cancelled row is explicitly separate from the initial six concurrent requests and does not qualify cancelling a claimed job, an approved request or a submitted CA issuance.
-
-The actor registers its new enrollment in the existing parent ownership registry before later assertions. Failed UI execution can withdraw only its exact still-unclaimed pending approval through the normal public API; that fallback cannot produce passing browser evidence. Native fixture cleanup remains owned by the parent. Source and pure request/proof controls are implemented; native/browser execution remains pending.

@@ -42,6 +42,9 @@ class ProfileTests(unittest.TestCase):
     def test_committed_javascript_python_scope_parity(self):
         matrix=json.loads((ROOT/"docs/certops/release-qualification-matrix.json").read_text())
         for profile in profiles.PROFILES:
+            if profile == "extended-adcs":
+                with self.assertRaises(ValueError): profiles.select_profile(matrix, profile)
+                continue
             expected=profiles.select_profile(matrix,profile)
             result=subprocess.run(["node","-e","const p=require('./scripts/certops-qualification-profiles'),m=require('./docs/certops/release-qualification-matrix.json');const s=p.selectProfile(m,process.argv[1]);console.log(JSON.stringify(p.summaryFields(s,true)));",profile],cwd=ROOT,capture_output=True,text=True,check=True,timeout=30)
             self.assertEqual(json.loads(result.stdout),profiles.summary_fields(expected,True))

@@ -1,12 +1,13 @@
-name: "CertOps / Collect AD CS evidence"
-on:
+name: CertOps / Collect AD CS evidence
+'on':
   workflow_dispatch:
     inputs:
       profile:
-        description: Evidence scope; adcs-native collects runnable native AD CS cells and reports all omitted environments
+        description: Core native AD CS only; deferred campaigns remain unqualified
         type: choice
         default: adcs-native
-        options: [adcs-native, adcs, extended-adcs]
+        options:
+          - adcs-native
       candidate_sha:
         description: Exact trusted main candidate commit (40 lowercase hexadecimal characters)
         required: true

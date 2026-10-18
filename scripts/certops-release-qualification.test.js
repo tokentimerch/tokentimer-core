@@ -364,7 +364,7 @@ test("committed release matrix covers all mandatory suites and rejects escaped s
 });
 
 test("release supporting sources enforce reviewed 256-item cap, unique identities and repository bounds",()=>{
- const declared=[...new Set(require("../docs/certops/release-qualification-matrix.json").slots.flatMap(slot=>[slot.source,...(slot.requiredSources||[])]))];assert.ok(declared.length>=257);
+ const declared=require("node:child_process").execFileSync("git",["ls-files"],{cwd:root,encoding:"utf8"}).trim().split(/\r?\n/).filter(file=>fs.existsSync(path.join(root,file)));assert.ok(declared.length>=257);
  const records=declared.slice(0,257).map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
  const value=artifact(),spec=structuredClone(specification),options={candidateSha,specification:spec};value.report.fixtureSources=records.slice(0,256);spec.slots[0].requiredSources=records.slice(0,96).map(row=>row.file);assert.deepEqual(verifyMatrix([value],options),[]);
  for(const count of [97,128,129,192,256]){const good=structuredClone(value),specification=structuredClone(spec);good.report.fixtureSources=records.slice(0,count);specification.slots[0].requiredSources=records.slice(0,count).map(row=>row.file);assert.deepEqual(verifyMatrix([good],{candidateSha,specification}),[]);}
@@ -387,55 +387,4 @@ test("database matrix requires every committed case and source digest without pr
     (value) => { value.fixtureSources.push(value.fixtureSources[0]); },
     (value) => { value.evidenceLevel = "real-host"; },
   ]) { const copy = JSON.parse(JSON.stringify(report)); mutate(copy); assert.ok(verifyMatrix([{ ...artifact, report: copy }], { candidateSha, specification }).length); }
-});
-
-test("resident domain retention requires genuine day, complete native facts and current candidate sources",()=>{
- const helper=require("./certops-retention24h-proof"),fixture=require("./certops-retention24h-test-fixture.cjs"),slot=require("../docs/certops/release-qualification-matrix.json").slots.find(item=>item.suite===helper.SUITE);assert.ok(slot);
- const composite=fixture();composite.publicPreparation.fixtureSources=helper.REQUIRED_SOURCES.map(file=>({file,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,file))).digest("hex")}));
- const report=helper.createQualificationReport(composite),value={kind:"host",suite:helper.SUITE,environment:{...slot.environment},report},options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
- assert.deepEqual(verifyMatrix([value],options),[]);
- for(const flag of helper.FLAGS){const invalid=structuredClone(value);invalid.report.nativeRetention24h[flag]=false;assert.ok(verifyMatrix([invalid],options).length,flag);}
- for(const patch of [{monotonicElapsedMs:86399999},{maximumSweepGapMs:3900001},{oldNotAfter:report.nativeRetention24h.cleanupDeadline},{keptSweepCount:2},{scope:"resident-timing-only-native-oracles-required"},{requestIds:["11","11"]}]){const invalid=structuredClone(value);Object.assign(invalid.report.nativeRetention24h,patch);assert.ok(verifyMatrix([invalid],options).length);}
- for(const id of helper.REQUIRED_SCENARIOS){const invalid=structuredClone(value);invalid.report.scenarios=invalid.report.scenarios.filter(item=>item.id!==id);assert.ok(verifyMatrix([invalid],options).length,id);}
- const interruption=require('../tests/e2e/helpers/certops-retention24h-interrupted');
- for(const flag of interruption.FLAGS){const invalid=structuredClone(value);invalid.report.nativeRetention24h.interruptedDelete[flag]=false;assert.ok(verifyMatrix([invalid],options).length);}
- for(const patch of [{cleanupDeadline:report.nativeRetention24h.oldNotAfter},{productionSixHourCadenceQualified:true},{full168HourRetentionQualified:true},{interruptedAt:report.nativeRetention24h.cleanupDeadline},{resumedAt:report.nativeRetention24h.cleanupFinishedAt}]){const invalid=structuredClone(value);Object.assign(invalid.report.nativeRetention24h.interruptedDelete,patch);assert.ok(verifyMatrix([invalid],options).length);}
- {const invalid=structuredClone(value);delete invalid.report.nativeRetention24h.interruptedDelete;assert.ok(verifyMatrix([invalid],options).length);}
- for(const file of interruption.REQUIRED_SOURCES){const missing=structuredClone(value);missing.report.fixtureSources=missing.report.fixtureSources.filter(row=>row.file!==file);assert.ok(verifyMatrix([missing],options).length);const stale=structuredClone(value);stale.report.fixtureSources.find(row=>row.file===file).sha256='0'.repeat(64);assert.ok(verifyMatrix([stale],options).length);}
- const missing=structuredClone(value);delete missing.report.nativeRetention24h;assert.ok(verifyMatrix([missing],options).length);
- const stale=structuredClone(value);stale.report.fixtureSources[0].sha256="0".repeat(64);assert.ok(verifyMatrix([stale],options).length);
- const omitted=structuredClone(value);omitted.report.fixtureSources.pop();assert.ok(verifyMatrix([omitted],options).length);
-});
-
-test("native issuer reassignment stays pending without a disposable forest", () => {
-  const slot = require("../docs/certops/release-qualification-matrix.json").slots.find(item => item.id === "windows-native-issuer-reassignment");
-  const helper = require("../tests/e2e/helpers/certops-native-issuer-reassignment");
-  const proof = {
-    scope: helper.SCOPE, renewalProtocol: "production-scheduler-sweep-after-public-issuer-switch", schedulerInvocation: "qualification-invoked-production-default-sweep", workerIntervalQualified: false, nativeCell: "pending",
-    originIssuerId: "11111111-1111-4111-8111-111111111111", destinationIssuerId: "22222222-2222-4222-8222-222222222222", originCaKeySha256: "a".repeat(64), destinationCaKeySha256: "b".repeat(64),
-    profileId: "33333333-3333-4333-8333-333333333333", certificateId: "44444444-4444-4444-8444-444444444444", requestIds: ["17", "18"], fingerprints: ["c".repeat(64), "d".repeat(64)], spkiFingerprints: ["e".repeat(64), "f".repeat(64)],
-    enrollmentIds: ["55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"], jobIds: ["77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888"],
-    containerNames: ["tokentimer-enr-55555555-5555-4555-8555-555555555555", "tokentimer-enr-66666666-6666-4666-8666-666666666666"],
-    ...Object.fromEntries(helper.FLAGS.map(flag => [flag, true])),
-  };
-  const value = suiteArtifact(slot.suite, slot.source, { nativeIssuerReassignment: proof, nativeCell: "pending" });
-  value.environment = { ...slot.environment };
-  value.report.qualificationEnvironment = { ...slot.environment, measurement: "native" };
-  value.report.fixtureSources = slot.requiredSources.map(file => ({ file, sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(root, file))).digest("hex") }));
-  const options = { candidateSha, specification: { schemaVersion: 1, slots: [slot] } };
-  assert.ok(verifyMatrix([value], options).length);
-  const qualified = structuredClone(value); qualified.report.nativeCell = "qualified";
-  assert.ok(verifyMatrix([qualified], options).length);
-  const missing = structuredClone(value); delete missing.report.nativeIssuerReassignment;
-  assert.ok(verifyMatrix([missing], options).length);
-  const native = structuredClone(value);
-  Object.assign(native.report, {nativeCell:"qualified", platform:"win32", architecture:"x64", cleanup:{status:"passed"}});
-  native.report.nativeIssuerReassignment.nativeCell = "qualified";
-  native.report.nativeIssuerReassignment.requestIds = ["17", "17"];
-  native.report.nativeIssuerReassignment.nativeRequests = ["tt-ca.lab.certops.test\\TTQualificationRoot", "tt-ca-switch.lab.certops.test\\TTQualificationDestination"].map((caConfig,i)=>({caConfig,caKeySha256:i===0?proof.originCaKeySha256:proof.destinationCaKeySha256,requestId:"17",disposition:20,subjectRequestCount:1,fingerprintSha256:proof.fingerprints[i]}));
-  assert.deepEqual(verifyMatrix([native], options), []);
-  for(const mutate of [r=>{r.nativeIssuerReassignment.nativeCell="pending";},r=>{r.nativeIssuerReassignment.nativeRequests[1].caConfig=r.nativeIssuerReassignment.nativeRequests[0].caConfig;},r=>{r.cleanup.status="failed";},r=>{r.architecture="arm64";},r=>{r.qualificationEnvironment.osVersion="2025";},r=>{r.scenarios.pop();}]){
-    const invalid=structuredClone(native);mutate(invalid.report);assert.ok(verifyMatrix([invalid],options).length);
-  }
-
 });

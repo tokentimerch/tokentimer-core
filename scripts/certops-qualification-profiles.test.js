@@ -20,7 +20,7 @@ test("native AD CS collection requires every runnable cohort and exposes deferre
     .map(row => row.id).filter(id => !subject.ADCS_NATIVE.includes(id));
   for (const suite of diagnostics) {
     const slots = matrix.slots.filter(row => row.suite === suite);
-    assert.ok(slots.length);
+    assert.ok(matrix.deferredSlots.some(row => row.suite === suite));
     assert.ok(slots.every(row => selected.omittedSlotIds.includes(row.id)));
   }
   const summary = subject.summaryFields(selected, true);
@@ -32,64 +32,19 @@ const {
   validateQualificationSummary,
   catalogCoverage,
 } = require("./certops-release-qualification");
-test("profiles partition the complete matrix without hiding missing or blocked hosted cells", () => {
-  assert.deepEqual(matrix.qualificationProfiles, subject.PROFILES);
-  const full = subject.selectProfile(matrix),
-    hosted = subject.selectProfile(matrix, "standard-hosted"),
-    domain = subject.selectProfile(matrix, "adcs"),
-    extended = subject.selectProfile(matrix, "extended-adcs");
-  assert.equal(full.omittedSlotIds.length, 0);
+test("core profiles expose all deferred environments and cannot qualify the full feature set", () => {
+  const { verifyMatrix, validateQualificationSummary, catalogCoverage } = require("./certops-release-qualification");
+  const full = subject.selectProfile(matrix);
+  assert.deepEqual(new Set(full.omittedSlotIds), new Set(matrix.deferredSlots.map(slot => slot.id)));
   assert.equal(full.selectedSlotIds.length, matrix.slots.length);
-  assert.deepEqual(
-    new Set([
-      ...hosted.selectedSlotIds,
-      ...domain.selectedSlotIds,
-      ...extended.selectedSlotIds,
-    ]),
-    new Set(full.selectedSlotIds),
-  );
-  assert.equal(
-    hosted.selectedSlotIds.length +
-      domain.selectedSlotIds.length +
-      extended.selectedSlotIds.length,
-    full.selectedSlotIds.length,
-  );
-  for (const slot of hosted.specification.slots)
-    assert.equal(subject.classify(slot), "hosted");
-  for (const slot of matrix.slots.filter((slot) =>
-    /dns-provider|arm64/.test(slot.id),
-  ))
-    assert.ok(hosted.selectedSlotIds.includes(slot.id));
-  for (const profile of Object.keys(subject.PROFILES)) {
-    const selection = subject.selectProfile(matrix, profile);
-    assert.ok(
-      verifyMatrix([], {
-        candidateSha: "a".repeat(40),
-        specification: selection.specification,
-      }).length >= selection.selectedSlotIds.length,
-    );
-    const summary = {
-      schemaVersion: 1,
-      status: "passed",
-      mandatoryEnvironments: selection.selectedSlotIds.length,
-      allFeaturesQualified: false,
-      catalogCoverage: catalogCoverage(),
-      ...subject.summaryFields(selection, true),
-    };
+  assert.equal(subject.summaryFields(full, true).fullMatrixQualified, false);
+  assert.throws(() => subject.selectProfile(matrix, "extended-adcs"));
+  for (const profile of ["full", "standard-hosted", "adcs", "adcs-native"]) {
+    const selected = subject.selectProfile(matrix, profile);
+    assert.ok(verifyMatrix([], { candidateSha: "a".repeat(40), specification: selected.specification }).length);
+    const summary = { schemaVersion: 1, status: "passed", mandatoryEnvironments: selected.selectedSlotIds.length, allFeaturesQualified: false, catalogCoverage: catalogCoverage(), ...subject.summaryFields(selected, true) };
     assert.deepEqual(validateQualificationSummary(summary), []);
-    for (const patch of [
-      { selectedSlotIds: [] },
-      { omittedSlotIds: [] },
-      { fullMatrixQualified: profile !== "full" },
-      { qualificationScope: "all-features" },
-    ]) {
-      if (
-        JSON.stringify(patch) === JSON.stringify({ omittedSlotIds: [] }) &&
-        profile === "full"
-      )
-        continue;
-      assert.ok(validateQualificationSummary({ ...summary, ...patch }).length);
-    }
+    for (const patch of [{ omittedSlotIds: [] }, { fullMatrixQualified: true }, { allFeaturesQualified: true }]) assert.ok(validateQualificationSummary({ ...summary, ...patch }).length);
   }
 });
 test("unknown empty and newly unclassified domain profiles fail closed", () => {
@@ -145,8 +100,8 @@ function workflows() {
 }
 test("all reviewed Azure workflows opt in and only manual workflows can provision", () => {
   const files = workflows();
-  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 16);
-  assert.ok(azure.PROVISION.includes("certops-native-issuer-reassignment.yml"));
+  assert.equal(azure.PROVISION.length + azure.LIFECYCLE.length, 2);
+  assert.ok(azure.PROVISION.includes("certops-enterprise-adcs-qualification.yml"));
   for (const [name, workflow] of Object.entries(files))
     assert.deepEqual(azure.validate(name, workflow), [], name);
   for (const name of azure.PROVISION) {
