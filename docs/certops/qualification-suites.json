@@ -346,7 +346,10 @@
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
       "adcs-real-native-success-result-outbox-scm-restart": "real-host",
       "adcs-real-local-rule-empty-allowlist-refused": "real-host",
-      "adcs-real-pending-key-survivor-protects-local-policy-cleanup": "real-host"
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup": "real-host",
+      "adcs-real-uncertain-single-owned-candidate-created": "real-host",
+      "adcs-real-uncertain-single-candidate-auto-installs": "real-host",
+      "adcs-real-uncertain-single-candidate-replay-does-not-resubmit": "real-host"
     },
     "adcs-api-release-gates": {
       "adcs-api-gate-cleanup": "integration",
@@ -709,7 +712,10 @@
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation": "real-host",
       "adcs-real-native-success-result-outbox-scm-restart": "real-host",
       "adcs-real-local-rule-empty-allowlist-refused": "real-host",
-      "adcs-real-pending-key-survivor-protects-local-policy-cleanup": "real-host"
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup": "real-host",
+      "adcs-real-uncertain-single-owned-candidate-created": "real-host",
+      "adcs-real-uncertain-single-candidate-auto-installs": "real-host",
+      "adcs-real-uncertain-single-candidate-replay-does-not-resubmit": "real-host"
     },
     "result-fences-api": {
       "result-fence-invalid-shape": "integration",
@@ -2581,7 +2587,10 @@
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
       "adcs-real-native-success-result-outbox-scm-restart",
       "adcs-real-local-rule-empty-allowlist-refused",
-      "adcs-real-pending-key-survivor-protects-local-policy-cleanup"
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup",
+      "adcs-real-uncertain-single-owned-candidate-created",
+      "adcs-real-uncertain-single-candidate-auto-installs",
+      "adcs-real-uncertain-single-candidate-replay-does-not-resubmit"
     ],
     "adcs-api-release-gates": [
       "adcs-api-unconfigured-issuer",
@@ -2944,7 +2953,10 @@
       "adcs-real-http-only-leaf-crl-signed-deferred-continuation",
       "adcs-real-native-success-result-outbox-scm-restart",
       "adcs-real-local-rule-empty-allowlist-refused",
-      "adcs-real-pending-key-survivor-protects-local-policy-cleanup"
+      "adcs-real-pending-key-survivor-protects-local-policy-cleanup",
+      "adcs-real-uncertain-single-owned-candidate-created",
+      "adcs-real-uncertain-single-candidate-auto-installs",
+      "adcs-real-uncertain-single-candidate-replay-does-not-resubmit"
     ],
     "result-fences-api": [
       "result-fence-invalid-shape",

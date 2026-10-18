@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 DOMAIN = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-install-interruption", "adcs-lost-submit", "adcs-uncertain-abandon", "adcs-cmc-renewal", "adcs-safety-variants", "adcs-crash-experiments"}
 EXTENDED = {"enterprise-adcs-elapsed-pending-real", "windows-domain-adcs-retention24h", "windows-domain-adcs-default-ttl24h", "windows-domain-installed-retention-default-timer"}
-PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard-hosted": {"hosted"}, "adcs": {"domain-adcs"}, "extended-adcs": {"extended-domain-adcs"}}
+ADCS_NATIVE = {"enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-uncertain-abandon"}
+PROFILES = {"full": {"hosted", "domain-adcs", "extended-domain-adcs"}, "standard-hosted": {"hosted"}, "adcs": {"domain-adcs"}, "adcs-native": {"domain-adcs"}, "extended-adcs": {"extended-domain-adcs"}}
 
 
 def select_profile(matrix, profile="full", capabilities=None):
@@ -23,7 +24,7 @@ def select_profile(matrix, profile="full", capabilities=None):
         if "domain" in capabilities.get(slot.get("suite"),[]):
             raise ValueError("Unclassified domain suite cannot enter hosted qualification")
         return "hosted"
-    selected = [slot for slot in slots if category(slot) in PROFILES[profile]]
+    selected = [slot for slot in slots if category(slot) in PROFILES[profile] and (profile != "adcs-native" or slot.get("suite") in ADCS_NATIVE)]
     if not selected:
         raise ValueError("Qualification profile selects no environments")
     selected_ids = [slot["id"] for slot in selected]

@@ -20,10 +20,14 @@ const EXTENDED = Object.freeze([
   "windows-domain-adcs-default-ttl24h",
   "windows-domain-installed-retention-default-timer",
 ]);
+// Native collection deliberately excludes contract-only diagnostics; omitted slot
+// IDs remain in every verdict and cannot imply complete AD CS qualification.
+const ADCS_NATIVE = Object.freeze(["enterprise-adcs-real", "enterprise-adcs-hierarchy-real", "native-adcs-issuer-reassignment", "adcs-browser-enrollment", "adcs-uncertain-abandon"]);
 const PROFILES = Object.freeze({
   full: ["hosted", "domain-adcs", "extended-domain-adcs"],
   "standard-hosted": ["hosted"],
   adcs: ["domain-adcs"],
+  "adcs-native": ["domain-adcs"],
   "extended-adcs": ["extended-domain-adcs"],
 });
 function classify(slot) {
@@ -53,7 +57,8 @@ function selectProfile(matrix, profile = "full") {
     "Unique committed slot IDs required",
   );
   const selected = matrix.slots.filter((slot) =>
-    PROFILES[profile].includes(classify(slot)),
+    PROFILES[profile].includes(classify(slot)) &&
+    (profile !== "adcs-native" || ADCS_NATIVE.includes(slot.suite)),
   );
   assert.ok(
     selected.length > 0,
@@ -108,6 +113,7 @@ function parseArguments(args) {
 }
 module.exports = {
   DOMAIN,
+  ADCS_NATIVE,
   EXTENDED,
   PROFILES,
   classify,

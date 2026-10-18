@@ -3,10 +3,10 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Evidence scope; standard-hosted omits domain labs but still requires every selected hosted/provider cell
+        description: Evidence scope; adcs-native collects runnable native AD CS cells and reports all omitted environments
         type: choice
         default: full
-        options: [full, standard-hosted, adcs, extended-adcs]
+        options: [full, standard-hosted, adcs, adcs-native, extended-adcs]
       candidate_sha:
         description: Exact trusted main candidate commit (40 lowercase hexadecimal characters)
         required: true

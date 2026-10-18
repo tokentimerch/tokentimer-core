@@ -31,6 +31,13 @@ async function main() {
   fs.mkdirSync(output, { recursive: true });
   let created = false;
   const summary = {
+    schemaVersion: 1,
+    scope: "distribution-functional-support",
+    kind: "vault",
+    qualificationStatus: "not-qualified",
+    startedAt: new Date().toISOString(),
+    fixtureSources: require("./certops-distribution-functional-summary").sourceInventory("vault"),
+    tests: [],
     status: "failed",
     evidenceLevel: "integration",
     nativeAgentQualified: false,
@@ -121,6 +128,8 @@ async function main() {
       "-e",
       "GITHUB_SHA=" + summary.candidateSha,
       "-e",
+      "GITHUB_ACTIONS=" + (process.env.GITHUB_ACTIONS === "true" ? "true" : "false"),
+      "-e",
       "CERTOPS_REPORT_SCOPE=distribution-vault-adapter",
       image,
       "node",
@@ -141,6 +150,7 @@ async function main() {
       slot.suite,
       summary.candidateSha,
     );
+    summary.tests.push({suite:"distribution-vault-adapter",status:"passed",report:"adapter.jsonl"});
     summary.status = "passed";
     console.log(
       "PASS real Vault adapter/CAS/ACL and fault tests; native release not qualified",
@@ -158,6 +168,7 @@ async function main() {
       run(["rm", "-f", name]);
       summary.cleanup = "passed";
     }
+    summary.finishedAt = new Date().toISOString();
     fs.writeFileSync(
       path.join(output, "summary.json"),
       JSON.stringify(summary, null, 2) + "\n",

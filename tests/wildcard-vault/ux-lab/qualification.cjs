@@ -59,6 +59,7 @@ function createGate({ root, candidateSha, mode }) {
   // Source mounts and the lab-only capability manifest are explicit. The release
   // collector MUST reject this report even if every functional case passes.
   Object.assign(gate.report, {
+    supportingRunId: path.basename(root),
     experimental: true,
     qualificationStatus: "not-qualified",
     databaseInjection: false,

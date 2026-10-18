@@ -10,6 +10,21 @@ ROOT=Path(__file__).resolve().parent.parent
 
 
 class ProfileTests(unittest.TestCase):
+    def test_native_adcs_collector_cannot_hide_deferred_scopes_or_promote_full(self):
+        spec = importlib.util.spec_from_file_location("adcs_profile_collector", ROOT / "scripts/certops-release-collector.py")
+        collector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(collector)
+        matrix = json.loads((ROOT / "docs/certops/release-qualification-matrix.json").read_text())
+        selected = profiles.select_profile(matrix, "adcs-native")
+        self.assertEqual({row["suite"] for row in selected["specification"]["slots"]}, profiles.ADCS_NATIVE)
+        candidate, coverage = "a" * 40, {"implementationStatus": "incomplete"}
+        count = len(selected["selectedSlotIds"])
+        summary = {"schemaVersion": 1, "status": "passed", "candidateSha": candidate, "mandatoryEnvironments": count, "allFeaturesQualified": False, "catalogCoverage": coverage, **profiles.summary_fields(selected, True)}
+        collector.validate_matrix_summary(summary, candidate, count, coverage, selected)
+        for patch in ({"fullMatrixQualified": True}, {"qualificationProfile": "full"}, {"omittedSlotIds": []}, {"selectedSlotIds": selected["selectedSlotIds"][:-1]}, {"mandatoryEnvironments": count - 1}):
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                collector.validate_matrix_summary({**summary, **patch}, candidate, count, coverage, selected)
+
     def test_actual_collector_rejects_scoped_promotion_and_omission_forgery(self):
         spec=importlib.util.spec_from_file_location("profile_collector",ROOT/"scripts/certops-release-collector.py")
         collector=importlib.util.module_from_spec(spec);spec.loader.exec_module(collector)

@@ -8,6 +8,10 @@ function audit(project, output, publishedVersions = []) {
   assert.ok(Array.isArray(publishedVersions) && publishedVersions.length >= 2 && publishedVersions.length <= 100, "Published historical version inventory is required");
   assert.equal(new Set(publishedVersions).size, publishedVersions.length);
   for (const id of publishedVersions) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  const candidateSha=process.env.TT_UX_CORE_COMMIT || process.env.GITHUB_SHA;
+  const certificateMode=process.env.TT_UX_CERTIFICATE_MODE;
+  assert.match(candidateSha||"",/^[a-f0-9]{40}$/);
+  assert.ok(["ordinary","san","wildcard"].includes(certificateMode));
   const run = (args, input) => {
     const r = spawnSync("docker", args, {
       input,
@@ -67,6 +71,7 @@ function audit(project, output, publishedVersions = []) {
       database + logs,
     ),
   );
+  Object.assign(result,{candidateSha,certificateMode,project});
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, JSON.stringify(result, null, 2) + "\n");
   return result;

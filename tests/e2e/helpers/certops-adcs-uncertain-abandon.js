@@ -74,11 +74,11 @@ function assertProof(value) {
 }
 
 async function qualifyUncertainScenario(context, mode = "abandon") {
-  assert.ok(["abandon", "operator-created-ambiguity"].includes(mode));
-  const ambiguity = mode === "operator-created-ambiguity";
+  assert.ok(["abandon", "operator-created-ambiguity", "operator-created-unique"].includes(mode));
+  const ambiguity = mode !== "abandon";
   const abandonActor=!ambiguity ? context.abandonActor : null;
   if(abandonActor){assert.equal(typeof abandonActor.abandonEnrollment,"function");assert.equal(typeof abandonActor.observeNativeCompletion,"function");}
-  const variant = ambiguity ? require("./certops-adcs-uncertain-operator-ambiguity") : null;
+  const variant = mode === "operator-created-unique" ? require("./certops-adcs-uncertain-operator-unique") : ambiguity ? require("./certops-adcs-uncertain-operator-ambiguity") : null;
   const { gate, fixture, api, agentRowId, configDir, workDir, run, preflight, ps, command, until, jobFinished, ownedSites, ownedCertificateIds, ownedEnrollmentIds, ownedFirewallRules, ownedPhaseObservers, serviceOwned, caConfig } = context;
   assert.equal(process.platform, "win32");
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
@@ -92,7 +92,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
     if (prior.length) { assert.equal(prior.length, 1); assert.equal(prior[0].sha256, sha256); }
     else gate.report.fixtureSources.push({ file, sha256 });
   }
-  const suffix = ambiguity ? "operatorambiguity" : "uncertain";
+  const suffix = mode === "operator-created-unique" ? "operatorunique" : ambiguity ? "operatorambiguity" : "uncertain";
   const domain = `certops-adcs-${run}-${suffix}.example.test`;
   const site = `TTADCS-${run}-${suffix}`;
   const rule = ambiguity ? `TTQualification-OperatorAmbiguity-${run}` : `TTQualification-Uncertain-${run}`;
@@ -157,7 +157,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
     // recovery must prove no resubmission, rather than an ongoing network block.
     ps(`$r=Get-NetFirewallRule -Name '${rule}' -ErrorAction Stop;if($r.Group -ne '${rule}' -or $r.DisplayName -ne '${rule}'){throw 'Foreign transport fault'};Remove-NetFirewallRule -Name '${rule}';if(Get-NetFirewallRule -Name '${rule}' -ErrorAction SilentlyContinue){throw 'Transport remains blocked'}`);
     if (ambiguity) {
-      await variant.runOperatorCreatedAmbiguity({ context, original, created, domain, site, port, proof, keyIdentity, keyIdentityBefore, leaseMeasurementStart, restartService() { ps("Start-Service TokenTimerAgent -ErrorAction Stop"); stopped = false; } });
+      await (variant.runCandidateRecovery || variant.runOperatorCreatedAmbiguity)({ context, original, created, domain, site, port, proof, keyIdentity, keyIdentityBefore, leaseMeasurementStart, restartService() { ps("Start-Service TokenTimerAgent -ErrorAction Stop"); stopped = false; } });
     } else {
       await gate.scenario("adcs-real-uncertain-zero-request-acknowledged-recovery", async () => {
         const worker = await import(pathToFileURL(path.join(root, "apps/worker/src/certops-worker.js")).href);
@@ -206,7 +206,7 @@ async function qualifyUncertainScenario(context, mode = "abandon") {
     if (errors.length) throw new AggregateError([...(primaryError ? [primaryError] : []), ...errors], "Uncertain abandon and owned fault restoration failed");
   }
   if (primaryError) throw primaryError;
-  if (ambiguity) { variant.verifyProof(proof); gate.report.nativeUncertainOperatorAmbiguity = proof; }
+  if (ambiguity) { variant.verifyProof(proof); gate.report[variant.REPORT_FIELD || "nativeUncertainOperatorAmbiguity"] = proof; }
   else { assertProof(proof); gate.report.nativeUncertainAbandon = proof; }
 }
 function qualifyUncertainAbandon(context) { return qualifyUncertainScenario(context, "abandon"); }

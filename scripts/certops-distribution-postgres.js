@@ -42,6 +42,11 @@ async function main() {
   fs.mkdirSync(output, { recursive: true });
   const summary = {
     schemaVersion: 1,
+    scope: "distribution-functional-support",
+    kind: "postgres",
+    qualificationStatus: "not-qualified",
+    startedAt: new Date().toISOString(),
+    fixtureSources: require("./certops-distribution-functional-summary").sourceInventory("postgres"),
     candidateSha: run("git", ["rev-parse", "HEAD"]).trim(),
     evidenceLevel: "integration",
     nativeAgentQualified: false,
@@ -156,7 +161,7 @@ async function main() {
         summary.candidateSha,
       );
       summary.tests.push({
-        suite,
+        suite: "distribution-postgres-" + suite,
         status: "passed",
         report: path.basename(report),
       });
@@ -179,6 +184,7 @@ async function main() {
       run("docker", ["rm", "-f", name]);
       summary.cleanup = "passed";
     }
+    summary.finishedAt = new Date().toISOString();
     fs.writeFileSync(
       path.join(output, "summary.json"),
       JSON.stringify(summary, null, 2) + "\n",

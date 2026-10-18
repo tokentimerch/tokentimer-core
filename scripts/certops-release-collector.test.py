@@ -1407,6 +1407,7 @@ class CollectorTests(unittest.TestCase):
         value["nativeCmcBoundaries"] = cmc_proof()
         value["nativeUncertainAbandon"] = uncertain_abandon_proof()
         value["nativeUncertainOperatorAmbiguity"] = operator_ambiguity_proof()
+        value["nativeUncertainOperatorUnique"] = json.loads(subprocess.check_output(["node", "-e", "process.stdout.write(JSON.stringify(require('./scripts/fixtures/certops-adcs-unique-candidate.cjs').proof()))"], cwd=Path(__file__).resolve().parent.parent, text=True))
         value["nativePublicForeignSpki"] = {**public_foreign_spki_proof(), "privateTrace": "sentinel"}
         value["nativeRequiredTemplateAttributes"] = {**required_template_attribute_proof(), "privateTrace": "sentinel"}
         value["nativeLiveEnrollAcl"] = {**live_enroll_acl_proof(), "privateDacl": "sentinel"}

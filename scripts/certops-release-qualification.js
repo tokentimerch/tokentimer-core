@@ -238,6 +238,7 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           require("../tests/e2e/helpers/certops-adcs-background-renewals").verifyProof(artifact.report.nativeAdcsBackgroundRenewals);
           require("../tests/e2e/helpers/certops-adcs-uncertain-abandon").assertProof(artifact.report.nativeUncertainAbandon);
           require("../tests/e2e/helpers/certops-adcs-uncertain-operator-ambiguity").verifyProof(artifact.report.nativeUncertainOperatorAmbiguity);
+          require("../tests/e2e/helpers/certops-adcs-uncertain-operator-unique").verifyProof(artifact.report.nativeUncertainOperatorUnique);
           require("../tests/e2e/helpers/certops-adcs-issued-cancellation").verifyIssuedCancellationFacts(artifact.report.nativeIssuedCancellation);
           const expiry = artifact.report.nativeValidationExpiry;
           if (!expiry || expiry.configuredTimeoutSeconds !== 300 || expiry.defaultTimeoutSeconds !== 86400 ||

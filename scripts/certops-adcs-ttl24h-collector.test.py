@@ -261,7 +261,7 @@ class AuthenticationTests(unittest.TestCase):
                 item = value["urls"][url]
                 self.assertEqual(redirect, isinstance(item, bytes))
                 return item if isinstance(item, bytes) else encode(item)
-            with tempfile.TemporaryDirectory(prefix="ttl-owner-main-", dir=ROOT / ".build") as directory:
+            with tempfile.TemporaryDirectory(prefix="ttl-owner-main-") as directory:
                 root = Path(directory)
                 (root / "docs/certops").mkdir(parents=True)
                 (root / "docs/certops/release-qualification-matrix.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))

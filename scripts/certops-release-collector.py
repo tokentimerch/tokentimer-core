@@ -27,6 +27,7 @@ import certops_retention_cadence_collection as retention_cadence_collection
 import certops_linux_backup_dac_proof as linux_backup_dac_proof
 import certops_filesystem_concurrent_proof as filesystem_concurrent_proof
 import certops_kubernetes_rbac_proof as kubernetes_rbac_proof
+from certops_adcs_unique_candidate_proof import fields as unique_candidate_fields
 import certops_linux_trust_independent_proof as linux_trust_independent_proof
 import certops_linux_signed_trust_proof as linux_signed_trust_proof
 import certops_acme_certificate_signing_proof as certificate_signing_proof
@@ -1841,6 +1842,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
             if ambiguity["selectedRequestId"] == ambiguity["unusedRequestId"]:
                 raise ValueError("Native ambiguity selected request cannot be revoked")
             result["nativeUncertainOperatorAmbiguity"] = bounded_ambiguity
+            result["nativeUncertainOperatorUnique"] = unique_candidate_fields(value.get("nativeUncertainOperatorUnique"))
             public_foreign = public_foreign_spki_fields(value.get("nativePublicForeignSpki"))
             expected_foreign = {"enrollmentId": bounded_ambiguity["enrollmentId"], "originalSpkiSha256": bounded_ambiguity["csrSpkiSha256"], "reconcileSearchFrom": bounded_ambiguity["reconcileSearchFrom"], "selectedRequestId": bounded_ambiguity["selectedRequestId"], "selectedFingerprint": bounded_ambiguity["fingerprints"][bounded_ambiguity["requestIds"].index(bounded_ambiguity["selectedRequestId"])]}
             if any(public_foreign[key] != expected for key, expected in expected_foreign.items()) or public_foreign["foreignRequestId"] in bounded_ambiguity["requestIds"] or public_foreign["failedJobId"] in bounded_ambiguity["jobIds"]:

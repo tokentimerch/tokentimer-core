@@ -10,6 +10,23 @@ const test = require("node:test"),
 const subject = require("./certops-qualification-profiles"),
   azure = require("./certops-azure-scope-policy");
 const matrix = require("../docs/certops/release-qualification-matrix.json");
+test("native AD CS collection requires every runnable cohort and exposes deferred contracts", () => {
+  const selected = subject.selectProfile(matrix, "adcs-native");
+  assert.deepEqual(new Set(selected.specification.slots.map(slot => slot.suite)), new Set(subject.ADCS_NATIVE));
+  for (const slot of matrix.slots) {
+    assert.equal(selected.selectedSlotIds.includes(slot.id), subject.ADCS_NATIVE.includes(slot.suite));
+  }
+  const diagnostics = require("./_registration/adcs-coverage.json").suites
+    .map(row => row.id).filter(id => !subject.ADCS_NATIVE.includes(id));
+  for (const suite of diagnostics) {
+    const slots = matrix.slots.filter(row => row.suite === suite);
+    assert.ok(slots.length);
+    assert.ok(slots.every(row => selected.omittedSlotIds.includes(row.id)));
+  }
+  const summary = subject.summaryFields(selected, true);
+  assert.equal(summary.fullMatrixQualified, false);
+  assert.equal(summary.qualificationScope, "declared-profile");
+});
 const {
   verifyMatrix,
   validateQualificationSummary,

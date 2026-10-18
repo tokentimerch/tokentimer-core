@@ -53,6 +53,7 @@ test("hierarchy workflow dispatch selects one bounded protected lab and retains 
   assert.equal(job["timeout-minutes"], 165);
   assert.equal(job.env.WINDOWS_VERSION, "${{ inputs.windows_version }}");
   assert.equal(job.env.WINDOWS_LANGUAGE, "${{ inputs.language }}");
+  assert.equal(job.env.CERTOPS_WINDOWS_LANGUAGE_ASSETS, "${{ secrets.CERTOPS_WINDOWS_LANGUAGE_ASSETS }}");
   const provision = job.steps.find((step) =>
     /provision-lab\.ps1/.test(step.run || ""),
   );

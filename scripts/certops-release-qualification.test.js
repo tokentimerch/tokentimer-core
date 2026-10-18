@@ -282,6 +282,7 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
     nativeAdcsCapacity: adcsCapacityProof(), nativeAlgorithmBoundaries: algorithmProof(), nativeCmcBoundaries: cmcProof(),
     nativeForeignSpkiCandidate: foreignSpkiProof(),
     nativeUncertainOperatorAmbiguity: operatorAmbiguityProof(),
+    nativeUncertainOperatorUnique: require("./fixtures/certops-adcs-unique-candidate.cjs").proof(),
     nativePublicForeignSpki: require("./fixtures/certops-adcs-public-foreign-spki.cjs").proof(),
     nativeRequiredTemplateAttributes: require("./fixtures/certops-adcs-template-required-attributes.cjs").proof(),
     nativeLiveEnrollAcl: require("./fixtures/certops-adcs-live-enroll-acl.cjs").proof(),
@@ -309,6 +310,19 @@ test("native ADCS cohort dispatch budgets cannot be omitted duplicated or exceed
   });
   const options = { candidateSha, specification: { schemaVersion: 1, slots: [{ id: "cohort", kind: "host", suite, source: file, environment }] } };
   assert.deepEqual(verifyMatrix([value], options), []);
+  {
+    const helper = require("../tests/e2e/helpers/certops-adcs-uncertain-operator-unique");
+    assert.ok(value.report.nativeUncertainOperatorUnique);
+    {
+      const absent = structuredClone(value); delete absent.report.nativeUncertainOperatorUnique;
+      assert.ok(verifyMatrix([absent], options).length);
+      for (const id of helper.REQUIRED_SCENARIOS) {
+        const missing = structuredClone(value);
+        missing.report.scenarios = missing.report.scenarios.filter(row => row.id !== id);
+        assert.ok(verifyMatrix([missing], options).length, id);
+      }
+    }
+  }
   for(const key of Object.keys(pendingCaProof())){
     const missing=structuredClone(value);delete missing.report.nativePendingCaRenewal[key];assert.ok(verifyMatrix([missing],options).length,`pending CA missing ${key}`);
     const wrong=structuredClone(value);wrong.report.nativePendingCaRenewal[key]=typeof wrong.report.nativePendingCaRenewal[key]==="boolean"?!wrong.report.nativePendingCaRenewal[key]:"invalid";assert.ok(verifyMatrix([wrong],options).length,`pending CA invalid ${key}`);

@@ -1037,7 +1037,7 @@ async function main() {
       security: () => require("./adversarial.cjs").security(module.exports.context),
       "runtime-controls": () => require("./adversarial.cjs").runtimeControls(module.exports.context),
       browser: () => require("./browser.cjs").inspect({state,owner,base,matrix,root}),
-      privacy: async () => require("../../../scripts/certops-distribution-privacy").audit(process.env.TT_UX_PROJECT, path.join(root,"privacy.json"), (await versions()).filter(v=>v.state==="published").map(v=>v.id)),
+      privacy: async () => { require("../../../scripts/certops-distribution-privacy").audit(process.env.TT_UX_PROJECT, path.join(root,"privacy.json"), (await versions()).filter(v=>v.state==="published").map(v=>v.id)); if(gate)gate.report.privacyEvidence={file:"privacy.json",sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,"privacy.json"))).digest("hex")}; },
     } : {}),
     transfer,
   }))

@@ -1562,7 +1562,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -1754,7 +1755,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -1946,7 +1948,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -2138,7 +2141,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -2330,7 +2334,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -2522,7 +2527,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -2714,7 +2720,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -2906,7 +2913,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -3098,7 +3106,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -4097,7 +4106,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -7029,7 +7039,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -7223,7 +7234,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -7417,7 +7429,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -7611,7 +7624,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -7805,7 +7819,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -7999,7 +8014,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -8193,7 +8209,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -8387,7 +8404,8 @@
         ".github/workflows/certops-enterprise-adcs-qualification.yml",
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
-        "infra/certops-adcs/control-plane.sh"
+        "infra/certops-adcs/control-plane.sh",
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
       ]
     },
     {
@@ -10796,6 +10814,9 @@
       "hosted"
     ],
     "adcs": [
+      "domain-adcs"
+    ],
+    "adcs-native": [
       "domain-adcs"
     ],
     "extended-adcs": [

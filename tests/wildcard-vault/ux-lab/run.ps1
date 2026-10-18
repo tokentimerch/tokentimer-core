@@ -41,6 +41,7 @@ try {
   $env:TT_UX_HAPROXY_PORT = "$($BasePort + 143)"
   $env:TT_UX_CERTIFICATE_MODE = $CertificateMode
   $env:TT_UX_CORE_COMMIT = (& git rev-parse HEAD)
+  if ($Action -eq 'Test' -and (!$options -or $options.coreCommit -ne $env:TT_UX_CORE_COMMIT)) { throw "Owned lab candidate differs from current checkout; recreate the lab." }
   $env:TT_UX_PROJECT = $Project
   $imagesFile = Join-Path $output 'runtime-images.json'
   if (Test-Path $imagesFile) {
