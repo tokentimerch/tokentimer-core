@@ -193,3 +193,11 @@ test("CA confirmation selects the independently current visible key group despit
   assert.throws(()=>helper.currentAuthorityGroup([old],current));
   assert.throws(()=>helper.currentAuthorityGroup([{...latest,thumbprintSha1:"0".repeat(40)}],current));
 });
+
+test("package worker proof stays distinct from focused default-sweep qualification", () => {
+  const proof = { ...valid(), scheduler: "production-maintenance-worker" };
+  assert.throws(() => helper.verifyProof(proof));
+  assert.equal(helper.verifyProof(proof, { workerDriven: true }), true);
+  assert.throws(() => helper.verifyProof(valid(), { workerDriven: true }));
+  assert.throws(() => helper.verifyProof({ ...proof, scheduler: "background-worker-loop" }, { workerDriven: true }));
+});
