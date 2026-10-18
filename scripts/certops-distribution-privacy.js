@@ -78,7 +78,9 @@ function audit(project, output, publishedVersions = []) {
 }
 if (require.main === module) {
   try {
-    console.log(JSON.stringify(audit(process.argv[2], process.argv[3], JSON.parse(process.argv[4] || "[]"))));
+    audit(process.argv[2], process.argv[3], JSON.parse(process.argv[4] || "[]"));
+    // Evidence belongs in the controlled artifact, never in CI console output.
+    console.log("Owned distribution zero-custody audit completed");
   } catch {
     console.error("Owned distribution zero-custody audit failed");
     process.exitCode = 1;
