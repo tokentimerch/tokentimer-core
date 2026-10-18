@@ -568,9 +568,9 @@ async function resolveWindowsIisTarget(job) {
         "AD CS jobs require keyMode os-store-managed and a windows-iis target",
     };
   }
-  const commonName = job?.target?.reference;
-  if (!isNonEmptyString(commonName)) {
-    return { error: "renew job has no target.reference to use as the certificate CN" };
+  const reference = job?.target?.reference;
+  if (!isNonEmptyString(reference)) {
+    return { error: "renew job has no target.reference" };
   }
   const store = job.target.store;
   const binding = job.target.binding;
@@ -588,9 +588,8 @@ async function resolveWindowsIisTarget(job) {
       type: "windows-iis",
       store,
       binding,
-      reference: commonName,
+      reference,
     },
-    commonName,
   };
 }
 
@@ -775,7 +774,7 @@ function createAdcsWindowsIisExecutors(deps) {
     ]);
   }
 
-  async function buildAdcsIssuerContext({ job, executionContext, stateDir }) {
+  async function buildAdcsIssuerContext({ job, executionContext, stateDir, continuation = false }) {
     const decoded = decodeEnrollmentSnapshot(job);
     if (!decoded.ok) return { error: decoded.error };
     // Cleanup must remain possible when the CA cache/helper is unavailable.
@@ -783,8 +782,11 @@ function createAdcsWindowsIisExecutors(deps) {
 
     const keyMapped = mapSnapshotKeyAlgorithm(decoded.snapshot);
     if (keyMapped.error) return { error: keyMapped.error };
-    const localRule=matchWholeEnrollmentRule(executionContext.adcsEnrollmentRules,decoded.snapshot.caConfig,decoded.snapshot.template,{...decoded.snapshot,extraDnsNames:[job.target?.reference,job.target?.binding?.sniHost].filter(value=>typeof value==="string"&&value.length)});
-    if(!localRule)return {decoded,snapshot:decoded.snapshot,keyMapped,domains:decoded.snapshot.authorizedDnsNames,localRuleRefused:true};
+    const localRule = matchWholeEnrollmentRule(
+      executionContext.adcsEnrollmentRules, decoded.snapshot.caConfig, decoded.snapshot.template,
+      { ...decoded.snapshot, extraDnsNames: [job.target?.binding?.sniHost].filter(value => typeof value === "string" && value.length) },
+    );
+    if(!localRule && !continuation)return {decoded,snapshot:decoded.snapshot,keyMapped,domains:decoded.snapshot.authorizedDnsNames,localRuleRefused:true};
 
 
     const helper = resolveAdcsCmcHelperPath({
@@ -817,6 +819,7 @@ function createAdcsWindowsIisExecutors(deps) {
     return {
       decoded,
       keyMapped,
+      localRuleRefused: !localRule,
       helperPath: helper.path,
       caCertPath: ca.caCertPath,
       domains,
@@ -879,7 +882,7 @@ function createAdcsWindowsIisExecutors(deps) {
     if (targetResolved.error) {
       return { status: "failed", keyRotated: null, errorMessage: targetResolved.error };
     }
-    const { windowsTarget, commonName } = targetResolved;
+    const { windowsTarget } = targetResolved;
 
     const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
     const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir });
@@ -906,12 +909,13 @@ function createAdcsWindowsIisExecutors(deps) {
       return { status: "rejected", rejectionReason: "invalid_terminal_cleanup_operation",
         keyRotated: null, errorMessage: "Terminal cleanup requires continue-enrollment" };
     }
-    if (!domains.includes(commonName)) {
+    const commonName = windowsTarget.binding.sniHost || domains[0];
+    if (!ctx.localRuleRefused && !domains.includes(commonName)) {
       return {
         status: "failed",
         keyRotated: null,
         errorMessage: boundErrorMessage(
-          `target.reference ${JSON.stringify(commonName)} is not in enrollment authorizedDnsNames`,
+          `Target DNS hostname ${JSON.stringify(commonName)} is not in enrollment authorizedDnsNames`,
         ),
         enrollmentResult: enrollmentResultFor(decoded.enrollmentId, decoded.attempt, "refused", {
           errorCode: null,
@@ -1796,7 +1800,7 @@ function createAdcsWindowsIisExecutors(deps) {
       certificatePem,
       csrSpkiSha256: journal.csrSpkiSha256,
       snapshot,
-      requiredDnsName: windowsTarget.reference,
+      requiredDnsName: windowsTarget.binding.sniHost || snapshot.authorizedDnsNames[0],
       stateDir,
       executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
       templateOid: journal.templateOid,
@@ -1916,7 +1920,7 @@ function createAdcsWindowsIisExecutors(deps) {
     }
     const { windowsTarget } = targetResolved;
     const stateDir = resolveAgentStateDir(executionContext) || path.dirname(execution.keysDir);
-    const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir });
+    const ctx = await buildAdcsIssuerContext({ job, executionContext, stateDir, continuation: true });
     if (ctx.error) {
       return {
         status: "failed",
@@ -2114,7 +2118,9 @@ function createAdcsWindowsIisExecutors(deps) {
         return safetyRefusalResult(safety, decoded);
       }
 
-      if(ctx.localRuleRefused){
+      // Only a never-submitted journal may be refused under changed local policy.
+      // Retrieval/reconciliation retain the signed issuer context and original key.
+      if(ctx.localRuleRefused && ["keygen_intent", "prepared"].includes(journal.state)){
         if(journal.installStep || ["installing","install_failed"].includes(journal.state))return {status:"failed",keyRotated:null,errorMessage:"Local enrollment policy now refuses this job; installation reconciliation is required before key cleanup"};
         const receipt=readIssuedContainerRecord({stateDir,containerName});
         if(containerName!==buildEnrollmentContainerName(decoded.enrollmentId)||receipt?.status==="enrolled_by_agent"||receipt?.acceptedThumbprint)return {status:"failed",keyRotated:null,errorMessage:"Local policy refusal cannot free an unowned or already accepted enrollment key"};
@@ -2168,7 +2174,7 @@ function createAdcsWindowsIisExecutors(deps) {
         }
         if (typeof onBeforeMutation === "function") onBeforeMutation("keygen");
         let csrResult = await generateCsrViaCng({
-          commonName: windowsTarget.reference,
+          commonName: windowsTarget.binding.sniHost || domains[0],
           altNames: domains,
           jobId: job.certificateId,
           enrollmentId: decoded.enrollmentId,
@@ -2202,7 +2208,7 @@ function createAdcsWindowsIisExecutors(deps) {
           }
           removeIssuedContainerRecord({ stateDir, containerName });
           csrResult = await generateCsrViaCng({
-            commonName: windowsTarget.reference,
+            commonName: windowsTarget.binding.sniHost || domains[0],
             altNames: domains,
             jobId: job.certificateId,
             enrollmentId: decoded.enrollmentId,
@@ -2640,7 +2646,7 @@ function createAdcsWindowsIisExecutors(deps) {
             certificatePem: artifacts.leafPem,
             csrSpkiSha256: journal.csrSpkiSha256,
             snapshot,
-            requiredDnsName: windowsTarget.reference,
+            requiredDnsName: windowsTarget.binding.sniHost || snapshot.authorizedDnsNames[0],
             stateDir,
             executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
             templateOid: journal.templateOid,
@@ -2791,7 +2797,7 @@ function createAdcsWindowsIisExecutors(deps) {
           certificatePem: reconciled.certificatePem,
           csrSpkiSha256: journal.csrSpkiSha256,
           snapshot,
-          requiredDnsName: windowsTarget.reference,
+          requiredDnsName: windowsTarget.binding.sniHost || snapshot.authorizedDnsNames[0],
           stateDir,
           executionContext: { ...executionContext, adcsCaCertPath: caCertPath },
           templateOid: journal.templateOid,

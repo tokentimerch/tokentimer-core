@@ -397,6 +397,7 @@ describe("certops renewal scheduler", () => {
       dueRows: [
         dueCertificate({
           renewalProfileOverrides: {
+            keyRotationPolicy: { rotateOnRenew: true },
             deploymentTargets: [windowsTarget],
             target: windowsTarget,
           },
@@ -882,4 +883,10 @@ describe("certops renewal scheduler", () => {
 
     assert.strictEqual(createdJobs[0].workspaceRequiresApprovalAlways, false);
   });
+});
+
+for (const code of ["CERTOPS_CERTIFICATE_RETIRED", "CERTOPS_CERTIFICATE_NOT_RENEWABLE"]) it('counts retirement at admission as a skip: '+code, async () => {
+  const pool = createSchedulerPool({ dueRows: [dueCertificate()] });
+  const summary = await runRenewalSchedulerSweep({ dbPool: pool, env: {}, jobCreator: async () => { throw Object.assign(new Error('retired after scan'), { code }); } });
+  assert.equal(summary.skippedRetired, 1); assert.equal(summary.created, 0); assert.deepEqual(summary.errors, []);
 });
