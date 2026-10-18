@@ -1269,7 +1269,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -1462,7 +1463,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -1655,7 +1657,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -1848,7 +1851,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -2041,7 +2045,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -2234,7 +2239,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -2427,7 +2433,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -2620,7 +2627,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {
@@ -2813,7 +2821,8 @@
         "scripts/certops-adcs-uncertain-abandon-native.js",
         "scripts/certops_adcs_uncertain_abandon_proof.py",
         "infra/certops-adcs/control-plane.sh",
-        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js"
+        "tests/e2e/helpers/certops-adcs-uncertain-operator-unique.js",
+        "infra/certops-adcs/assert-lab-capacity.ps1"
       ]
     },
     {

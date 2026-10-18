@@ -18,7 +18,8 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$RetentionCadenceNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
-  [string]$Location = 'westeurope')
+  [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
+  [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
 if($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0'){throw 'Only the core AD CS lab is included; extended campaigns are deferred'}
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
@@ -28,6 +29,7 @@ if($ResponseLossExperiment -ne '0' -and $JournalPhaseExperiment -ne 'none'){thro
 if($PendingElapsedQualification -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Elapsed pending qualification requires its isolated four-hour Server2022 en-US profile'}
 if($Retention24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Retention24h requires explicit isolated four-hour Server2022 en-US preparation'}
 if($AdcsTtl24hPrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $AdcsTtl24hNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Default ADCS TTL requires explicit isolated four-hour Server2022 en-US preparation'}
+& (Join-Path $PSScriptRoot 'assert-lab-capacity.ps1') -Location $Location -VmSize $VmSize
 $password = 'Tt!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) + 'a1'
 Write-Output "::add-mask::$password"
 $createdAt = [DateTimeOffset]::UtcNow
@@ -102,7 +104,7 @@ try {
   if($RetentionCadencePrepare -eq '1'){$initialTags+=@('cadencePrepareKind=certops-native-installed-retention-cadence',"cadencePrepareNonce=$RetentionCadenceNonce","cadencePrepareRunId=$env:GITHUB_RUN_ID","cadencePrepareRunAttempt=$env:GITHUB_RUN_ATTEMPT")}
   az group create --name $ResourceGroup --location $Location --tags $initialTags -o none
   if ($LASTEXITCODE -ne 0) { throw 'Could not create isolated lab group' }
-  @{ expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
+  @{ vmSize=@{value=$VmSize}; expiresAt=@{value=$expiresAt}; candidateSha=@{value=$candidateSha}; windowsVersion=@{value=$WindowsVersion}; hierarchy=@{value=($HierarchyRole -eq 'subordinate')}; issuerSwitch=@{value=($IssuerReassignment -eq '1')}; adminPassword=@{value=$password} } | ConvertTo-Json -Depth 5 | Set-Content $parameterPath
   az deployment group create -g $ResourceGroup --name qualification --template-file (Join-Path $PSScriptRoot 'main.bicep') --parameters "@$parameterPath" -o none
   if ($LASTEXITCODE -ne 0) { throw 'Private lab deployment failed' }
   if($Language -ne 'en-US'){

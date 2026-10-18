@@ -50,6 +50,9 @@ services:
       - API_URL=http://localhost:4000
       # CertOps route tests intentionally enable the dark-launch flag.
       - CERTOPS_ENABLED=${CERTOPS_ENABLED:-true}
+      # Synthetic test-only defaults; dispatch can supply isolated per-run keys.
+      - CERTOPS_SIGNING_ENCRYPTION_KEY=${CERTOPS_SIGNING_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      - CERTOPS_REGISTRATION_ENCRYPTION_KEY=${CERTOPS_REGISTRATION_ENCRYPTION_KEY:-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789}
       # Auth
       - SESSION_SECRET=test-session-secret-key
       # SMTP (MailHog)

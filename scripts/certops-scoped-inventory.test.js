@@ -11,3 +11,14 @@ test("distribution qualification requires explicit dispatch even for relevant ma
  assert.deepEqual(Object.keys(workflow.on),["workflow_dispatch"]);
  assert.equal(workflow.jobs["agent-lab"].if,"github.ref == 'refs/heads/main'");
 });
+
+test("supporting API container receives the qualification encryption keys",()=>{
+ const yaml=require("node:module").createRequire(require.resolve("mocha/package.json"))("js-yaml");
+ const workflow=yaml.load(fs.readFileSync(path.join(root,".github/workflows/certops-qualification.yml"),"utf8"));
+ const compose=yaml.load(fs.readFileSync(path.join(root,"deploy/compose/docker-compose.test.yml"),"utf8"));
+ for(const name of ["CERTOPS_SIGNING_ENCRYPTION_KEY","CERTOPS_REGISTRATION_ENCRYPTION_KEY"]){
+  const entry=compose.services.api.environment.find(value=>value.startsWith(name+"="));assert.ok(entry,`${name} must reach the API container`);
+  const match=entry.slice(name.length+1).match(/^\$\{([^:]+):-([a-f0-9]{64})\}$/);assert.ok(match);assert.equal(match[1],name);
+  assert.match(workflow.jobs["adcs-api"].env[name],/^[a-f0-9]{64}$/);
+ }
+});
