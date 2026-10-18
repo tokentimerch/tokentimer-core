@@ -1,6 +1,12 @@
 import React, { lazy, Suspense } from 'react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx';
 import {
   hasRecentChunkRecovery,
@@ -88,7 +94,45 @@ describe('chunk load recovery', () => {
     expect(hasRecentChunkRecovery()).toBe(true);
   });
 
-  it('handles Vite preload failures without an unhandled rejection', () => {
+  it.each(['CSV', 'XLSX'])(
+    'preserves unsaved form state when an optional %s import fails',
+    async parser => {
+      const unmounted = vi.fn();
+      function Form() {
+        const [value, setValue] = React.useState('');
+        React.useEffect(() => () => unmounted(), []);
+        return (
+          <input
+            aria-label='Unsaved note'
+            value={value}
+            onChange={event => setValue(event.target.value)}
+          />
+        );
+      }
+      render(
+        <ErrorBoundary>
+          <Form />
+        </ErrorBoundary>
+      );
+      const input = screen.getByRole('textbox', { name: 'Unsaved note' });
+      fireEvent.change(input, { target: { value: 'Keep this draft' } });
+      const event = new Event('vite:preloadError', { cancelable: true });
+      event.payload = new TypeError(
+        `Failed to fetch dynamically imported module: /assets/${parser}-old.js`
+      );
+      fireEvent(window, event);
+      expect(screen.getByRole('textbox', { name: 'Unsaved note' })).toBe(input);
+      expect(input).toHaveValue('Keep this draft');
+      expect(unmounted).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Unsaved changes will be lost'
+      );
+      expect(reload).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh Page' }));
+      expect(reload).toHaveBeenCalledTimes(1);
+    }
+  );
+  it('shows a prompt for Vite preload failures without swallowing the caller error', () => {
     render(
       <ErrorBoundary>
         <p>Dashboard</p>
@@ -97,7 +141,7 @@ describe('chunk load recovery', () => {
     const event = new Event('vite:preloadError', { cancelable: true });
     event.payload = new Error('Unable to preload CSS for /assets/page.css');
     fireEvent(window, event);
-    expect(event.defaultPrevented).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
     expect(
       screen.getByText('Page files could not be loaded')
     ).toBeInTheDocument();
@@ -117,7 +161,7 @@ describe('chunk load recovery', () => {
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
   });
 
-  it('keeps the recovery message when Vite suppresses a rejected lazy import', async () => {
+  it('lets a rejected lazy import reach the boundary after the Vite prompt', async () => {
     const Page = lazy(() =>
       Promise.reject(chunkError()).catch(error => {
         const event = new Event('vite:preloadError', { cancelable: true });
@@ -133,9 +177,12 @@ describe('chunk load recovery', () => {
         </Suspense>
       </ErrorBoundary>
     );
-    expect(
-      await screen.findByText('Page files could not be loaded')
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByText('Page files could not be loaded')
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
     expect(reload).not.toHaveBeenCalled();
   });
 

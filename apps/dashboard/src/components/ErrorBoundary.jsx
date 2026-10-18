@@ -10,7 +10,7 @@ import {
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, preloadError: null };
     this.handlePreloadError = this.handlePreloadError.bind(this);
   }
 
@@ -28,9 +28,8 @@ class ErrorBoundary extends React.Component {
 
   handlePreloadError(event) {
     if (!isChunkLoadError(event.payload)) return;
-    // Vite otherwise rethrows the preload error as an unhandled rejection.
-    event.preventDefault();
-    this.setState({ hasError: true, error: event.payload });
+    // Keep optional imports and their callers in control of their own errors.
+    this.setState({ preloadError: event.payload });
   }
 
   componentDidCatch(error, errorInfo) {
@@ -111,7 +110,37 @@ class ErrorBoundary extends React.Component {
       );
     }
 
-    return this.props.children;
+    return (
+      <>
+        {this.props.children}
+        {this.state.preloadError && (
+          <div
+            role='alert'
+            style={{
+              position: 'fixed',
+              bottom: '1rem',
+              left: '1rem',
+              right: '1rem',
+              zIndex: 1500,
+              border: '1px solid ' + primitives.slate[300],
+              borderRadius: '0.5rem',
+              padding: '1rem',
+              backgroundColor: primitives.slate[50],
+              color: primitives.slate[900],
+            }}
+          >
+            <h2>Page files could not be loaded</h2>
+            <p>
+              {hasRecentChunkRecovery()
+                ? 'Refreshing did not resolve the problem. Check your connection and try again later. If it persists, contact your administrator.'
+                : 'The dashboard may have been updated, or your connection may have been interrupted. Save your work before refreshing.'}{' '}
+              Unsaved changes will be lost when you refresh.
+            </p>
+            <button onClick={refreshAfterChunkFailure}>Refresh Page</button>
+          </div>
+        )}
+      </>
+    );
   }
 }
 
