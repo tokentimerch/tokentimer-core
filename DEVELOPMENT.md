@@ -51,6 +51,25 @@ pnpm run dev:ports:check
 pnpm run dev
 ```
 
+## Dashboard errors after deployment
+
+An open browser tab can still reference lazy page chunks from an older Vite
+build after a deployment replaces those assets. The dashboard recognizes known
+dynamic import and CSS preload failures and offers a refresh with an unsaved
+changes warning. It never refreshes automatically, because a failed navigation
+can occur while an operator is editing a form.
+
+A tab-scoped session marker remembers a refresh attempt for one minute. If a
+loader failure recurs during that interval, the error screen explains that the
+refresh did not resolve the problem. Refresh remains an explicit user action,
+including when session storage is unavailable, so recovery cannot loop.
+Unrelated application errors retain the normal error boundary message.
+
+If refreshing does not help, check connectivity and ensure the deployment serves
+the current HTML and its referenced assets consistently. Retaining previous
+hashed assets during a rollout can keep older tabs working. Loader failures can
+also indicate network problems; they do not prove that a deployment occurred.
+
 ## Environment
 
 Copy the root example when you need custom values:
