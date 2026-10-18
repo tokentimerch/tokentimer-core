@@ -12,7 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { createAdcsWindowsIisExecutors } = require("./adcs-windows-iis");
-const { computeSpkiSha256Hex, keygenIntentPath, writeKeygenIntent, writeCsrArtifact, writeEnrollmentJournal, readEnrollmentJournal } = require("./issuers/adcs-enrollment");
+const { computeSpkiSha256Hex, keygenIntentPath, writeKeygenIntent, writeCsrArtifact, writeIssuedCertificateArtifacts, writeEnrollmentJournal, readEnrollmentJournal } = require("./issuers/adcs-enrollment");
 const { buildEnrollmentContainerName, recordIssuedContainer, markIssuedContainerAccepted } = require("./windows-cert-store");
 const caPath = path.resolve(__dirname, "../reference/adcs-cmc/testdata/ca.cer");
 const caBytes = fs.readFileSync(caPath);
@@ -129,16 +129,50 @@ for(const boundary of ["missing-constraints","dns-scope","key-algorithm","extra-
   }finally{await fsp.rm(stateDir,{recursive:true,force:true});}
 });
 
-for(const boundary of ["pending-cleanup","pending-cleanup-failure","accepted-key-protected"])test(`stricter whole local rule ${boundary} keeps authoritative key custody`,async()=>{
-  const stateDir=await fsp.mkdtemp(path.join(os.tmpdir(),"adcs-local-rule-continue-"));
-  try{
-    const enrollmentId=crypto.randomUUID(),job=jobFor(enrollmentId),containerName=buildEnrollmentContainerName(enrollmentId);
-    const {csrSha256}=await writeCsrArtifact({stateDir,enrollmentId,csrPem:"-----BEGIN CERTIFICATE REQUEST-----\nUNIT-ONLY\n-----END CERTIFICATE REQUEST-----\n"});
-    await writeEnrollmentJournal(stateDir,enrollmentId,{state:"pending",attempt:1,containerName,snapshotSha256:job.enrollment.snapshotSha256,jobId:"local-policy-unit",csrSha256,csrSpkiSha256:"ab".repeat(32),templateOid,caConfig:snapshot.caConfig,template:snapshot.template,requestId:17});
-    if(boundary==="accepted-key-protected"){recordIssuedContainer({stateDir,containerName,jobId:"prior-unit",certificateId:job.certificateId});assert.equal(markIssuedContainerAccepted({stateDir,containerName,acceptedThumbprint:"AA".repeat(20),store:"My"}),true);}
-    const calls=[];
-    const result=await factory(stateDir).executeWindowsIisContinueEnrollmentJob({job,jobId:"local-policy-unit",client:{},log:{},executionContext:{execution:{keysDir:path.join(stateDir,"keys")},windowsKeySurvivorHelperPath:__filename,adcsEnrollmentRules:[{caConfig:snapshot.caConfig,template:snapshot.template,dnsScopes:["outside.test"],keyAlgorithms:["rsa"]}],adcsPreflightImpl(){throw new Error("Local refusal must precede CA contact");},windowsExecFileImpl(file,args,opts,callback){calls.push(args);if(boundary==="pending-cleanup-failure"&&args.includes("-delkey"))callback(Object.assign(new Error("Denied fixture key deletion"),{code:5}),"","");else if(args[0]==="--key-survivors"){assert.equal(file,__filename);assert.deepEqual(args,["--key-survivors","--container",containerName]);callback(null,JSON.stringify({complete:true,shared:false,storesScanned:3,certificatesScanned:0,matches:0}),"");}else callback(null,args.includes("-key")?`${containerName}\n`:"","");return {kill(){},once(){},pid:1};}}});
-    if(boundary==="pending-cleanup"){assert.equal(result.status,"rejected");assert.equal(result.enrollmentResult.state,"refused");assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"refused");assert.equal(calls.length,3);assert.deepEqual(calls[0],["-csp","Microsoft Software Key Storage Provider","-key"]);assert.deepEqual(calls[1],["--key-survivors","--container",containerName]);assert.deepEqual(calls[2],["-csp","Microsoft Software Key Storage Provider","-delkey",containerName]);}
-    else{assert.equal(result.status,"failed");assert.equal(readEnrollmentJournal(stateDir,enrollmentId).journal.state,"pending");assert.equal(calls.length,boundary==="accepted-key-protected"?0:3);assert.match(result.errorMessage,boundary==="accepted-key-protected"?/already accepted/:/retry required/);}
-  }finally{await fsp.rm(stateDir,{recursive:true,force:true});}
+for (const reference of ["production-iis-01", "iis://production/site-1"]) test('deployment reference is not a DNS identity: '+reference, async () => {
+  const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-target-reference-"));
+  try {
+    const helper = path.join(stateDir, "fixture.exe"); fs.writeFileSync(helper, "fixture");
+    const job = jobFor(crypto.randomUUID()); job.target.reference = reference;
+    const result = await factory(stateDir).executeWindowsIisAdcsRenewJob({ job, jobId: "reference-unit", client: {}, log: {}, executionContext: {
+      execution: { keysDir: path.join(stateDir, "keys") }, adcsHelperPath: helper, adcsCaCertPath: caPath,
+      adcsEnrollmentRules: [{ caConfig: snapshot.caConfig, template: snapshot.template, dnsScopes: ["example.com"], keyAlgorithms: ["rsa"] }],
+      adcsPreflightImpl: () => ({ preflightResult: facts("template") }),
+      windowsExecFileImpl() { assert.fail("unsafe fixture must stop before key generation"); },
+    }});
+    assert.equal(result.enrollmentResult.errorCode, "ADCS_TEMPLATE_UNSAFE", "reference must pass local rule and reach template safety");
+  } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
+});
+for (const state of ["pending", "pending_issuance", "submission_uncertain", "issued", "validation_deferred"]) test('removed local rule preserves submitted key in '+state, async () => {
+  const stateDir = await fsp.mkdtemp(path.join(os.tmpdir(), "adcs-submitted-policy-"));
+  try {
+    const helper = path.join(stateDir, "fixture.exe"); fs.writeFileSync(helper, "fixture");
+    const enrollmentId = crypto.randomUUID(), job = jobFor(enrollmentId), containerName = buildEnrollmentContainerName(enrollmentId);
+    const { csrSha256 } = await writeCsrArtifact({ stateDir, enrollmentId, csrPem: "-----BEGIN CERTIFICATE REQUEST-----\nUNIT-ONLY\n-----END CERTIFICATE REQUEST-----\n" });
+    const leafPem = fs.readFileSync(path.join(__dirname, "verify/fixtures/leaf.crt.pem"), "utf8");
+    const base = { attempt: 1, containerName, snapshotSha256: job.enrollment.snapshotSha256, jobId: "preserve-unit", csrSha256, csrSpkiSha256: computeSpkiSha256Hex(leafPem), templateOid, caConfig: snapshot.caConfig, template: snapshot.template };
+    await writeEnrollmentJournal(stateDir, enrollmentId, { ...base, state: "prepared" });
+    await writeEnrollmentJournal(stateDir, enrollmentId, { ...base, state: "submitting" });
+    if (["issued", "validation_deferred"].includes(state)) {
+      const { leafSha256 } = await writeIssuedCertificateArtifacts({ stateDir, enrollmentId, leafPem });
+      await writeEnrollmentJournal(stateDir, enrollmentId, { ...base, state: "issued", leafSha256, requestId: 17 });
+      if (state === "validation_deferred") await writeEnrollmentJournal(stateDir, enrollmentId, { ...base, state, leafSha256, requestId: 17, validationDeadlineAt: new Date(Date.now()+600000).toISOString() });
+    } else await writeEnrollmentJournal(stateDir, enrollmentId, { ...base, state, requestId: 17 });
+    let retrieved = 0, validated = 0, reconciled = 0;
+    const result = await factory(stateDir).executeWindowsIisContinueEnrollmentJob({ job, jobId: "preserve-unit", client: {}, log: {}, executionContext: {
+      execution: { keysDir: path.join(stateDir, "keys") }, adcsHelperPath: helper, adcsCaCertPath: caPath, adcsEnrollmentRules: [],
+      adcsPreflightImpl() { assert.fail("submitted recovery must not repeat admission checks"); },
+      adcsTryReconcileUncertainSubmissionImpl: async () => { reconciled++; return { status: "unresolved", probed: 0, nextSearchFrom: 17 }; },
+      adcsRunDecision6ValidationImpl: async () => { validated++; return { ok: false, retryable: true, errorCode: "ADCS_REVOCATION_UNKNOWN", error: "fixture unavailable" }; },
+      adcsExecFileImpl: async (_, args) => { retrieved++; assert.ok(args.includes("-retrieve")); fs.writeFileSync(args.at(-1), "response fixture"); return { stdout: "", stderr: "" }; },
+      adcsDecodeCmcImpl: async () => ({ ok: true, result: { disposition: "pending", requestId: 17 } }),
+      windowsExecFileImpl() { assert.fail("policy change must not delete or replace a submitted key"); },
+    }});
+    assert.equal(retrieved, ["pending", "pending_issuance"].includes(state) ? 1 : 0);
+    assert.equal(validated, ["issued", "validation_deferred"].includes(state) ? 1 : 0);
+    assert.equal(reconciled, state === "submission_uncertain" ? 1 : 0);
+    assert.notEqual(result.enrollmentResult?.state, "refused");
+    assert.notEqual(readEnrollmentJournal(stateDir, enrollmentId).journal.state, "refused");
+    assert.equal(readEnrollmentJournal(stateDir, enrollmentId).journal.containerName, containerName);
+  } finally { await fsp.rm(stateDir, { recursive: true, force: true }); }
 });
