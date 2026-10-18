@@ -20,8 +20,16 @@ $null = & certutil.exe -config $config -ping 2>&1
 if ($LASTEXITCODE -ne 0) { throw 'Domain-backed AD CS RPC ping failed' }
 $publicCa=Join-Path $env:TEMP 'TTQualificationRoot.cer'
 $phase='ca-export'
-& certutil.exe -f -config $config -ca.cert $publicCa | Out-Null
-if($LASTEXITCODE -ne 0){throw 'Qualification CA public certificate export failed'}
+$exportOutput = & certutil.exe -f -config $config -ca.cert $publicCa 2>&1
+$exportExit = $LASTEXITCODE
+if($exportExit -ne 0){
+  # Emit numeric status only, never arbitrary guest output or credential text.
+  Write-Output ('CERTOPS_CA_EXPORT_EXIT={0}' -f $exportExit)
+  foreach($code in [regex]::Matches(($exportOutput -join "`n"),'(?i)\b0x[0-9a-f]{8}\b')){
+    Write-Output ('CERTOPS_CA_EXPORT_HRESULT={0}' -f $code.Value.ToUpperInvariant())
+  }
+  throw 'Qualification CA public certificate export failed'
+}
 $phase='ca-identity'
 $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($publicCa)
 if($certificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne 'TTQualificationRoot'){throw 'Unexpected qualification root certificate subject'}

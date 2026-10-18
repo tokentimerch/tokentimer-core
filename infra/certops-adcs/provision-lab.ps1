@@ -72,6 +72,9 @@ function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [strin
   $response = $text | ConvertFrom-Json
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains($Marker)) {
+    foreach($exportDiagnostic in [regex]::Matches($message,'(?m)^CERTOPS_CA_EXPORT_(?:EXIT=-?[0-9]{1,11}|HRESULT=0X[0-9A-F]{8})\s*$')){
+      Write-Output $exportDiagnostic.Value.Trim()
+    }
     $diagnostic=[regex]::Match($message,'(?m)^CERTOPS_TEMPLATE_FAILURE=(descriptor|remoting|definitions|directory|create-oid|create-template|commit-template|template-acl|publish-template|ca-hardening):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
     if($diagnostic.Success){Write-Output $diagnostic.Value.Trim()}
     $memberDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_MEMBER_FAILURE=(membership|dns-config|dns-lookup|iis-install|domain-join):[0-9]{1,5}:-?[0-9]{1,11}\s*$')
