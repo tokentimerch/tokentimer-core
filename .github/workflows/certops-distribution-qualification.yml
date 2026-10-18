@@ -35,7 +35,7 @@ on:
       - '.npmrc'
       - 'tests/wildcard-vault/**'
       - 'scripts/certops-distribution-*'
-      - 'docs/certops/release-qualification-matrix.json'
+      - 'docs/certops/qualification-suites.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/certops-distribution-qualification.yml'
   workflow_dispatch:

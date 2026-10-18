@@ -9,15 +9,14 @@ const test = require("node:test"),
   )("js-yaml");
 const subject = require("./certops-qualification-profiles"),
   azure = require("./certops-azure-scope-policy");
-const matrix = require("../docs/certops/release-qualification-matrix.json");
+const matrix = require("../docs/certops/qualification-suites.json");
 test("native AD CS collection requires every runnable cohort and exposes deferred contracts", () => {
   const selected = subject.selectProfile(matrix, "adcs-native");
   assert.deepEqual(new Set(selected.specification.slots.map(slot => slot.suite)), new Set(subject.ADCS_NATIVE));
   for (const slot of matrix.slots) {
     assert.equal(selected.selectedSlotIds.includes(slot.id), subject.ADCS_NATIVE.includes(slot.suite));
   }
-  const diagnostics = require("./_registration/adcs-coverage.json").suites
-    .map(row => row.id).filter(id => !subject.ADCS_NATIVE.includes(id));
+  const diagnostics = ["adcs-install-interruption", "adcs-lost-submit", "adcs-cmc-renewal", "adcs-safety-variants", "adcs-crash-experiments"];
   for (const suite of diagnostics) {
     const slots = matrix.slots.filter(row => row.suite === suite);
     assert.ok(matrix.deferredSlots.some(row => row.suite === suite));

@@ -5,6 +5,7 @@ the real API-agent/native harness. It clears the officer password after executio
 #>
 param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('en-US','de-DE','fr-FR')][string]$Language='en-US',[ValidateSet('0','1')][string]$ResponseLossExperiment='0',[ValidateSet('none','keygen_intent','prepared','submitting','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',[ValidateSet('0','1')][string]$PendingElapsedQualification='0',[ValidateSet('0','1')][string]$IssuerReassignment='0',[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[string]$RootCertificateBase64,[ValidateSet('0','1')][string]$Retention24hPrepare='0',[string]$Retention24hNonce,[string]$Retention24hCreatedAt,[string]$Retention24hRunId,[string]$Retention24hRunAttempt)
 $ErrorActionPreference = 'Stop'
+if($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0'){throw 'Extended campaigns are deferred'}
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
 $runtime=Get-Content 'C:\ttqualification\runtime.json' -Raw | ConvertFrom-Json
 $env:PATH=$runtime.path
@@ -40,13 +41,10 @@ $env:CERTOPS_ADCS_HIERARCHY=$HierarchyRole
 $env:CERTOPS_ADCS_HIERARCHY_ROOT_CERT=$RootCertificateBase64
 Set-Location $runtime.source
 try {
-  if($Retention24hPrepare -eq '1'){
-    if($runtime.windowsVersion -ne '2022' -or $Language -ne 'en-US' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $PendingElapsedQualification -ne '0' -or $HierarchyRole -ne 'root'){throw 'Retention24h dedicated guest selector mismatch'}
-    & (Join-Path $runtime.source 'scripts/certops-retention24h-bootstrap.ps1') -CandidateSha $runtime.candidateSha -Nonce $Retention24hNonce -RunId $Retention24hRunId -RunAttempt $Retention24hRunAttempt -CreatedAt $Retention24hCreatedAt
-  }else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }
+  & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js
   $testExitCode=$LASTEXITCODE
 } finally {
   $env:CERTOPS_ADCS_OFFICER_PASSWORD=$null
 }
 if ($testExitCode -ne 0) { throw 'Native enterprise AD CS scenarios failed' }
-if($Retention24hPrepare -eq '1'){Write-Output 'CERTOPS_STAGE=retention24h-prepared'}else{Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'}
+Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'

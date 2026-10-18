@@ -180,17 +180,9 @@ test("comprehensive browser integration is mandatory outside isolated issuer, el
   const provision=fs.readFileSync(path.join(root,"infra/certops-adcs/provision-lab.ps1"),"utf8");
   assert.ok(provision.includes("if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent'"));
   assert.match(provision, /if\(\$IssuerReassignment -ne '1' -and \$PendingElapsedQualification -ne '1' -and \$Retention24hPrepare -ne '1' -and \$AdcsTtl24hPrepare -ne '1' -and \$RetentionCadencePrepare -ne '1'\)\{\s+Refresh-LabAuthentication/);
-  assert.ok(provision.includes("if($RetentionCadencePrepare -eq '1'){"));
-  assert.ok(provision.includes("run-retention-cadence-prepare.ps1"));
-  assert.ok(provision.includes("if($Retention24hPrepare -eq '1'){"));
-  assert.ok(provision.includes("'CERTOPS_STAGE=retention24h-prepared'"));
-  assert.ok(provision.includes("if($AdcsTtl24hPrepare -eq '1'){"));
-  assert.ok(provision.includes("run-ttl24h-prepare.ps1"));
-  assert.ok(provision.includes("'CERTOPS_STAGE=adcs-ttl24h-prepared'"));
-  const guest=fs.readFileSync(path.join(root,"infra/certops-adcs/run-windows-tests.ps1"),"utf8");
-  assert.ok(guest.includes("$env:CERTOPS_ADCS_BROWSER=if($IssuerReassignment -eq '1' -or $PendingElapsedQualification -eq '1' -or $Retention24hPrepare -eq '1'){$null}else{'1'}"));
-  assert.ok(guest.includes("scripts/certops-retention24h-bootstrap.ps1"));
-  assert.ok(guest.includes("}else{ & $runtime.node --test tests/e2e/certops-adcs-real-e2e.test.js }"));
+  assert.ok(provision.includes("Only the core AD CS lab is included"));
+  assert.ok(!provision.includes("run-retention-cadence-prepare.ps1"));
+  assert.ok(!provision.includes("run-ttl24h-prepare.ps1"));
 });
 
 test("CA confirmation selects the independently current visible key group despite historical ordering", () => {

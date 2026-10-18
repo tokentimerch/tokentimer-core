@@ -177,7 +177,7 @@ function verify(directory, candidateSha, root = ROOT) {
   const files = walk(directory),
     matrix = JSON.parse(
       fs.readFileSync(
-        path.join(root, "docs/certops/release-qualification-matrix.json"),
+        path.join(root, "docs/certops/qualification-suites.json"),
         "utf8",
       ),
     ),

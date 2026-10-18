@@ -11,14 +11,12 @@ const crypto = require("node:crypto");
 const { verifyReport } = require("./certops-qualification-report");
 const { verify: verifyStack } = require("./certops-stack-report");
 const { verify: verifyDatabase } = require("./certops-integration-report");
-const matrix = require("../docs/certops/release-qualification-matrix.json");
-const catalog = require("../docs/certops/e2e-scenario-catalog.json");
+const matrix = require("../docs/certops/qualification-suites.json");
+const catalog = require("../docs/certops/qualification-suites.json");
 // These registrations describe local contracts, with no native qualifying
 // producer. A passed outer envelope must never upgrade their simulated proofs.
 // A future native implementation must deliberately replace this eligibility gate.
-const localContractSuites = new Set([
-  ...require("./_registration/adcs-coverage.json").suites.map(item => item.id).filter(id => !["adcs-browser-enrollment","adcs-uncertain-abandon"].includes(id)),
-]);
+const localContractSuites = new Set(["adcs-install-interruption", "adcs-lost-submit", "adcs-cmc-renewal", "adcs-safety-variants", "adcs-crash-experiments"]);
 function catalogCoverage(specification = catalog) {
   const errors = require("./certops-qualification-catalog").validateCatalog(specification);
   if (errors.length) throw new Error("Invalid committed scenario catalog");
@@ -99,15 +97,9 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
         if (verifyReport(artifact.report, undefined, { expectedSha: candidateSha }).length) throw new Error("Mandatory runtime evidence incomplete");
         if (localContractSuites.has(slot.suite)) throw new Error("Local-contract-only suite has no native qualifying producer");
 
-        if (slot.suite === "windows-domain-adcs-default-ttl24h") {
-          const helper = require("./certops-adcs-ttl24h-proof"); helper.verifyProof(artifact.report[helper.FIELD]);
-          if (artifact.report[helper.FIELD].candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Actual TTL native environment, candidate and cleanup required");
-        }
-        if (slot.suite === "windows-domain-installed-retention-default-timer") {
-          const native = require("./certops-retention-cadence-proof").verifyProof(artifact.report.nativeRetentionCadence);
-          if (native.candidateSha !== candidateSha || artifact.report.platform !== "win32" || artifact.report.architecture !== "x64" || artifact.report.cleanup?.status !== "passed") throw new Error("Installed timer native environment, original candidate and cleanup required");
-        }
-        if (slot.suite === "windows-domain-adcs-retention24h") require("./certops-retention24h-proof").verifyProof(artifact.report.nativeRetention24h);
+
+
+
 
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-renewal").verifyCrossProof(artifact.report.nativePendingCaRenewal,artifact.report.nativeAdcsCapacity);
         if (slot.suite === "enterprise-adcs-real") require("../tests/e2e/helpers/certops-adcs-pending-ca-key-change").verifyCrossProof(artifact.report.nativePendingCaKeyChange,artifact.report.nativePendingCaRenewal);
@@ -191,21 +183,6 @@ function verifyMatrix(artifacts, { candidateSha, root = path.resolve(__dirname, 
           const n=artifact.report.qualificationEnvironment;
           if(artifact.report.platform!=="win32"||artifact.report.architecture!=="x64"||n.osFamily!=="windows"||n.osVersion!=="2022"||n.nativeLanguage!=="en-US"||n.identity!=="LocalSystem"||n.measurement!=="native"||artifact.report.cleanup?.status!=="passed")throw new Error("Native uncertain abandon requires completed SYSTEM root-domain Server2022 execution");
         }
-        const adcsLocalContracts = {
-          "adcs-install-interruption": ["../tests/e2e/helpers/certops-adcs-install-interruption", "nativeAdcsInstallInterruption"],
-          "adcs-lost-submit": ["../tests/e2e/helpers/certops-adcs-lost-submit", "nativeAdcsLostSubmit"],
-          "adcs-cmc-renewal": ["../tests/e2e/helpers/certops-adcs-cmc-renewal", "nativeAdcsCmcRenewal"],
-          "adcs-safety-variants": ["../tests/e2e/helpers/certops-adcs-safety-variants", "nativeAdcsSafetyVariants"],
-          "adcs-crash-experiments": ["../tests/e2e/helpers/certops-adcs-crash-experiments", "nativeAdcsCrashExperiments"],
-        };
-        if (adcsLocalContracts[slot.suite]) {
-          const [modulePath, field] = adcsLocalContracts[slot.suite];
-          const proof = artifact.report[field];
-          require(modulePath).verifyProof(proof);
-          if (proof.disposableForestRan !== false || proof.nativeExecutionQualified !== false || proof.hostCapabilityAbsentIsPass !== false) throw new Error("AD CS local contract stays unqualified without a disposable forest");
-          if (slot.suite === "adcs-crash-experiments" && proof.releaseQualificationSatisfied !== false) throw new Error("AD CS crash experiments cannot satisfy release qualification");
-        }
-
         if (slot.suite === "enterprise-adcs-elapsed-pending-real") {
           require("./certops-adcs-pending-elapsed-report").verify(artifact.report, { expectedSha: candidateSha });
           const count = artifact.report.primaryNativePreflightDispatchCount;

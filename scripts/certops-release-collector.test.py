@@ -175,49 +175,7 @@ class CollectorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 collector.live_enroll_acl_proof.fields({**proof, **patch})
 
-    def test_resident_domain_retention_strips_private_data_and_rejects_short_or_incomplete_days(self):
-        source = "const f=require('./scripts/certops-retention24h-test-fixture.cjs'),h=require('./scripts/certops-retention24h-proof');process.stdout.write(JSON.stringify(h.verifyCompositeProof(f())))"
-        proof = json.loads(subprocess.check_output(['node', '-e', source], cwd=collector.ROOT, text=True, timeout=15))
-        report = {'suite': 'windows-domain-adcs-retention24h', 'nativeRetention24h': {**proof, 'rawCertificateInventory': 'private-sentinel', 'privateKey': 'private-sentinel'}}
-        projected = collector.sanitized_report(report, {report['suite']}, set())
-        self.assertEqual(projected['nativeRetention24h'], proof)
-        self.assertNotIn('private-sentinel', json.dumps(projected))
-        for key, expected in proof.items():
-            with self.subTest(field=key):
-                invalid = json.loads(json.dumps(report))
-                del invalid['nativeRetention24h'][key]
-                with self.assertRaises(ValueError):
-                    collector.sanitized_report(invalid, {report['suite']}, set())
-                invalid = json.loads(json.dumps(report))
-                invalid['nativeRetention24h'][key] = False if expected is True else 'invalid'
-                with self.assertRaises(ValueError):
-                    collector.sanitized_report(invalid, {report['suite']}, set())
-        for change in ({'bootTime': proof['finishedAt']}, {'processCreatedAt': proof['finishedAt']}, {'monotonicElapsedMs': 86399999}, {'monotonicElapsedMs': True}, {'keptSweepCount': 2}, {'maximumSweepGapMs': 3900001}, {'oldNotAfter': proof['cleanupDeadline']}, {'preDeadlineObservedAt': proof['cleanupDeadline']}, {'cleanupFinishedAt': proof['startedAt']}, {'scope': 'resident-timing-only-native-oracles-required'}, {'requestIds': ['11', '11']}, {'requestIds': ['11', '4294967296']}):
-            with self.subTest(change=change):
-                invalid = {**report, 'nativeRetention24h': {**proof, **change}}
-                with self.assertRaises(ValueError):
-                    collector.sanitized_report(invalid, {report['suite']}, set())
 
-    def test_real_day_native_interruption_nested_facts_are_required_and_sanitized(self):
-        source = "const f=require('./scripts/certops-retention24h-test-fixture.cjs'),h=require('./scripts/certops-retention24h-proof');process.stdout.write(JSON.stringify(h.verifyCompositeProof(f())))"
-        proof = json.loads(subprocess.check_output(['node', '-e', source], cwd=collector.ROOT, text=True, timeout=15))
-        report = {'suite': 'windows-domain-adcs-retention24h', 'nativeRetention24h': proof}
-        for key, expected in proof['interruptedDelete'].items():
-            bad = json.loads(json.dumps(report))
-            del bad['nativeRetention24h']['interruptedDelete'][key]
-            with self.subTest(missing=key), self.assertRaises(ValueError):
-                collector.retention24h_fields(bad)
-            bad = json.loads(json.dumps(report))
-            bad['nativeRetention24h']['interruptedDelete'][key] = False if expected is True else True
-            with self.subTest(tampered=key), self.assertRaises(ValueError):
-                collector.retention24h_fields(bad)
-        for patch in ({'cleanupDeadline': proof['oldNotAfter']}, {'interruptedAt': proof['cleanupDeadline']}, {'resumedAt': proof['cleanupFinishedAt']}, {'monotonicElapsedBeforeCrashMs': proof['monotonicElapsedMs'] + 1}):
-            bad = json.loads(json.dumps(report))
-            bad['nativeRetention24h']['interruptedDelete'].update(patch)
-            with self.subTest(patch=patch), self.assertRaises(ValueError):
-                collector.retention24h_fields(bad)
-        report['nativeRetention24h']['interruptedDelete']['rawNativeReceipt'] = 'private-sentinel'
-        self.assertNotIn('private-sentinel', json.dumps(collector.retention24h_fields(report)))
 
     def test_collection_budgets_follow_committed_growth_with_absolute_caps(self):
         self.assertEqual(collector.collection_limits(1), {'runs': 100, 'archives': 200, 'reports': 200})
@@ -230,7 +188,7 @@ class CollectorTests(unittest.TestCase):
         for invalid in (0, -1, 513, 1024, True, 201.0, '201', None):
             with self.assertRaises(ValueError):
                 collector.collection_limits(invalid)
-        matrix = json.loads((collector.ROOT / 'docs/certops/release-qualification-matrix.json').read_text())
+        matrix = json.loads((collector.ROOT / 'docs/certops/qualification-suites.json').read_text())
         self.assertGreaterEqual(collector.collection_limits(len(matrix['slots']))['reports'], len(matrix['slots']))
 
     def test_growth_preserves_run_identity_and_independent_download_bounds(self):
@@ -261,7 +219,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_event_names_project_committed_cases_and_keep_unrecognized_failures(self):
         scope = 'distribution-postgres-postgres'
-        manifest = next(slot for slot in json.loads((collector.ROOT / 'docs/certops/release-qualification-matrix.json').read_text())['slots'] if slot['suite'] == scope)
+        manifest = next(slot for slot in json.loads((collector.ROOT / 'docs/certops/qualification-suites.json').read_text())['slots'] if slot['suite'] == scope)
         events = [{'scope': scope, 'name': manifest['requiredTests'][0], 'type': 'test:pass'}, {'scope': scope, 'name': 'password=sentinel', 'type': 'test:fail'}, {'scope': scope, 'name': {'secret': 'sentinel'}, 'type': 'test:pass'}]
         result = collector.sanitized_report(events, set(), {scope})
         self.assertEqual(result[0]['name'], events[0]['name'])

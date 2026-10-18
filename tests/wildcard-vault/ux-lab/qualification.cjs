@@ -68,7 +68,7 @@ function createGate({ root, candidateSha, mode }) {
   });
   gate.report.qualificationEnvironment.certificateMode = mode;
   gate.report.fixtureSources =
-    require("../../../docs/certops/release-qualification-matrix.json")
+    require("../../../docs/certops/qualification-suites.json")
       .slots.find((s) => s.suite === SUITE)
       .requiredSources.map((file) => ({
         file,

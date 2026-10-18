@@ -20,10 +20,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-import certops_retention24h_collection as retention24h_collection
-from certops_retention_policy_expiry import fields as retention_policy_expiry_fields, interruption_fields as retention_interruption_fields
-import certops_adcs_ttl24h_collection as adcs_ttl24h_collection
-import certops_retention_cadence_collection as retention_cadence_collection
 from certops_adcs_unique_candidate_proof import fields as unique_candidate_fields
 import certops_adcs_live_enroll_acl_proof as live_enroll_acl_proof
 import certops_adcs_result_outbox_proof as adcs_result_outbox_proof
@@ -58,7 +54,7 @@ def validate_run_ids(run_ids, limits):
         raise ValueError('Run IDs must be a bounded unique JSON array of positive integers')
 
 def catalog_coverage():
-    catalog = json.loads((ROOT / 'docs/certops/e2e-scenario-catalog.json').read_text())
+    catalog = json.loads((ROOT / 'docs/certops/qualification-suites.json').read_text())
     rows = catalog.get('scenarios')
     if catalog.get('schemaVersion') != 1 or not isinstance(rows, list) or (not rows):
         raise ValueError('Invalid committed scenario catalog')
@@ -80,7 +76,7 @@ def validate_run(run, candidate, repository):
         raise ValueError('Selected run is not successful trusted-main candidate qualification')
 
 def declared_sources():
-    slots = json.loads((ROOT / 'docs/certops/release-qualification-matrix.json').read_text())['slots']
+    slots = json.loads((ROOT / 'docs/certops/qualification-suites.json').read_text())['slots']
     declared = {source for slot in slots for source in slot.get('requiredSources', [])}
     declared.update((slot['source'] for slot in slots if 'source' in slot))
     groups = json.loads((ROOT / 'tests/integration/certops-qualification-groups.json').read_text())
@@ -452,60 +448,6 @@ def webhosting_fields(proof):
         raise ValueError('Invalid native WebHosting CA request bound')
     return result
 
-def retention24h_fields(value):
-    """Public native-day proof only; timer/prepare/source fixtures cannot qualify."""
-    proof = value.get('nativeRetention24h')
-    flags = ('genuinePublicAdcsCutover', 'distinctNativeRequestsAndLeaves', 'productionLedger24HourDeadline', 'oldExpiryBeyondDeadline', 'immutableOriginalPrepareVerified', 'sameVmTaskBootAndProcess', 'soleInstalledAgentStoppedDrained', 'predecessorProtectedCustodyPreserved', 'actualPreDeadlinePreserved', 'productionDefaultClockCollector', 'actualResidentDayElapsed', 'oldCertificateActuallyAbsent', 'oldKeyActuallyAbsent', 'replacementCngIisAndTrustedTlsUnchanged', 'immutableLedgerIdentityPreserved', 'currentExecutableAndSourceDigestsBound', 'independentFinalNativeRecheck', 'ownedAzureCleanupVerified')
-    if not isinstance(proof, dict) or proof.get('scope') != 'actual-domain-adcs-same-process-native-retention24h' or any((proof.get(key) is not True for key in flags)):
-        raise ValueError('Incomplete actual native retention24h evidence')
-    result = {'scope': proof['scope'], **dict.fromkeys(flags, True)}
-    uuid = '[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}'
-    for key, pattern in (('candidateSha', '[a-f0-9]{40}'), ('prepareRunId', '[1-9][0-9]{0,19}'), ('prepareRunAttempt', '[1-9][0-9]{0,19}'), ('vmId', uuid), *((key, '[a-f0-9]{64}') for key in ('nonce', 'taskXmlSha256', 'configSha256', 'nodeSha256', 'keeperSha256', 'collectorHelperSha256', 'ledgerIdentitySha256'))):
-        if not isinstance(proof.get(key), str) or not re.fullmatch(pattern, proof[key]):
-            raise ValueError('Invalid native retention24h identity')
-        result[key] = proof[key]
-    for key, low, high in (('processId', 1, 4294967295), ('retentionHours', 24, 24), ('monotonicElapsedMs', 86400000, 90000000), ('keptSweepCount', 24, 26), ('maximumSweepGapMs', 1, 3900000)):
-        if type(proof.get(key)) is not int or not low <= proof[key] <= high:
-            raise ValueError('Invalid native retention24h measured bound')
-        result[key] = proof[key]
-    epochs = {}
-    for key in ('bootTime', 'processCreatedAt', 'originalCreatedAt', 'verifiedCutoverAt', 'oldNotAfter', 'cleanupDeadline', 'startedAt', 'finishedAt', 'preDeadlineObservedAt', 'cleanupFinishedAt'):
-        raw = proof.get(key)
-        if not isinstance(raw, str) or len(raw) > 40 or (not re.fullmatch('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})', raw)):
-            raise ValueError('Invalid native retention24h actual timestamp')
-        try:
-            epochs[key] = round(datetime.fromisoformat(raw.replace('Z', '+00:00')).timestamp() * 1000)
-        except (ValueError, OverflowError):
-            raise ValueError('Invalid native retention24h timestamp') from None
-        result[key] = raw
-    created, cut, deadline, start, end, pre, clean = (epochs[key] for key in ('originalCreatedAt', 'verifiedCutoverAt', 'cleanupDeadline', 'startedAt', 'finishedAt', 'preDeadlineObservedAt', 'cleanupFinishedAt'))
-    if not created <= epochs['bootTime'] <= epochs['processCreatedAt'] <= start or not created <= cut <= start or start - cut > 600000 or (deadline != cut + 86400000) or (epochs['oldNotAfter'] <= deadline + 3600000) or (not start <= pre < deadline < end <= clean <= created + 115200000) or (abs(end - start - proof['monotonicElapsedMs']) > 5000):
-        raise ValueError('Native retention24h elapsed/deadline/expiry scope mismatch')
-    for key, pattern in (('requestIds', '[1-9][0-9]{0,9}'), ('enrollmentIds', uuid), ('jobIds', uuid), ('thumbprints', '[A-F0-9]{40}'), ('containerNames', 'tokentimer-enr-' + uuid), ('fingerprints', '[a-f0-9]{64}'), ('spkiSha256', '[a-f0-9]{64}'), ('serialNumbers', '[a-f0-9]{1,128}')):
-        items = proof.get(key)
-        if not isinstance(items, list) or len(items) != 2 or any((not isinstance(item, str) or not re.fullmatch(pattern, item) for item in items)) or (len({item.lower() for item in items}) != 2):
-            raise ValueError('Invalid distinct native retention24h generations')
-        result[key] = list(items)
-    if any((int(item) > 4294967295 for item in proof['requestIds'])) or any((proof['containerNames'][i] != 'tokentimer-enr-' + proof['enrollmentIds'][i] for i in range(2))):
-        raise ValueError('Native retention24h request/key ownership mismatch')
-    nested = proof.get('interruptedDelete')
-    nested_flags = ('actualDayBeforeNativeMutation', 'sameOriginalProductionLedger', 'ownedChildExit86', 'containedNativeTreeDrained', 'nativeCertificateAbsentBeforeResume', 'nativeKeyPossessionRetainedBeforeResume', 'incompleteLedgerUnchanged', 'replacementCustodyAndTrustedTlsPreserved', 'ordinaryDefaultClockResumeCompleted', 'nativeCertificateAndKeyAbsentAfterResume')
-    if not isinstance(nested, dict) or nested.get('scope') != 'actual-day-native-delstore-interruption-and-default-clock-resume' or any((nested.get(key) is not True for key in nested_flags)) or (nested.get('productionSixHourCadenceQualified') is not False) or (nested.get('full168HourRetentionQualified') is not False) or (nested.get('cleanupDeadline') != proof['cleanupDeadline']) or (type(nested.get('monotonicElapsedBeforeCrashMs')) is not int) or (not 86400000 <= nested['monotonicElapsedBeforeCrashMs'] <= proof['monotonicElapsedMs']):
-        raise ValueError('Incomplete actual real-day native deletion interruption')
-    nested_times = {}
-    for key in ('interruptedAt', 'resumedAt'):
-        raw = nested.get(key)
-        if not isinstance(raw, str) or not re.fullmatch('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z', raw):
-            raise ValueError('Invalid actual retention interruption timestamp')
-        try:
-            nested_times[key] = round(datetime.fromisoformat(raw.replace('Z', '+00:00')).timestamp() * 1000)
-        except (ValueError, OverflowError):
-            raise ValueError('Invalid actual retention interruption timestamp') from None
-    if not deadline < nested_times['interruptedAt'] <= nested_times['resumedAt'] <= end or nested_times['interruptedAt'] < start + nested['monotonicElapsedBeforeCrashMs'] - 5000:
-        raise ValueError('Retention interruption differs from original real-day boundary')
-    result['interruptedDelete'] = {key: nested[key] for key in ('scope', *nested_flags, 'monotonicElapsedBeforeCrashMs', 'interruptedAt', 'resumedAt', 'cleanupDeadline', 'productionSixHourCadenceQualified', 'full168HourRetentionQualified')}
-    return result
-
 def algorithm_boundaries_fields(rows):
     cases = {'rsa2048-below-template3072': 'rsa3072', 'rsa3072-below-template4096': 'rsa4096', 'ec256-on-p384-schema-three': 'ec384schema3', 'ec256-on-p384-schema-four': 'ec384'}
     flags = ('nativeSafeTemplateObserved', 'publicConfirmedIssuerUsed', 'actualSignedClaimRefusal', 'noCaRequestAllocated', 'noKeyGenerated', 'noAcceptedLeafOrJournal', 'positiveNativeCustodyUnchanged', 'positiveTrustedTlsUnchanged')
@@ -579,15 +521,6 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
                 result[key] = [item if isinstance(item, str) and item in known else '[unrecognized]' for item in result[key]]
         result['capabilities'] = {name if name in known_caps else '[unrecognized]': {'available': capability.get('available') is True} for name, capability in value.get('capabilities', {}).items() if isinstance(capability, dict)}
         result['scenarios'] = [{key: item[key] for key in ('id', 'status', 'evidenceLevel', 'startedAt', 'finishedAt') if key in item} for item in value.get('scenarios', []) if isinstance(item, dict)]
-        if value.get('suite') == retention_cadence_collection.SUITE:
-            result['nativeRetentionCadence'] = retention_cadence_collection.report_fields(value)
-            result['platform'] = 'win32'
-            result['architecture'] = 'x64'
-        if value.get('suite') == 'windows-domain-adcs-retention24h':
-            result['nativeRetention24h'] = retention24h_fields(value)
-        if value.get('suite') == adcs_ttl24h_collection.SUITE:
-            from certops_adcs_ttl24h_proof import fields as adcs_ttl24h_fields
-            result['nativeAdcsTtl24h'] = adcs_ttl24h_fields(value)
         for scenario in result['scenarios']:
             if scenario.get('id') not in known_ids:
                 scenario['id'] = '[unrecognized]'
@@ -871,7 +804,7 @@ def _sanitized_report(value, suites, scopes, database_scopes=()):
     return None
 
 def committed_case_names(scope, kind):
-    slots = json.loads((ROOT / 'docs/certops/release-qualification-matrix.json').read_text())['slots']
+    slots = json.loads((ROOT / 'docs/certops/qualification-suites.json').read_text())['slots']
     matching = [slot for slot in slots if slot['kind'] == kind and slot['suite'] == scope]
     if kind == 'database':
         groups = json.loads((ROOT / 'tests/integration/certops-qualification-groups.json').read_text())
@@ -975,7 +908,7 @@ def extract_reports(raw, suites, scopes, database_scopes=(), authenticate_report
                 raise ValueError('Qualification report exceeds size limit')
             text = archive.read(item).decode('utf-8')
             try:
-                value = (retention24h_collection.json_bytes(text.encode('utf-8')) if authenticate_report else json.loads(text)) if parts.suffix == '.json' else [json.loads(line) for line in text.splitlines() if line.strip()]
+                value = json.loads(text) if parts.suffix == '.json' else [json.loads(line) for line in text.splitlines() if line.strip()]
             except (ValueError, TypeError, AttributeError):
                 raise ValueError('Malformed JSON qualification artifact') from None
             if authenticate_report is not None and (not authenticate_report(value)):
@@ -1046,7 +979,7 @@ def main(arguments=()):
     run_ids = json.loads(os.environ.get('CERTOPS_RELEASE_RUN_IDS', '[]'))
     if not re.fullmatch('[a-f0-9]{40}', candidate) or not re.fullmatch('[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository) or (not token):
         raise ValueError('Explicit candidate, repository and read-only workflow token required')
-    matrix = json.loads((ROOT / 'docs/certops/release-qualification-matrix.json').read_text())
+    matrix = json.loads((ROOT / 'docs/certops/qualification-suites.json').read_text())
     selection = qualification_profiles.select_profile(matrix, profile)
     selected_matrix = selection['specification']
     limits = collection_limits(len(selected_matrix['slots']))
@@ -1065,12 +998,7 @@ def main(arguments=()):
         for run_id in run_ids:
             endpoint = f'https://api.github.com/repos/{repository}/actions/runs/{run_id}'
             run = json.loads(download(endpoint, token))
-            owner_auth = {retention24h_collection.FINALIZER: retention24h_collection, adcs_ttl24h_collection.FINALIZER: adcs_ttl24h_collection, retention_cadence_collection.FINALIZER: retention_cadence_collection}.get(run.get('path'))
-            elapsed_finalizer = owner_auth is not None
-            if elapsed_finalizer:
-                owner_auth.validate_finalizer_run(run, repository, run_id)
-            else:
-                validate_run(run, candidate, repository)
+            validate_run(run, candidate, repository)
             data = json.loads(download(endpoint + '/artifacts?per_page=100', token))
             if data.get('total_count', 0) > MAX_ARTIFACTS_PER_RUN:
                 raise ValueError('Artifact inventory exceeds explicit bound')
@@ -1087,31 +1015,7 @@ def main(arguments=()):
                 downloaded_bytes += len(raw)
                 if downloaded_bytes > MAX_TOTAL_DOWNLOAD:
                     raise ValueError('Collection total download size exceeds limit')
-                if elapsed_finalizer and artifact.get('digest') != 'sha256:' + hashlib.sha256(raw).hexdigest():
-                    raise ValueError('Real-day finalizer artifact digest does not match GitHub')
-
-                def authenticate_elapsed_report(report):
-                    if not isinstance(report, dict):
-                        return False
-                    if report.get('suite') != owner_auth.SUITE:
-                        if report.get('suite') in suites or report.get('scope') in scopes | database_scopes:
-                            raise ValueError('Real-day finalizer cannot supply other qualification suites')
-                        return False
-                    if report.get('candidateSha') != candidate:
-                        return False
-
-                    def fetch_retention_owner(url, redirect=False):
-                        nonlocal downloaded_bytes, archive_count
-                        owner_raw = download(url, token, redirect=redirect)
-                        downloaded_bytes += len(owner_raw)
-                        if redirect:
-                            archive_count += 1
-                        if downloaded_bytes > MAX_TOTAL_DOWNLOAD or archive_count > limits['archives']:
-                            raise ValueError('Real-day ownership exceeds collection budget')
-                        return owner_raw
-                    owner_auth.authenticate(report, run, run_id, candidate, repository, fetch_retention_owner)
-                    return True
-                reports = extract_reports(raw, suites, scopes, database_scopes, authenticate_report=authenticate_elapsed_report) if elapsed_finalizer else extract_reports(raw, suites, scopes, database_scopes)
+                reports = extract_reports(raw, suites, scopes, database_scopes)
                 for suffix, report in reports:
                     issuer_reassignment_proof.verify_workflow(report, run.get('path'))
                     browser_enrollment_proof.verify_workflow(report, run.get('path'))
@@ -1141,7 +1045,7 @@ def failed_profile_summary(arguments, environment, root=ROOT):
     try:
         profile = qualification_profiles.requested_profile(arguments, environment)
         result['qualificationProfile'] = profile
-        matrix = json.loads((root / 'docs/certops/release-qualification-matrix.json').read_text())
+        matrix = json.loads((root / 'docs/certops/qualification-suites.json').read_text())
         selected = qualification_profiles.select_profile(matrix, profile)
         result.update(qualification_profiles.summary_fields(selected))
         result['mandatoryEnvironments'] = len(selected['selectedSlotIds'])
