@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, "../..");
 const CANDIDATE = "a".repeat(40);
 function artifact(scope = "real-agent-acme-filesystem") {
   const slot =
-    require("../../docs/certops/qualification-suites.json").slots.find(
+    require("../certops-qualification-manifest").slots.find(
       (row) => row.suite === scope,
     );
   const client = scope.includes("acmesh") ? "acme.sh" : "certbot";

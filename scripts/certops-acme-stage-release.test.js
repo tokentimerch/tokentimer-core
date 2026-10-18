@@ -12,7 +12,7 @@ const errors = (value) =>
     specification: {
       schemaVersion: 1,
       slots: [
-        require("../docs/certops/qualification-suites.json").slots.find(
+        require("./certops-qualification-manifest").slots.find(
           (s) => s.suite === value.suite,
         ),
       ],

@@ -36,6 +36,7 @@ on:
       - '.npmrc'
       - 'tests/wildcard-vault/**'
       - 'scripts/certops-distribution-*'
+      - 'scripts/certops-qualification-manifest.js'
       - 'docs/certops/qualification-suites.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/certops-distribution-qualification.yml'

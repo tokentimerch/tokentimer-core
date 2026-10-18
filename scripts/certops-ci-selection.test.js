@@ -8,7 +8,7 @@
 const {test}=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs");
 const {selectFiles,manual}=require("./certops-ci-selection");const {discover}=require("./run-certops-tooling-tests");
 test("installed Linux discovery projection selects tooling without native dispatch",()=>{const file="scripts/certops_linux_installed_discovery_proof.py",value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
-test("qualification profiles Python changes explicitly select only tooling",()=>{const file="scripts/certops_qualification_profiles.py",value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));});
+test("qualification manifest readers select only tooling",()=>{for(const file of ["scripts/certops_qualification_profiles.py","scripts/certops_qualification_manifest.py","scripts/certops-qualification-manifest.js"]){const value=selectFiles([file]);assert.equal(value.tooling,true);assert.equal(value.windows,false);assert.equal(value.stack,false);assert.ok(file.endsWith(".js")||fs.readFileSync(".github/workflows/certops-qualification.yml","utf8").includes(`- '${file}'`));}});
 
 test("AD CS proof-only changes select tooling without provisioning a lab",()=>{
  for(const file of ["scripts/certops_adcs_live_enroll_acl_proof.py","scripts/certops_adcs_http_crl_proof.py","scripts/certops_adcs_ocsp_revoked_proof.py"]){

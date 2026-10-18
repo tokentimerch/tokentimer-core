@@ -3,7 +3,7 @@
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const helper=require("../tests/e2e/helpers/certops-adcs-browser-enrollment");
 const fixture=require("./fixtures/certops-native-browser-enrollment.cjs");
-const matrix=require("../docs/certops/qualification-suites.json");
+const matrix=require("./certops-qualification-manifest");
 const {verifyMatrix}=require("./certops-release-qualification");
 function errors(report){const slot=matrix.slots.find(row=>row.suite===helper.SUITE);return verifyMatrix([{kind:"host",suite:report.suite,environment:slot.environment,report}],{candidateSha:report.candidateSha,specification:{schemaVersion:1,slots:[slot]}});}
 test("completed native browser stages derive an exact source-bound report without first-issue claims",()=>{

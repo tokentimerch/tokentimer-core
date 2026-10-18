@@ -65,7 +65,7 @@ test("Every committed Linux ACME scope binds current actual journey and Pebble p
     "real-agent-alpine-acmesh",
   ]) {
     const sources = supplementalSources(scope);
-    const declared = require("../docs/certops/qualification-suites.json").slots.find(slot=>slot.suite===scope).requiredSources;
+    const declared = require("./certops-qualification-manifest").slots.find(slot=>slot.suite===scope).requiredSources;
     assert.deepEqual(sources.map(item=>item.file).sort(),[...declared].sort());
     for(const file of require("../tests/e2e/helpers/certops-acme-background-renewals").REQUIRED_SOURCES)assert.ok(sources.some(item=>item.file===file));
     for (const item of sources)

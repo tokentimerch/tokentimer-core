@@ -1,4 +1,5 @@
 """Offline immutable-owner adversaries; synthetic data is never native evidence."""
+import certops_qualification_manifest as qualification_manifest
 import base64
 import copy
 import hashlib
@@ -267,8 +268,8 @@ class AuthenticationTests(unittest.TestCase):
                 (root / "docs/certops/qualification-suites.json").write_bytes(encode({"slots": [{"id": "owned-elapsed-fixture", "kind": "host", "suite": auth.SUITE, "source": report["fixtureSource"]["file"], "requiredSources": [row["file"] for row in report["fixtureSources"]]}]}))
                 (root / "tests/integration").mkdir(parents=True)
                 (root / "tests/integration/certops-qualification-groups.json").write_bytes((ROOT / "tests/integration/certops-qualification-groups.json").read_bytes())
-                contract = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
-                contract["slots"] = json.loads((root / "docs/certops/qualification-suites.json").read_text())["slots"]
+                contract = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
+                contract["slots"] = qualification_manifest.load(root / "docs/certops/qualification-suites.json")["slots"]
                 contract["suites"][auth.SUITE] = []
                 contract["requiredCapabilities"][auth.SUITE] = []
                 (root / "docs/certops/qualification-suites.json").write_bytes(encode(contract))

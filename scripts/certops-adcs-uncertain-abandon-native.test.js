@@ -3,7 +3,7 @@
 const {test}=require("node:test"),assert=require("node:assert/strict");
 const h=require("./certops-adcs-uncertain-abandon-native"),fixture=require("./fixtures/certops-native-uncertain-abandon.cjs");
 const {verifyMatrix}=require("./certops-release-qualification");
-const slot=require("../docs/certops/qualification-suites.json").slots.find(s=>s.suite===h.SUITE);
+const slot=require("./certops-qualification-manifest").slots.find(s=>s.suite===h.SUITE);
 function errors(report){return verifyMatrix([{kind:"host",suite:h.SUITE,environment:slot.environment,report}],{candidateSha:report.candidateSha,specification:{schemaVersion:1,slots:[slot]}});}
 test("executed zero-request browser abandonment sidecar satisfies its exact native cell",()=>{const report=fixture.nativeReport();assert.equal(report.scenarios.length,8);assert.deepEqual(errors(report),[]);});
 test("sidecar refuses missing actual stages, source, candidate, cleanup and experiments",()=>{

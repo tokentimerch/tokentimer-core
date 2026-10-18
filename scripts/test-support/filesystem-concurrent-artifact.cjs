@@ -7,7 +7,7 @@ const helper = require("../certops-filesystem-concurrent");
 const root = path.resolve(__dirname, "../..");
 const SUITE = "filesystem-host",
   CANDIDATE = "a".repeat(40);
-const contract = require("../../docs/certops/qualification-suites.json");
+const contract = require("../certops-qualification-manifest");
 const IDS = contract.suites[SUITE],
   CAPS = contract.requiredCapabilities[SUITE];
 function nativeProof() {

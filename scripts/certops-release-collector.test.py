@@ -1,3 +1,4 @@
+import certops_qualification_manifest as qualification_manifest
 
 def adcs_result_outbox_evidence():
     import certops_adcs_result_outbox_proof as proof
@@ -728,7 +729,7 @@ class CollectorTests(unittest.TestCase):
 
     def test_renewal_key_facts_keep_only_committed_sources_not_public_leaf_or_claim_bodies(self):
         suite = "renewal-key-facts-api"
-        matrix = json.loads((collector.ROOT / "docs/certops/qualification-suites.json").read_text())
+        matrix = qualification_manifest.load(collector.ROOT / "docs/certops/qualification-suites.json")
         slot = next(row for row in matrix["slots"] if row["suite"] == suite)
         sources = [{"file": file, "sha256": "a" * 64} for file in slot["requiredSources"]]
         report = {"suite": suite, "fixtureSource": sources[0], "fixtureSources": sources,
@@ -1005,7 +1006,7 @@ class CollectorTests(unittest.TestCase):
             collector.validate_run_ids(list(range(1, slots + 1)), limits)
         for invalid in (0, -1, 513, 1024, True, 201.0, "201", None):
             with self.assertRaises(ValueError): collector.collection_limits(invalid)
-        matrix = json.loads((collector.ROOT / "docs/certops/qualification-suites.json").read_text())
+        matrix = qualification_manifest.load(collector.ROOT / "docs/certops/qualification-suites.json")
         self.assertGreaterEqual(collector.collection_limits(len(matrix["slots"]))["reports"], len(matrix["slots"]))
 
     def test_growth_preserves_run_identity_and_independent_download_bounds(self):

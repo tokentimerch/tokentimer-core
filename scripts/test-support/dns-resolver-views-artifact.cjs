@@ -19,12 +19,12 @@ function nativeProof() {
   };
 }
 function slot() {
-  return require("../../docs/certops/qualification-suites.json").slots.find(
+  return require("../certops-qualification-manifest").slots.find(
     (row) => row.suite === SUITE,
   );
 }
 function artifact() {
-  const contract = require("../../docs/certops/qualification-suites.json"),
+  const contract = require("../certops-qualification-manifest"),
     IDS = contract.suites[SUITE],
     CAPS = contract.requiredCapabilities[SUITE];
   const environment = {

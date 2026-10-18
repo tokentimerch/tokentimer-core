@@ -51,6 +51,7 @@ on:
       - 'scripts/certops_acme_browser_lifecycle_proof.py'
       - 'scripts/certops_linux_installed_discovery_proof.py'
       - 'scripts/certops_qualification_profiles.py'
+      - 'scripts/certops_qualification_manifest.py'
       - 'scripts/certops_adcs_ttl24h_collection.py'
       - 'scripts/certops_adcs_ttl24h_proof.py'
       - 'scripts/certops_adcs_live_enroll_acl_proof.py'

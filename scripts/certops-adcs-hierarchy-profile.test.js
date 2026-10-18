@@ -81,7 +81,7 @@ test("hierarchy workflow dispatch selects one bounded protected lab and retains 
   );
 });
 test("release hierarchy cells require every actual selected environment and current selection sources", () => {
-  const matrix = require("../docs/certops/qualification-suites.json");
+  const matrix = require("./certops-qualification-manifest");
   const cells = matrix.slots.filter(
     (slot) => slot.suite === "enterprise-adcs-hierarchy-real",
   );

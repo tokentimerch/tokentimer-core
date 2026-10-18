@@ -20,7 +20,7 @@ def fixture():
 
 def js_errors(report):
     source = """const fs=require('node:fs'),report=JSON.parse(fs.readFileSync(0,'utf8'));
-const slot=require('./docs/certops/qualification-suites.json').slots.find(row=>row.suite===report.suite);
+const slot=require('./scripts/certops-qualification-manifest').slots.find(row=>row.suite===report.suite);
 console.log(JSON.stringify(require('./scripts/certops-release-qualification').verifyMatrix([{kind:'host',suite:report.suite,environment:slot.environment,report}],{candidateSha:report.candidateSha,specification:{schemaVersion:1,slots:[slot]}})));"""
     return json.loads(subprocess.check_output(["node", "-e", source], cwd=ROOT, input=json.dumps(report), text=True))
 

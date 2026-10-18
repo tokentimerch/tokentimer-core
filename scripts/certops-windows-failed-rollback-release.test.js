@@ -8,7 +8,7 @@ const test = require("node:test"),
   } = require("./test-support/windows-failed-rollback.cjs"),
   { verifyMatrix } = require("./certops-release-qualification");
 const slots =
-  require("../docs/certops/qualification-suites.json").slots.filter(
+  require("./certops-qualification-manifest").slots.filter(
     (x) => x.suite === "windows-installed-failed-rollback-renewal",
   );
 function errors(value, slot) {

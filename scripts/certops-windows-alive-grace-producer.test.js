@@ -51,7 +51,7 @@ test("alive/default-grace producer accepts only complete closed cleanup facts an
 });
 
 test("separate alive scope binds every shared cleanup and pin dependency after parent integration", () => {
-  const matrix = require("../docs/certops/qualification-suites.json");
+  const matrix = require("./certops-qualification-manifest");
   for (const file of [
     ...require("../tests/e2e/helpers/certops-windows-installed-verify-rollback")
       .REQUIRED_SOURCES,

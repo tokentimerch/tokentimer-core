@@ -23,7 +23,7 @@ test("empty local allowlist refuses the previously permitted pair and cannot be 
  assert.equal(matchWholeEnrollmentRule([],allowed.caConfig,allowed.template,request),null);
  const proof=helper.pairCases.map(caseId=>({caseId,...Object.fromEntries(helper.pairFlags.map(field=>[field,true]))}));
  assert.throws(()=>helper.verifyPairProof(proof.filter(row=>row.caseId!=="empty-allowlist")));
- const contract=require("../docs/certops/qualification-suites.json"),matrix=require("../docs/certops/qualification-suites.json");
+ const contract=require("./certops-qualification-manifest"),matrix=require("./certops-qualification-manifest");
  for(const suite of ["enterprise-adcs-real","enterprise-adcs-hierarchy-real"]){
   assert.ok(contract.suites[suite].includes("adcs-real-local-rule-empty-allowlist-refused"));
   for(const slot of matrix.slots.filter(row=>row.suite===suite))for(const file of helper.REQUIRED_SOURCES)assert.ok(slot.requiredSources.includes(file),file);

@@ -7,7 +7,7 @@ const helper = require("../certops-linux-trust-independent-roots");
 const root = path.resolve(__dirname, "../..");
 const SUITE = "linux-trust-host",
   CANDIDATE = "a".repeat(40);
-const contract = require("../../docs/certops/qualification-suites.json");
+const contract = require("../certops-qualification-manifest");
 const IDS = contract.suites[SUITE],
   CAPS = contract.requiredCapabilities[SUITE];
 function nativeProof(version = "24.04") {
@@ -81,7 +81,7 @@ function artifact(version = "24.04") {
   return { kind: "host", suite: SUITE, environment, report };
 }
 function slot(version = "24.04") {
-  return require("../../docs/certops/qualification-suites.json").slots.find(
+  return require("../certops-qualification-manifest").slots.find(
     (row) => row.suite === SUITE && row.environment.osVersion === version,
   );
 }

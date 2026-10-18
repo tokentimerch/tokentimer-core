@@ -6,7 +6,7 @@
 "use strict";
 const { test } = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const { validateInventory, verifyDnsErrors } = require("./certops-dns-provider-errors-report");
-const inventory = require("../docs/certops/dns-provider-errors.json"), contract = require("../docs/certops/qualification-suites.json");
+const inventory = require("../docs/certops/dns-provider-errors.json"), contract = require("./certops-qualification-manifest");
 const root = path.resolve(__dirname, "..");
 test("OAuth fixture endpoints require exact HTTPS origin and token path", () => {
   const { isOAuthFixtureEndpoint } = require("./certops-dns-provider-errors");

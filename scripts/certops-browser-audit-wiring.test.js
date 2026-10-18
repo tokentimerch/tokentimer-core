@@ -24,7 +24,7 @@ test("browser audit is mandatory manual execution with independent verification 
   }
 });
 test("audit producer names and all source dependencies bind one native Ubuntu slot without auto browser launch", () => {
-  const suite = "browser-certificate-audit", inventory = require("../docs/certops/qualification-suites.json"), matrix = require("../docs/certops/qualification-suites.json");
+  const suite = "browser-certificate-audit", inventory = require("./certops-qualification-manifest"), matrix = require("./certops-qualification-manifest");
   assert.deepEqual(inventory.suites[suite], producer.scenarios);
   assert.deepEqual(inventory.requiredCapabilities[suite], ["browser", "api", "postgres", "openssl"]);
   for (const id of producer.scenarios) assert.equal(inventory.scenarioEvidenceLevels[suite][id], "e2e");

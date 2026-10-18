@@ -11,8 +11,8 @@ const crypto = require("node:crypto");
 const { verifyReport } = require("./certops-qualification-report");
 const { verify: verifyStack } = require("./certops-stack-report");
 const { verify: verifyDatabase } = require("./certops-integration-report");
-const matrix = require("../docs/certops/qualification-suites.json");
-const catalog = require("../docs/certops/qualification-suites.json");
+const matrix = require("./certops-qualification-manifest");
+const catalog = require("./certops-qualification-manifest");
 // These registrations describe local contracts, with no native qualifying
 // producer. A passed outer envelope must never upgrade their simulated proofs.
 // A future native implementation must deliberately replace this eligibility gate.

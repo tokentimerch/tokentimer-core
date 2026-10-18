@@ -8,7 +8,7 @@ const mismatch = require("../certops-daemon-served-leaf-mismatch");
 const root = path.resolve(__dirname, "../..");
 const SUITE = "nginx-host",
   CANDIDATE = "a".repeat(40);
-const contract = require("../../docs/certops/qualification-suites.json");
+const contract = require("../certops-qualification-manifest");
 const IDS = contract.suites[SUITE],
   CAPS = contract.requiredCapabilities[SUITE];
 function nativeProof(service = "nginx") {
@@ -79,7 +79,7 @@ function artifact(service = "nginx", version = "24.04") {
   return { kind: "host", suite: SUITE, environment, report };
 }
 function slot(service = "nginx", version = "24.04") {
-  return require("../../docs/certops/qualification-suites.json").slots.find(
+  return require("../certops-qualification-manifest").slots.find(
     (row) =>
       row.suite === service + "-host" &&
       row.environment.distributionVersion === version,

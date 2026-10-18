@@ -1,4 +1,5 @@
 """Pure ARM64 collector projections/refusals; no host or workflow qualification."""
+import certops_qualification_manifest as qualification_manifest
 import copy
 import importlib.util
 import json
@@ -18,7 +19,7 @@ def report():
     architecture = {"productType": 1, "build": "26200", "cpuArchitectures": [12], "platform": "win32", "nodeArchitecture": "arm64", "powershellArchitecture": "arm64", "goHostArchitecture": "arm64", "goHostOs": "windows", "nodePeMachine": 0xaa64, "powershellPeMachine": 0xaa64, "goPeMachine": 0xaa64, "certreqPeMachine": 0xaa64, "certutilPeMachine": 0xaa64, "administrator": True}
     proof = {"scope": "native-windows11-arm64-cng-public-fixture", "architecture": architecture, "helperPeMachine": 0xaa64, "helperSha256": "b" * 64, "helperExecuted": True, "serverQualified": False, "iisQualified": False, "domainAdcsQualified": False, "privateCaKeyPersisted": False, "cleanupCompleted": True,
              "cases": [{**dict.fromkeys(FLAGS, True), "profile": profile, "chainVerdict": "revocation_unknown", "wrongPinVerdict": "ca_key_changed", "malformedVerdict": "invalid", "storesScanned": 5, "privateExportHResult": -2146893813} for profile in ("rsa-2048", "ec-p256")]}
-    metadata = json.loads((collector.ROOT / "docs/certops/qualification-suites.json").read_text())
+    metadata = qualification_manifest.load(collector.ROOT / "docs/certops/qualification-suites.json")
     return {"suite": SUITE, "platform": "win32", "architecture": "arm64", "nativeArchitectureProbe": copy.deepcopy(architecture), "nativeArm64CngRuntime": proof, "qualificationEnvironment": {"osFamily": "windows", "osVersion": "desktop-26200", "productType": 1, "measurement": "native", "architecture": "arm64"}, "requiredScenarios": metadata["suites"][SUITE], "requiredCapabilities": metadata["requiredCapabilities"][SUITE]}
 
 

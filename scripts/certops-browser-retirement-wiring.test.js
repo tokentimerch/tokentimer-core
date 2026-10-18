@@ -26,7 +26,7 @@ test("manual browser retirement executes and independently verifies its exact up
   }
 });
 test("all retirement scenarios and current supporting sources remain mandatory in one actual host slot", () => {
-  const inventory = require("../docs/certops/qualification-suites.json"), matrix = require("../docs/certops/qualification-suites.json");
+  const inventory = require("./certops-qualification-manifest"), matrix = require("./certops-qualification-manifest");
   assert.deepEqual(inventory.suites["browser-retirement-visibility"], fixture.scenarios);
   assert.deepEqual(inventory.requiredCapabilities["browser-retirement-visibility"], ["browser", "api", "postgres", "openssl"]);
   for (const id of fixture.scenarios) assert.equal(inventory.scenarioEvidenceLevels["browser-retirement-visibility"][id], "e2e");

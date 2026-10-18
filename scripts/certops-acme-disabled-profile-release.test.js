@@ -6,7 +6,7 @@ const fixture = require("./test-support/acme-stage-artifact.cjs"),
   h = require("../tests/e2e/helpers/certops-acme-disabled-profile"),
   { verifyMatrix } = require("./certops-release-qualification");
 const slot =
-  require("../docs/certops/qualification-suites.json").slots.find(
+  require("./certops-qualification-manifest").slots.find(
     (row) => row.id === "linux-real-acme",
   );
 function errors(value) {

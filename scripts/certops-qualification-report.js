@@ -10,7 +10,7 @@ function verifyReport(report, expectedScenarios, { expectedSha = process.env.GIT
   if (!report || typeof report !== "object" || Array.isArray(report)) return ["Invalid report object"];
   // Direct CLI verification must fail too when a newly registered suite omits
   // required classifications; a separate CI metadata check is not sufficient.
-  const metadata = require("../docs/certops/qualification-suites.json");
+  const metadata = require("./certops-qualification-manifest");
   if (require("./certops-qualification-suites").validateSuites(metadata).length) return ["Invalid committed qualification suite contract"];
   expectedScenarios ??= require("../docs/certops/qualification-suites.json").suites[report.suite];
   const errors = [];

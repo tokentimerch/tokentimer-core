@@ -9,7 +9,7 @@ const test = require("node:test"),
   )("js-yaml");
 const subject = require("./certops-qualification-profiles"),
   azure = require("./certops-azure-scope-policy");
-const matrix = require("../docs/certops/qualification-suites.json");
+const matrix = require("./certops-qualification-manifest");
 test("native AD CS collection requires every runnable cohort and exposes deferred contracts", () => {
   const selected = subject.selectProfile(matrix, "adcs-native");
   assert.deepEqual(new Set(selected.specification.slots.map(slot => slot.suite)), new Set(subject.ADCS_NATIVE));

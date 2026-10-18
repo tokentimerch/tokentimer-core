@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const { verifyReport } = require("./certops-qualification-report");
 const { validateCatalog } = require("./certops-qualification-catalog");
 test("committed catalog contains valid independent scenario specifications", () => {
-  assert.deepEqual(validateCatalog(require("../docs/certops/qualification-suites.json")), []);
+  assert.deepEqual(validateCatalog(require("./certops-qualification-manifest")), []);
 });
 test("catalog rejects duplicate identities and unsupported implementation claims", () => {
   const row = { id: "fixture.case", outcome: "Checks behavior", status: "implemented", evidenceLevel: "unassigned", requiredEnvironments: [], implementation: null };
@@ -68,14 +68,14 @@ test("unit helper evidence cannot be promoted to native certificate proof", () =
 });
 test("committed suites require unique scenarios and exhaustive evidence classifications", () => {
   const { validateSuites } = require("./certops-qualification-suites");
-  assert.deepEqual(validateSuites(require("../docs/certops/qualification-suites.json")), []);
+  assert.deepEqual(validateSuites(require("./certops-qualification-manifest")), []);
   const invalid = { schemaVersion: 1, suites: { fixture: ["native", "native"] } };
   assert.ok(validateSuites(invalid).length);
   assert.ok(validateSuites({ schemaVersion: 1, suites: { fixture: ["native"] } }).length >= 2);
 });
 
 test("a complete execution report cannot pass with missing committed classifications", () => {
-  const metadata = require("../docs/certops/qualification-suites.json");
+  const metadata = require("./certops-qualification-manifest");
   const suite = "terminal-renewal-admission-api", candidateSha = "a".repeat(40), time = new Date().toISOString();
   const report = { schemaVersion: 1, suite, candidateSha, evidenceLevel: metadata.suiteEvidenceLevels[suite], strict: true, status: "passed", startedAt: time, finishedAt: time,
     requiredScenarios: metadata.suites[suite], missingScenarios: [], requiredCapabilities: metadata.requiredCapabilities[suite], missingCapabilities: [],

@@ -4,7 +4,7 @@ const test = require("node:test"),
   assert = require("node:assert/strict");
 const { verifyMatrix } = require("./certops-release-qualification");
 const { fixture } = require("./test-support/retention-cadence-artifact.cjs");
-const matrix = require("../docs/certops/qualification-suites.json");
+const matrix = require("./certops-qualification-manifest");
 const slot = matrix.slots.find(
   (x) => x.suite === "windows-domain-installed-retention-default-timer",
 );

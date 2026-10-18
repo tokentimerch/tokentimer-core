@@ -82,7 +82,7 @@ test("collection workflow preserves full default and passes explicit closed prof
   assert.doesNotMatch(source, /azure\/(?:login|cli)@|provision-lab\.ps1/);
 });
 test("profile inventory derives exact selected and omitted IDs without a qualified verdict", () => {
-  const matrix = require("../docs/certops/qualification-suites.json"),
+  const matrix = require("./certops-qualification-manifest"),
     h = require("./certops-qualification-profiles"),
     inventory = helper.profileInventory();
   assert.equal(inventory.executionStatus, "not-run");

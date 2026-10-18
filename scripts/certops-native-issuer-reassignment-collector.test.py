@@ -1,4 +1,5 @@
 """Offline CA-scoped projection/parity regressions; never executes a CA or agent."""
+import certops_qualification_manifest as qualification_manifest
 import copy
 import hashlib
 import importlib.util
@@ -29,8 +30,8 @@ def fixture():
     p["nativeRequests"] = [dict(caConfig=config, caKeySha256=p["originCaKeySha256" if i == 0 else "destinationCaKeySha256"],
                                requestId="17", disposition=20, subjectRequestCount=1, fingerprintSha256=p["fingerprints"][i])
                            for i, config in enumerate(proof.CONFIGS)]
-    contract = json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())
-    slot = next(x for x in json.loads((ROOT / "docs/certops/qualification-suites.json").read_text())["slots"] if x["suite"] == proof.SUITE)
+    contract = qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")
+    slot = next(x for x in qualification_manifest.load(ROOT / "docs/certops/qualification-suites.json")["slots"] if x["suite"] == proof.SUITE)
     digest = lambda file: dict(file=file, sha256=hashlib.sha256((ROOT / file).read_bytes()).hexdigest())
     stamp = "2026-10-18T00:00:00.000Z"
     return dict(schemaVersion=1, suite=proof.SUITE, candidateSha="a" * 40, status="passed", strict=True, evidenceLevel="real-host",
@@ -47,7 +48,7 @@ def fixture():
 
 def js_errors(report):
     program = """const fs=require('node:fs');const report=JSON.parse(fs.readFileSync(0,'utf8'));
-const slot=require('./docs/certops/qualification-suites.json').slots.find(s=>s.suite===report.suite);
+const slot=require('./scripts/certops-qualification-manifest').slots.find(s=>s.suite===report.suite);
 const errors=require('./scripts/certops-release-qualification').verifyMatrix([{kind:'host',suite:report.suite,environment:slot.environment,report}],{candidateSha:report.candidateSha,specification:{schemaVersion:1,slots:[slot]}});process.stdout.write(JSON.stringify(errors));"""
     return json.loads(subprocess.check_output(["node", "-e", program], input=json.dumps(report), cwd=ROOT, text=True))
 

@@ -15,7 +15,7 @@ test("cross-store proof refuses missing, coerced and unbounded native facts", ()
   }
   assert.throws(() => verifyProof({ ...proof, rawInventory: "must not escape" }));
   assert.throws(() => verifyProof(undefined));
-  const slots = require("../docs/certops/qualification-suites.json").slots.filter(slot => slot.suite === "windows-host");
+  const slots = require("./certops-qualification-manifest").slots.filter(slot => slot.suite === "windows-host");
   assert.equal(slots.length, 2);
   for (const slot of slots) for (const file of REQUIRED_SOURCES) assert.ok(slot.requiredSources.includes(file), file);
 });

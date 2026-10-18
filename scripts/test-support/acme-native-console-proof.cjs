@@ -94,7 +94,7 @@ function artifact() {
   };
 }
 function slot() {
-  return require("../../docs/certops/qualification-suites.json").slots.find(
+  return require("../certops-qualification-manifest").slots.find(
     (value) => value.suite === "linux-native-acme-browser-console",
   );
 }

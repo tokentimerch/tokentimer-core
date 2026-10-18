@@ -444,7 +444,7 @@ test("actual controller wrapper binds full sources, completed task and native pr
   };
   const report = adapter.qualificationReport(args),
     slot =
-      require("../docs/certops/qualification-suites.json").slots.find(
+      require("./certops-qualification-manifest").slots.find(
         (row) => row.suite === report.suite,
       );
   assert.deepEqual(

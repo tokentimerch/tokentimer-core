@@ -1,7 +1,7 @@
 "use strict";
 // Source-bound artifact adversaries only. Never a native service/PG execution.
 const test=require("node:test"),assert=require("node:assert/strict"),{artifact,candidateSha}=require("./test-support/arm64-installed-artifact.cjs"),{verifyMatrix}=require("./certops-release-qualification"),h=require("./certops-arm64-installed-proof");
-const slot=require("../docs/certops/qualification-suites.json").slots.find(row=>row.suite===h.suite),options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
+const slot=require("./certops-qualification-manifest").slots.find(row=>row.suite===h.suite),options={candidateSha,specification:{schemaVersion:1,slots:[slot]}};
 test("actual ARM64 installed agent cell requires every narrow native fact and current source",()=>{
  assert.ok(slot);assert.deepEqual(verifyMatrix([artifact()],options),[]);
  for(const key of Object.keys(artifact().report.nativeArm64InstalledAgent)){const missing=artifact();delete missing.report.nativeArm64InstalledAgent[key];assert.ok(verifyMatrix([missing],options).length,key);const wrong=artifact();wrong.report.nativeArm64InstalledAgent[key]=typeof wrong.report.nativeArm64InstalledAgent[key]==="boolean"?!wrong.report.nativeArm64InstalledAgent[key]:"wrong";assert.ok(verifyMatrix([wrong],options).length,key);}

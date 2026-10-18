@@ -27,7 +27,7 @@ for(const version of ['2022','2025']){
 
 def matrix_errors(reports):
     source = """const fs=require('node:fs'),reports=JSON.parse(fs.readFileSync(0,'utf8'));
-const matrix=require('./docs/certops/qualification-suites.json'),verify=require('./scripts/certops-release-qualification').verifyMatrix;
+const matrix=require('./scripts/certops-qualification-manifest'),verify=require('./scripts/certops-release-qualification').verifyMatrix;
 console.log(JSON.stringify(reports.map(report=>{
  const slot=matrix.slots.find(s=>s.suite===report.suite&&s.environment.osVersion===report.qualificationEnvironment.osVersion);
  return verify([{kind:'host',suite:report.suite,environment:slot.environment,report}],{candidateSha:report.candidateSha,specification:{schemaVersion:1,slots:[slot]}});

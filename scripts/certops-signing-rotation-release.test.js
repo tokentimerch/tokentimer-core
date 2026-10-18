@@ -8,8 +8,8 @@ const test = require("node:test"),
   { createRequire } = require("node:module"),
   { verifyMatrix } = require("./certops-release-qualification");
 const root = path.resolve(__dirname, ".."),
-  matrix = require("../docs/certops/qualification-suites.json"),
-  contract = require("../docs/certops/qualification-suites.json"),
+  matrix = require("./certops-qualification-manifest"),
+  contract = require("./certops-qualification-manifest"),
   slot = matrix.slots.find((s) => s.suite === "native-signing-rotation"),
   candidateSha = "a".repeat(40);
 const digest = (file) => ({
