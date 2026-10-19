@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GroupNotPersistedError,
   appendWebhook,
+  assertGroupPersisted,
   buildGroup,
   describeGroup,
   groupIdFor,
   toStoredWebhook,
+  uniqueGroupId,
   upsertGroup,
   validateWebhookDraft,
 } from '../../src/components/onboarding/alertGroups.js';
@@ -171,5 +174,86 @@ describe('groupIdFor and describeGroup', () => {
       '+41790000000 (WhatsApp)',
       'Ops Slack (webhook)',
     ]);
+  });
+});
+
+describe('assertGroupPersisted', () => {
+  const wanted = {
+    id: 'g1',
+    email_contact_ids: ['1', '2'],
+    whatsapp_contact_ids: [],
+    webhook_names: ['Ops Slack'],
+  };
+  const settings = {
+    default_contact_group_id: 'g1',
+    webhook_urls: [{ name: 'Ops Slack' }],
+    contact_groups: [{ ...wanted }],
+  };
+
+  it('accepts a group the server kept in full', () => {
+    expect(
+      assertGroupPersisted(settings, wanted, { expectDefault: true }).id
+    ).toBe('g1');
+  });
+
+  it('detects a group dropped over the plan limit', () => {
+    expect(() =>
+      assertGroupPersisted({ ...settings, contact_groups: [] }, wanted)
+    ).toThrow(GroupNotPersistedError);
+  });
+
+  it('detects members trimmed over the plan limit', () => {
+    const trimmed = {
+      ...settings,
+      contact_groups: [{ ...wanted, email_contact_ids: ['1'] }],
+    };
+    try {
+      assertGroupPersisted(trimmed, wanted);
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect(e.reason).toBe('member_limit');
+    }
+  });
+
+  it('detects a webhook that is not stored or not on the group', () => {
+    const noHook = { ...settings, webhook_urls: [] };
+    expect(() => assertGroupPersisted(noHook, wanted)).toThrow(/webhook/);
+    const notOnGroup = {
+      ...settings,
+      contact_groups: [{ ...wanted, webhook_names: [] }],
+    };
+    expect(() => assertGroupPersisted(notOnGroup, wanted)).toThrow(/webhook/);
+  });
+
+  it('checks the default only when asked', () => {
+    const other = { ...settings, default_contact_group_id: 'g2' };
+    expect(() => assertGroupPersisted(other, wanted)).not.toThrow();
+    expect(() =>
+      assertGroupPersisted(other, wanted, { expectDefault: true })
+    ).toThrow(/default/);
+  });
+});
+
+describe('uniqueGroupId', () => {
+  it('uses the plain id when free', () => {
+    expect(uniqueGroupId('Ops', [])).toBe('onboarding-ops');
+  });
+
+  it('never overwrites a different group with the same name', () => {
+    expect(uniqueGroupId('Ops', [{ id: 'onboarding-ops' }])).toBe(
+      'onboarding-ops-2'
+    );
+    expect(
+      uniqueGroupId('Ops', [
+        { id: 'onboarding-ops' },
+        { id: 'onboarding-ops-2' },
+      ])
+    ).toBe('onboarding-ops-3');
+  });
+
+  it('lets a group keep its own id when editing', () => {
+    expect(
+      uniqueGroupId('Ops', [{ id: 'onboarding-ops' }], 'onboarding-ops')
+    ).toBe('onboarding-ops');
   });
 });

@@ -206,6 +206,59 @@ describe("Onboarding notifications and CertOps reality (API contract)", function
     expect((bad.body.job || bad.body).payload.mode).to.equal("real");
   });
 
+  it("counts a webhook-only default group as a recipient, and only while the webhook exists", async () => {
+    const webhook = {
+      name: "Ops Slack",
+      url: "https://hooks.slack.com/services/T000/B000/XXXX",
+      kind: "slack",
+      severity: "",
+      template: "",
+      routingKey: "",
+      verified: true,
+      verifiedUrl: "https://hooks.slack.com/services/T000/B000/XXXX",
+    };
+    const group = {
+      id: "onboarding-webhook-only",
+      name: "Webhook only",
+      email_contact_ids: [],
+      whatsapp_contact_ids: [],
+      webhook_names: ["Ops Slack"],
+      weekly_digest_email: false,
+      weekly_digest_whatsapp: false,
+      weekly_digest_webhooks: false,
+    };
+    await request(BASE)
+      .put(ws("/alert-settings"))
+      .set("Cookie", manager.cookie)
+      .send({ webhook_urls: [webhook], contact_groups: [group], default_contact_group_id: group.id })
+      .expect(200);
+
+    const saved = (
+      await request(BASE).get(ws("/alert-settings")).set("Cookie", manager.cookie).expect(200)
+    ).body;
+    expect(saved.webhook_urls.map((w) => w.name)).to.deep.equal(["Ops Slack"]);
+    expect(saved.contact_groups[0].webhook_names).to.deep.equal(["Ops Slack"]);
+
+    let groups = (await summary(manager)).alerts.contactGroups;
+    expect(groups.defaultHasRecipient).to.equal(true);
+    expect(groups.defaultHasWebhookRecipient).to.equal(true);
+    expect(groups.defaultHasEmailRecipient).to.equal(false);
+    expect(groups.webhookCount).to.equal(1);
+
+    // The summary must never carry the webhook URL, which is a secret.
+    expect(JSON.stringify(await summary(manager))).to.not.contain("hooks.slack.com");
+
+    // Removing the webhook leaves a group that names nothing real.
+    await request(BASE)
+      .put(ws("/alert-settings"))
+      .set("Cookie", manager.cookie)
+      .send({ webhook_urls: [] })
+      .expect(200);
+    groups = (await summary(manager)).alerts.contactGroups;
+    expect(groups.defaultHasRecipient).to.equal(false);
+    expect(groups.webhookCount).to.equal(0);
+  });
+
   it("reports the wizard's issue job from the database, and separates observed from provisioning", async () => {
     const issue = await request(BASE)
       .post(ws("/certops/jobs"))

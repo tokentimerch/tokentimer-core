@@ -84,6 +84,22 @@ export function groupIdFor(name) {
 }
 
 /**
+ * An id that does not collide with another group. A retried save of the same
+ * name reuses its own id, but a different group that happens to share the name
+ * is never overwritten.
+ */
+export function uniqueGroupId(name, groups = [], ownId = null) {
+  const base = groupIdFor(name);
+  const taken = new Set(
+    (groups || []).map(g => String(g.id)).filter(id => id !== String(ownId))
+  );
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 100; n += 1) {
+    if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+  }
+  return `${base}-${Date.now()}`;
+}
+/**
  * A complete group. Needs at least one way to reach someone, as the product
  * requires. Thresholds are stored only when they differ from the workspace.
  */
@@ -155,4 +171,66 @@ export function describeGroup(group, contacts = []) {
   );
   (group.webhook_names || []).forEach(n => parts.push(`${n} (webhook)`));
   return parts;
+}
+
+export class GroupNotPersistedError extends Error {
+  constructor(reason, detail) {
+    const messages = {
+      group_limit:
+        'Your plan allows no more contact groups. Reuse or edit an existing group instead.',
+      member_limit:
+        'Your plan allows fewer recipients in a group than you selected, so some were dropped. Remove a few and save again.',
+      webhook_missing:
+        'The group could not keep one of its webhooks. Check that the webhook still exists.',
+      not_default: 'The group was saved but could not be made the default.',
+    };
+    super(messages[reason] || 'The group could not be saved.');
+    this.name = 'GroupNotPersistedError';
+    this.reason = reason;
+    this.detail = detail;
+  }
+}
+
+/**
+ * The alert-settings write silently trims over-limit groups and members, so a
+ * save only counts once the settings read back contain what was asked for.
+ */
+export function assertGroupPersisted(settings, wanted, { expectDefault } = {}) {
+  const groups = Array.isArray(settings?.contact_groups)
+    ? settings.contact_groups
+    : [];
+  const saved = groups.find(g => String(g.id) === String(wanted.id));
+  if (!saved) throw new GroupNotPersistedError('group_limit');
+  const has = (list, id) => (list || []).map(String).includes(String(id));
+  for (const id of wanted.email_contact_ids || []) {
+    if (!has(saved.email_contact_ids, id))
+      throw new GroupNotPersistedError('member_limit');
+  }
+  for (const id of wanted.whatsapp_contact_ids || []) {
+    if (!has(saved.whatsapp_contact_ids, id))
+      throw new GroupNotPersistedError('member_limit');
+  }
+  const names = new Set(
+    (Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : []).map(
+      w => w?.name
+    )
+  );
+  for (const name of wanted.webhook_names || []) {
+    if (!has(saved.webhook_names, name) || !names.has(name))
+      throw new GroupNotPersistedError('webhook_missing', name);
+  }
+  if (
+    expectDefault &&
+    String(settings.default_contact_group_id || '') !== String(wanted.id)
+  ) {
+    throw new GroupNotPersistedError('not_default');
+  }
+  return saved;
+}
+
+/** True if the saved list holds a webhook with this name. */
+export function hasWebhook(settings, name) {
+  return (
+    Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : []
+  ).some(w => w?.name === name);
 }
