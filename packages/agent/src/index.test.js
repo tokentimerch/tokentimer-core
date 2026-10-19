@@ -307,6 +307,20 @@ describe("runDiscoveryScan", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reports SAN-only certificates with an empty subject through the evidence contract", async () => {
+    const pem = fs.readFileSync(path.join(__dirname, "verify/fixtures/san-only.crt.pem"), "utf8");
+    const cert = new crypto.X509Certificate(pem);
+    assert.ok(!cert.subject);
+    fs.writeFileSync(path.join(dir, "san-only.crt"), pem);
+    const client = createRecordingClient();
+    const result = await runDiscoveryScan({ directories: [dir], client, log: silentLog });
+    assert.equal(result.observed, 1);
+    const item = client.calls.reportEvidence[0].evidenceItems[0];
+    assert.equal(item.fingerprintSha256, cert.fingerprint256.replace(/:/g, "").toLowerCase());
+    assert.equal(item.metadata.find(field => field.name === "subject").value, null);
+    assert.match(item.metadata.find(field => field.name === "subjectAltNames").value, /nginx.wildcard.test/);
+  });
+
   it("reports parsed certificates as certificate.observed evidence with public fields only", async () => {
     // Use a SAN-bearing fixture so subjectAltNames is present in metadata.
     const leafPem = fs.readFileSync(

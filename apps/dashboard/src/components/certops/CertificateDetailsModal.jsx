@@ -13,6 +13,7 @@ import {
   ModalCloseButton,
   ModalHeader,
   ModalOverlay,
+  Select,
   Spinner,
   Text,
   Textarea,
@@ -42,6 +43,7 @@ import {
   formatContactGroupNames,
   hydrateContactGroupIds,
 } from '../../utils/contactGroupAssignment.js';
+import CertificateDeployments from './CertificateDeployments.jsx';
 import CertificateInstances from './CertificateInstances.jsx';
 import CertificateTimeline from './CertificateTimeline.jsx';
 import KeyLocalityBadge from './KeyLocalityBadge.jsx';
@@ -182,6 +184,9 @@ export default function CertificateDetailsModal({
   compactTableSections = false,
   propertyValueRows = false,
   managedCertificateId,
+  workspaceId,
+  identityId,
+  focusDeployments = false,
   identityPanel,
   showObservedLocations = true,
   titleOverride,
@@ -202,7 +207,6 @@ export default function CertificateDetailsModal({
 
   const {
     certificate: linkedCertificate,
-    certificateCount = 0,
     ambiguousLink = false,
     instances = [],
     instancesAvailable = true,
@@ -232,7 +236,15 @@ export default function CertificateDetailsModal({
   const expiresAt = certificate?.notAfter || token?.expiresAt;
   const expiry = expiryDescriptor(expiresAt);
   const sections = listLabel(token?.section);
-  const domains = listLabel(token?.domains);
+  const selectedCertificateFacts = Boolean(
+    certificate && (identityId || certOps.certificates?.length > 1)
+  );
+  const domains = listLabel(
+    selectedCertificateFacts ? certificate.subjectAltNames : token?.domains
+  );
+  const certificateSubject = selectedCertificateFacts
+    ? certificate.subject
+    : token?.subject;
   const sans = listLabel(certificate?.subjectAltNames);
   const publicKey = [
     certificate?.publicKeyAlgorithm,
@@ -240,12 +252,16 @@ export default function CertificateDetailsModal({
   ]
     .filter(Boolean)
     .join(' ');
-  const certificateIssuer = hasValue(token?.issuer)
-    ? token.issuer
-    : certificate?.issuer;
-  const certificateSerialNumber = hasValue(token?.serial_number)
-    ? token.serial_number
-    : certificate?.serialNumber;
+  const certificateIssuer = selectedCertificateFacts
+    ? certificate.issuer
+    : hasValue(token?.issuer)
+      ? token.issuer
+      : certificate?.issuer;
+  const certificateSerialNumber = selectedCertificateFacts
+    ? certificate.serialNumber
+    : hasValue(token?.serial_number)
+      ? token.serial_number
+      : certificate?.serialNumber;
   const hasRenewalData = hasAnyValue(
     certificate?.renewal?.state,
     certificate?.renewal?.detail,
@@ -260,7 +276,7 @@ export default function CertificateDetailsModal({
     domains,
     certificateIssuer,
     certificateSerialNumber,
-    token?.subject,
+    certificateSubject,
     token?.contacts,
     token?.renewal_url
   );
@@ -484,6 +500,27 @@ export default function CertificateDetailsModal({
               {certOpsError}
             </Text>
           ) : null}
+          {certOps.certificates?.length > 1 && certOps.selectCertificate ? (
+            <Select
+              mb={4}
+              aria-label='Certificate to inspect'
+              value={certificate?.id || ''}
+              onChange={event => certOps.selectCertificate(event.target.value)}
+            >
+              <option value=''>Select a managed certificate</option>
+              {certOps.certificates.map((item, index) => (
+                <option key={item.id} value={item.id}>
+                  {item.commonName ||
+                    item.name ||
+                    item.subjectAltNames?.[0] ||
+                    'Certificate'}{' '}
+                  · {sourceLabel(item.source)} ·{' '}
+                  {item.sourceRef || `Registration ${index + 1}`} ·{' '}
+                  {item.status || 'Unknown'}
+                </option>
+              ))}
+            </Select>
+          ) : null}
           {ambiguousLink ? (
             <Box mb={4} role='status'>
               <Text fontSize='sm' color='dashboard.modal.muted'>
@@ -498,13 +535,6 @@ export default function CertificateDetailsModal({
                 Choose a certificate in Certificate Management
               </Link>
             </Box>
-          ) : certificateCount > 1 ? (
-            <Text mb={4} fontSize='xs' color='dashboard.modal.muted'>
-              {certificateCount} certificates reference this token. Showing{' '}
-              {managedCertificateId
-                ? 'the certificate for the selected source.'
-                : 'the most recently updated active certificate.'}
-            </Text>
           ) : null}
 
           <Box minW={0}>
@@ -694,8 +724,8 @@ export default function CertificateDetailsModal({
                     )}
                   </DetailRow>
                 ) : null}
-                {isEditing || hasValue(token.subject) ? (
-                  <DetailRow label='Subject' valueTitle={token.subject}>
+                {isEditing || hasValue(certificateSubject) ? (
+                  <DetailRow label='Subject' valueTitle={certificateSubject}>
                     {isEditing ? (
                       <Textarea
                         {...commonInputProps}
@@ -707,7 +737,7 @@ export default function CertificateDetailsModal({
                       />
                     ) : (
                       <Text fontSize='sm' overflowWrap='anywhere'>
-                        {token.subject}
+                        {certificateSubject}
                       </Text>
                     )}
                   </DetailRow>
@@ -826,25 +856,42 @@ export default function CertificateDetailsModal({
                     valueTitle={sans}
                   />
                 ) : null}
-                {hasValue(certificate?.fingerprintSha256) ? (
-                  <DetailRow label='SHA-256 fingerprint'>
-                    <CopyableId
-                      id={certificate.fingerprintSha256}
-                      size='sm'
-                      color='dashboard.modal.text'
-                    />
-                  </DetailRow>
-                ) : null}
-                {hasValue(certificate?.id) ? (
-                  <DetailRow label='Managed certificate ID'>
-                    <CopyableId
-                      id={certificate.id}
-                      size='sm'
-                      color='dashboard.modal.text'
-                    />
-                  </DetailRow>
-                ) : null}
               </Section>
+            ) : null}
+
+            {hasValue(certificate?.fingerprintSha256) ||
+            hasValue(certificate?.id) ? (
+              <Box as='details' mb={6}>
+                <Box as='summary' fontSize='xs' cursor='pointer'>
+                  Advanced certificate diagnostics
+                </Box>
+                <Grid
+                  templateColumns={{
+                    base: 'minmax(0, 1fr)',
+                    md: 'repeat(2, minmax(0, 1fr))',
+                  }}
+                  mt={2}
+                >
+                  {hasValue(certificate?.fingerprintSha256) ? (
+                    <DetailRow label='SHA-256 fingerprint'>
+                      <CopyableId
+                        id={certificate.fingerprintSha256}
+                        size='sm'
+                        color='dashboard.modal.text'
+                      />
+                    </DetailRow>
+                  ) : null}
+                  {hasValue(certificate?.id) ? (
+                    <DetailRow label='Managed certificate ID'>
+                      <CopyableId
+                        id={certificate.id}
+                        size='sm'
+                        color='dashboard.modal.text'
+                      />
+                    </DetailRow>
+                  ) : null}
+                </Grid>
+              </Box>
             ) : null}
 
             {isEditing || hasValue(token.notes) || identityPanel ? (
@@ -879,6 +926,19 @@ export default function CertificateDetailsModal({
                   )}
                 </Box>
               </Section>
+            ) : null}
+            {certificate?.id || identityId ? (
+              <CertificateDeployments
+                workspaceId={
+                  workspaceId || certOps.workspaceId || token.workspace_id
+                }
+                managedCertificateId={
+                  identityId ? managedCertificateId : certificate?.id
+                }
+                identityId={identityId || certificate?.identityId}
+                isOpen={isOpen}
+                focus={focusDeployments}
+              />
             ) : null}
             {identityPanel || null}
             {showObservedLocations && hasObservedLocations ? (

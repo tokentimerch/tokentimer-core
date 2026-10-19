@@ -622,26 +622,15 @@ export function pickPrimaryCertificate(certificates) {
 }
 
 export const AMBIGUOUS_CERTIFICATE_LINK_MESSAGE =
-  'This asset is linked to multiple certificate identities. Choose a certificate in Certificate Management to view its details or change its lifecycle.';
+  'This asset is linked to multiple managed certificates. Select the certificate to inspect.';
 
 /** A token link alone cannot identify a certificate across rotation or imports. */
 export function resolveTokenCertificate(certificates) {
   const items = Array.isArray(certificates) ? certificates.filter(Boolean) : [];
-  const identities = new Set(
-    items.map((certificate, index) => {
-      const fingerprint = String(certificate.fingerprintSha256 || '')
-        .replace(/:/g, '')
-        .trim()
-        .toLowerCase();
-      return /^[a-f0-9]{64}$/.test(fingerprint)
-        ? fingerprint
-        : `unidentified:${certificate.id || index}`;
-    })
-  );
-  const ambiguousLink = identities.size > 1;
+  const ambiguousLink = items.length > 1;
   return {
     certificate: ambiguousLink ? null : pickPrimaryCertificate(items),
-    certificateCount: identities.size,
+    certificateCount: items.length,
     ambiguousLink,
     // Ambiguity must never make a linked token eligible for hard deletion.
     hasManagedLinks: items.length > 0,
