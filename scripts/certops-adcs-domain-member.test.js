@@ -214,7 +214,7 @@ function Invoke-WebRequest {
 }
 try { & $env:CERTOPS_TOOLS_SCRIPT -CandidateSha ('a'*40) -ApiPublicPemBase64 'AA==' }
 catch {
-  if($_.Exception.Message -ne 'TEST_SELECTION_COMPLETE'){throw ('Guest release selection failed: '+$_.Exception.Message)}
+  if($_.Exception.Message -ne 'Windows qualification tools bootstrap failed; inspect bounded step receipt'){throw ('Guest release selection failed: '+$_.Exception.Message)}
   if($global:certopsMetadata -ne 3){throw 'Expected exactly three bounded metadata requests'}
   if($global:certopsDownloads.Count -ne 2){throw 'Expected exactly two selected downloads'}
   Write-Output 'RELEASE_ARRAY_SELECTION_PASSED'
@@ -228,4 +228,6 @@ throw 'Expected bounded test completion'
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /RELEASE_ARRAY_SELECTION_PASSED/);
+  assert.match(result.stdout, /CERTOPS_TOOLS_FAILURE=go-download:RuntimeException:Unclassified:0/);
+  assert.doesNotMatch(result.stdout + result.stderr, /TEST_SELECTION_COMPLETE/);
 });
