@@ -33,6 +33,9 @@ import {
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
+import { onboardingAPI } from '../utils/onboardingApi.js';
+import { showError } from '../utils/toast.js';
+import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { resetTourCompleted } from '../utils/tourStorage.js';
 
 function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
@@ -240,6 +243,23 @@ export default function UserPreferences({
   const appearanceIconColor = dashboard.accent.interactiveForeground;
   const [viewerOnly, setViewerOnly] = useState(isViewer);
 
+  const { workspaceId } = useWorkspace();
+  const [restartingSetup, setRestartingSetup] = useState(false);
+
+  // Starting over only clears the guide's own progress. Assets, monitors and
+  // contact groups it created are untouched.
+  const handleRestartSetup = async () => {
+    setRestartingSetup(true);
+    try {
+      if (workspaceId) await onboardingAPI.resetSession(workspaceId, 'mega');
+      navigate('/onboarding');
+    } catch (e) {
+      showError(e?.message || 'Could not restart the setup guide.');
+    } finally {
+      setRestartingSetup(false);
+    }
+  };
+
   const handleRestartTour = () => {
     try {
       resetTourCompleted('dashboard');
@@ -367,6 +387,37 @@ export default function UserPreferences({
                 borderRadius='md'
                 overflow='hidden'
               >
+                {!viewerOnly ? (
+                  <DisplayActionRow
+                    label='Setup guide'
+                    description='Configure assets, alerts and certificate management step by step. Restarting keeps everything already created.'
+                    text={text}
+                    bodySecondary={bodySecondary}
+                    showDivider
+                  >
+                    <HStack
+                      spacing={2}
+                      w={{ base: 'full', sm: 'auto' }}
+                      flexWrap='wrap'
+                    >
+                      <DashboardActionButton
+                        leftIcon={<Icon as={FiPlay} aria-hidden />}
+                        onClick={() => navigate('/onboarding')}
+                        w={{ base: 'full', sm: 'auto' }}
+                      >
+                        Open setup guide
+                      </DashboardActionButton>
+                      <DashboardActionButton
+                        onClick={handleRestartSetup}
+                        isLoading={restartingSetup}
+                        variant='outline'
+                        w={{ base: 'full', sm: 'auto' }}
+                      >
+                        Start over
+                      </DashboardActionButton>
+                    </HStack>
+                  </DisplayActionRow>
+                ) : null}
                 {!viewerOnly ? (
                   <DisplayActionRow
                     label='Product tour'

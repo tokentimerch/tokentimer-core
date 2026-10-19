@@ -28,7 +28,6 @@ function WelcomeModal({
   data,
   displayName,
   emailSent = true,
-  onStartTour,
   onStartSetup,
   introductionVideoUrl,
 }) {
@@ -43,9 +42,8 @@ function WelcomeModal({
     primaryButtonProps,
     tokens: modalTokens,
   } = useDashboardModalProps();
-  const showTourAction = Boolean(onStartTour);
   const showSetupAction = Boolean(onStartSetup);
-  const showIntroVideoAction = Boolean(introductionVideoUrl) && !showTourAction;
+  const showIntroVideoAction = Boolean(introductionVideoUrl);
 
   return (
     <Modal
@@ -126,21 +124,44 @@ function WelcomeModal({
 
             <Box {...fieldProps} p={4} w='full'>
               <Text fontSize='sm' color={modalTokens.text}>
-                <strong>What{"'"}s next?</strong>
+                <strong>
+                  {showSetupAction ? 'Set up your environment' : "What's next?"}
+                </strong>
               </Text>
               <VStack spacing={2} mt={2} align='start'>
-                {showTourAction && (
-                  <Text fontSize='xs' color={modalTokens.muted}>
-                    <Link
-                      as='button'
-                      onClick={onStartTour}
-                      color={modalTokens.focusBorder}
-                      textDecoration='underline'
-                      _hover={{ textDecoration: 'underline' }}
-                    >
-                      Try our product tour to discover the possibilities
-                    </Link>
-                  </Text>
+                {showSetupAction ? (
+                  <>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      A short guided setup that leaves you with something
+                      working:
+                    </Text>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Monitor a website certificate or track a key, secret or
+                      license
+                    </Text>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Import from a file, GitHub, GitLab, Vault, AWS and more
+                    </Text>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Choose who gets alerted, by email or webhook
+                    </Text>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Discover and renew certificates on your servers
+                    </Text>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Progress is saved. Reopen the guide any time from
+                      Preferences.
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Add your first token or secret
+                    </Text>
+                    <Text fontSize='xs' color={modalTokens.muted}>
+                      Set up your contact groups and thresholds
+                    </Text>
+                  </>
                 )}
                 {showIntroVideoAction && (
                   <Text fontSize='xs' color={modalTokens.muted}>
@@ -179,15 +200,6 @@ function WelcomeModal({
 
         <ModalFooter {...footerProps} justifyContent='center'>
           <HStack spacing={3} flexWrap='wrap' justify='center' w='full'>
-            {showTourAction && (
-              <Button
-                leftIcon={<Icon as={FiPlay} />}
-                onClick={onStartTour}
-                {...outlineButtonProps}
-              >
-                Take Tour
-              </Button>
-            )}
             {showIntroVideoAction && (
               <Button
                 as='a'
