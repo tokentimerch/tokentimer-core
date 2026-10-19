@@ -639,17 +639,36 @@ requester cannot approve their own job applies, from the dashboard as well.
 - *Configuration change, and remote HTTP with OAuth.* Each is a separate design
   with its own gate.
 
+**Closed after independent review.** A reviewer found four things, all fixed:
+
+- *Lapsed requests held resources forever.* A request nobody approved within 24
+  hours stayed `pending_approval`, so it kept a per-CA capacity slot, kept
+  counting against the assistant's limits and stopped the renewal scheduler from
+  renewing that certificate. Lapsed windows are now ended in two places: inside
+  every submission, so the limit never depends on a background job, and by a
+  sweep in the maintenance worker.
+- *One preview could become several orders.* A preview is now spent by its first
+  submission, enforced by a check under the plan's row lock and a unique
+  constraint, so a bug elsewhere cannot spend it twice.
+- *Changes of authority did not reach waiting requests.* Switching assistant
+  writes off now ends the waiting requests in that workspace at once, and the
+  sweep ends requests whose requester no longer holds the manager role.
+- *A connection that expired still had its approved work claimed.* The agent
+  claim query now refuses a pending job whose connection has ended, and the sweep
+  ends such work. A job an agent already holds is deliberately left alone, since
+  ending it would strand the agent mid-run; the existing reconciliation handles it.
+
+The sweeps skip rows another transaction holds rather than waiting for them, and
+take locks in the same order as withdrawal, so they cannot deadlock with an
+approval or a withdrawal.
+
 **Known gaps in what was built.**
 
-- A connection that *expires* (rather than is revoked) stops authenticating and
-  its waiting requests can no longer be approved, but an already approved,
-  not-yet-claimed job from it can still be claimed by an agent. Revocation closes
-  that case; expiry does not yet. A sweeper or a claim-path check would close it.
-- The approval window (24 hours) is enforced at approval time and shown as
-  `expired`, but nothing proactively cancels the job when it lapses.
 - The dashboard approvals screen does not yet show that a request came from an
   assistant, which connection made it, or the resolved effect. Approvers see an
   ordinary renewal job.
+- Plans are never deleted. They are small and expire in ten minutes, but nothing
+  removes old rows, and a preview is rate limited only by the shared API limiter.
 
 ## Open decisions and proposed defaults
 

@@ -34,6 +34,7 @@ const {
 const connections = require("../services/operator/connections");
 const enrollments = require("../services/operator/enrollments");
 const renewRequests = require("../services/operator/renewRequests");
+const { endWaitingForWorkspace } = require("../services/operator/requestMaintenance");
 const actionCodes = require("../services/operator/actionRequests").CODES;
 const { projectWhoami } = require("../services/operator/projections");
 const reads = require("../services/operator/reads");
@@ -717,6 +718,7 @@ const WRITE_STATUS = Object.freeze({
   [actionCodes.RETIRED]: 409,
   [actionCodes.NOT_POSSIBLE]: 409,
   [actionCodes.PLAN_EXPIRED]: 410,
+  [actionCodes.PLAN_USED]: 409,
   [actionCodes.PLAN_MISMATCH]: 409,
   [actionCodes.INTENT_STALE]: 409,
   [actionCodes.CONFLICT]: 409,
@@ -936,6 +938,10 @@ router.put(
             req.workspace.id,
             body.writesEnabled,
           ]);
+          // Turning writes off also ends the requests still waiting for a person.
+          if (!body.writesEnabled) {
+            await endWaitingForWorkspace(client, req.workspace.id);
+          }
           await writeAudit({
             client,
             actorUserId: req.user.id,

@@ -41,6 +41,7 @@ class ToolError extends Error {
 const CODE_ERRORS = Object.freeze({
   OPERATOR_WRITES_DISABLED: ["MCP_WRITES_DISABLED", "Assistant write requests are not enabled for this workspace.", false, null],
   OPERATOR_PLAN_EXPIRED: ["MCP_PLAN_EXPIRED", "The preview expired. Preview again.", false, null],
+  OPERATOR_PLAN_USED: ["MCP_CONFLICT", "This preview was already submitted. Preview again.", false, "plan_used"],
   OPERATOR_PLAN_MISMATCH: ["MCP_VALIDATION_ERROR", "The plan does not match what was previewed.", false, "plan_mismatch"],
   OPERATOR_INTENT_STALE: ["MCP_INTENT_STALE", "The certificate changed since the preview. Preview again.", false, null],
   OPERATOR_IDEMPOTENCY_CONFLICT: ["MCP_IDEMPOTENCY_CONFLICT", "This request id was already used for something different. Use a new request id.", false, null],
