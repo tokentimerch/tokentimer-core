@@ -244,7 +244,10 @@ function DoneCard({ ctx }) {
       kind='info'
       title='You are set up'
       description={
-        GOALS[ctx.session.intent?.goal]?.doneText || 'Setup is complete.'
+        (ctx.session.progress?.certops?.infrastructure === 'windows' &&
+          GOALS[ctx.session.intent?.goal]?.doneTextWindows) ||
+        GOALS[ctx.session.intent?.goal]?.doneText ||
+        'Setup is complete.'
       }
       docs={ctx.docs('alerts.thresholds', 'Alert thresholds')}
       actions={

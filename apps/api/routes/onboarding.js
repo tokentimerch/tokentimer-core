@@ -129,6 +129,7 @@ router.get(`${BASE}/:flow/summary`, ...guards, async (req, res) => {
           enabled: certopsEnabled,
           since: session.createdAt,
           dryRunJobId: session.progress?.certops?.dryRunJobId,
+          issueJobId: session.progress?.certops?.issueJobId,
         }),
       null,
     );

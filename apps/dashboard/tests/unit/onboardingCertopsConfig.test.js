@@ -10,6 +10,7 @@ import {
   buildVaultConfigs,
   buildVaultPolicies,
   isLoopbackHttp,
+  issueIdempotencyKey,
   isValidHostname,
   nameInZone,
   SENSITIVE_PATTERN,
@@ -401,5 +402,24 @@ describe('vault distribution', () => {
     expect(() =>
       buildVaultPolicies({ mount: 'a/b', workspaceId: WS, groupId: GROUP })
     ).toThrow(/mount/);
+  });
+});
+
+describe('issuance request key', () => {
+  const args = {
+    names: ['a.example.com'],
+    zone: 'example.com',
+    certPath: '/etc/ssl/a.pem',
+  };
+  it('is stable for the same request, so a reload cannot place a second order', () => {
+    expect(issueIdempotencyKey(args)).toBe(issueIdempotencyKey({ ...args }));
+  });
+  it('changes with the request or the attempt', () => {
+    const k = issueIdempotencyKey(args);
+    expect(issueIdempotencyKey({ ...args, zone: 'other.com' })).not.toBe(k);
+    expect(issueIdempotencyKey({ ...args, attempt: 2 })).not.toBe(k);
+  });
+  it('matches the server key pattern', () => {
+    expect(issueIdempotencyKey(args)).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
   });
 });

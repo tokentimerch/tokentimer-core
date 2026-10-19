@@ -18,11 +18,19 @@ import { CopyBlock } from './blocks.jsx';
 import { capabilityGap, requiredCapabilities } from './certopsMatrix.js';
 import { buildVaultConfigs, buildVaultPolicies } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import IssueStep from './certopsIssueStep.jsx';
 
 export function FirstCertificateStep({ ctx }) {
   const { muted } = useDashboardTheme();
+  const saved = certopsProgress(ctx);
+  const automating = saved.objective === 'automate';
+  const infra = saved.infrastructure || 'linux';
+  const windows = infra === 'windows';
+  if (automating && infra === 'linux') {
+    return <IssueStep ctx={ctx} />;
+  }
   const certs = ctx.summary?.certops?.certificates;
-  const total = certs?.total || 0;
+  const total = certs?.observed ?? certs?.total ?? 0;
   return (
     <StepFrame
       kind='verify'
@@ -31,6 +39,9 @@ export function FirstCertificateStep({ ctx }) {
       docs={[
         ...ctx.docs('certops.inventory', 'Certificate inventory'),
         ...ctx.docs('certops.discovery', 'How discovery works'),
+        ...(automating && windows
+          ? ctx.docs('certops.installWindows', 'Windows runbook')
+          : []),
       ]}
       actions={
         <DashboardActionButton variant='outline' onClick={() => ctx.refresh()}>
@@ -61,6 +72,13 @@ export function FirstCertificateStep({ ctx }) {
             identity, validity, observed locations and monitoring status.
           </Text>
         )}
+        {automating && windows ? (
+          <Text fontSize='xs' color={muted}>
+            Windows issuance and IIS binding follow the Windows runbook. This
+            wizard only confirms that the agent reports certificates; it does
+            not request or verify an order on Windows.
+          </Text>
+        ) : null}
       </VStack>
     </StepFrame>
   );

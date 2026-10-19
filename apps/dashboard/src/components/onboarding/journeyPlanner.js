@@ -86,8 +86,25 @@ function certopsDone(stepId, { reality, progress }) {
         certops?.agents?.executionEnabled === true &&
         certops?.dryRun?.status === 'dry_run_complete'
       );
-    case 'certops_first':
-      return (certops?.certificates?.total || 0) > 0;
+    case 'certops_first': {
+      const objective = progress?.certops?.objective;
+      const infra = progress?.certops?.infrastructure || 'linux';
+      // Linux automation only counts once the order really succeeded, because
+      // a requested order already creates an inventory row.
+      if (
+        (objective === 'automate' || objective === 'vault') &&
+        infra === 'linux'
+      ) {
+        return (
+          certops?.issueJob?.status === 'succeeded' &&
+          certops?.issueJob?.mode === 'real'
+        );
+      }
+      return (
+        (certops?.certificates?.observed ?? certops?.certificates?.total ?? 0) >
+        0
+      );
+    }
     case 'certops_vault':
       return (
         certops?.distribution?.groups > 0 && certops?.distribution?.verified

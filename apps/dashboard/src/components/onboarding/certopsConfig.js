@@ -282,6 +282,27 @@ export function buildIssueJob({
   };
 }
 
+/**
+ * Stable per request: the same names, zone, path and CA always map to the same
+ * key, so a reload or double click returns the existing job instead of
+ * placing a second (rate-limited) ACME order. A new attempt number is the
+ * only way to ask again after a failure.
+ */
+export function issueIdempotencyKey({
+  names,
+  zone,
+  certPath,
+  caEndpoint = LETS_ENCRYPT_STAGING,
+  attempt = 1,
+}) {
+  const text = [(names || []).join(','), zone, certPath, caEndpoint].join('|');
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+  }
+  return `wizard-issue-${hash.toString(16)}-${attempt}`;
+}
+
 export const STAGING_CA = LETS_ENCRYPT_STAGING;
 export const PRODUCTION_CA = LETS_ENCRYPT_PRODUCTION;
 

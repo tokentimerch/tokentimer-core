@@ -205,4 +205,64 @@ describe("Onboarding notifications and CertOps reality (API contract)", function
     expect(bad.status, JSON.stringify(bad.body)).to.be.oneOf([200, 201]);
     expect((bad.body.job || bad.body).payload.mode).to.equal("real");
   });
+
+  it("reports the wizard's issue job from the database, and separates observed from provisioning", async () => {
+    const issue = await request(BASE)
+      .post(ws("/certops/jobs"))
+      .set("Cookie", manager.cookie)
+      .send({
+        operation: "issue",
+        idempotencyKey: `wizard-issue-${crypto.randomUUID()}`,
+        payload: {
+          target: { type: "domain", reference: "app.example.com" },
+          sans: ["app.example.com"],
+          commandRef: "certbot",
+          caEndpoint: "https://acme-staging-v02.api.letsencrypt.org/directory",
+          dnsZone: "example.com",
+          dnsProvider: "cloudflare",
+          certPath: "/etc/ssl/certs/app.pem",
+        },
+      });
+    expect(issue.status, JSON.stringify(issue.body)).to.equal(201);
+    const jobId = issue.body.job.id;
+
+    const read = (await request(BASE).get(ws("/onboarding/mega")).set("Cookie", manager.cookie).expect(200)).body.session;
+    await request(BASE)
+      .put(ws("/onboarding/mega"))
+      .set("Cookie", manager.cookie)
+      .send({ expectedRevision: read.revision, progress: { certops: { issueJobId: jobId } } })
+      .expect(200);
+
+    const s = (await summary(manager)).certops;
+    expect(s.issueJob).to.deep.include({ id: jobId, operation: "issue", status: "pending", mode: "real" });
+    expect(s.issueJob.certificateStatus).to.equal("provisioning");
+    // The requested order created a row, but it is not an observed certificate.
+    expect(s.certificates.total).to.be.greaterThan(0);
+    expect(s.certificates.observed).to.equal(0);
+  });
+
+  it("does not read an issue job that belongs to another workspace", async () => {
+    const otherWs = crypto.randomUUID();
+    await client.query(`INSERT INTO workspaces (id, name, plan, created_by) VALUES ($1, 'Other', 'oss', $2)`, [otherWs, admin.user.id]);
+    await client.query(
+      `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by) VALUES ($1, $2, 'admin', $1)`,
+      [admin.user.id, otherWs],
+    );
+    try {
+      const foreign = await request(BASE)
+        .post(`/api/v1/workspaces/${otherWs}/certops/jobs`)
+        .set("Cookie", admin.cookie)
+        .send({ operation: "noop", idempotencyKey: `foreign-${crypto.randomUUID()}` });
+      expect(foreign.status, JSON.stringify(foreign.body)).to.equal(201);
+      const read = (await request(BASE).get(ws("/onboarding/mega")).set("Cookie", manager.cookie).expect(200)).body.session;
+      await request(BASE)
+        .put(ws("/onboarding/mega"))
+        .set("Cookie", manager.cookie)
+        .send({ expectedRevision: read.revision, progress: { certops: { issueJobId: foreign.body.job.id } } })
+        .expect(200);
+      expect((await summary(manager)).certops.issueJob).to.equal(null);
+    } finally {
+      await client.query("DELETE FROM workspaces WHERE id = $1", [otherWs]);
+    }
+  });
 });

@@ -102,7 +102,9 @@ export const GOALS = {
     certopsObjective: 'observe',
   },
   certops_automate: {
-    doneText: 'Your agent is connected and ready for automated certificates.',
+    doneText: 'Your agent issued a staging certificate.',
+    doneTextWindows:
+      'Your agent is connected. Windows issuance and IIS binding follow the Windows runbook.',
     label: 'Issue and renew certificates automatically',
     description:
       'Use an agent to request, install and renew certificates (ACME).',
