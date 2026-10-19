@@ -18,6 +18,7 @@ import { reconcilePending } from './reconcile.js';
 import { docUrl } from './docLinks.js';
 import StepFrame from './StepFrame.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
+import { trackOnboarding, transitionEvents } from './analytics.js';
 import { GOALS } from './modules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
@@ -317,6 +318,24 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
         : null,
     [onboarding]
   );
+
+  // One event per real transition; the first plan after load reports nothing
+  // unless the user is resuming a chosen goal.
+  const lastPlan = useRef({ plan: null, goal: null });
+  const chosenGoal = onboarding.session?.intent?.goal || null;
+  useEffect(() => {
+    if (!plan) return;
+    const { plan: before, goal: beforeGoal } = lastPlan.current;
+    for (const [name, props] of transitionEvents(
+      before,
+      plan,
+      chosenGoal,
+      beforeGoal
+    )) {
+      trackOnboarding(name, props);
+    }
+    lastPlan.current = { plan, goal: chosenGoal };
+  }, [plan, chosenGoal]);
 
   const changeGoal = useCallback(async () => {
     await onboarding.controller.update(clearGoal);
