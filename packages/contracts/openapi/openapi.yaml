@@ -8283,7 +8283,7 @@ paths:
             type: string
         - name: summaries
           in: query
-          description: When true, IDs are required. Returns group IDs, managed certificate IDs, current identity IDs and active consumer counts/status only. Uses current active management periods and backend convergence, never historical job success. Details are fetched separately.
+          description: When true, IDs are required. Returns group IDs, managed certificate IDs, current identity IDs and active consumer counts/status. Summary verification_expirations contains one Unix millisecond deadline per verified consumer (the earlier of evidence freshness and certificate expiry). Clients may only downgrade verification at these deadlines. The response evaluated_at is the server evaluation start time for conservative clock-skew and latency correction. Uses current active management periods and backend convergence, never historical job success. Details are fetched separately.
           schema:
             type: boolean
             default: false
@@ -8308,6 +8308,8 @@ paths:
         observed_version, freshness_seconds and stale alongside existing fields. Convergence requires
         current authorization, an active management period and evidence for its current immutable identity;
         a historically successful job is not current deployment proof.
+        Response evaluated_at records server evaluation start time. desired_version and observed_version
+        are Vault provider revisions, not TokenTimer material IDs or rollout generations.
       parameters:
         - name: id
           in: path

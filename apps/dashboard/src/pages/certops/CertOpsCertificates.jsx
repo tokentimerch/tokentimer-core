@@ -672,7 +672,10 @@ export default function CertOpsCertificates() {
             ) : null}
             <DashboardActionButton
               variant='outline'
-              onClick={refresh}
+              onClick={() => {
+                refresh();
+                deployments.refresh();
+              }}
               isLoading={loading}
             >
               Refresh

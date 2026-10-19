@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import apiClient from '../../utils/apiClient';
 import {
   combineDeploymentSummaries,
   distributionKey,
 } from './distributionFormat.js';
+import useDistributionRead, {
+  DISTRIBUTION_POLL_MS,
+  serverClockOffset,
+} from './useDistributionRead.js';
 
 export default function useDistributionSummaries(
   workspaceId,
@@ -24,21 +28,12 @@ export default function useDistributionSummaries(
   ]
     .sort()
     .join(',');
-  const scope = `${workspaceId || ''}/${managedIds}/${identityIds}`;
-  const [state, setState] = useState({
-    scope: '',
-    groups: [],
-    loading: false,
-    error: '',
-  });
-  useEffect(() => {
-    if (!workspaceId || (!managedIds && !identityIds)) return undefined;
-    let active = true;
-    const controller = new AbortController();
-    let sequence = 0;
-    const load = () => {
-      const request = ++sequence;
-      setState({ scope, groups: [], loading: true, error: '' });
+  const scope =
+    workspaceId && (managedIds || identityIds)
+      ? `${workspaceId}/${managedIds}/${identityIds}`
+      : null;
+  const read = useCallback(
+    async (signal, startedAt) => {
       const managed = managedIds ? managedIds.split(',') : [];
       const identities = identityIds ? identityIds.split(',') : [];
       const requests = [];
@@ -58,61 +53,93 @@ export default function useDistributionSummaries(
                 identityIds:
                   identities.slice(index, index + 200).join(',') || undefined,
               },
-              signal: controller.signal,
+              signal,
             }
           )
         );
       }
-      Promise.all(requests)
-        .then(results => {
-          if (active && request === sequence)
-            setState({
-              scope,
-              groups: [
-                ...new Map(
-                  results
-                    .flatMap(({ data }) => data.groups || [])
-                    .map(group => [group.id, group])
-                ).values(),
-              ],
-              loading: false,
-              error: '',
-            });
+      const responses = await Promise.all(requests);
+      const groups = new Map();
+      for (const { data } of responses) {
+        const offset = serverClockOffset(data, startedAt);
+        for (const group of data.groups || [])
+          groups.set(group.id, {
+            ...group,
+            offset,
+            fallbackExpiry: startedAt + DISTRIBUTION_POLL_MS,
+          });
+      }
+      const index = new Map();
+      for (const group of groups.values()) {
+        for (const key of [
+          `identity:${group.current_identity_id}`,
+          `managed:${group.managed_certificate_id}`,
+        ]) {
+          if (!index.has(key)) index.set(key, []);
+          index.get(key).push(group);
+        }
+      }
+      return {
+        index,
+        deadlines: [...groups.values()].flatMap(group =>
+          Array.isArray(group.summary?.verification_expirations)
+            ? group.summary.verification_expirations.map(
+                time => time + group.offset
+              )
+            : [group.fallbackExpiry]
+        ),
+      };
+    },
+    [workspaceId, managedIds, identityIds]
+  );
+  const state = useDistributionRead(scope, read);
+  const summaries = useMemo(() => {
+    const result = new Map();
+    for (const [key, groups] of state.data?.index || []) {
+      result.set(
+        key,
+        groups.map(group => {
+          const summary = group.summary || {};
+          const expirations = summary.verification_expirations;
+          if (Array.isArray(expirations)) {
+            const expired = expirations.filter(
+              time => time + group.offset <= state.now
+            ).length;
+            return {
+              ...group,
+              summary: {
+                ...summary,
+                verified: Math.max(0, summary.verified - expired),
+                stale: (summary.stale || 0) + expired,
+              },
+            };
+          }
+          // Older servers cannot supply exact freshness boundaries. Fail closed after one poll window.
+          return state.now >= group.fallbackExpiry && summary.verified
+            ? { ...group, freshnessUnknown: true }
+            : group;
         })
-        .catch(() => {
-          if (active && request === sequence)
-            setState({
-              scope,
-              groups: [],
-              loading: false,
-              error: 'Deployment status unavailable',
-            });
-        });
-    };
-    load();
-    const timer = setInterval(load, 30_000);
-    return () => {
-      active = false;
-      controller.abort();
-      clearInterval(timer);
-    };
-  }, [workspaceId, managedIds, identityIds, scope]);
-  const current = state.scope === scope;
-  return {
-    loading: !current || state.loading,
-    error: current ? state.error : '',
-    getSummary(certificate) {
-      if (!current || state.loading || state.error) return null;
-      const key = distributionKey(certificate);
-      return combineDeploymentSummaries(
-        state.groups.filter(
-          group =>
-            (!certificate.expectedIdentityId ||
-              certificate.expectedIdentityId === group.current_identity_id) &&
-            (key === `identity:${group.current_identity_id}` ||
-              key === `managed:${group.managed_certificate_id}`)
-        )
       );
+    }
+    return result;
+  }, [state.data, state.now]);
+  return {
+    ...state,
+    getSummary(certificate) {
+      if (!state.data) return null;
+      const groups = (summaries.get(distributionKey(certificate)) || []).filter(
+        group =>
+          !certificate.expectedIdentityId ||
+          certificate.expectedIdentityId === group.current_identity_id
+      );
+      const summary = combineDeploymentSummaries(groups);
+      return {
+        ...summary,
+        staleData: Boolean(state.error),
+        ...(groups.some(group => group.freshnessUnknown)
+          ? { status: 'unavailable' }
+          : {}),
+      };
     },
   };
 }

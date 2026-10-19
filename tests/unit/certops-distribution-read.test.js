@@ -89,3 +89,16 @@ test("single-group consumer read still uses the same convergence query and scope
     return { rows: [] };
   } } });
 });
+
+test("cached verification deadlines use the earlier evidence or certificate expiry, only for verified active bindings", () => {
+  const now = Date.parse("2026-10-19T12:00:00Z");
+  const verified = consumer({ converged: true, observed_at: new Date(now), freshness_seconds: 60, observed_valid_to: new Date(now + 3600000) });
+  const expiring = { ...verified, observed_valid_to: new Date(now + 20000) };
+  const failed = { ...verified, latest_deployment: { stage: "failed" } };
+  const inactive = { ...verified, binding_state: "removed" };
+  const summary = summarizeConsumers([verified, expiring, failed, inactive]);
+  assert.equal(summary.verified, 2);
+  assert.deepEqual(summary.verification_expirations, [now + 20000, now + 60000]);
+  assert.equal(summary.failed, 1);
+  assert.equal(summarizeConsumers([verified], false).verified, 0);
+});

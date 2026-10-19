@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Box,
   Button,
   HStack,
   Link,
   Select,
-  Spinner,
+  SimpleGrid,
   Table,
   TableContainer,
   Tbody,
@@ -13,36 +20,80 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
   VStack,
 } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
-import { Truck } from 'lucide-react';
+import { RefreshCw, Truck } from 'lucide-react';
 import apiClient from '../../utils/apiClient';
 import Section from '../DashboardDetailsSection.jsx';
+import CopyableId from '../CopyableId.jsx';
 import DeploymentBadge from './DeploymentBadge.jsx';
+import DeploymentHelp, {
+  deploymentFieldHelp,
+  providerRevisionHelp,
+  refreshStatusHelp,
+} from './DeploymentHelp.jsx';
 import {
   combineDeploymentSummaries,
   consumerDeploymentStatus,
+  consumerVersionComparison,
   deploymentStates,
+  verificationDeadline,
+  freshnessDeadline,
+  formatFreshnessDuration,
+  verificationMethods,
+  verificationStages,
 } from './distributionFormat.js';
+import useDistributionRead, {
+  serverClockOffset,
+} from './useDistributionRead.js';
 import { formatDateTime } from './certopsFormat.js';
 
 const explanations = {
   failed:
-    'The latest deployment failed. Inspect the job evidence before retrying.',
+    'The latest deployment failed. Review the job evidence, correct the cause, then follow the signed retry and approval workflow.',
   uncertain:
-    'Execution may have changed the service, but its result is unconfirmed. Inspect the execution evidence.',
+    'The service may have changed, but the result is unconfirmed. Investigate the destination and reconcile locally before any signed retry or approval. Do not retry blindly.',
   stale:
-    'The last verification is older than the consumer freshness policy. Verify the service again.',
+    'The last verification is no longer current. Check its freshness window and certificate expiry, then verify the destination again.',
   pending:
-    'The desired certificate has not been verified as currently served with the current assignment.',
+    'Deployment was requested, but the expected certificate is not currently verified. Check the agent and job evidence.',
   not_deployed:
-    'No desired version is assigned. An approved rollout is required.',
+    'No expected version is assigned. Add this destination to an approved rollout to deploy the certificate.',
   inactive:
-    'This assignment or management period has ended. Previous evidence does not confirm current deployment.',
+    'This assignment or management period has ended. Previous evidence does not confirm a current deployment.',
 };
-
+const publicationLabels = {
+  published: 'Published',
+  allocated: 'Publication pending',
+  failed: 'Publication failed',
+  orphaned_unknown_effect: 'Publication outcome uncertain',
+  superseded: 'Superseded',
+};
+const failureReasons = {
+  service_unavailable: 'The destination service was unavailable.',
+  verification_failed: 'The destination did not pass verification.',
+};
+const EMPTY_ROWS = [];
+function SectionBody({ children }) {
+  return (
+    <Box py={2} minW={0}>
+      {children}
+    </Box>
+  );
+}
+function profileName(ref) {
+  return ref && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(ref)
+    ? ref
+    : 'Deployment profile';
+}
+function providerRevision(value) {
+  return value !== null && value !== undefined && value !== ''
+    ? `Vault provider revision ${value}`
+    : 'Provider revision unavailable';
+}
 function JobLink({ workspaceId, jobId, children = 'View job and evidence' }) {
   return jobId ? (
     <Link
@@ -55,6 +106,171 @@ function JobLink({ workspaceId, jobId, children = 'View job and evidence' }) {
     </Link>
   ) : null;
 }
+function Fact({ label, children }) {
+  const help = deploymentFieldHelp[label];
+  return (
+    <Box minW={0}>
+      <HStack spacing={1} align='center'>
+        <Text fontSize='xs' color='dashboard.modal.muted'>
+          {label}
+        </Text>
+        {help ? <DeploymentHelp label={label} text={help} /> : null}
+      </HStack>
+      <Box fontSize='xs' overflowWrap='anywhere'>
+        {children ?? 'Unavailable'}
+      </Box>
+    </Box>
+  );
+}
+function Diagnostics({ children }) {
+  return (
+    <Box as='details' mt={3}>
+      <Box as='summary' fontSize='xs' cursor='pointer'>
+        Advanced diagnostics
+      </Box>
+      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={3}>
+        {children}
+      </SimpleGrid>
+    </Box>
+  );
+}
+function Identifier({ label, value, display }) {
+  return value !== null && value !== undefined ? (
+    <Fact label={label}>
+      <CopyableId id={String(value)} display={display} />
+    </Fact>
+  ) : null;
+}
+function ProviderRevision({ value }) {
+  return (
+    <HStack as='span' display='inline-flex' spacing={0}>
+      <Text as='span'>{providerRevision(value)}</Text>
+      <DeploymentHelp
+        label='Vault provider revision'
+        text={providerRevisionHelp}
+      />
+    </HStack>
+  );
+}
+function ConsumerDetails({ consumer: c, status, workspaceId, now, staleData }) {
+  const deadline = freshnessDeadline(c);
+  const unknown = status === 'uncertain';
+  return (
+    <Box p={{ base: 2, md: 3 }}>
+      {explanations[status] ? (
+        <Text fontSize='sm' mb={3}>
+          {explanations[status]}
+        </Text>
+      ) : null}
+      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+        <Fact label='Deployment profile'>
+          {profileName(c.deployment_profile_ref)}
+        </Fact>
+        <Fact label='Assigned agent'>
+          {c.assigned_agent_id
+            ? c.agent_name || 'Unnamed agent'
+            : 'Agent assignment missing'}
+        </Fact>
+        <Fact label='Expected version'>
+          {c.desired_material_version_id
+            ? providerRevision(c.desired_version)
+            : 'Not assigned'}
+        </Fact>
+        <Fact label='Last confirmed version'>
+          {c.observed_material_version_id
+            ? `${providerRevision(c.observed_version)}${unknown ? ' (historical; current state unknown)' : ''}`
+            : 'Never confirmed'}
+        </Fact>
+        <Fact label='Last verification'>
+          {c.observed_at ? formatDateTime(c.observed_at) : 'Never verified'}
+        </Fact>
+        <Fact label='Verification freshness'>
+          {deadline !== null
+            ? `${now >= deadline ? 'Expired on' : status === 'verified' && !staleData ? 'Valid until' : 'Policy window until'} ${formatDateTime(deadline)}`
+            : 'No valid verification window'}
+        </Fact>
+        <Fact label='Deployment status'>
+          {staleData
+            ? 'Unconfirmed — refresh unavailable'
+            : deploymentStates[status].label}
+        </Fact>
+        <Fact label='Last confirmed verification'>
+          {c.observed_at
+            ? verificationMethods[c.verification_method] ||
+              'Verification method unavailable'
+            : 'No confirmation recorded'}
+        </Fact>
+        <Fact label='Latest execution outcome'>
+          {c.latest_deployment?.stage
+            ? verificationStages[c.latest_deployment.stage] ||
+              'See job evidence for the recorded outcome'
+            : 'No execution recorded'}
+        </Fact>
+        <Fact label='Verification policy'>
+          {verificationMethods[c.verification_policy] || 'Unknown policy'}
+        </Fact>
+        <Fact label='Required destination'>
+          {c.required === true
+            ? 'Yes'
+            : c.required === false
+              ? 'No'
+              : 'Not recorded'}
+        </Fact>
+        <Fact label='Certificate expiry on destination'>
+          {c.observed_valid_to
+            ? formatDateTime(c.observed_valid_to)
+            : 'Not observed'}
+        </Fact>
+        <Fact label='Deployment evidence'>
+          <JobLink
+            workspaceId={workspaceId}
+            jobId={c.latest_deployment?.jobId}
+          />
+          {!c.latest_deployment?.jobId ? 'No job recorded' : null}
+        </Fact>
+        {status === 'failed' ? (
+          <Fact label='Failure reason'>
+            {failureReasons[c.latest_deployment?.failureCode] ||
+              'The job reported a deployment error. Review its evidence for the failure reason.'}
+          </Fact>
+        ) : null}
+      </SimpleGrid>
+      <Text fontSize='xs' color='dashboard.modal.muted' mt={3}>
+        Revisions above belong to the Vault provider. Version comparisons use
+        TokenTimer material identity; rollout generations are separate.
+      </Text>
+      <Diagnostics>
+        {[
+          ['Consumer ID', c.binding_id],
+          ['Agent ID', c.assigned_agent_id],
+          ['Deployment profile reference', c.deployment_profile_ref],
+          ['Profile revision', c.profile_revision],
+          ['Authorization revision', c.authorization_revision],
+          ['Expected material version ID', c.desired_material_version_id],
+          [
+            'Last confirmed material version ID',
+            c.observed_material_version_id,
+          ],
+          ['Desired rollout generation', c.desired_generation],
+          ['Accepted rollout generation', c.accepted_generation],
+          ['Observed SHA-256 fingerprint', c.observed_fingerprint_sha256],
+          ['Verification policy code', c.verification_policy],
+          ['Execution stage', c.latest_deployment?.stage],
+          ['Execution failure code', c.latest_deployment?.failureCode],
+          ['Last job ID', c.latest_deployment?.jobId],
+          ['Rollout wave', c.wave],
+        ].map(([label, value]) => (
+          <Identifier key={label} label={label} value={value} />
+        ))}
+        <Identifier
+          label='Freshness policy'
+          value={c.freshness_seconds}
+          display={formatFreshnessDuration(c.freshness_seconds)}
+        />
+      </Diagnostics>
+    </Box>
+  );
+}
 
 function GroupDeployments({
   workspaceId,
@@ -62,290 +278,300 @@ function GroupDeployments({
   identityId,
   revision,
   onLoaded,
+  parentError,
 }) {
-  const [state, setState] = useState({
-    loading: true,
-    error: '',
-    consumers: [],
-    versions: [],
-  });
   const currentIdentity =
     !identityId || group.current_identity_id === identityId;
   const current = group.active && currentIdentity;
+  const scope = `${workspaceId}/${group.id}/${identityId || ''}/${group.current_identity_id || ''}/${group.generation || 0}/${Boolean(group.active)}`;
+  const read = useCallback(
+    async (signal, startedAt) => {
+      const base = `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/certops/distribution-groups/${encodeURIComponent(group.id)}`;
+      const [consumers, versions] = await Promise.all([
+        currentIdentity
+          ? apiClient.get(`${base}/consumers`, { signal })
+          : Promise.resolve({ data: { consumers: [] } }),
+        apiClient.get(`${base}/versions`, { signal }),
+      ]);
+      return {
+        consumers: consumers.data.consumers || [],
+        offset: serverClockOffset(consumers.data, startedAt),
+        deadlines: (consumers.data.consumers || [])
+          .map(c => verificationDeadline(c))
+          .filter(time => time !== null)
+          .map(time => time + serverClockOffset(consumers.data, startedAt)),
+        versions: (versions.data.versions || []).filter(
+          v =>
+            !identityId ||
+            v.certificate_identity_id === identityId ||
+            (currentIdentity && !v.certificate_identity_id)
+        ),
+      };
+    },
+    [workspaceId, group.id, identityId, currentIdentity]
+  );
+  const state = useDistributionRead(scope, read);
+  const { refresh } = state;
+  const lastRevision = useRef(revision);
   useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-    setState({ loading: true, error: '', consumers: [], versions: [] });
-    const base = `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/certops/distribution-groups/${encodeURIComponent(group.id)}`;
-    Promise.all([
-      currentIdentity
-        ? apiClient.get(`${base}/consumers`, { signal: controller.signal })
-        : Promise.resolve({ data: { consumers: [] } }),
-      apiClient.get(`${base}/versions`, { signal: controller.signal }),
-    ])
-      .then(([consumers, versions]) => {
-        if (active)
-          setState({
-            loading: false,
-            error: '',
-            consumers: consumers.data.consumers || [],
-            versions: (versions.data.versions || []).filter(
-              v =>
-                !identityId ||
-                v.certificate_identity_id === identityId ||
-                (currentIdentity && !v.certificate_identity_id)
-            ),
-          });
-      })
-      .catch(() => {
-        if (active)
-          setState({
-            loading: false,
-            error: 'Deployment details could not be loaded. Refresh to retry.',
-            consumers: [],
-            versions: [],
-          });
-      });
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [workspaceId, group.id, identityId, currentIdentity, revision]);
+    if (lastRevision.current !== revision) {
+      lastRevision.current = revision;
+      refresh();
+    }
+  }, [revision, refresh]);
+  const loaded = Boolean(state.data);
   useEffect(() => {
-    if (!state.loading) onLoaded?.();
-  }, [state.loading, onLoaded]);
+    if (loaded) onLoaded?.();
+  }, [loaded, onLoaded]);
   const [page, setPage] = useState(0);
-  const activeConsumers = state.consumers.filter(
-    c => c.binding_state === 'active'
+  const [expanded, setExpanded] = useState(null);
+  const consumers = state.data?.consumers || EMPTY_ROWS;
+  const versions = state.data?.versions || [];
+  const now = state.now - (state.data?.offset || 0);
+  const summary = useMemo(() => {
+    const counts = {
+      total: 0,
+      verified: 0,
+      failed: 0,
+      uncertain: 0,
+      stale: 0,
+      pending: 0,
+      not_deployed: 0,
+    };
+    for (const c of consumers) {
+      if (c.binding_state !== 'active') continue;
+      counts.total++;
+      counts[consumerDeploymentStatus(c, now)]++;
+    }
+    const result = combineDeploymentSummaries([{ summary: counts }]);
+    return {
+      ...result,
+      ...(!current ? { verified: 0, status: 'inactive' } : {}),
+      staleData: Boolean(state.error || parentError),
+    };
+  }, [consumers, now, current, state.error, parentError]);
+  const safePage = Math.min(
+    page,
+    Math.max(0, Math.ceil(consumers.length / 20) - 1)
   );
-  const counts = {
-    total: activeConsumers.length,
-    verified: 0,
-    failed: 0,
-    uncertain: 0,
-    stale: 0,
-    pending: 0,
-    not_deployed: 0,
-  };
-  for (const consumer of activeConsumers)
-    counts[consumerDeploymentStatus(consumer)]++;
-  const summary = combineDeploymentSummaries([{ summary: counts }]);
-  if (!current) summary.verified = 0;
-  if (!current) summary.status = 'inactive';
-  const publication = state.versions.find(
-    version => version.state === 'published'
-  );
-  const latestAttempt = state.versions[0];
+  const publication = versions.find(v => v.state === 'published');
+  const attempt = versions[0];
   return (
     <VStack align='stretch' spacing={3} py={2}>
-      <Text fontSize='sm'>
-        Vault store: <strong>{group.material_store_ref}</strong>
-      </Text>
-      <Text fontSize='sm'>
-        Published material:{' '}
-        {state.loading
-          ? 'Loading publication…'
-          : state.error
-            ? 'Unavailable'
-            : publication?.state === 'published'
-              ? `Version ${publication.provider_version} · ${formatDateTime(publication.published_at)}`
-              : publication?.state === 'orphaned_unknown_effect'
-                ? 'Publication uncertain — inspect the publishing job evidence'
-                : publication
-                  ? publication.state
-                  : 'Not published'}
-      </Text>
-      {latestAttempt && latestAttempt !== publication ? (
-        <Box>
-          <Text fontSize='xs'>
-            Latest publication attempt:{' '}
-            {latestAttempt.state === 'orphaned_unknown_effect'
-              ? 'Uncertain — inspect execution evidence'
-              : latestAttempt.state}
+      <Box>
+        <HStack justify='space-between' align='start' spacing={2}>
+          <Text fontSize='sm' fontWeight='medium' overflowWrap='anywhere'>
+            {group.material_store_ref}
           </Text>
-          <JobLink
-            workspaceId={workspaceId}
-            jobId={latestAttempt.publishing_job_id}
-          >
-            Inspect latest publication attempt
-          </JobLink>
-        </Box>
-      ) : null}
-      <JobLink workspaceId={workspaceId} jobId={publication?.publishing_job_id}>
-        View publication job and evidence
-      </JobLink>
-      <Text fontSize='xs' color='dashboard.modal.muted'>
-        Publication stores certificate material. It does not prove that
-        consumers currently serve it.
-      </Text>
+          <DeploymentHelp
+            label='Publication is separate from verified deployment'
+            text='Published to Vault means stored material. It does not prove that any destination currently serves the certificate.'
+          />
+        </HStack>
+        <HStack spacing={2} flexWrap='wrap' fontSize='xs'>
+          <Text>
+            {state.error && !state.data
+              ? 'Publication status unavailable'
+              : state.loading
+                ? 'Loading publication…'
+                : attempt?.state === 'published'
+                  ? 'Published to Vault'
+                  : attempt
+                    ? publicationLabels[attempt.state] ||
+                      'Publication requires review'
+                    : 'Not published'}
+          </Text>
+          {attempt ? (
+            <>
+              <ProviderRevision value={attempt.provider_version} />
+              <Text color='dashboard.modal.muted'>
+                {formatDateTime(attempt.published_at || attempt.created_at)}
+              </Text>
+              <JobLink
+                workspaceId={workspaceId}
+                jobId={attempt.publishing_job_id}
+              >
+                {attempt.state === 'published'
+                  ? 'Publication evidence'
+                  : 'Attempt evidence'}
+              </JobLink>
+            </>
+          ) : null}
+        </HStack>
+        {publication && publication.id !== attempt?.id ? (
+          <HStack spacing={2} flexWrap='wrap' fontSize='xs'>
+            <Text>Last published:</Text>
+            <ProviderRevision value={publication.provider_version} />
+            <Text color='dashboard.modal.muted'>
+              {formatDateTime(publication.published_at)}
+            </Text>
+            <JobLink
+              workspaceId={workspaceId}
+              jobId={publication.publishing_job_id}
+            >
+              Publication evidence
+            </JobLink>
+          </HStack>
+        ) : null}
+      </Box>
       {!current ? (
-        <Text fontSize='sm'>
+        <Text fontSize='xs'>
           {currentIdentity
             ? explanations.inactive
             : 'Historical certificate. This registration now tracks another identity; its current consumers are not shown here.'}
         </Text>
       ) : null}
+      {state.error ? (
+        <Text role='alert' fontSize='xs'>
+          Details could not be refreshed.{' '}
+          {state.data
+            ? 'Showing the last known data; current state is unconfirmed.'
+            : 'Refresh to try again.'}
+        </Text>
+      ) : null}
       {state.loading ? (
-        <HStack role='status'>
-          <Spinner size='xs' />
-          <Text fontSize='sm'>Loading consumers…</Text>
-        </HStack>
-      ) : state.error ? (
-        <Text role='alert'>{state.error}</Text>
-      ) : (
+        <Text role='status' fontSize='xs'>
+          Loading consumers…
+        </Text>
+      ) : state.data ? (
         <>
-          <DeploymentBadge summary={summary} />
-          <Text fontSize='xs'>
-            {activeConsumers.length} consumers · {summary.verified} currently
-            verified
-            {state.consumers.length > activeConsumers.length
-              ? ` · ${state.consumers.length - activeConsumers.length} ended assignments`
-              : ''}
-          </Text>
-          {!state.consumers.length && currentIdentity ? (
+          <Box alignSelf='flex-start'>
+            <DeploymentBadge summary={summary} showVerified />
+          </Box>
+          {!consumers.length && currentIdentity ? (
             <Text fontSize='sm'>
-              No consumer assignments. Add consumers and approve a rollout to
-              deploy this certificate.
+              No consumer assignments. Add destinations to an approved rollout
+              to deploy this certificate.
             </Text>
           ) : null}
-          {state.consumers.length ? (
+          {consumers.length ? (
             <TableContainer overflowX='auto' whiteSpace='normal'>
               <Table
                 size='sm'
-                minW='700px'
+                minW='480px'
                 aria-label='Certificate deployment consumers'
               >
                 <Thead>
                   <Tr>
-                    {[
-                      'Consumer',
-                      'Desired / observed',
-                      'Verification',
-                      'Deployed expiry',
-                      'Evidence',
-                    ].map(label => (
-                      <Th key={label}>{label}</Th>
-                    ))}
+                    {['Destination', 'Version', 'Status', 'Actions'].map(
+                      label => (
+                        <Th key={label} px={2}>
+                          {label}
+                        </Th>
+                      )
+                    )}
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {state.consumers.slice(page * 20, (page + 1) * 20).map(c => {
-                    const status = current
-                      ? consumerDeploymentStatus(c)
-                      : 'inactive';
-                    return (
-                      <Tr key={c.binding_id}>
-                        <Td>
-                          <Text fontSize='sm'>
-                            {c.agent_name || 'Unnamed agent'}
-                          </Text>
-                          <Text fontSize='xs'>
-                            {c.deployment_profile_ref ||
-                              'Deployment profile unavailable'}
-                          </Text>
-                          {!c.assigned_agent_id ? (
-                            <Text fontSize='xs'>Agent assignment missing</Text>
+                  {consumers
+                    .slice(safePage * 20, (safePage + 1) * 20)
+                    .map(c => {
+                      const status = current
+                        ? consumerDeploymentStatus(c, now)
+                        : 'inactive';
+                      const label =
+                        status === 'verified'
+                          ? 'Verified'
+                          : deploymentStates[status].label;
+                      const open = expanded === c.binding_id;
+                      return (
+                        <Fragment key={c.binding_id}>
+                          <Tr>
+                            <Td px={2}>
+                              <Text fontSize='xs' fontWeight='medium'>
+                                {c.agent_name || 'Unnamed agent'}
+                              </Text>
+                              <Text fontSize='xs' color='dashboard.modal.muted'>
+                                {profileName(c.deployment_profile_ref)}
+                              </Text>
+                            </Td>
+                            <Td px={2} fontSize='xs'>
+                              <Tooltip
+                                label={`Expected: ${c.desired_material_version_id ? providerRevision(c.desired_version) : 'Not assigned'}. Last confirmed: ${c.observed_material_version_id ? providerRevision(c.observed_version) : 'None'}. ${status === 'uncertain' ? 'Current service state is unknown.' : 'Compares TokenTimer material identities.'}`}
+                                hasArrow
+                              >
+                                <Text tabIndex={0}>
+                                  {consumerVersionComparison(c, status)}
+                                </Text>
+                              </Tooltip>
+                            </Td>
+                            <Td px={2}>
+                              <Tooltip
+                                label={
+                                  state.error || parentError
+                                    ? 'Last known state. Refresh unavailable; current state is unconfirmed.'
+                                    : explanations[status] ||
+                                      (c.verification_method === 'trust'
+                                        ? verificationMethods.trust
+                                        : verificationMethods.served)
+                                }
+                                hasArrow
+                              >
+                                <Text tabIndex={0} fontSize='xs'>
+                                  {state.error || parentError
+                                    ? `Last known: ${label}`
+                                    : label}
+                                </Text>
+                              </Tooltip>
+                            </Td>
+                            <Td px={2}>
+                              <Button
+                                variant='link'
+                                size='xs'
+                                aria-expanded={open}
+                                aria-controls={`consumer-${c.binding_id}`}
+                                onClick={() =>
+                                  setExpanded(open ? null : c.binding_id)
+                                }
+                              >
+                                {open ? 'Hide details' : 'Details'}
+                              </Button>
+                            </Td>
+                          </Tr>
+                          {open ? (
+                            <Tr id={`consumer-${c.binding_id}`}>
+                              <Td colSpan={4} px={0}>
+                                <ConsumerDetails
+                                  consumer={c}
+                                  status={status}
+                                  workspaceId={workspaceId}
+                                  now={now}
+                                  staleData={Boolean(
+                                    state.error || parentError
+                                  )}
+                                />
+                              </Td>
+                            </Tr>
                           ) : null}
-                        </Td>
-                        <Td>
-                          <Text fontSize='xs'>
-                            Desired:{' '}
-                            {c.desired_version
-                              ? `Version ${c.desired_version}`
-                              : 'Not assigned'}
-                          </Text>
-                          <Text fontSize='xs'>
-                            Observed:{' '}
-                            {c.observed_version
-                              ? `Version ${c.observed_version}`
-                              : 'Not observed'}
-                          </Text>
-                        </Td>
-                        <Td>
-                          <Text fontSize='sm'>
-                            {deploymentStates[status].label}
-                          </Text>
-                          <Text fontSize='xs'>
-                            {c.observed_at
-                              ? formatDateTime(c.observed_at)
-                              : 'Never verified'}
-                          </Text>
-                          <Text fontSize='xs'>
-                            {c.verification_method || c.verification_policy}
-                          </Text>
-                          {explanations[status] ? (
-                            <Text fontSize='xs' mt={1}>
-                              {explanations[status]}
-                            </Text>
-                          ) : null}
-                          {c.latest_deployment?.failureCode ? (
-                            <Text fontSize='xs'>
-                              Error: {c.latest_deployment.failureCode}
-                            </Text>
-                          ) : null}
-                        </Td>
-                        <Td fontSize='xs'>
-                          {c.observed_valid_to
-                            ? formatDateTime(c.observed_valid_to)
-                            : 'Not observed'}
-                        </Td>
-                        <Td>
-                          <JobLink
-                            workspaceId={workspaceId}
-                            jobId={c.latest_deployment?.jobId}
-                          />
-                          <Box as='details' mt={2}>
-                            <Box as='summary' fontSize='xs' cursor='pointer'>
-                              Technical details
-                            </Box>
-                            <Text
-                              fontSize='xs'
-                              whiteSpace='pre-wrap'
-                              overflowWrap='anywhere'
-                            >
-                              {JSON.stringify(
-                                {
-                                  bindingId: c.binding_id,
-                                  agentId: c.assigned_agent_id,
-                                  desiredVersionId:
-                                    c.desired_material_version_id,
-                                  observedVersionId:
-                                    c.observed_material_version_id,
-                                  desiredGeneration: c.desired_generation,
-                                  acceptedGeneration: c.accepted_generation,
-                                  fingerprint: c.observed_fingerprint_sha256,
-                                  freshnessSeconds: c.freshness_seconds,
-                                  stage: c.latest_deployment?.stage,
-                                },
-                                null,
-                                2
-                              )}
-                            </Text>
-                          </Box>
-                        </Td>
-                      </Tr>
-                    );
-                  })}
+                        </Fragment>
+                      );
+                    })}
                 </Tbody>
               </Table>
             </TableContainer>
           ) : null}
-          {state.consumers.length > 20 ? (
+          {consumers.length > 20 ? (
             <HStack justify='space-between'>
               <Button
                 size='xs'
-                isDisabled={page === 0}
-                onClick={() => setPage(p => p - 1)}
+                isDisabled={safePage === 0}
+                onClick={() => {
+                  setPage(safePage - 1);
+                  setExpanded(null);
+                }}
               >
                 Previous consumers
               </Button>
               <Text fontSize='xs'>
-                Page {page + 1} of {Math.ceil(state.consumers.length / 20)}
+                Page {safePage + 1} of {Math.ceil(consumers.length / 20)}
               </Text>
               <Button
                 size='xs'
-                isDisabled={(page + 1) * 20 >= state.consumers.length}
-                onClick={() => setPage(p => p + 1)}
+                isDisabled={(safePage + 1) * 20 >= consumers.length}
+                onClick={() => {
+                  setPage(safePage + 1);
+                  setExpanded(null);
+                }}
               >
                 Next consumers
               </Button>
@@ -353,36 +579,96 @@ function GroupDeployments({
           ) : null}
           <Box as='details'>
             <Box as='summary' cursor='pointer' fontSize='xs'>
-              Publication technical details and history
+              Publication history
             </Box>
-            <Text fontSize='xs' overflowWrap='anywhere'>
-              Group: {group.id} · Management period:{' '}
-              {group.management_period_id} · Generation: {group.generation}
-            </Text>
-            {state.versions.map(v => (
-              <Box key={v.id} mt={2}>
-                <Text fontSize='xs' overflowWrap='anywhere'>
-                  {v.state} · Version {v.provider_version || 'unassigned'} ·{' '}
-                  {v.id} · {v.fingerprint_sha256 || 'No fingerprint'}
+            {versions.length <= 1 ? (
+              <Text fontSize='xs' mt={2}>
+                No earlier publication records.
+              </Text>
+            ) : null}
+            {versions.slice(1).map(v => (
+              <HStack
+                key={v.id}
+                spacing={2}
+                mt={2}
+                flexWrap='wrap'
+                fontSize='xs'
+              >
+                <Text>
+                  {publicationLabels[v.state] || 'Publication requires review'}
+                </Text>
+                <ProviderRevision value={v.provider_version} />
+                <Text color='dashboard.modal.muted'>
+                  {formatDateTime(v.published_at || v.created_at)}
                 </Text>
                 <JobLink
                   workspaceId={workspaceId}
                   jobId={v.publishing_job_id}
                 />
-              </Box>
+              </HStack>
             ))}
           </Box>
+          <Box as='details'>
+            <Box as='summary' cursor='pointer' fontSize='xs'>
+              Technical information
+            </Box>
+            <Box as='section' mt={3}>
+              <Text as='h4' fontSize='xs' fontWeight='semibold'>
+                Certificate publication
+              </Text>
+              {!versions.length ? (
+                <Text fontSize='xs' mt={2}>
+                  No publication records.
+                </Text>
+              ) : null}
+              {versions.map((v, index) => (
+                <Box key={v.id} mt={3}>
+                  <Text as='h5' fontSize='xs' fontWeight='medium'>
+                    {index === 0
+                      ? 'Latest publication record'
+                      : 'Previous publication record'}
+                  </Text>
+                  <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={2}>
+                    {[
+                      ['Material version ID', v.id],
+                      ['Certificate identity ID', v.certificate_identity_id],
+                      ['SHA-256 fingerprint', v.fingerprint_sha256],
+                      ['Profile revision', v.profile_revision],
+                      ['Publication state code', v.state],
+                      ['Publishing job ID', v.publishing_job_id],
+                    ].map(([label, value]) => (
+                      <Identifier key={label} label={label} value={value} />
+                    ))}
+                    <Fact label='Vault provider revision'>
+                      {v.provider_version !== null &&
+                      v.provider_version !== undefined &&
+                      v.provider_version !== ''
+                        ? String(v.provider_version)
+                        : 'Not assigned'}
+                    </Fact>
+                  </SimpleGrid>
+                </Box>
+              ))}
+            </Box>
+            <Box as='section' mt={4}>
+              <Text as='h4' fontSize='xs' fontWeight='semibold'>
+                Distribution configuration
+              </Text>
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={2}>
+                {[
+                  ['Distribution group ID', group.id],
+                  ['Management period ID', group.management_period_id],
+                  ['Rollout generation', group.generation],
+                  ['Managed certificate ID', group.managed_certificate_id],
+                ].map(([label, value]) => (
+                  <Identifier key={label} label={label} value={value} />
+                ))}
+              </SimpleGrid>
+            </Box>
+          </Box>
         </>
-      )}
+      ) : null}
     </VStack>
-  );
-}
-
-function SectionBody({ children }) {
-  return (
-    <Box py={2} minW={0}>
-      {children}
-    </Box>
   );
 }
 
@@ -393,114 +679,102 @@ export default function CertificateDeployments({
   isOpen,
   focus = false,
 }) {
-  const scope = `${workspaceId}/${managedCertificateId || ''}/${identityId || ''}`;
-  const [state, setState] = useState({
-    scope: '',
-    groups: [],
-    loading: true,
-    error: '',
-  });
-  const [selected, setSelected] = useState('');
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    if (!isOpen || !workspaceId || (!managedCertificateId && !identityId))
-      return undefined;
-    let active = true;
-    const controller = new AbortController();
-    setState({ scope, groups: [], loading: true, error: '' });
-    apiClient
-      .get(
+  const scope =
+    isOpen && workspaceId && (managedCertificateId || identityId)
+      ? `${workspaceId}/${managedCertificateId || ''}/${identityId || ''}`
+      : null;
+  const read = useCallback(
+    async signal => {
+      const { data } = await apiClient.get(
         `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/certops/distribution-groups`,
         {
           params: identityId
             ? { identityIds: identityId }
             : { managedCertificateIds: managedCertificateId },
-          signal: controller.signal,
+          signal,
         }
-      )
-      .then(({ data }) => {
-        if (!active) return;
-        const groups = (data.groups || []).filter(
+      );
+      return {
+        groups: (data.groups || []).filter(
           g =>
             !managedCertificateId ||
             g.managed_certificate_id === managedCertificateId
-        );
-        const current = groups.filter(
-          g => g.active && (!identityId || g.current_identity_id === identityId)
-        );
-        setSelected(
-          current.length === 1
-            ? current[0].id
-            : groups.length === 1
-              ? groups[0].id
-              : ''
-        );
-        setState({ scope, groups, loading: false, error: '' });
-      })
-      .catch(() => {
-        if (active)
-          setState({
-            scope,
-            groups: [],
-            loading: false,
-            error:
-              'Deployment information unavailable. Your role may not allow access, or the service could not be reached.',
-          });
-      });
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [workspaceId, managedCertificateId, identityId, isOpen, scope, revision]);
-  const loading = state.scope !== scope || state.loading;
-  const group = !loading && state.groups.find(g => g.id === selected);
+        ),
+      };
+    },
+    [workspaceId, managedCertificateId, identityId]
+  );
+  const state = useDistributionRead(scope, read);
+  const [selection, setSelection] = useState({ scope: null, id: '' });
+  const [revision, setRevision] = useState(0);
+  const groups = state.data?.groups || [];
+  const current = groups.filter(
+    g => g.active && (!identityId || g.current_identity_id === identityId)
+  );
+  const selected =
+    selection.scope === scope && groups.some(g => g.id === selection.id)
+      ? selection.id
+      : current.length === 1
+        ? current[0].id
+        : groups.length === 1
+          ? groups[0].id
+          : '';
+  const group = groups.find(g => g.id === selected);
   const sectionRef = useRef(null);
   const focusSection = useCallback(() => {
     if (focus) sectionRef.current?.scrollIntoView?.({ block: 'start' });
   }, [focus]);
+  const loaded = Boolean(state.data);
   useEffect(() => {
-    if (focus && !loading)
-      sectionRef.current?.scrollIntoView?.({ block: 'start' });
-  }, [focus, loading]);
+    if (focus && loaded) focusSection();
+  }, [focus, loaded, focusSection]);
   return (
     <Box ref={sectionRef}>
       <Section
         title='Deployments'
         icon={Truck}
         enclosed
-        description='Certificate publication and verified consumer deployment.'
+        headerAction={
+          <DeploymentHelp
+            label='Refresh status'
+            text={refreshStatusHelp}
+            icon={RefreshCw}
+            busy={state.loading || state.refreshing}
+            onAction={() => {
+              state.refresh();
+              setRevision(r => r + 1);
+            }}
+          />
+        }
       >
         <SectionBody>
-          <HStack justify='flex-end'>
-            <Button
-              size='xs'
-              onClick={() => setRevision(r => r + 1)}
-              isLoading={loading}
-            >
-              Refresh deployments
-            </Button>
-          </HStack>
-          {loading ? (
+          {state.error ? (
+            <Text role='alert' fontSize='xs'>
+              Deployment information unavailable.{' '}
+              {state.data
+                ? 'Showing the last known data; current state is unconfirmed.'
+                : 'Check your access and refresh to try again.'}
+            </Text>
+          ) : null}
+          {state.loading ? (
             <Text role='status' fontSize='sm'>
               Loading deployments…
             </Text>
-          ) : state.error ? (
-            <Text role='alert' fontSize='sm'>
-              {state.error}
-            </Text>
-          ) : !state.groups.length ? (
+          ) : state.data && !groups.length ? (
             <Text fontSize='sm'>Not distributed</Text>
           ) : (
             <>
-              {state.groups.length > 1 ? (
+              {groups.length > 1 ? (
                 <Select
                   size='sm'
                   aria-label='Distribution management period'
                   value={selected}
-                  onChange={event => setSelected(event.target.value)}
+                  onChange={event =>
+                    setSelection({ scope, id: event.target.value })
+                  }
                 >
                   <option value=''>Select a distribution registration</option>
-                  {state.groups.map((g, index) => (
+                  {groups.map((g, index) => (
                     <option key={g.id} value={g.id}>
                       {g.material_store_ref} · {g.active ? 'Current' : 'Ended'}{' '}
                       · {formatDateTime(g.created_at)} · Registration{' '}
@@ -511,19 +785,20 @@ export default function CertificateDeployments({
               ) : null}
               {group ? (
                 <GroupDeployments
-                  key={`${scope}/${group.id}/${revision}`}
+                  key={`${scope}/${group.id}`}
                   workspaceId={workspaceId}
                   group={group}
                   identityId={identityId}
                   revision={revision}
                   onLoaded={focusSection}
+                  parentError={state.error}
                 />
-              ) : (
+              ) : state.data ? (
                 <Text fontSize='sm'>
-                  Select a registration to inspect its consumers and publication
-                  history.
+                  Select a registration to inspect its destinations and
+                  publication history.
                 </Text>
-              )}
+              ) : null}
             </>
           )}
         </SectionBody>

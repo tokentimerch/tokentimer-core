@@ -127,9 +127,7 @@ it('adds a compact deployment indicator only for an authoritatively linked certi
   };
   const handlers = show(asset, 'workspace-a');
   await waitFor(() =>
-    expect(
-      screen.getAllByText('3/5 verified · Partially verified').length
-    ).toBeGreaterThan(0)
+    expect(screen.getAllByText('3/5').length).toBeGreaterThan(0)
   );
   expect(
     screen.queryByRole('columnheader', { name: 'Deployment' })
@@ -137,6 +135,13 @@ it('adds a compact deployment indicator only for an authoritatively linked certi
   fireEvent.click(screen.getByRole('button', { name: 'Details' }));
   expect(handlers.onOpenTokenModal).toHaveBeenCalledWith(
     expect.objectContaining({ id: 7, __managedCert: managed })
+  );
+  const deployment = screen.getAllByRole('button', {
+    name: /Open certificate deployments: 3\/5 verified/,
+  })[0];
+  fireEvent.click(deployment);
+  expect(handlers.onOpenTokenModal).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: 7, __focusDeployments: true })
   );
   expect(distributionGet).toHaveBeenCalledTimes(1);
   expect(distributionGet.mock.calls[0][1].params).toMatchObject({

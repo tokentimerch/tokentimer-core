@@ -856,25 +856,42 @@ export default function CertificateDetailsModal({
                     valueTitle={sans}
                   />
                 ) : null}
-                {hasValue(certificate?.fingerprintSha256) ? (
-                  <DetailRow label='SHA-256 fingerprint'>
-                    <CopyableId
-                      id={certificate.fingerprintSha256}
-                      size='sm'
-                      color='dashboard.modal.text'
-                    />
-                  </DetailRow>
-                ) : null}
-                {hasValue(certificate?.id) ? (
-                  <DetailRow label='Managed certificate ID'>
-                    <CopyableId
-                      id={certificate.id}
-                      size='sm'
-                      color='dashboard.modal.text'
-                    />
-                  </DetailRow>
-                ) : null}
               </Section>
+            ) : null}
+
+            {hasValue(certificate?.fingerprintSha256) ||
+            hasValue(certificate?.id) ? (
+              <Box as='details' mb={6}>
+                <Box as='summary' fontSize='xs' cursor='pointer'>
+                  Advanced certificate diagnostics
+                </Box>
+                <Grid
+                  templateColumns={{
+                    base: 'minmax(0, 1fr)',
+                    md: 'repeat(2, minmax(0, 1fr))',
+                  }}
+                  mt={2}
+                >
+                  {hasValue(certificate?.fingerprintSha256) ? (
+                    <DetailRow label='SHA-256 fingerprint'>
+                      <CopyableId
+                        id={certificate.fingerprintSha256}
+                        size='sm'
+                        color='dashboard.modal.text'
+                      />
+                    </DetailRow>
+                  ) : null}
+                  {hasValue(certificate?.id) ? (
+                    <DetailRow label='Managed certificate ID'>
+                      <CopyableId
+                        id={certificate.id}
+                        size='sm'
+                        color='dashboard.modal.text'
+                      />
+                    </DetailRow>
+                  ) : null}
+                </Grid>
+              </Box>
             ) : null}
 
             {isEditing || hasValue(token.notes) || identityPanel ? (

@@ -25,21 +25,29 @@ function consumerStatus(row) {
 
 function summarizeConsumers(rows, active = true) {
   const counts = { total: 0, verified: 0, failed: 0, uncertain: 0, stale: 0, pending: 0, not_deployed: 0 };
+  const expirations = [];
   for (const row of rows) {
     const status = consumerStatus(row);
     if (status === "inactive") continue;
     counts.total++;
     counts[status]++;
+    if (status === "verified") {
+      const freshness = new Date(row.observed_at).getTime() + Number(row.freshness_seconds) * 1000;
+      const expiry = new Date(row.observed_valid_to).getTime();
+      if (Number.isFinite(freshness) && Number.isFinite(expiry)) expirations.push(Math.min(freshness, expiry));
+    }
   }
   if (!active) return { ...counts, verified: 0, status: "inactive" };
   const status = counts.uncertain ? "uncertain" : counts.failed ? "failed" : counts.stale ? "stale"
     : counts.total && counts.verified === counts.total ? "verified" : counts.verified ? "partial"
       : !counts.total || counts.not_deployed === counts.total ? "not_deployed" : "pending";
-  return { ...counts, status };
+  // Only deadlines, no consumer IDs or evidence. Allows cached counts to expire without granting convergence.
+  return { ...counts, status, ...(expirations.length === counts.verified ? { verification_expirations: expirations.sort((a, b) => a - b) } : {}) };
 }
 
 /** Bounded batch metadata read; two queries regardless of certificate/consumer count. */
 async function listDistributionGroups({ client, workspaceId, query = {} }) {
+  const evaluated_at = new Date().toISOString();
   const managedIds = parseIds(query.managedCertificateIds);
   const identityIds = parseIds(query.identityIds);
   const scoped = managedIds.length > 0 || identityIds.length > 0;
@@ -65,14 +73,14 @@ async function listDistributionGroups({ client, workspaceId, query = {} }) {
           WHERE history.workspace_id=g.workspace_id AND history.group_id=g.id AND history.certificate_identity_id=ANY($3::uuid[]))))
       AND (NOT $5::boolean OR (g.state='active' AND p.ended_at IS NULL))
     ORDER BY g.created_at DESC LIMIT 1000`, [workspaceId, managedIds, identityIds, scoped, summaries])).rows;
-  if (!summaries || !groups.length) return { groups };
+  if (!summaries || !groups.length) return { groups, evaluated_at };
   const consumers = await consumerMatrix({ client, workspaceId, groupIds: groups.map(group => group.id) });
   const byGroup = new Map();
   for (const row of consumers) {
     if (!byGroup.has(row.group_id)) byGroup.set(row.group_id, []);
     byGroup.get(row.group_id).push(row);
   }
-  return { groups: groups.map(group => ({
+  return { evaluated_at, groups: groups.map(group => ({
     id: group.id, managed_certificate_id: group.managed_certificate_id,
     current_identity_id: group.current_identity_id,
     summary: summarizeConsumers(byGroup.get(group.id) || []),
