@@ -133,7 +133,7 @@ describe("adapter configuration: the stored credential file", () => {
     dir = mkdir();
     try {
       const stored = pathMod.join(dir, "credential");
-      writeCredential(stored, CREDENTIAL);
+      writeCredential(stored, CREDENTIAL, { binding: url.TOKENTIMER_API_URL });
       const config = loadConfig(url, { defaultFile: stored });
       assert.equal(config.authorizationHeader(), `Bearer ${CREDENTIAL}`);
     } finally {
@@ -160,7 +160,7 @@ describe("adapter configuration: the stored credential file", () => {
     dir = mkdir();
     try {
       const stored = pathMod.join(dir, "credential");
-      writeCredential(stored, CREDENTIAL);
+      writeCredential(stored, CREDENTIAL, { binding: url.TOKENTIMER_API_URL });
       fsp.chmodSync(stored, 0o644);
       assert.throws(
         () => loadConfig(url, { defaultFile: stored }),
@@ -203,5 +203,137 @@ describe("adapter configuration: the stored credential file", () => {
     } finally {
       fsp.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("adapter configuration: a stored credential is bound to its issuing server", () => {
+  const fsp = require("node:fs");
+  const os = require("node:os");
+  const pathMod = require("node:path");
+  const { writeCredential } = require("./credentialStore");
+  const REAL = "https://tokentimer.example.com";
+  const EVIL = "https://evil.example.net";
+  let dir;
+
+  function withDir(fn) {
+    dir = fsp.mkdtempSync(pathMod.join(os.tmpdir(), "tt-mcp-bind-"));
+    try {
+      return fn(pathMod.join(dir, "credential"));
+    } finally {
+      fsp.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const refusesAsForeign = (call) =>
+    assert.throws(call, (error) => {
+      assert.ok(error instanceof ConfigError);
+      assert.match(error.message, /different TokenTimer server/);
+      assert.ok(!error.message.includes(CREDENTIAL), "the credential must not be echoed");
+      assert.ok(!error.message.includes(EVIL) && !error.message.includes(REAL), "no address is echoed either");
+      return true;
+    });
+
+  it("never releases the default credential to a server it was not issued by", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL, { binding: REAL });
+      // The attack: a hostile project configuration sets only the address.
+      refusesAsForeign(() => loadConfig({ TOKENTIMER_API_URL: EVIL }, { defaultFile: stored }));
+      // The legitimate case still works.
+      assert.equal(
+        loadConfig({ TOKENTIMER_API_URL: REAL }, { defaultFile: stored }).authorizationHeader(),
+        `Bearer ${CREDENTIAL}`,
+      );
+    });
+  });
+
+  it("holds an explicitly named file to the same rule, so naming the default path does not bypass it", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL, { binding: REAL });
+      refusesAsForeign(() =>
+        loadConfig({ TOKENTIMER_API_URL: EVIL, TOKENTIMER_MCP_CREDENTIAL_FILE: stored }, { defaultFile: null }),
+      );
+      assert.doesNotThrow(() =>
+        loadConfig({ TOKENTIMER_API_URL: REAL, TOKENTIMER_MCP_CREDENTIAL_FILE: stored }, { defaultFile: null }),
+      );
+    });
+  });
+
+  it("treats a different path prefix, scheme, port or host as a different server", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL, { binding: REAL });
+      for (const address of [
+        `${REAL}/tokentimer`,
+        "https://tokentimer.example.com:8443",
+        "https://tokentimer.example.com.evil.net",
+        "https://tokentimer.example.co",
+        "https://sub.tokentimer.example.com",
+      ]) {
+        refusesAsForeign(() => loadConfig({ TOKENTIMER_API_URL: address }, { defaultFile: stored }));
+      }
+    });
+  });
+
+  it("treats http and https, or a different port, on localhost as different servers", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL, { binding: "http://localhost:4000" });
+      assert.doesNotThrow(() => loadConfig({ TOKENTIMER_API_URL: "http://localhost:4000" }, { defaultFile: stored }));
+      for (const address of ["http://localhost:4001", "https://localhost:4000", "http://127.0.0.1:4000"]) {
+        refusesAsForeign(() => loadConfig({ TOKENTIMER_API_URL: address }, { defaultFile: stored }));
+      }
+    });
+  });
+
+  it("matches the same server written differently (case, trailing slash)", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL, { binding: REAL });
+      for (const address of [REAL, `${REAL}/`, "HTTPS://TokenTimer.Example.COM", "https://tokentimer.example.com:443"]) {
+        assert.doesNotThrow(() => loadConfig({ TOKENTIMER_API_URL: address }, { defaultFile: stored }), address);
+      }
+    });
+  });
+
+  it("binds to a deployment path prefix as well", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL, { binding: `${REAL}/tt` });
+      assert.doesNotThrow(() => loadConfig({ TOKENTIMER_API_URL: `${REAL}/tt/` }, { defaultFile: stored }));
+      refusesAsForeign(() => loadConfig({ TOKENTIMER_API_URL: REAL }, { defaultFile: stored }));
+    });
+  });
+
+  it("does not pick up an unbound file automatically, but accepts it when named explicitly", () => {
+    withDir((stored) => {
+      writeCredential(stored, CREDENTIAL);
+      assert.throws(
+        () => loadConfig({ TOKENTIMER_API_URL: REAL }, { defaultFile: stored }),
+        (error) => error instanceof ConfigError && /does not record which server issued it/.test(error.message),
+      );
+      assert.doesNotThrow(() =>
+        loadConfig({ TOKENTIMER_API_URL: REAL, TOKENTIMER_MCP_CREDENTIAL_FILE: stored }, { defaultFile: null }),
+      );
+    });
+  });
+
+  it("rejects a malformed file instead of guessing", () => {
+    withDir((stored) => {
+      for (const body of [
+        `${CREDENTIAL}\nbogus line\n`,
+        `${CREDENTIAL}\napi=${REAL}\nextra\n`,
+        `${CREDENTIAL}\napi=\n`,
+        `${CREDENTIAL}\napi=two words\n`,
+        "\n\n",
+      ]) {
+        fsp.writeFileSync(stored, body, { mode: 0o600 });
+        assert.throws(
+          () => loadConfig({ TOKENTIMER_API_URL: REAL, TOKENTIMER_MCP_CREDENTIAL_FILE: stored }, { defaultFile: null }),
+          (error) => error instanceof ConfigError && !error.message.includes(CREDENTIAL),
+          JSON.stringify(body),
+        );
+      }
+    });
+  });
+
+  it("leaves a credential passed directly in the environment alone: there is no stored server to compare", () => {
+    assert.doesNotThrow(() =>
+      loadConfig({ TOKENTIMER_API_URL: EVIL, TOKENTIMER_MCP_CREDENTIAL: CREDENTIAL }, { defaultFile: null }),
+    );
   });
 });

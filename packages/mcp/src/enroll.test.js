@@ -135,7 +135,9 @@ describe("enroll: a successful setup", () => {
     assert.equal(result.calls[0].options.method, "POST");
     assert.equal(result.calls[0].options.redirect, "error");
     assert.equal(result.calls[0].options.headers.Authorization, `Bearer ${GRANT}`);
-    assert.equal(fs.readFileSync(result.file, "utf8"), `${CREDENTIAL}\n`);
+    // The credential is stored with the server that issued it, so it can never
+    // be released to a different one.
+    assert.equal(fs.readFileSync(result.file, "utf8"), `${CREDENTIAL}\napi=${API}\n`);
     assert.match(result.stdout, /Connected\./);
     assert.match(result.stdout, /"laptop"/);
     assert.match(result.stdout, /2026-11-18/);
@@ -223,7 +225,7 @@ describe("enroll: failures before the code is spent", () => {
     assert.equal(fs.readFileSync(file, "utf8"), "EXISTING\n");
     const replaced = await enroll({ argv: ["--api-url", API, "--credential-file", file, "--replace"] });
     assert.equal(replaced.code, 0);
-    assert.equal(fs.readFileSync(file, "utf8"), `${CREDENTIAL}\n`);
+    assert.equal(fs.readFileSync(file, "utf8"), `${CREDENTIAL}\napi=${API}\n`);
   });
 
   it("stops before spending the code if the location is unusable", async () => {

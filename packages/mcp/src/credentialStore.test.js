@@ -174,6 +174,47 @@ describe("credential store: writing", () => {
   });
 });
 
+describe("credential store: the server binding and write order", () => {
+  const { formatCredentialFile, parseCredentialFile } = require("./credentialStore");
+  const REAL = "https://tokentimer.example.com";
+
+  it("stores the issuing server beside the secret and reads both back", () => {
+    const file = path.join(dir, "credential");
+    writeCredential(file, SECRET, { binding: REAL });
+    assert.equal(fs.readFileSync(file, "utf8"), `${SECRET}\napi=${REAL}\n`);
+    assert.deepEqual(parseCredentialFile(fs.readFileSync(file, "utf8")), { credential: SECRET, binding: REAL, valid: true });
+  });
+
+  it("round-trips with and without a binding, and tolerates Windows line endings", () => {
+    assert.deepEqual(parseCredentialFile(formatCredentialFile(SECRET, null)), { credential: SECRET, binding: null, valid: true });
+    assert.deepEqual(parseCredentialFile(`${SECRET}\r\napi=${REAL}\r\n`), { credential: SECRET, binding: REAL, valid: true });
+  });
+
+  it("refuses a binding with spaces or line breaks, which could forge a second line", () => {
+    for (const binding of ["a b", "x\ny", "x\r\ny", ""]) {
+      refused(() => writeCredential(path.join(dir, "c"), SECRET, { binding }), /not valid/);
+    }
+    assert.equal(fs.existsSync(path.join(dir, "c")), false);
+  });
+
+  it("restricts Windows access while the file is still empty, before any secret is written", () => {
+    const file = path.join(dir, "credential");
+    let sizeWhenRestricted = null;
+    let restricted = null;
+    writeCredential(file, SECRET, {
+      platform: "win32",
+      env: { USERNAME: "alice", USERDOMAIN: "CORP" },
+      execFileSync: (command, args) => {
+        restricted = args[0];
+        sizeWhenRestricted = fs.statSync(args[0]).size;
+      },
+    });
+    assert.ok(restricted, "the restriction must run");
+    assert.equal(sizeWhenRestricted, 0, "the secret must not exist yet when access is restricted");
+    assert.equal(fs.readFileSync(file, "utf8"), `${SECRET}\n`);
+  });
+});
+
 describe("credential store: checking a destination without writing", () => {
   it("accepts a path whose directories do not exist yet, and writes nothing", () => {
     const file = path.join(dir, "a", "b", "credential");

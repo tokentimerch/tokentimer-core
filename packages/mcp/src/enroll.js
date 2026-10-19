@@ -13,7 +13,7 @@
 
 const crypto = require("node:crypto");
 const { ToolError, buildUrl, readCapped } = require("./apiClient");
-const { CREDENTIAL_PATTERN, ConfigError, resolveBaseUrl } = require("./config");
+const { CREDENTIAL_PATTERN, ConfigError, resolveBaseUrl, serverAddressOf } = require("./config");
 const {
   CredentialStoreError,
   checkDestination,
@@ -251,7 +251,8 @@ async function runEnroll({
 
   let stored;
   try {
-    stored = store(file, credential, { replace: options.replace });
+    // Bound to this server, so the file can never be released to another.
+    stored = store(file, credential, { replace: options.replace, binding: serverAddressOf(config) });
   } catch (error) {
     // The code is spent and the credential exists only in memory. Say exactly
     // what happened and how to recover, without echoing anything sensitive.

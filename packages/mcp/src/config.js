@@ -5,7 +5,12 @@
 // logging or inspecting the config object cannot reveal it.
 
 const fs = require("node:fs");
-const { CredentialStoreError, assertPrivateFile, defaultCredentialPath } = require("./credentialStore");
+const {
+  CredentialStoreError,
+  assertPrivateFile,
+  defaultCredentialPath,
+  parseCredentialFile,
+} = require("./credentialStore");
 
 const CREDENTIAL_PATTERN = /^ttopc_[a-f0-9]{16}_[a-f0-9]{64}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
@@ -42,21 +47,40 @@ function resolveBaseUrl(raw) {
   return { origin: url.origin, basePath };
 }
 
-function readCredential(env, { readFile, checkFile, defaultFile, exists }) {
+// `serverAddress` is where requests will go. A stored credential that records
+// the server it was issued by is only ever released to that server: otherwise a
+// configuration that merely sets the address could collect it.
+function readCredential(env, { readFile, checkFile, defaultFile, exists, serverAddress }) {
   const direct = env.TOKENTIMER_MCP_CREDENTIAL;
   let file = env.TOKENTIMER_MCP_CREDENTIAL_FILE;
   if (file && direct) {
     throw new ConfigError("Set TOKENTIMER_MCP_CREDENTIAL or TOKENTIMER_MCP_CREDENTIAL_FILE, not both");
   }
   // Nothing given explicitly: use the file that `tokentimer-mcp enroll` wrote.
-  if (!file && !direct && defaultFile && exists(defaultFile)) file = defaultFile;
+  const automatic = !file && !direct && Boolean(defaultFile) && exists(defaultFile);
+  if (automatic) file = defaultFile;
   let value = direct;
   if (file) {
     try {
       // A credential other users can read is refused before it is opened.
       checkFile(file);
-      value = readFile(file, "utf8");
+      const parsed = parseCredentialFile(readFile(file, "utf8"));
+      if (!parsed.valid) throw new ConfigError("The connection credential is not in the expected format");
+      if (parsed.binding && parsed.binding !== serverAddress) {
+        throw new ConfigError(
+          "This credential was issued by a different TokenTimer server than the one configured, so it was not used. " +
+            "Check TOKENTIMER_API_URL, or run tokentimer-mcp enroll again for this server.",
+        );
+      }
+      if (automatic && !parsed.binding) {
+        throw new ConfigError(
+          "The stored credential does not record which server issued it, so it is not used automatically. " +
+            "Run tokentimer-mcp enroll --replace, or set TOKENTIMER_MCP_CREDENTIAL_FILE explicitly.",
+        );
+      }
+      value = parsed.credential;
     } catch (error) {
+      if (error instanceof ConfigError) throw error;
       if (error instanceof CredentialStoreError && /readable by other users/.test(error.message)) {
         throw new ConfigError(error.message);
       }
@@ -73,6 +97,11 @@ function readCredential(env, { readFile, checkFile, defaultFile, exists }) {
     throw new ConfigError("The connection credential is not in the expected format");
   }
   return value;
+}
+
+// The address a credential is bound to: origin plus any path prefix.
+function serverAddressOf({ origin, basePath }) {
+  return `${origin}${basePath || ""}`;
 }
 
 function parsePositiveInt(raw, name, fallback, { min, max }) {
@@ -94,7 +123,13 @@ function loadConfig(
   } = {},
 ) {
   const { origin, basePath } = resolveBaseUrl(env.TOKENTIMER_API_URL);
-  const credential = readCredential(env, { readFile, checkFile, defaultFile, exists });
+  const credential = readCredential(env, {
+    readFile,
+    checkFile,
+    defaultFile,
+    exists,
+    serverAddress: serverAddressOf({ origin, basePath }),
+  });
   const legacy = (env.TOKENTIMER_MCP_LEGACY || "serve").trim().toLowerCase();
   if (legacy !== "serve" && legacy !== "reject") {
     throw new ConfigError("TOKENTIMER_MCP_LEGACY must be serve or reject");
@@ -123,4 +158,4 @@ function loadConfig(
   return Object.freeze(config);
 }
 
-module.exports = { ConfigError, CREDENTIAL_PATTERN, loadConfig, resolveBaseUrl };
+module.exports = { ConfigError, CREDENTIAL_PATTERN, loadConfig, resolveBaseUrl, serverAddressOf };

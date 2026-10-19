@@ -93,16 +93,42 @@ function checkDestination(file, { replace = false } = {}) {
   throw new CredentialStoreError("The credential location is not writable");
 }
 
+// A stored credential is bound to the server that issued it. The binding sits
+// in the file beside the secret, so the two cannot be separated or half-written.
+//
+//   ttopc_...                       the credential
+//   api=https://tokentimer.example  the server it was issued by (optional)
+//
+// A file with no binding line (a hand-made one, a mounted secret) still works
+// when given explicitly, but is never picked up automatically.
+const BINDING_LINE = /^api=(\S+)$/;
+
+function formatCredentialFile(secret, binding) {
+  return binding ? `${secret}\napi=${binding}\n` : `${secret}\n`;
+}
+
+function parseCredentialFile(text) {
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0 || lines.length > 2) return { credential: "", binding: null, valid: false };
+  const credential = lines[0];
+  if (lines.length === 1) return { credential, binding: null, valid: true };
+  const match = BINDING_LINE.exec(lines[1]);
+  return match ? { credential, binding: match[1], valid: true } : { credential, binding: null, valid: false };
+}
+
 // Writes the credential and returns the path. Refuses to replace an existing
 // file unless asked to, so running setup twice cannot silently discard a
 // working credential.
 function writeCredential(
   file,
   secret,
-  { replace = false, platform = process.platform, env = process.env, execFileSync = childProcess.execFileSync } = {},
+  { replace = false, binding = null, platform = process.platform, env = process.env, execFileSync = childProcess.execFileSync } = {},
 ) {
   if (typeof secret !== "string" || secret.length === 0) {
     throw new CredentialStoreError("There is no credential to store");
+  }
+  if (binding !== null && !/^\S+$/.test(String(binding))) {
+    throw new CredentialStoreError("The server address to bind the credential to is not valid");
   }
   const resolved = checkDestination(file, { replace });
   ensureDirectory(path.dirname(resolved), platform);
@@ -111,15 +137,18 @@ function writeCredential(
   let created = false;
   try {
     // "wx" fails if the name exists, so a pre-placed file or link is never followed.
-    const fd = fs.openSync(temporary, "wx", 0o600);
+    fs.closeSync(fs.openSync(temporary, "wx", 0o600));
     created = true;
+    // Access is restricted while the file is still empty, so the secret never
+    // exists under inherited permissions. (POSIX mode 0600 applied at creation.)
+    if (platform === "win32") restrictToCurrentUserWindows(temporary, { env, execFileSync });
+    const fd = fs.openSync(temporary, "r+");
     try {
-      fs.writeSync(fd, `${secret}\n`);
+      fs.writeSync(fd, formatCredentialFile(secret, binding));
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
-    if (platform === "win32") restrictToCurrentUserWindows(temporary, { env, execFileSync });
     fs.renameSync(temporary, resolved);
     created = false;
   } catch (error) {
@@ -161,6 +190,8 @@ module.exports = {
   assertPrivateFile,
   checkDestination,
   defaultCredentialPath,
+  formatCredentialFile,
+  parseCredentialFile,
   restrictToCurrentUserWindows,
   windowsAccount,
   writeCredential,

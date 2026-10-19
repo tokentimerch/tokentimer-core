@@ -471,8 +471,23 @@ read-only release, which can use a directly provisioned credential shown once.
   the destination before spending the code, writes the credential to a private
   file (mode 0600 in a 0700 directory; on Windows the inherited permissions are
   removed and the file is deleted if that fails) and never prints either secret.
-  The server refuses a credential file other users can read. An operating-system
-  keychain is not implemented; the file is the supported store.
+  On Windows access is restricted while the file is still empty, so the secret
+  never exists under inherited permissions. The adapter refuses a credential file
+  other users can read. An operating-system keychain is not implemented; the file
+  is the supported store.
+- **A stored credential is bound to the server that issued it.** An independent
+  review found that the adapter would load the default credential file and send
+  it to whatever `TOKENTIMER_API_URL` named, so a hostile project-level client
+  configuration that set only the address could collect it. The file now records
+  the issuing server beside the secret (`api=<origin and path prefix>`) and the
+  adapter releases the credential only to that exact server: scheme, host, port
+  and path prefix must all match. The check applies to an explicitly named file
+  as well as the default one. A file with no binding (hand-made or mounted) is
+  accepted only when named explicitly, never picked up automatically. A
+  credential passed directly in the environment has no stored server to compare
+  and is unaffected. Residual risk: a hostile configuration that names an
+  unbound credential file explicitly still sends that file's secret wherever the
+  address points, so unbound files should not be kept in default locations.
 - Credentials are never transmitted through MCP tool arguments, results,
   resources or logs. The local host, credential store and MCP runtime are
   trusted components. This design does not protect against compromise of that
