@@ -1218,7 +1218,7 @@ async function claimJobs({
                         SELECT 1 FROM certificate_enrollments continuation
                          WHERE continuation.workspace_id = cj.workspace_id
                            AND continuation.id = cj.enrollment_id
-                           AND continuation.state IN ('installing', 'install_failed')
+                           AND continuation.state IN ('installing', 'install_failed', 'pending_issuance', 'validation_deferred')
                       )
                     )
                   ))

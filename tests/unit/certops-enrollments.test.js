@@ -1660,6 +1660,34 @@ describe("LIFE-04 retired identity installation guards", () => {
     });
   }
 
+  for (const state of ["pending_issuance", "validation_deferred"]) {
+    it(`does not poll a ${state} enrollment for a retired identity, since retrieval can install`, async () => {
+      const db = retiredEnrollment(state, "revoked");
+      let attempted = false;
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => {
+          attempted = true;
+          return { id: JOB_ID };
+        },
+      });
+      assert.equal(attempted, false);
+      assert.deepEqual(created, []);
+      assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, null);
+    });
+
+    it(`still polls a ${state} enrollment while the identity is active`, async () => {
+      const db = retiredEnrollment(state, "active");
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => ({ id: JOB_ID }),
+      });
+      assert.equal(created.length, 1);
+    });
+  }
+
   it("still resumes installation while the identity is active", async () => {
     const db = retiredEnrollment("installing", "active");
     const created = await scheduleDueEnrollments({
@@ -1698,14 +1726,14 @@ describe("LIFE-04 retired identity installation guards", () => {
       "utf8",
     );
     assert.match(dispatch, /cj\.operation = 'continue-enrollment'/);
-    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed'\)/);
+    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred'\)/);
     assert.match(dispatch, /'renew', 'deploy', 'deploy-from-store', 'reload'/);
     const guard = fs.readFileSync(
       path.join(__dirname, "../../apps/api/migrations/certops-distribution-lifecycle-guards.sql"),
       "utf8",
     );
     assert.match(guard, /install_continuation/);
-    assert.match(guard, /continuation\.state IN \('installing', 'install_failed'\)/);
+    assert.match(guard, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred'\)/);
     assert.match(guard, /NEW\.operation NOT IN \('renew','deploy','deploy-from-store','reload'\)/);
   });
 });

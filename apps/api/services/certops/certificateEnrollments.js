@@ -1016,12 +1016,15 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         return null;
       }
       if (!decision.dispatch && decision.state !== "expired") return null;
-      if (decision.reason === "resume_installation" &&
+      // Polling can retrieve an approved certificate and install it, so it is
+      // fenced like an installing resume. Timeout cleanup stays allowed.
+      if ((decision.reason === "resume_installation" || decision.reason === "poll") &&
           await identityRetired(tx, row.workspace_id, row.certificate_id)) {
         if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
         logger.warn("certops enrollment installation blocked by certificate lifecycle", {
           workspaceId: row.workspace_id,
           enrollmentId: row.id,
+          reason: decision.reason,
         });
         return null;
       }
@@ -1088,7 +1091,6 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         workspaceId: candidate.workspace_id,
         enrollmentId: candidate.id,
         code: error.code || null,
-        error: error.message,
       });
       continue;
     }
