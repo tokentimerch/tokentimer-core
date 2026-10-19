@@ -46,3 +46,12 @@ test("scheduled janitor remains enabled when new lab provisioning is disabled",(
  for(const condition of [azure.PROVISION_IF,"always()","github.ref == 'refs/heads/main' && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'"]){const bad=structuredClone(workflow);bad.jobs.cleanup.if=condition;assert.ok(azure.validate(name,bad).length);}
  assert.match(azure.PROVISION_IF,/CERTOPS_ADCS_LAB_ENABLED/);assert.doesNotMatch(azure.LIFECYCLE_IF,/CERTOPS_ADCS_LAB_ENABLED/);
 });
+test("temporary qualification branch exception permits manual runs only on its exact ref",()=>{
+ const gate="(github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/adcs-018-qualification'))";
+ const workflow=baseline(); workflow.jobs.qualify.if=gate;
+ assert.deepEqual(validateWorkflow(workflow,"certops-qualification.yml"),[]);
+ for(const bad of [gate.replace("test/adcs-018-qualification","other-branch"),gate.replace("github.event_name == 'workflow_dispatch' && ","")]) {
+  workflow.jobs.qualify.if=bad; assert.ok(validateWorkflow(workflow,"certops-qualification.yml").length);
+ }
+ workflow.jobs.qualify.if=gate; assert.ok(validateWorkflow(workflow,"certops-adcs-lab-janitor.yml").length);
+});
