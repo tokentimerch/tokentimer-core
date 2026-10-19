@@ -49,15 +49,15 @@ export default function DeploymentBadge({
     ? `${certificateCount} certs`
     : `${count}${showVerified && summary?.total ? ' verified' : ''}`;
   const description = certificateCount
-    ? `${certificateCount} distributed certificates. Select a certificate in details.${error ? ' Refresh unavailable; current state is unconfirmed.' : ''}`
+    ? `${certificateCount} distributed certificates. Select a certificate in details.${error ? ' Refresh unavailable. Current state is unconfirmed.' : ''}`
     : stale
-      ? `Last known: ${summary.total ? `${summary.verified}/${summary.total} verified` : deploymentStates[summary.status]?.label || 'Unavailable'}. Refresh unavailable; current state is unconfirmed.`
+      ? `Last known: ${summary.total ? `${summary.verified}/${summary.total} verified` : deploymentStates[summary.status]?.label || 'Unavailable'}. Refresh unavailable. Current state is unconfirmed.`
       : error
         ? 'Deployment status unavailable. Open details to try again.'
         : loading && !summary
           ? 'Loading deployment status'
           : status === 'unavailable'
-            ? `${descriptor.label}. ${summary?.total ? `Last known: ${summary.verified}/${summary.total} verified; ` : ''}Current state is unconfirmed.`
+            ? `${descriptor.label}. ${summary?.total ? `Last known: ${summary.verified}/${summary.total} verified. ` : ''}Current state is unconfirmed.`
             : `${summary?.total ? `${summary.verified}/${summary.total} verified. ` : ''}${descriptor.label}`;
   const Icon = certificateCount
     ? Layers

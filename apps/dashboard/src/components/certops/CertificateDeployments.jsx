@@ -25,7 +25,7 @@ import {
   VStack,
 } from '@chakra-ui/react';
 import { Link as RouterLink } from 'react-router';
-import { RefreshCw, Truck } from 'lucide-react';
+import { Truck } from 'lucide-react';
 import apiClient from '../../utils/apiClient';
 import Section from '../DashboardDetailsSection.jsx';
 import CopyableId from '../CopyableId.jsx';
@@ -55,15 +55,14 @@ const explanations = {
   failed:
     'The latest deployment failed. Review the job evidence, correct the cause, then follow the signed retry and approval workflow.',
   uncertain:
-    'The service may have changed, but the result is unconfirmed. Investigate the destination and reconcile locally before any signed retry or approval. Do not retry blindly.',
+    'The deployment outcome is uncertain. Investigate the destination and reconcile locally before following the signed retry and approval workflow.',
   stale:
     'The last verification is no longer current. Check its freshness window and certificate expiry, then verify the destination again.',
   pending:
-    'Deployment was requested, but the expected certificate is not currently verified. Check the agent and job evidence.',
+    'The expected certificate is awaiting verification. Check the agent and job evidence.',
   not_deployed:
     'No expected version is assigned. Add this destination to an approved rollout to deploy the certificate.',
-  inactive:
-    'This assignment or management period has ended. Previous evidence does not confirm a current deployment.',
+  inactive: 'Historical evidence for an ended assignment or management period.',
 };
 const publicationLabels = {
   published: 'Published',
@@ -178,7 +177,7 @@ function ConsumerDetails({ consumer: c, status, workspaceId, now, staleData }) {
         </Fact>
         <Fact label='Last confirmed version'>
           {c.observed_material_version_id
-            ? `${providerRevision(c.observed_version)}${unknown ? ' (historical; current state unknown)' : ''}`
+            ? `${providerRevision(c.observed_version)}${unknown ? ' (historical, current state unknown)' : ''}`
             : 'Never confirmed'}
         </Fact>
         <Fact label='Last verification'>
@@ -236,8 +235,7 @@ function ConsumerDetails({ consumer: c, status, workspaceId, now, staleData }) {
         ) : null}
       </SimpleGrid>
       <Text fontSize='xs' color='dashboard.modal.muted' mt={3}>
-        Revisions above belong to the Vault provider. Version comparisons use
-        TokenTimer material identity; rollout generations are separate.
+        Versions are compared using TokenTimer material IDs.
       </Text>
       <Diagnostics>
         {[
@@ -364,8 +362,8 @@ function GroupDeployments({
             {group.material_store_ref}
           </Text>
           <DeploymentHelp
-            label='Publication is separate from verified deployment'
-            text='Published to Vault means stored material. It does not prove that any destination currently serves the certificate.'
+            label='Certificate publication'
+            text='Certificate material stored in the customer Vault.'
           />
         </HStack>
         <HStack spacing={2} flexWrap='wrap' fontSize='xs'>
@@ -418,14 +416,14 @@ function GroupDeployments({
         <Text fontSize='xs'>
           {currentIdentity
             ? explanations.inactive
-            : 'Historical certificate. This registration now tracks another identity; its current consumers are not shown here.'}
+            : 'Publication history for this certificate identity. The registration currently tracks another certificate.'}
         </Text>
       ) : null}
       {state.error ? (
         <Text role='alert' fontSize='xs'>
           Details could not be refreshed.{' '}
           {state.data
-            ? 'Showing the last known data; current state is unconfirmed.'
+            ? 'Showing the last known data. Current state is unconfirmed.'
             : 'Refresh to try again.'}
         </Text>
       ) : null}
@@ -499,7 +497,7 @@ function GroupDeployments({
                               <Tooltip
                                 label={
                                   state.error || parentError
-                                    ? 'Last known state. Refresh unavailable; current state is unconfirmed.'
+                                    ? 'Last known state. Refresh unavailable. Current state is unconfirmed.'
                                     : explanations[status] ||
                                       (c.verification_method === 'trust'
                                         ? verificationMethods.trust
@@ -736,9 +734,8 @@ export default function CertificateDeployments({
         enclosed
         headerAction={
           <DeploymentHelp
-            label='Refresh status'
+            label='Refresh'
             text={refreshStatusHelp}
-            icon={RefreshCw}
             busy={state.loading || state.refreshing}
             onAction={() => {
               state.refresh();
@@ -752,7 +749,7 @@ export default function CertificateDeployments({
             <Text role='alert' fontSize='xs'>
               Deployment information unavailable.{' '}
               {state.data
-                ? 'Showing the last known data; current state is unconfirmed.'
+                ? 'Showing the last known data. Current state is unconfirmed.'
                 : 'Check your access and refresh to try again.'}
             </Text>
           ) : null}

@@ -96,7 +96,7 @@ it('loads only when opened and shows publication separately from current deploym
   expect(screen.getByText('1/1 verified')).toBeInTheDocument();
   expect(
     screen.getByRole('button', {
-      name: 'About Publication is separate from verified deployment',
+      name: 'About Certificate publication',
     })
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Details', exact: true }));
@@ -141,9 +141,9 @@ describe.each([
       latest_deployment: { stage: 'orphaned_unknown_effect' },
     },
     'Deployment outcome uncertain',
-    /result is unconfirmed/,
+    /deployment outcome is uncertain/,
   ],
-  [{ converged: false }, 'Pending verification', /not currently verified/],
+  [{ converged: false }, 'Pending verification', /awaiting verification/],
   [
     {
       converged: false,
@@ -195,12 +195,12 @@ it('handles absent distribution, missing consumers, failures and retry', async (
   const { rerender } = render(view());
   expect(await screen.findByText('Not distributed')).toBeInTheDocument();
   get.mockRejectedValueOnce(new Error('offline'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Deployment information unavailable'
   );
   mockData([]);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(
     await screen.findByText(/No consumer assignments/)
   ).toBeInTheDocument();
@@ -212,7 +212,7 @@ it('shows ended periods as historical, and never reads another identity’s curr
   mockData([row()], [{ ...group, current_identity_id: 'identity-b' }]);
   render(view({ identityId: 'identity-a' }));
   expect(
-    await screen.findByText(/registration now tracks another identity/)
+    await screen.findByText(/registration currently tracks another certificate/)
   ).toBeInTheDocument();
   await screen.findByText('Publication history');
   expect(get.mock.calls.some(([url]) => url.endsWith('/consumers'))).toBe(
@@ -283,7 +283,7 @@ it('keeps readable destination details and the same table mounted during manual 
   expect(screen.getByText('Last confirmed version')).toBeInTheDocument();
   const pending = [];
   get.mockImplementation(() => new Promise(resolve => pending.push(resolve)));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(pending.length).toBe(3));
   expect(screen.getByRole('table')).toBe(table);
   expect(
@@ -311,11 +311,13 @@ it('does not confuse provider revisions, material identity or uncertain last-con
     within(table).getByRole('button', { name: 'Details', exact: true })
   );
   expect(
-    screen.getByText(/historical; current state unknown/)
+    screen.getByText(/historical, current state unknown/)
   ).toBeInTheDocument();
-  expect(screen.getByText(/Do not retry blindly/)).toBeInTheDocument();
   expect(
-    screen.getByText(/Revisions above belong to the Vault provider/)
+    screen.getByText(/signed retry and approval workflow/)
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Versions are compared using TokenTimer material IDs/)
   ).toBeInTheDocument();
   expect(
     screen.queryByRole('button', { name: /Retry/ })
@@ -358,7 +360,7 @@ it('does not retain green evidence when the registration advances to another rol
   await screen.findByText('1/1 verified');
   generation = 2;
   holdConsumers = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await waitFor(() =>
     expect(screen.queryByText('1/1 verified')).not.toBeInTheDocument()
   );
@@ -430,11 +432,11 @@ it('organizes all publication diagnostics in one Technical information section a
   );
 });
 
-it('explains a GET-only Refresh status next to the heading and keeps existing details while revalidating', async () => {
+it('explains a GET-only Refresh next to the heading and keeps existing details while revalidating', async () => {
   render(view());
   const table = await screen.findByRole('table');
   const refresh = screen.getByRole('button', {
-    name: 'Refresh status',
+    name: 'Refresh',
     exact: true,
   });
   expect(
@@ -444,7 +446,7 @@ it('explains a GET-only Refresh status next to the heading and keeps existing de
   ).toContainElement(refresh);
   fireEvent.focus(refresh);
   expect(await screen.findByRole('tooltip')).toHaveTextContent(
-    'Reload the latest deployment status and evidence recorded by TokenTimer. This does not trigger deployment or verification.'
+    'Reload the latest deployment status and evidence recorded by TokenTimer.'
   );
   const readsBefore = get.mock.calls.length;
   const pending = [];

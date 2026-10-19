@@ -515,7 +515,7 @@ export default function CertificateIdentityDetailModal({
       ) : null}
       <DashboardDetailsSection
         title='Observed locations'
-        description='Where this certificate has been seen. Recreated endpoint monitors share one location; previous observations stay in history. Stored copies do not prove service use or configure automatic renewal.'
+        description='Where this certificate has been seen, with the latest observation at each location and previous observations in history.'
         icon={MapPin}
         enclosed
         mb={0}
@@ -651,7 +651,7 @@ export default function CertificateIdentityDetailModal({
       </DashboardDetailsSection>
       <DashboardDetailsSection
         title='Certificate management'
-        description='Registrations that track this certificate and can automate renewal. Stopping management ends that registration’s automation; it does not remove the certificate or stop location observations.'
+        description='Registrations that track this certificate and can automate renewal.'
         icon={Settings}
         enclosed
         mb={0}
