@@ -135,6 +135,22 @@ scrubber are additional layers, with the scrubber as the last line.
 - No tool accepts a certificate signing request, key or key-bearing PEM, and
   none reads secret values. Inputs still pass the existing private-key
   rejection.
+- A connection never gets looser access than the session route it is built on.
+  Each tool records the role that route requires (`sessionRouteMinRole` in the
+  catalog) and a contract test fails if a tool's minimum role is lower. This
+  already mattered once: the agent list is manager-only today because fleet
+  metadata is treated as sensitive, so `tt_get_agent_health` requires a manager.
+- Free-text search is an allowlist. The existing certificate search matches
+  certificate bodies, lifecycle reasons, and, for managers and above, key
+  references, deployed paths and source references. The operator search matches
+  only subject, SANs, issuer and fingerprint, and the topology-reading switch is
+  forced off for every connection regardless of the represented user's role. The
+  job search is not exposed.
+- The operator projection is built from the fields named in the contracts, not by
+  deleting fields from the existing responses. Existing job detail includes the
+  job payload and result metadata, and existing identity records include key
+  references, token and certificate snapshots and location references; none of
+  those are reachable from a connection.
 
 ### 5. First read-only release (settled direction)
 
@@ -454,11 +470,23 @@ Workspace pause blocks new write requests, subject to section 11.
   transport (checked against the official documentation on 2026-10-19). That
   establishes the specification, not compatibility of any particular SDK or
   client.
-- Pin the exact SDK version before the read-only implementation starts. State the
-  compatibility policy for older clients (negotiate the pinned revision plus a
-  stated fallback, refuse the rest with a clear error). Validate inputs and
-  outputs on both sides. Conformance tests per supported transport are release
-  gates.
+- Pin the exact SDK version before the read-only implementation starts. Checked
+  against the npm registry on 2026-10-19: the v1.x line (`@modelcontextprotocol/sdk`
+  1.32.1, the npm `latest` tag) implements the specification only up to
+  `2025-11-25`, and its README states that `2026-07-28` support is not planned
+  for v1.x. The v2 packages (`@modelcontextprotocol/server` and
+  `@modelcontextprotocol/client`, both 2.3.1 on that date) export a modern
+  revision server with a stdio entry point and need Node 20 or later, which this
+  repository's Node range satisfies. The proposal is to pin
+  `@modelcontextprotocol/server` exactly (2.3.1 today) and use the matching
+  client package in conformance tests. Not yet verified: how the server treats
+  clients that still send the older handshake, and the transitive dependency and
+  license review (zod 4, Apache-2.0). Those are checked before the dependency is
+  added.
+- State the compatibility policy for older clients (negotiate the pinned
+  revision plus a stated fallback, refuse the rest with a clear error). Validate
+  inputs and outputs on both sides. Conformance tests per supported transport are
+  release gates.
 - stdio and remote HTTP are separate authentication designs. Enrollment supports
   local setup only. A hosted HTTP endpoint is not launched without standards-based
   OAuth: tokens issued for the MCP server, no passthrough of an upstream token,

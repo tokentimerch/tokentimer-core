@@ -6,13 +6,23 @@
     "version": "2026-07-28",
     "source": "https://modelcontextprotocol.io/specification/versioning",
     "verifiedOn": "2026-10-19",
-    "sdkPin": "unpinned: set to an exact version before the read-only implementation starts",
+    "sdkPin": {
+      "status": "proposed",
+      "server": "@modelcontextprotocol/server@2.3.1",
+      "conformanceClient": "@modelcontextprotocol/client@2.3.1",
+      "checkedOn": "2026-10-19",
+      "evidence": "The v1.x line (@modelcontextprotocol/sdk 1.32.1, npm latest) implements the specification only up to 2025-11-25 and its README says 2026-07-28 support is not planned for v1.x. The v2 packages export a modern-revision server with a stdio entry point; their dependency set and node floor (>=20) fit this repository's node range (>=22 <25).",
+      "openQuestions": [
+        "behavior toward clients that still use the 2025-11-25 handshake (the package ships a legacy path whose behavior is unverified here)",
+        "exact transitive dependency set and license review (zod ^4, Apache-2.0) before adding it to the workspace"
+      ]
+    },
     "clientCompatibility": "unproven: established by conformance tests, not by the existence of the specification"
   },
   "scopes": [
     { "name": "mcp:identity:read", "minRole": "viewer", "stage": "read-only" },
     { "name": "mcp:certs:read", "minRole": "viewer", "stage": "read-only" },
-    { "name": "mcp:agents:read", "minRole": "viewer", "stage": "read-only" },
+    { "name": "mcp:agents:read", "minRole": "workspace_manager", "stage": "read-only" },
     { "name": "mcp:jobs:read", "minRole": "viewer", "stage": "read-only" },
     { "name": "mcp:assets:read", "minRole": "viewer", "stage": "read-only-wave-2" },
     { "name": "mcp:renewals:read", "minRole": "viewer", "stage": "read-only-wave-2" },
@@ -72,6 +82,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_whoami_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_whoami_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/mcp/whoami",
       "routeStatus": "new"
     },
@@ -84,6 +95,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/certops/certificate-identities",
       "routeStatus": "existing-needs-operator-projection"
     },
@@ -96,6 +108,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId",
       "routeStatus": "existing-needs-operator-projection"
     },
@@ -108,6 +121,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId/observations",
       "routeStatus": "new"
     },
@@ -115,11 +129,12 @@
       "name": "tt_get_agent_health",
       "title": "Show agent liveness and declared operations",
       "scope": "mcp:agents:read",
-      "minRole": "viewer",
+      "minRole": "workspace_manager",
       "contractStatus": "mvp",
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_output",
+      "sessionRouteMinRole": "workspace_manager",
       "route": "GET /api/v1/workspaces/:id/certops/agents",
       "routeStatus": "existing-needs-operator-projection"
     },
@@ -132,6 +147,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_job_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_job_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
       "routeStatus": "existing-needs-operator-projection"
     },
@@ -144,6 +160,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/certops/jobs",
       "routeStatus": "existing-needs-operator-projection"
     },
@@ -156,6 +173,7 @@
       "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
       "input": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_output",
+      "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId/explain",
       "routeStatus": "new"
     },

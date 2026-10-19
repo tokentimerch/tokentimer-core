@@ -140,7 +140,20 @@ describe("MCP tool contracts (ADR-0015)", () => {
     }
   });
 
-  it("does not mark any write contract as final", () => {
+  it("never grants a tool looser access than the existing session route it is built on", () => {
+    const rank = { viewer: 1, workspace_manager: 2, admin: 3 };
+    for (const tool of mvpTools) {
+      assert.ok(rank[tool.sessionRouteMinRole], `${tool.name}: record the role the session route requires`);
+      assert.ok(
+        rank[tool.minRole] >= rank[tool.sessionRouteMinRole],
+        `${tool.name}: minRole ${tool.minRole} is looser than the session route (${tool.sessionRouteMinRole})`,
+      );
+    }
+    const agents = mvpTools.find((tool) => tool.name === "tt_get_agent_health");
+    assert.strictEqual(agents.minRole, "workspace_manager", "fleet metadata is manager-only today");
+  });
+
+  it("does not make any write contract final", () => {
     const writeTools = catalog.tools.filter((tool) => tool.annotations.readOnlyHint === false);
     assert.ok(writeTools.length > 0);
     for (const tool of writeTools) {
