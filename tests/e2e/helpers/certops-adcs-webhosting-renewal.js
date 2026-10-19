@@ -334,6 +334,33 @@ function cleanupWebHosting(context) {
 function cleanupCapacity(context) {
   return cleanupRegisteredStore(context, true);
 }
+async function provisionWebHostingSource({fixture,agentRowId,isolated}) {
+  const {certificateId,domain,site,port}=isolated;
+  assert.match(certificateId,uuid);
+  const identity=domain.match(/^certops-adcs-([a-f0-9]{10})-webhosting\.example\.test$/);
+  assert.ok(identity,"Exact owned WebHosting subject required");
+  assert.equal(site,`TTAdcsWebHosting${identity[1]}`);
+  assert.ok(Number.isInteger(port)&&port>1024&&port<65536);
+  const inserted=await fixture.pool.query(`INSERT INTO managed_certificates (
+    id,workspace_id,status,source,source_ref,name,common_name,subject_alt_names,
+    key_mode,key_reference,public_metadata,deployed_cert_path,deployed_agent_id
+  ) VALUES ($1,$2,'provisioning','agent_issuance',$3,$4,$4,$5,
+    'os-store-managed',$6,$7::jsonb,NULL,$8) RETURNING id`,
+  [certificateId,fixture.workspaceId,crypto.randomUUID(),domain,[domain],
+    `winstore://WebHosting/${site}:${port}`,
+    JSON.stringify({issuance:{requestedAt:new Date().toISOString(),target:{type:"windows-iis",store:"WebHosting",binding:{site,port,sniHost:domain}}}}),agentRowId]);
+  assert.equal(inserted.rows[0]?.id,certificateId);
+  // The real INSERT trigger opens management. Never call /readd for this new
+  // source; a random certificate UUID alone cannot satisfy agent claim gating.
+  const periods=await fixture.pool.query(`SELECT p.id,
+    certops_is_initial_provisioning($1,$2,'renew','agent','api') AS eligible
+    FROM certops_management_periods p WHERE p.workspace_id=$1
+    AND p.managed_certificate_id=$2 AND p.ended_at IS NULL`,[fixture.workspaceId,certificateId]);
+  assert.equal(periods.rows.length,1,"WebHosting source requires exactly one open management period");
+  assert.match(periods.rows[0].id,uuid);
+  assert.equal(periods.rows[0].eligible,true,"WebHosting initial enrollment must be agent-claim eligible");
+  return certificateId;
+}
 async function qualifyWebHostingRenewal(context) {
   const {
     gate,
@@ -428,6 +455,7 @@ async function qualifyWebHostingRenewal(context) {
   await gate.scenario(
     REQUIRED_SCENARIOS[0],
     async () => {
+      await provisionWebHostingSource(context);
       for (let generation = 0; generation < 2; generation++) {
         const response = await fixture.request(`${api}/enrollments`, "POST", {
           issuerId,
@@ -619,6 +647,7 @@ module.exports = {
   REQUIRED_SOURCES,
   FLAGS,
   verifyProof,
+  provisionWebHostingSource,
   qualifyWebHostingRenewal,
   cleanupPlan,
   capacityCleanupPlan,

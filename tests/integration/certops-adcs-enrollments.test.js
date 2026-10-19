@@ -122,6 +122,26 @@ describe("CertOps AD CS enrollments (real database)", function () {
     assert.equal(job.rows[0].eligible, true);
   });
 
+  it("WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",async()=>{
+    const assert=require("node:assert/strict");
+    const {provisionWebHostingSource}=require("../e2e/helpers/certops-adcs-webhosting-renewal");
+    const certificateId=crypto.randomUUID(),domain="certops-adcs-0123456789-webhosting.example.test",site="TTAdcsWebHosting0123456789",port=8443;
+    await provisionWebHostingSource({fixture:{workspaceId,pool},agentRowId,isolated:{certificateId,domain,site,port}});
+    const periods=await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId]);
+    assert.equal(periods.rows.length,1);
+    await assert.rejects(()=>pool.query("INSERT INTO certops_management_periods(workspace_id,managed_certificate_id) VALUES($1,$2)",[workspaceId,certificateId]),error=>error.code==="23505"&&error.constraint==="uq_certops_open_management_period");
+    const source=(await pool.query("SELECT key_reference,public_metadata FROM managed_certificates WHERE workspace_id=$1 AND id=$2",[workspaceId,certificateId])).rows[0];
+    assert.equal(source.key_reference,`winstore://WebHosting/${site}:${port}`);assert.equal(source.public_metadata.issuance.target.store,"WebHosting");
+    const enrollment=await createEnrollment(enrollmentInput({certificateId,authorizedDnsNames:[domain],target:{type:"windows-iis",reference:domain,store:"WebHosting",binding:{site,port,sniHost:domain}}}));
+    const {claimJobs,_test:dispatchCaps}=require("../../apps/api/services/certops/agentDispatch");
+    await pool.query("UPDATE certops_agents SET agent_version='0.18.0',declared_capabilities=$2::jsonb,capabilities_updated_at=NOW(),declared_target_selectors=$3::jsonb WHERE id=$1",[agentRowId,JSON.stringify(["adcs-enroll-v1",dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]),JSON.stringify([domain])]);
+    const agent=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
+    const claimed=await claimJobs({dbPool:pool,agent:{id:agentRowId,workspaceId,agentId:agent.agent_id,agentVersion:"0.18.0",protocolVersion:"1.0.0",status:"active"},envelope:{agentId:agent.agent_id,protocolVersion:"1.0.0"},body:{supportedActions:["renew"],maxJobs:16},deps:{enforceAgentSequence:async()=>({sequence:1}),signJobForDispatch:async({job,envelopeVersion})=>({...job,envelopeVersion})}});
+    assert.ok(claimed.jobs.some(job=>String(job.id??job.jobId)===enrollment.jobId));
+    const job=(await pool.query("SELECT status,claim_id,subject_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[workspaceId,enrollment.jobId])).rows[0];
+    assert.equal(job.status,"claimed");assert.ok(job.claim_id);assert.equal(job.subject_id,certificateId);
+  });
+
   function enrollmentInput(overrides = {}) {
     return {
       client: pool,

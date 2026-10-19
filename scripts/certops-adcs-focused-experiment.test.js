@@ -134,7 +134,7 @@ test("agent-absence probe excludes its own PowerShell command but refuses a real
  const {spawnSync}=require("node:child_process");
  for(const other of [false,true]){
   const setup=`function Get-CimInstance { @([pscustomobject]@{ProcessId=$PID;CommandLine='powershell tokentimer-agent.js'}${other?",[pscustomobject]@{ProcessId=($PID+1);CommandLine='node tokentimer-agent.js'}":""}) };`;
-  const result=spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-Command",setup+script],{encoding:"utf8",windowsHide:true,timeout:10000});
+  const result=spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-Command",setup+script],{encoding:"utf8",windowsHide:true,timeout:10000});
   assert.equal(result.status,0);assert.equal(result.stdout.trim(),other?"1":"0");
  }
 });
