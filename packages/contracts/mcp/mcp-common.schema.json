@@ -87,7 +87,28 @@
     },
     "lifecycleStatus": {
       "type": "string",
-      "enum": ["provisioning", "active", "revoked", "decommissioned"]
+      "enum": ["active", "revoked", "decommissioned"]
+    },
+    "displayStatus": {
+      "type": "string",
+      "enum": [
+        "discovered",
+        "provisioning",
+        "active",
+        "renewing",
+        "expiring",
+        "expired",
+        "revoked",
+        "decommissioned"
+      ]
+    },
+    "presenceState": {
+      "type": "string",
+      "enum": ["confirmed_present", "confirmed_absent", "unknown"]
+    },
+    "capabilityString": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,63}$"
     },
     "renewalPathState": {
       "type": "string",

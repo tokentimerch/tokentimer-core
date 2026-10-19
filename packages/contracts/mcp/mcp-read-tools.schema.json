@@ -20,6 +20,9 @@
     "cursor": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/cursor" },
     "completeness": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/completeness" },
     "lifecycleStatus": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/lifecycleStatus" },
+    "displayStatus": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/displayStatus" },
+    "presenceState": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/presenceState" },
+    "capabilityString": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/capabilityString" },
     "renewalPathState": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/renewalPathState" },
     "jobStatus": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/jobStatus" },
     "jobOperation": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/jobOperation" },
@@ -87,36 +90,34 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "identityId",
+        "id",
+        "kind",
         "fingerprintSha256",
         "subject",
-        "sans",
-        "sansTruncated",
         "issuer",
-        "notBefore",
         "notAfter",
         "daysUntilExpiry",
+        "displayStatus",
         "lifecycleStatus",
         "renewalPathState",
         "stillObserved"
       ],
       "properties": {
-        "identityId": { "$ref": "#/definitions/uuid" },
-        "fingerprintSha256": { "$ref": "#/definitions/fingerprintSha256" },
-        "subject": { "$ref": "#/definitions/nullableUntrustedText" },
-        "sans": {
-          "type": "array",
-          "maxItems": 25,
-          "items": { "$ref": "#/definitions/untrustedText" }
+        "id": { "$ref": "#/definitions/uuid" },
+        "kind": { "type": "string", "enum": ["identity", "provisional"] },
+        "fingerprintSha256": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/fingerprintSha256" }]
         },
-        "sansTruncated": { "type": "boolean" },
+        "subject": { "$ref": "#/definitions/nullableUntrustedText" },
         "issuer": { "$ref": "#/definitions/nullableUntrustedText" },
-        "notBefore": { "$ref": "#/definitions/nullableTimestamp" },
         "notAfter": { "$ref": "#/definitions/nullableTimestamp" },
         "daysUntilExpiry": {
           "oneOf": [{ "type": "null" }, { "type": "integer" }]
         },
-        "lifecycleStatus": { "$ref": "#/definitions/lifecycleStatus" },
+        "displayStatus": { "$ref": "#/definitions/displayStatus" },
+        "lifecycleStatus": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/lifecycleStatus" }]
+        },
         "renewalPathState": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
         },
@@ -128,10 +129,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "lifecycleStatus": { "$ref": "#/definitions/lifecycleStatus" },
+        "status": { "$ref": "#/definitions/displayStatus" },
+        "includeRetired": { "type": "boolean", "default": false },
         "expiresWithinDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
         "expiresBefore": { "$ref": "#/definitions/timestamp" },
-        "renewalPathState": { "$ref": "#/definitions/renewalPathState" },
         "query": { "type": "string", "minLength": 1, "maxLength": 128 },
         "limit": { "$ref": "#/definitions/limit" },
         "cursor": { "$ref": "#/definitions/cursor" }
@@ -169,16 +170,29 @@
         "certificate": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["summary", "lifecycle", "managementPeriods", "managementPeriodsTruncated", "renewal", "observation"],
+          "required": ["summary", "details", "lifecycle", "managementPeriods", "managementPeriodsTruncated", "renewal", "observation"],
           "properties": {
             "summary": { "$ref": "#/definitions/certificateSummary" },
+            "details": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["notBefore", "sans", "sansTruncated"],
+              "properties": {
+                "notBefore": { "$ref": "#/definitions/nullableTimestamp" },
+                "sans": {
+                  "type": "array",
+                  "maxItems": 25,
+                  "items": { "$ref": "#/definitions/untrustedText" }
+                },
+                "sansTruncated": { "type": "boolean" }
+              }
+            },
             "lifecycle": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["status", "changedAt", "reason"],
+              "required": ["status", "reason"],
               "properties": {
                 "status": { "$ref": "#/definitions/lifecycleStatus" },
-                "changedAt": { "$ref": "#/definitions/nullableTimestamp" },
                 "reason": { "$ref": "#/definitions/nullableUntrustedText" }
               }
             },
@@ -188,12 +202,15 @@
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["periodId", "sourceKind", "openedAt", "closedAt"],
+                "required": ["periodId", "sourceKind", "startedAt", "endedAt", "endedReason"],
                 "properties": {
                   "periodId": { "$ref": "#/definitions/uuid" },
                   "sourceKind": { "$ref": "#/definitions/snakeCode" },
-                  "openedAt": { "$ref": "#/definitions/timestamp" },
-                  "closedAt": { "$ref": "#/definitions/nullableTimestamp" }
+                  "startedAt": { "$ref": "#/definitions/timestamp" },
+                  "endedAt": { "$ref": "#/definitions/nullableTimestamp" },
+                  "endedReason": {
+                    "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
+                  }
                 }
               }
             },
@@ -201,27 +218,30 @@
             "renewal": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["pathState", "autoRenewEnabled", "nextRenewalAt", "profileId"],
+              "required": ["state", "renewsFrom", "renewBeforeDays", "profileId", "workspacePaused", "pathState"],
               "properties": {
-                "pathState": {
-                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
+                "state": { "$ref": "#/definitions/snakeCode" },
+                "renewsFrom": { "$ref": "#/definitions/nullableTimestamp" },
+                "renewBeforeDays": {
+                  "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }]
                 },
-                "autoRenewEnabled": {
-                  "oneOf": [{ "type": "null" }, { "type": "boolean" }]
-                },
-                "nextRenewalAt": { "$ref": "#/definitions/nullableTimestamp" },
                 "profileId": {
                   "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/uuid" }]
+                },
+                "workspacePaused": { "type": "boolean" },
+                "pathState": {
+                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
                 }
               }
             },
             "observation": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["lastObservedAt", "observedLocationCount"],
+              "required": ["lastObservedAt", "locationCount", "visibilityUnknown"],
               "properties": {
                 "lastObservedAt": { "$ref": "#/definitions/nullableTimestamp" },
-                "observedLocationCount": { "type": "integer", "minimum": 0 }
+                "locationCount": { "type": "integer", "minimum": 0 },
+                "visibilityUnknown": { "type": "boolean" }
               }
             }
           }
@@ -235,10 +255,6 @@
       "required": ["identityId"],
       "properties": {
         "identityId": { "$ref": "#/definitions/uuid" },
-        "presence": {
-          "type": "string",
-          "enum": ["present", "authoritative_absence", "unknown"]
-        },
         "limit": { "$ref": "#/definitions/limit" },
         "cursor": { "$ref": "#/definitions/cursor" }
       }
@@ -246,9 +262,10 @@
     "tt_get_certificate_observations_output": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["identityId", "items", "completeness"],
+      "required": ["identityId", "visibilityUnknown", "items", "completeness"],
       "properties": {
         "identityId": { "$ref": "#/definitions/uuid" },
+        "visibilityUnknown": { "type": "boolean" },
         "items": {
           "type": "array",
           "maxItems": 50,
@@ -256,30 +273,35 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "instanceId",
+              "id",
+              "source",
               "locationKind",
-              "location",
+              "presenceState",
+              "evidenceKind",
               "observedAt",
-              "presence",
-              "matchesIdentity",
-              "deploymentStatus"
+              "monitoringEnded",
+              "observationReason",
+              "previousObservationCount"
             ],
             "properties": {
-              "instanceId": { "$ref": "#/definitions/uuid" },
+              "id": { "$ref": "#/definitions/uuid" },
+              "source": { "$ref": "#/definitions/snakeCode" },
               "locationKind": {
-                "type": "string",
-                "enum": ["endpoint", "domain", "agent_host", "kubernetes", "other"]
-              },
-              "location": { "$ref": "#/definitions/nullableUntrustedText" },
-              "observedAt": { "$ref": "#/definitions/nullableTimestamp" },
-              "presence": {
-                "type": "string",
-                "enum": ["present", "authoritative_absence", "unknown"]
-              },
-              "matchesIdentity": { "type": "boolean" },
-              "deploymentStatus": {
                 "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
-              }
+              },
+              "presenceState": { "$ref": "#/definitions/presenceState" },
+              "evidenceKind": {
+                "oneOf": [
+                  { "type": "null" },
+                  { "type": "string", "enum": ["service_binding", "stored_copy", "unknown"] }
+                ]
+              },
+              "observedAt": { "$ref": "#/definitions/nullableTimestamp" },
+              "monitoringEnded": { "type": "boolean" },
+              "observationReason": {
+                "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
+              },
+              "previousObservationCount": { "type": "integer", "minimum": 0 }
             }
           }
         },
@@ -291,7 +313,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "agentId": { "$ref": "#/definitions/uuid" },
         "includeRetired": { "type": "boolean", "default": false },
         "limit": { "$ref": "#/definitions/limit" },
         "cursor": { "$ref": "#/definitions/cursor" }
@@ -309,32 +330,43 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "agentId",
+              "id",
               "hostname",
+              "platform",
+              "status",
               "liveness",
+              "agentKind",
               "lastSeenAt",
               "agentVersion",
               "protocolVersion",
-              "declaredOperations"
+              "compatibilityState",
+              "clockDriftState",
+              "supportedOperations",
+              "declaredCapabilities"
             ],
             "properties": {
-              "agentId": { "$ref": "#/definitions/uuid" },
+              "id": { "$ref": "#/definitions/uuid" },
               "hostname": { "$ref": "#/definitions/nullableUntrustedText" },
-              "liveness": {
-                "type": "string",
-                "enum": ["live", "stale", "offline", "retired"]
+              "platform": {
+                "oneOf": [{ "type": "null" }, { "type": "string", "enum": ["linux", "darwin", "win32"] }]
               },
+              "status": { "type": "string", "enum": ["active", "offline", "retired"] },
+              "liveness": { "type": "string", "enum": ["live", "stale", "retired"] },
+              "agentKind": { "type": "string", "enum": ["normal", "diagnostic"] },
               "lastSeenAt": { "$ref": "#/definitions/nullableTimestamp" },
-              "agentVersion": {
-                "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 64 }]
-              },
-              "protocolVersion": {
-                "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 32 }]
-              },
-              "declaredOperations": {
+              "agentVersion": { "type": "string", "maxLength": 32 },
+              "protocolVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+              "compatibilityState": { "$ref": "#/definitions/snakeCode" },
+              "clockDriftState": { "$ref": "#/definitions/snakeCode" },
+              "supportedOperations": {
                 "type": "array",
                 "maxItems": 32,
                 "items": { "$ref": "#/definitions/jobOperation" }
+              },
+              "declaredCapabilities": {
+                "type": "array",
+                "maxItems": 64,
+                "items": { "$ref": "#/definitions/capabilityString" }
               }
             }
           }
@@ -346,17 +378,36 @@
     "jobSummary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["jobId", "operation", "status", "mode", "identityId", "createdAt", "completedAt"],
+      "required": [
+        "id",
+        "operation",
+        "status",
+        "subjectType",
+        "subjectId",
+        "createdAt",
+        "startedAt",
+        "completedAt",
+        "requestedByKind",
+        "needsOperatorReconciliation"
+      ],
       "properties": {
-        "jobId": { "$ref": "#/definitions/uuid" },
+        "id": { "$ref": "#/definitions/uuid" },
         "operation": { "$ref": "#/definitions/jobOperation" },
         "status": { "$ref": "#/definitions/jobStatus" },
-        "mode": { "type": "string", "enum": ["real", "dry_run"] },
-        "identityId": {
+        "subjectType": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
+        },
+        "subjectId": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/uuid" }]
         },
         "createdAt": { "$ref": "#/definitions/timestamp" },
-        "completedAt": { "$ref": "#/definitions/nullableTimestamp" }
+        "startedAt": { "$ref": "#/definitions/nullableTimestamp" },
+        "completedAt": { "$ref": "#/definitions/nullableTimestamp" },
+        "requestedByKind": {
+          "type": "string",
+          "enum": ["user", "api_token", "operator_connection", "system"]
+        },
+        "needsOperatorReconciliation": { "type": "boolean" }
       }
     },
 
@@ -376,21 +427,13 @@
         "job": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "summary",
-            "updatedAt",
-            "attemptCount",
-            "requestedByKind",
-            "approval",
-            "pendingReason"
-          ],
+          "required": ["summary", "updatedAt", "attemptCount", "approval", "pendingReason", "errorCode"],
           "properties": {
             "summary": { "$ref": "#/definitions/jobSummary" },
             "updatedAt": { "$ref": "#/definitions/nullableTimestamp" },
             "attemptCount": { "type": "integer", "minimum": 0 },
-            "requestedByKind": {
-              "type": "string",
-              "enum": ["user", "api_token", "operator_connection", "system"]
+            "errorCode": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
             },
             "approval": {
               "type": "object",
@@ -430,7 +473,8 @@
       "properties": {
         "status": { "$ref": "#/definitions/jobStatus" },
         "operation": { "$ref": "#/definitions/jobOperation" },
-        "identityId": { "$ref": "#/definitions/uuid" },
+        "subjectId": { "$ref": "#/definitions/uuid" },
+        "createdSince": { "$ref": "#/definitions/timestamp" },
         "limit": { "$ref": "#/definitions/limit" },
         "cursor": { "$ref": "#/definitions/cursor" }
       }
