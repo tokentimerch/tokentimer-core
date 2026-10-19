@@ -18,6 +18,8 @@ import { reconcilePending } from './reconcile.js';
 import { docUrl } from './docLinks.js';
 import StepFrame from './StepFrame.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
+import { GOALS } from './modules.js';
+import { clearGoal, skipStep } from './sessionTransitions.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
 import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
 import { FileImportStep, IntegrationStep } from './importSteps.jsx';
@@ -37,6 +39,51 @@ function resolveApiOrigin() {
 }
 
 const FLOW = 'mega';
+
+// Follow-ups are suggestions, never incomplete items, and never repeat what
+// the user just did.
+export function nextSteps(goalId) {
+  const thresholds =
+    'Adjust alert thresholds and the delivery window in workspace preferences.';
+  switch (goalId) {
+    case 'monitor_https':
+    case 'track_asset':
+      return [
+        'Import many assets at once from a file or an integration.',
+        thresholds,
+      ];
+    case 'import_file':
+    case 'import_integration':
+      return [
+        'Set up an endpoint monitor for the sites you depend on.',
+        'Group assets into sections and assign contact groups in the inventory.',
+        thresholds,
+      ];
+    case 'alerting':
+      return [
+        'Add or import assets so alerts have something to watch.',
+        'Add Slack, Teams or WhatsApp channels in workspace preferences.',
+      ];
+    case 'certops_observe':
+      return [
+        'Set up automatic renewal for a certificate the agent found.',
+        'Install agents on more servers.',
+        thresholds,
+      ];
+    case 'certops_automate':
+      return [
+        'Issue your first certificate with the staging CA, then switch to the production CA.',
+        'Set up renewal-failure alerts for the contact group.',
+      ];
+    case 'certops_vault':
+      return [
+        'Run a verified rollout once your agents declare the distribution capabilities.',
+        'Keep this as a candidate feature until it is qualified for production.',
+      ];
+    default:
+      return [thresholds];
+  }
+}
 
 export const STEP_COMPONENTS = {
   goal: GoalStep,
@@ -196,7 +243,9 @@ function DoneCard({ ctx }) {
     <StepFrame
       kind='info'
       title='You are set up'
-      description='Your first asset is tracked and alerts have somewhere to go.'
+      description={
+        GOALS[ctx.session.intent?.goal]?.doneText || 'Setup is complete.'
+      }
       docs={ctx.docs('alerts.thresholds', 'Alert thresholds')}
       actions={
         <>
@@ -223,13 +272,11 @@ function DoneCard({ ctx }) {
             so alerts can be emailed.
           </Text>
         ) : null}
-        <Text fontSize='sm'>
-          Import many assets at once from a file or an integration.
-        </Text>
-        <Text fontSize='sm'>
-          Adjust alert thresholds and the delivery window in workspace
-          preferences.
-        </Text>
+        {nextSteps(ctx.session.intent?.goal).map(text => (
+          <Text key={text} fontSize='sm'>
+            {text}
+          </Text>
+        ))}
       </VStack>
     </StepFrame>
   );
@@ -268,16 +315,14 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [onboarding]
   );
 
+  const changeGoal = useCallback(async () => {
+    await onboarding.controller.update(clearGoal);
+    await onboarding.refresh();
+  }, [onboarding]);
+
   const skip = useCallback(
     async stepId => {
-      await onboarding.controller.update(s => ({
-        progress: {
-          ...s.progress,
-          skipped: Array.from(
-            new Set([...(s.progress?.skipped || []), stepId])
-          ),
-        },
-      }));
+      await onboarding.controller.update(s => skipStep(s, stepId));
       await onboarding.refresh();
     },
     [onboarding]
@@ -348,6 +393,16 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                     Your setup
                   </Text>
                   <JourneyRail steps={plan.steps} />
+                  {ctx.session.intent?.goal ? (
+                    <DashboardActionButton
+                      mt={3}
+                      size='xs'
+                      variant='ghost'
+                      onClick={changeGoal}
+                    >
+                      Change what I am setting up
+                    </DashboardActionButton>
+                  ) : null}
                   <Text fontSize='xs' mt={4} opacity={0.8}>
                     Progress is saved to your account. Leave any time and
                     continue on any device.

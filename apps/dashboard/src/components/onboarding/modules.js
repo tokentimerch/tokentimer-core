@@ -6,7 +6,7 @@
 // reads this table, so adding a module never changes the planner.
 
 export const STEP_DEFS = {
-  goal: { title: 'What do you want to track?', kind: 'ui' },
+  goal: { title: 'Choose what to set up', kind: 'ui' },
   monitor: { title: 'Add the website to monitor', kind: 'ui' },
   asset: { title: 'Add your first asset', kind: 'ui' },
   file_import: { title: 'Import assets from a file', kind: 'ui' },
@@ -40,6 +40,8 @@ export const INTEGRATIONS = {
 // Each goal lists the steps it needs in order. "verify" is always last.
 export const GOALS = {
   monitor_https: {
+    doneText:
+      'The website certificate is monitored and alerts have somewhere to go.',
     label: 'Monitor a website certificate',
     description:
       'Track the HTTPS certificate of a site and get alerted before it expires.',
@@ -48,6 +50,7 @@ export const GOALS = {
     area: 'assets',
   },
   track_asset: {
+    doneText: 'Your asset is tracked and alerts have somewhere to go.',
     label: 'Track an API key, secret or license',
     description: 'Record one asset by hand and get alerted before it expires.',
     steps: ['asset', 'recipients', 'verify'],
@@ -55,6 +58,7 @@ export const GOALS = {
     area: 'assets',
   },
   import_file: {
+    doneText: 'Your assets are imported and alerts have somewhere to go.',
     label: 'Import many assets from a file',
     description: 'Bring in a CSV, spreadsheet, JSON or YAML inventory.',
     steps: ['file_import', 'recipients', 'verify'],
@@ -62,6 +66,7 @@ export const GOALS = {
     area: 'assets',
   },
   import_integration: {
+    doneText: 'Your assets are imported and alerts have somewhere to go.',
     label: 'Import from GitHub, Vault, AWS or another service',
     description: 'Scan a connected service and choose which assets to import.',
     steps: ['integration', 'recipients', 'verify'],
@@ -70,6 +75,7 @@ export const GOALS = {
     needsProvider: true,
   },
   alerting: {
+    doneText: 'Alert notifications are set up.',
     label: 'Set up alert notifications',
     description:
       'Choose recipients, thresholds and make sure email delivery works.',
@@ -78,6 +84,7 @@ export const GOALS = {
     area: 'alerts',
   },
   certops_observe: {
+    doneText: 'An agent is connected and reporting certificates.',
     label: 'Discover certificates on my servers',
     description:
       'Install an agent that finds certificates and reports them, without changing anything.',
@@ -95,6 +102,7 @@ export const GOALS = {
     certopsObjective: 'observe',
   },
   certops_automate: {
+    doneText: 'Your agent is connected and ready for automated certificates.',
     label: 'Issue and renew certificates automatically',
     description:
       'Use an agent to request, install and renew certificates (ACME).',
@@ -114,6 +122,8 @@ export const GOALS = {
     certopsObjective: 'automate',
   },
   certops_vault: {
+    doneText:
+      'Your Vault distribution configuration is prepared. It is not verified until a rollout is.',
     label: 'Share one certificate across servers with Vault',
     description:
       'Publish an issued certificate to your Vault and deploy it to several hosts.',

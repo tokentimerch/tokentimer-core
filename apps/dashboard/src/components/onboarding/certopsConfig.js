@@ -67,6 +67,22 @@ export function nameInZone(name, zone) {
   return Boolean(z) && (n === z || n.endsWith(`.${z}`));
 }
 
+/**
+ * Plain http is accepted only for a loopback host, which is what the
+ * installers allow behind --allow-insecure-local-http. Anything else must be
+ * https so a bootstrap token is never sent in clear text over a network.
+ */
+export function isLoopbackHttp(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return (
+      url.protocol === 'http:' &&
+      ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname)
+    );
+  } catch (_) {
+    return false;
+  }
+}
 function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
@@ -88,26 +104,29 @@ export function buildInstallCommand({
   reloadServices = [],
   caBundle = '',
 }) {
-  if (!/^https:\/\//i.test(apiUrl || '')) {
-    throw new Error('The API address must use https.');
+  if (!/^https:\/\//i.test(apiUrl || '') && !isLoopbackHttp(apiUrl)) {
+    throw new Error(
+      'The API address must use https. Plain http is only allowed for localhost.'
+    );
   }
   if (!UUID.test(workspaceId || '')) {
     throw new Error('Invalid workspace id.');
   }
+  const insecureLoopback = isLoopbackHttp(apiUrl);
   if (os === 'windows') {
-    const lines = [
-      '.\\install-agent.ps1 `',
-      `  --api-url ${psQuote(apiUrl)} \``,
-      `  --workspace-id ${psQuote(workspaceId)}`,
+    const parts = [
+      `--api-url ${psQuote(apiUrl)}`,
+      `--workspace-id ${psQuote(workspaceId)}`,
     ];
-    if (caBundle) lines[lines.length - 1] += ` \``;
-    if (caBundle) lines.push(`  --ca-bundle ${psQuote(caBundle)}`);
-    return lines.join('\n');
+    if (caBundle) parts.push(`--ca-bundle ${psQuote(caBundle)}`);
+    if (insecureLoopback) parts.push('--allow-insecure-local-http');
+    return `.\\install-agent.ps1 \`\n  ${parts.join(' `\n  ')}`;
   }
   const flags = [
     `--api-url ${shQuote(apiUrl)}`,
     `--workspace-id ${shQuote(workspaceId)}`,
   ];
+  if (insecureLoopback) flags.push('--allow-insecure-local-http');
   for (const p of writePaths) flags.push(`--write-path ${shQuote(p)}`);
   for (const s of reloadServices) flags.push(`--reload-service ${s}`);
   if (caBundle) flags.push(`--ca-bundle ${shQuote(caBundle)}`);
