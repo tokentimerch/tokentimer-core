@@ -2,8 +2,14 @@
   "$comment": "Valid and invalid examples for the first read-only tool contracts (ADR-0015). Invalid outputs deliberately include fields that must never be disclosed, so the contract test proves closed objects reject them.",
   "tt_whoami": {
     "input": {
-      "valid": [{}],
-      "invalid": [{ "workspaceId": "550e8400-e29b-41d4-a716-446655440000" }]
+      "valid": [
+        {}
+      ],
+      "invalid": [
+        {
+          "workspaceId": "550e8400-e29b-41d4-a716-446655440000"
+        }
+      ]
     },
     "output": {
       "valid": [
@@ -11,24 +17,56 @@
           "contractVersion": 1,
           "workspace": {
             "id": "550e8400-e29b-41d4-a716-446655440000",
-            "name": { "value": "Platform", "untrusted": true, "truncated": false }
+            "name": {
+              "value": "Platform",
+              "untrusted": true,
+              "truncated": false
+            }
           },
-          "role": { "current": "admin", "ceiling": "workspace_manager", "effective": "workspace_manager" },
+          "role": {
+            "current": "admin",
+            "ceiling": "workspace_manager",
+            "effective": "workspace_manager"
+          },
           "connection": {
             "id": "550e8400-e29b-41d4-a716-446655440001",
-            "scopes": ["mcp:identity:read", "mcp:certs:read"],
+            "scopes": [
+              "mcp:identity:read",
+              "mcp:certs:read"
+            ],
             "expiresAt": "2026-11-18T12:00:00Z"
           },
-          "certops": { "enabled": true, "paused": false, "approvalRequiredAlways": false, "mcpWritesEnabled": false }
+          "certops": {
+            "enabled": true,
+            "paused": false,
+            "approvalRequiredAlways": false,
+            "mcpWritesEnabled": false
+          }
         }
       ],
       "invalid": [
         {
           "contractVersion": 1,
-          "workspace": { "id": "550e8400-e29b-41d4-a716-446655440000", "name": "Platform" },
-          "role": { "current": "admin", "ceiling": "admin", "effective": "admin" },
-          "connection": { "id": "550e8400-e29b-41d4-a716-446655440001", "scopes": [], "expiresAt": "2026-11-18T12:00:00Z" },
-          "certops": { "enabled": true, "paused": false, "approvalRequiredAlways": false, "mcpWritesEnabled": false }
+          "workspace": {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "name": "Platform"
+          },
+          "role": {
+            "current": "admin",
+            "ceiling": "admin",
+            "effective": "admin"
+          },
+          "connection": {
+            "id": "550e8400-e29b-41d4-a716-446655440001",
+            "scopes": [],
+            "expiresAt": "2026-11-18T12:00:00Z"
+          },
+          "certops": {
+            "enabled": true,
+            "paused": false,
+            "approvalRequiredAlways": false,
+            "mcpWritesEnabled": false
+          }
         }
       ]
     }
@@ -37,15 +75,33 @@
     "input": {
       "valid": [
         {},
-        { "status": "active", "expiresWithinDays": 30, "limit": 10 },
-        { "query": "example.com", "includeRetired": true }
+        {
+          "status": "active",
+          "expiresWithinDays": 30,
+          "limit": 10
+        },
+        {
+          "query": "example.com",
+          "includeRetired": true
+        }
       ],
       "invalid": [
-        { "expiresWithinDays": 30, "expiresBefore": "2026-12-01T00:00:00Z" },
-        { "limit": 500 },
-        { "status": "expired-ish" },
-        { "renewalPathState": "degraded" },
-        { "workspace_id": "550e8400-e29b-41d4-a716-446655440000" }
+        {
+          "expiresWithinDays": 30,
+          "expiresBefore": "2026-12-01T00:00:00Z"
+        },
+        {
+          "limit": 500
+        },
+        {
+          "status": "expired-ish"
+        },
+        {
+          "renewalPathState": "degraded"
+        },
+        {
+          "workspace_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
       ]
     },
     "output": {
@@ -56,8 +112,16 @@
               "id": "550e8400-e29b-41d4-a716-446655440002",
               "kind": "identity",
               "fingerprintSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-              "subject": { "value": "CN=www.example.com", "untrusted": true, "truncated": false },
-              "issuer": { "value": "CN=Example CA", "untrusted": true, "truncated": false },
+              "commonName": {
+                "value": "CN=www.example.com",
+                "untrusted": true,
+                "truncated": false
+              },
+              "issuer": {
+                "value": "CN=Example CA",
+                "untrusted": true,
+                "truncated": false
+              },
               "notAfter": "2026-12-01T00:00:00Z",
               "daysUntilExpiry": 43,
               "displayStatus": "active",
@@ -69,7 +133,7 @@
               "id": "550e8400-e29b-41d4-a716-446655440008",
               "kind": "provisional",
               "fingerprintSha256": null,
-              "subject": null,
+              "commonName": null,
               "issuer": null,
               "notAfter": null,
               "daysUntilExpiry": null,
@@ -79,7 +143,13 @@
               "stillObserved": false
             }
           ],
-          "completeness": { "returned": 2, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 2 }
+          "completeness": {
+            "returned": 2,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 2
+          }
         }
       ],
       "invalid": [
@@ -89,7 +159,7 @@
               "id": "550e8400-e29b-41d4-a716-446655440002",
               "kind": "identity",
               "fingerprintSha256": null,
-              "subject": "CN=www.example.com",
+              "commonName": "CN=www.example.com",
               "issuer": null,
               "notAfter": null,
               "daysUntilExpiry": null,
@@ -99,7 +169,13 @@
               "stillObserved": false
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         },
         {
           "items": [
@@ -107,7 +183,7 @@
               "id": "550e8400-e29b-41d4-a716-446655440002",
               "kind": "identity",
               "fingerprintSha256": null,
-              "subject": null,
+              "commonName": null,
               "issuer": null,
               "notAfter": null,
               "daysUntilExpiry": null,
@@ -118,17 +194,29 @@
               "keyReference": "file:///etc/ssl/private/www.key"
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         },
-        { "items": [] }
+        {
+          "items": []
+        }
       ]
     }
   },
   "tt_get_certificate": {
     "input": {
       "valid": [
-        { "identityId": "550e8400-e29b-41d4-a716-446655440002" },
-        { "fingerprintSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }
+        {
+          "identityId": "550e8400-e29b-41d4-a716-446655440002"
+        },
+        {
+          "fingerprintSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
       ],
       "invalid": [
         {},
@@ -136,7 +224,9 @@
           "identityId": "550e8400-e29b-41d4-a716-446655440002",
           "fingerprintSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         },
-        { "fingerprintSha256": "ABC" }
+        {
+          "fingerprintSha256": "ABC"
+        }
       ]
     },
     "output": {
@@ -147,7 +237,11 @@
               "id": "550e8400-e29b-41d4-a716-446655440002",
               "kind": "identity",
               "fingerprintSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-              "subject": { "value": "CN=www.example.com", "untrusted": true, "truncated": false },
+              "commonName": {
+                "value": "CN=www.example.com",
+                "untrusted": true,
+                "truncated": false
+              },
               "issuer": null,
               "notAfter": "2026-12-01T00:00:00Z",
               "daysUntilExpiry": 43,
@@ -158,12 +252,22 @@
             },
             "details": {
               "notBefore": "2026-09-01T00:00:00Z",
-              "sans": [{ "value": "www.example.com", "untrusted": true, "truncated": false }],
+              "sans": [
+                {
+                  "value": "www.example.com",
+                  "untrusted": true,
+                  "truncated": false
+                }
+              ],
               "sansTruncated": false
             },
             "lifecycle": {
               "status": "decommissioned",
-              "reason": { "value": "Replaced by new load balancer", "untrusted": true, "truncated": false }
+              "reason": {
+                "value": "Replaced by new load balancer",
+                "untrusted": true,
+                "truncated": false
+              }
             },
             "managementPeriods": [
               {
@@ -176,14 +280,16 @@
             ],
             "managementPeriodsTruncated": false,
             "renewal": {
-              "state": "not_applicable",
-              "renewsFrom": null,
-              "renewBeforeDays": null,
+              "pathState": null,
+              "pathReason": null,
               "profileId": null,
-              "workspacePaused": false,
-              "pathState": null
+              "workspacePaused": false
             },
-            "observation": { "lastObservedAt": "2026-10-18T00:00:00Z", "locationCount": 1, "visibilityUnknown": false }
+            "observation": {
+              "lastObservedAt": "2026-10-18T00:00:00Z",
+              "locationCount": 1,
+              "visibilityUnknown": false
+            }
           }
         }
       ],
@@ -194,7 +300,7 @@
               "id": "550e8400-e29b-41d4-a716-446655440002",
               "kind": "identity",
               "fingerprintSha256": null,
-              "subject": null,
+              "commonName": null,
               "issuer": null,
               "notAfter": null,
               "daysUntilExpiry": null,
@@ -203,19 +309,28 @@
               "renewalPathState": null,
               "stillObserved": false
             },
-            "details": { "notBefore": null, "sans": [], "sansTruncated": false },
-            "lifecycle": { "status": "active", "reason": null },
+            "details": {
+              "notBefore": null,
+              "sans": [],
+              "sansTruncated": false
+            },
+            "lifecycle": {
+              "status": "active",
+              "reason": null
+            },
             "managementPeriods": [],
             "managementPeriodsTruncated": false,
             "renewal": {
-              "state": "auto",
-              "renewsFrom": null,
-              "renewBeforeDays": null,
+              "pathState": null,
+              "pathReason": null,
               "profileId": null,
-              "workspacePaused": false,
-              "pathState": null
+              "workspacePaused": false
             },
-            "observation": { "lastObservedAt": null, "locationCount": 0, "visibilityUnknown": true },
+            "observation": {
+              "lastObservedAt": null,
+              "locationCount": 0,
+              "visibilityUnknown": true
+            },
             "certificatePem": "-----BEGIN CERTIFICATE-----"
           }
         }
@@ -225,10 +340,24 @@
   "tt_get_certificate_observations": {
     "input": {
       "valid": [
-        { "identityId": "550e8400-e29b-41d4-a716-446655440002" },
-        { "identityId": "550e8400-e29b-41d4-a716-446655440002", "limit": 5 }
+        {
+          "identityId": "550e8400-e29b-41d4-a716-446655440002"
+        },
+        {
+          "identityId": "550e8400-e29b-41d4-a716-446655440002",
+          "limit": 5
+        }
       ],
-      "invalid": [{}, { "identityId": "not-a-uuid" }, { "identityId": "550e8400-e29b-41d4-a716-446655440002", "presence": "present" }]
+      "invalid": [
+        {},
+        {
+          "identityId": "not-a-uuid"
+        },
+        {
+          "identityId": "550e8400-e29b-41d4-a716-446655440002",
+          "presence": "present"
+        }
+      ]
     },
     "output": {
       "valid": [
@@ -259,7 +388,13 @@
               "previousObservationCount": 0
             }
           ],
-          "completeness": { "returned": 2, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 2 }
+          "completeness": {
+            "returned": 2,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 2
+          }
         }
       ],
       "invalid": [
@@ -280,7 +415,13 @@
               "deploymentReference": "/etc/nginx/tls/www.pem"
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         },
         {
           "identityId": "550e8400-e29b-41d4-a716-446655440002",
@@ -298,15 +439,36 @@
               "previousObservationCount": 0
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         }
       ]
     }
   },
   "tt_get_agent_health": {
     "input": {
-      "valid": [{}, { "includeRetired": true, "limit": 20 }],
-      "invalid": [{ "agentId": "550e8400-e29b-41d4-a716-446655440006" }, { "limit": 0 }]
+      "valid": [
+        {},
+        {
+          "limit": 20
+        }
+      ],
+      "invalid": [
+        {
+          "agentId": "550e8400-e29b-41d4-a716-446655440006"
+        },
+        {
+          "limit": 0
+        },
+        {
+          "includeRetired": true
+        }
+      ]
     },
     "output": {
       "valid": [
@@ -314,7 +476,11 @@
           "items": [
             {
               "id": "550e8400-e29b-41d4-a716-446655440006",
-              "hostname": { "value": "web-01", "untrusted": true, "truncated": false },
+              "hostname": {
+                "value": "web-01",
+                "untrusted": true,
+                "truncated": false
+              },
               "platform": "linux",
               "status": "active",
               "liveness": "live",
@@ -324,11 +490,24 @@
               "protocolVersion": "1.0.0",
               "compatibilityState": "compatible",
               "clockDriftState": "ok",
-              "supportedOperations": ["renew", "deploy", "reload"],
-              "declaredCapabilities": ["evidence-claim-binding-v1", "adcs-enroll-v1"]
+              "supportedOperations": [
+                "renew",
+                "deploy",
+                "reload"
+              ],
+              "declaredCapabilities": [
+                "evidence-claim-binding-v1",
+                "adcs-enroll-v1"
+              ]
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         }
       ],
       "invalid": [
@@ -346,11 +525,19 @@
               "protocolVersion": "1.0.0",
               "compatibilityState": "compatible",
               "clockDriftState": "ok",
-              "supportedOperations": ["format-disk"],
+              "supportedOperations": [
+                "format-disk"
+              ],
               "declaredCapabilities": []
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         },
         {
           "items": [
@@ -369,18 +556,35 @@
               "supportedOperations": [],
               "declaredCapabilities": [],
               "pinnedSigningKeyId": "key-1",
-              "commandProfiles": ["acme:certbot"]
+              "commandProfiles": [
+                "acme:certbot"
+              ]
             }
           ],
-          "completeness": { "returned": 1, "truncated": false, "nextCursor": null, "totalKnown": true, "total": 1 }
+          "completeness": {
+            "returned": 1,
+            "truncated": false,
+            "nextCursor": null,
+            "totalKnown": true,
+            "total": 1
+          }
         }
       ]
     }
   },
   "tt_get_job": {
     "input": {
-      "valid": [{ "jobId": "550e8400-e29b-41d4-a716-446655440007" }],
-      "invalid": [{}, { "jobId": "latest" }]
+      "valid": [
+        {
+          "jobId": "550e8400-e29b-41d4-a716-446655440007"
+        }
+      ],
+      "invalid": [
+        {},
+        {
+          "jobId": "latest"
+        }
+      ]
     },
     "output": {
       "valid": [
@@ -401,8 +605,15 @@
             "updatedAt": "2026-10-19T10:00:05Z",
             "attemptCount": 0,
             "errorCode": null,
-            "approval": { "required": true, "state": "approved", "decidedAt": "2026-10-19T10:01:00Z" },
-            "pendingReason": { "code": "agent_offline", "message": "The assigned agent has not reported recently." }
+            "approval": {
+              "required": true,
+              "state": "approved",
+              "decidedAt": "2026-10-19T10:01:00Z"
+            },
+            "pendingReason": {
+              "code": "agent_offline",
+              "message": "The assigned agent has not reported recently."
+            }
           }
         }
       ],
@@ -424,7 +635,11 @@
             "updatedAt": null,
             "attemptCount": 1,
             "errorCode": null,
-            "approval": { "required": false, "state": "not_required", "decidedAt": null },
+            "approval": {
+              "required": false,
+              "state": "not_required",
+              "decidedAt": null
+            },
             "pendingReason": null,
             "claimId": "7d0c1f9a-0000-4000-8000-000000000000"
           }
@@ -447,7 +662,11 @@
             "updatedAt": null,
             "attemptCount": 1,
             "errorCode": "write_failed",
-            "approval": { "required": false, "state": "not_required", "decidedAt": null },
+            "approval": {
+              "required": false,
+              "state": "not_required",
+              "decidedAt": null
+            },
             "pendingReason": null
           }
         }
@@ -458,10 +677,30 @@
     "input": {
       "valid": [
         {},
-        { "status": "pending_approval", "operation": "renew", "limit": 10 },
-        { "subjectId": "550e8400-e29b-41d4-a716-446655440002", "createdSince": "2026-10-01T00:00:00Z" }
+        {
+          "status": "pending_approval",
+          "operation": "renew",
+          "limit": 10
+        },
+        {
+          "subjectId": "550e8400-e29b-41d4-a716-446655440002",
+          "createdSince": "7d"
+        }
       ],
-      "invalid": [{ "status": "stuck" }, { "operation": "rm -rf" }, { "q": "free text" }]
+      "invalid": [
+        {
+          "status": "stuck"
+        },
+        {
+          "operation": "rm -rf"
+        },
+        {
+          "q": "free text"
+        },
+        {
+          "createdSince": "2026-10-01T00:00:00Z"
+        }
+      ]
     },
     "output": {
       "valid": [
@@ -480,21 +719,43 @@
               "needsOperatorReconciliation": false
             }
           ],
-          "completeness": { "returned": 1, "truncated": true, "nextCursor": "abc123", "totalKnown": false, "total": null }
+          "completeness": {
+            "returned": 1,
+            "truncated": true,
+            "nextCursor": "abc123",
+            "totalKnown": false,
+            "total": null
+          }
         }
       ],
       "invalid": [
         {
           "items": [],
-          "completeness": { "returned": 0, "truncated": false, "nextCursor": "has spaces and !", "totalKnown": true, "total": 0 }
+          "completeness": {
+            "returned": 0,
+            "truncated": false,
+            "nextCursor": "has spaces and !",
+            "totalKnown": true,
+            "total": 0
+          }
         }
       ]
     }
   },
   "tt_explain_certificate_state": {
     "input": {
-      "valid": [{ "identityId": "550e8400-e29b-41d4-a716-446655440002" }],
-      "invalid": [{}, { "identityId": "550e8400-e29b-41d4-a716-446655440002", "assumeHealthy": true }]
+      "valid": [
+        {
+          "identityId": "550e8400-e29b-41d4-a716-446655440002"
+        }
+      ],
+      "invalid": [
+        {},
+        {
+          "identityId": "550e8400-e29b-41d4-a716-446655440002",
+          "assumeHealthy": true
+        }
+      ]
     },
     "output": {
       "valid": [
@@ -510,10 +771,15 @@
               "severity": "blocking",
               "message": "The pinned agent cannot currently claim renewal work.",
               "evidenceAt": "2026-10-19T11:59:00Z",
-              "sourceRef": { "kind": "agent", "id": "550e8400-e29b-41d4-a716-446655440006" }
+              "sourceRef": {
+                "kind": "agent",
+                "id": "550e8400-e29b-41d4-a716-446655440006"
+              }
             }
           ],
-          "unknownAreas": ["observations"]
+          "unknownAreas": [
+            "observations"
+          ]
         }
       ],
       "invalid": [

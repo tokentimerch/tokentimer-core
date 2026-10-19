@@ -97,8 +97,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_output",
       "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/operator/certificates",
-      "routeStatus": "planned",
-      "backingService": "listCertificateIdentities"
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_get_certificate",
@@ -111,8 +110,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_output",
       "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/operator/certificates/:identityId",
-      "routeStatus": "planned",
-      "backingService": "listCertificateIdentities"
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_get_certificate_observations",
@@ -125,8 +123,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_output",
       "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/operator/certificates/:identityId/observations",
-      "routeStatus": "planned",
-      "backingService": "listCertificateIdentities"
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_get_agent_health",
@@ -139,8 +136,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_output",
       "sessionRouteMinRole": "workspace_manager",
       "route": "GET /api/v1/operator/agents",
-      "routeStatus": "planned",
-      "backingService": "listAgents"
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_get_job",
@@ -153,8 +149,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_job_output",
       "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/operator/jobs/:jobId",
-      "routeStatus": "planned",
-      "backingService": "getCertificateJob"
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_list_jobs",
@@ -167,8 +162,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_output",
       "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/operator/jobs",
-      "routeStatus": "planned",
-      "backingService": "listCertificateJobs"
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_explain_certificate_state",
@@ -181,8 +175,7 @@
       "output": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_output",
       "sessionRouteMinRole": "viewer",
       "route": "GET /api/v1/operator/certificates/:identityId/explain",
-      "routeStatus": "planned",
-      "backingService": "resolveRenewalPathForCertificate, explainAgentJobEligibility, jobPendingReason"
+      "routeStatus": "implemented"
     },
 
     { "name": "tt_search_assets", "scope": "mcp:assets:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
