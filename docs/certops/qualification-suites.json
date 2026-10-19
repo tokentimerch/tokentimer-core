@@ -53,6 +53,7 @@
       "adcs-real-ca-flags-both-ca-flags-unsafe-refused": "real-host",
       "adcs-real-late-approval-remains-expired": "real-host",
       "adcs-real-pending-restart-single-continuation": "real-host",
+      "adcs-real-deleted-request-bounded-reconciliation-preserves-key": "real-host",
       "adcs-real-pending-abandon-refused": "real-host",
       "adcs-real-installation-failure-audited-retry": "real-host",
       "adcs-real-ec256schema3-issued-cng-iis": "real-host",
@@ -230,6 +231,7 @@
       "adcs-real-ca-flags-both-ca-flags-unsafe-refused": "real-host",
       "adcs-real-late-approval-remains-expired": "real-host",
       "adcs-real-pending-restart-single-continuation": "real-host",
+      "adcs-real-deleted-request-bounded-reconciliation-preserves-key": "real-host",
       "adcs-real-pending-abandon-refused": "real-host",
       "adcs-real-installation-failure-audited-retry": "real-host",
       "adcs-real-ec256schema3-issued-cng-iis": "real-host",
@@ -355,7 +357,8 @@
       "adcs-orphan-recovery-api-approval-and-rbac": "integration",
       "adcs-orphan-recovery-api-terminal-refusal": "integration",
       "adcs-original-enrollment-api-requester-approval": "integration",
-      "adcs-recovery-api-worker-principal-refused": "integration"
+      "adcs-recovery-api-worker-principal-refused": "integration",
+      "adcs-uncertain-retrieve-api-bounded-reconciliation": "integration"
     },
     "adcs-enrollment-policy-api": {
       "adcs-policy-api-immutable-defaults": "integration",
@@ -637,6 +640,7 @@
       "adcs-real-ca-flags-both-ca-flags-unsafe-refused",
       "adcs-real-late-approval-remains-expired",
       "adcs-real-pending-restart-single-continuation",
+      "adcs-real-deleted-request-bounded-reconciliation-preserves-key",
       "adcs-real-pending-abandon-refused",
       "adcs-real-installation-failure-audited-retry",
       "adcs-real-ec256schema3-issued-cng-iis",
@@ -814,6 +818,7 @@
       "adcs-real-ca-flags-both-ca-flags-unsafe-refused",
       "adcs-real-late-approval-remains-expired",
       "adcs-real-pending-restart-single-continuation",
+      "adcs-real-deleted-request-bounded-reconciliation-preserves-key",
       "adcs-real-pending-abandon-refused",
       "adcs-real-installation-failure-audited-retry",
       "adcs-real-ec256schema3-issued-cng-iis",
@@ -939,7 +944,8 @@
       "adcs-orphan-recovery-api-approval-and-rbac",
       "adcs-orphan-recovery-api-terminal-refusal",
       "adcs-original-enrollment-api-requester-approval",
-      "adcs-recovery-api-worker-principal-refused"
+      "adcs-recovery-api-worker-principal-refused",
+      "adcs-uncertain-retrieve-api-bounded-reconciliation"
     ],
     "adcs-enrollment-policy-api": [
       "adcs-policy-api-immutable-defaults",

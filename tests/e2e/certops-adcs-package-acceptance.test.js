@@ -38,7 +38,7 @@ test("AD CS operator journey uses the verified package and documented installer"
   const runtime = JSON.parse(fs.readFileSync("C:\\ttqualification\\runtime.json", "utf8"));
   const artifact = JSON.parse(fs.readFileSync(runtime.agentPackageReceipt, "utf8"));
   assert.equal(artifact.candidateSha, process.env.GITHUB_SHA);
-  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-package-acceptance-"));
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "certops-domain-adcs-package-"));
   applyRestrictivePermissions(workDir, { kind: "directory" });
   const installedRoot = "C:\\ProgramData\\TokenTimerAgent", configDir = path.join(installedRoot, "state");
   assert.equal(fs.existsSync(installedRoot), false, "Refuse any pre-existing canonical installation");
@@ -59,9 +59,19 @@ test("AD CS operator journey uses the verified package and documented installer"
   const run = crypto.randomBytes(5).toString("hex"), site = `TTADCS-${run}-rsa2048`, domain = `certops-adcs-${run}-rsa2048.example.test`;
   const port = await new Promise(resolve => { const server = net.createServer(); server.listen(0, "127.0.0.1", () => { const value = server.address().port; server.close(() => resolve(value)); }); });
   const api = `/api/v1/workspaces/${fixture.workspaceId}/certops`;
-  let packageRoot, files, credential, installed = false, siteOwned = false, primary;
+  let packageRoot, files, credential, installed = false, siteOwned = false, primary, stage = "package-install";
   await gate.preflight();
   try {
+    await gate.scenario("adcs-package-native-server-language-and-system-identity",async()=>{
+      const version=process.env.CERTOPS_WINDOWS_VERSION,language=process.env.CERTOPS_WINDOWS_LANGUAGE;
+      assert.ok(["2019","2022","2025"].includes(version));assert.equal(runtime.windowsVersion,version);
+      assert.ok(["en-US","de-DE","fr-FR"].includes(language));
+      const native=JSON.parse(ps(`$os=Get-CimInstance Win32_OperatingSystem;@{build=[string]$os.BuildNumber;productType=[string]$os.ProductType;uiCulture=(Get-UICulture).Name;systemLocale=(Get-WinSystemLocale).Name;identitySid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;domain=(Get-CimInstance Win32_ComputerSystem).Domain;installedDisplayResources=[bool](Test-Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\MUI\\UILanguages\\${language}')}|ConvertTo-Json -Compress`));
+      assert.equal(native.build,{"2019":"17763","2022":"20348","2025":"26100"}[version]);assert.equal(native.productType,"3");
+      assert.equal(native.uiCulture,language);assert.equal(native.systemLocale,language);assert.equal(native.identitySid,"S-1-5-18");
+      assert.equal(native.domain,"lab.certops.test");assert.equal(native.installedDisplayResources,true);
+      gate.report.nativeEnvironment={...native,osFamily:"windows",windowsVersion:version,language,measurement:"native"};
+    });
     await gate.scenario("adcs-package-checksum-and-extraction", async () => {
       ({ root: packageRoot, files } = extractVerified({ tarball: runtime.agentPackage, expectedSha256: artifact.sha256, destination: path.join(workDir, "extracted") }));
     });
@@ -85,7 +95,7 @@ test("AD CS operator journey uses the verified package and documented installer"
       Object.assign(settings, { heartbeatIntervalMs: 5000, pollIntervalMs: 2000,
         windowsDiscovery: { enabled: true, intervalMs: 5000, stores: ["My"] }, declaredTargetSelectors: [domain],
         execution: { enabled: true, dryRun: true }, policy: { allowedPaths: [workDir], allowedCommands: {}, allowedCaEndpoints: [], allowedDnsZones: [], allowedDnsProviders: [] },
-        adcs: { enrollmentRules: [{ caConfig: "tt-ca.lab.certops.test\\TTQualificationRoot", template: "TTQualificationRSAShort", dnsScopes: ["example.test"], keyAlgorithms: ["rsa"], operatorAttested: false }] } });
+        adcs: { enrollmentRules: ["TTQualificationRSAShort","TTQualificationPending"].map(template=>({ caConfig: "tt-ca.lab.certops.test\\TTQualificationRoot", template, dnsScopes: ["example.test"], keyAlgorithms: ["rsa"], operatorAttested: false })) } });
       fs.writeFileSync(settingsFile, JSON.stringify(settings)); applyRestrictivePermissions(settingsFile);
       ps("Restart-Service TokenTimerAgent -Force");
       const created = await fixture.request(`${api}/jobs`, "POST", { operation: "noop", mode: "dry_run", assignedAgentId: agentRow.id });
@@ -97,26 +107,44 @@ test("AD CS operator journey uses the verified package and documented installer"
       ps("Restart-Service TokenTimerAgent -Force");
       assert.deepEqual(fs.readFileSync(path.join(configDir, "credential")), credential);
     });
+    stage = "existing-iis-certificate";
     // Existing IIS content is an operator prerequisite, not a fabricated managed
     // source. The agent must discover it before the browser can attach a profile.
     const seed = JSON.parse(ps(`Import-Module WebAdministration;$c=New-SelfSignedCertificate -DnsName '${domain}' -CertStoreLocation Cert:\\LocalMachine\\My -NotAfter (Get-Date).AddDays(1);New-Website -Name '${site}' -PhysicalPath '${workDir.replace(/'/g,"''")}' -Port ${port}|Out-Null;Remove-WebBinding -Name '${site}' -Protocol http;New-WebBinding -Name '${site}' -Protocol https -Port ${port} -HostHeader '${domain}' -SslFlags 1;(Get-WebBinding -Name '${site}' -Protocol https).AddSslCertificate($c.Thumbprint,'My');@{pem=[Convert]::ToBase64String($c.RawData);thumb=$c.Thumbprint}|ConvertTo-Json -Compress`));
     siteOwned = true;
     ownedThumbprints.add(seed.thumb);
-    const caDer = ps("$roots=@(Get-ChildItem Cert:\\LocalMachine\\Root|Where-Object {$_.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -eq 'TTQualificationRoot'});if($roots.Count -ne 1){throw 'Ambiguous owned CA root'};[Convert]::ToBase64String($roots[0].RawData)");
-    const ca = new crypto.X509Certificate(Buffer.from(caDer, "base64"));
-    const authority = { keySha256: crypto.createHash("sha256").update(ca.publicKey.export({ type: "spki", format: "der" })).digest("hex") };
+    // Domain trust can expose multiple same-name roots. Export the active CA
+    // certificate through its authenticated endpoint and match exact DER.
+    stage = "active-ca-trust";
+    const caFile = path.join(workDir, "active-ca.cer");
+    command("certutil.exe", ["-f", "-config", "tt-ca.lab.certops.test\\TTQualificationRoot", "-ca.cert", caFile]);
+    const ca = new crypto.X509Certificate(fs.readFileSync(caFile));
+    assert.equal(ca.ca, true); assert.equal(ca.verify(ca.publicKey), true);
+    const caDer = ca.raw.toString("base64"), caThumb = ca.fingerprint.replace(/:/g, "");
+    assert.equal(ps(`$roots=@(Get-ChildItem Cert:\\LocalMachine\\Root|Where-Object Thumbprint -eq '${caThumb}');if($roots.Count -lt 1){throw 'Active CA root is not trusted'};foreach($root in $roots){if([Convert]::ToBase64String($root.RawData) -ne '${caDer}'){throw 'Active CA trust bytes mismatch'}};'trusted-active-ca'`), "trusted-active-ca");
+    const authority = { keySha256: crypto.createHash("sha256").update(ca.publicKey.export({ type: "spki", format: "der" })).digest("hex"), certificateB64:caDer, thumbprintSha1:caThumb, notBefore:ca.validFrom, notAfter:ca.validTo };
+    stage = "browser-journey";
     await browserJourney.qualifyAdcsBrowserJourney({ gate, fixture: readonlyFixture, api, agentRowId: agentRow.id, configDir, workDir, run,
       renewalFixture: { item: { id: "rsa2048", domain }, site, port, authority }, until, workerDriven: true,
       jobFinished: id => until(async () => { const row = (await fixture.request(`${api}/jobs/${id}`)).body.job; assert.ok(!["failed", "rejected", "cancelled"].includes(row?.status)); return row?.status === "succeeded"; }),
       ps, command, tlsAuthority: () => [ca.toString(), new crypto.X509Certificate(Buffer.from(seed.pem, "base64")).toString()],
       ownedEnrollmentIds, ownedThumbprints, ownedBrowserResources, ownedBrowserPreflightJobIds, ownedTlsProbes });
+    stage = "manager-approved-worker-continuation";
+    await require("./helpers/certops-adcs-package-pending").qualifyPackagePending({gate,fixture:readonlyFixture,api,agentRowId:agentRow.id,configDir,domain,site,port,authority:ca,until,command,ownedEnrollmentIds,ownedThumbprints});
     await gate.scenario("adcs-package-service-restart-preserves-custody", async () => {
       ps("Restart-Service TokenTimerAgent -Force");
       assert.deepEqual(fs.readFileSync(path.join(configDir, "credential")), credential);
       verifyInstalled(files, path.join(installedRoot, "app"));
       assert.equal(ps("(Get-Service TokenTimerAgent).Status"), "Running");
     });
-  } catch (error) { primary = error; throw error; }
+  } catch (error) {
+    primary = error;
+    // Keep a bounded diagnostic even when strict finalization reports missing
+    // scenarios. Never persist arbitrary native output, URLs or error bodies.
+    gate.report.failureStage = stage;
+    gate.report.failureCode = /^[A-Z0-9_]{1,64}$/.test(error?.code || "") ? error.code : "UNCLASSIFIED";
+    throw error;
+  }
   finally {
     let cleanup = "passed";
     try {

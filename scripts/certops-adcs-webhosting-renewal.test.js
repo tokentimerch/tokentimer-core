@@ -220,3 +220,17 @@ test("capacity cleanup admits only exact six My identities with separate store o
     );
   }
 });
+
+test("WebHosting fixture persists its exact source and verifies trigger-created initial eligibility",async()=>{
+ const id="11111111-1111-4111-8111-111111111111",period="22222222-2222-4222-8222-222222222222",events=[];
+ const isolated={certificateId:id,domain:"certops-adcs-0123456789-webhosting.example.test",site:"TTAdcsWebHosting0123456789",port:8443};
+ const fixture={workspaceId:"workspace",request:async()=>{throw Error("New source must never call readd");},pool:{query:async(sql,values)=>{
+  if(sql.startsWith("INSERT")){events.push("source");assert.equal(values[0],id);assert.equal(values[1],"workspace");assert.equal(values[5],"winstore://WebHosting/TTAdcsWebHosting0123456789:8443");assert.equal(values[7],"agent");const target=JSON.parse(values[6]).issuance.target;assert.deepEqual(target,{type:"windows-iis",store:"WebHosting",binding:{site:isolated.site,port:8443,sniHost:isolated.domain}});return{rows:[{id}]};}
+  events.push("eligibility");assert.deepEqual(values,["workspace",id]);assert.match(sql,/certops_is_initial_provisioning/);assert.match(sql,/ended_at IS NULL/);return{rows:[{id:period,eligible:true}]};
+ }}};
+ assert.equal(await helper.provisionWebHostingSource({fixture,agentRowId:"agent",isolated}),id);assert.deepEqual(events,["source","eligibility"]);
+ for(const rows of [[],[{id:period,eligible:false}],[{id:period,eligible:true},{id:period,eligible:true}]]){
+  fixture.pool.query=async sql=>({rows:sql.startsWith("INSERT")?[{id}]:rows});
+  await assert.rejects(()=>helper.provisionWebHostingSource({fixture,agentRowId:"agent",isolated}));
+ }
+});

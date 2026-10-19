@@ -13,7 +13,7 @@ const { readEnrollmentJournal } = require("../../../packages/agent/src/issuers/a
 
 async function qualifyRecovery(context) {
   const { gate, fixture, api, agentRowId, configDir, serviceOwned, ps, command, until,
-    jobFinished, ownedCertificateIds, ownedEnrollmentIds, ownedThumbprints, workDir, tlsAuthority, pendingRecoveryFixtures } = context;
+    jobFinished, ownedCertificateIds, ownedEnrollmentIds, ownedThumbprints, workDir, tlsAuthority, pendingRecoveryFixtures, registerOwnedUnacceptedEnrollment } = context;
   assert.equal(process.platform, "win32"); assert.equal(serviceOwned, true);
   assert.equal(process.env.CERTOPS_ADCS_DISPOSABLE_LAB, "1");
   const scheduler = require("../../../apps/api/services/certops/certificateEnrollments");
@@ -45,7 +45,8 @@ async function qualifyRecovery(context) {
 
   await gate.scenario("adcs-real-pending-restart-single-continuation", async () => {
     const owned = pendingRecoveryFixtures.cancel; assert.ok(owned);
-    const certificateId = crypto.randomUUID(); ownedCertificateIds.push(certificateId);
+    const certificateId=await require("./certops-adcs-local-rules").provisionSurvivorSource({fixture,agentRowId,
+      domain:owned.item.domain,site:owned.site,port:owned.port,ownedCertificateIds});
     const created = await fixture.request(`${api}/enrollments`,"POST",{issuerId:owned.issuerId,certificateId,agentId:agentRowId,
       target:{type:"windows-iis",reference:owned.item.domain,store:"My",binding:{site:owned.site,port:owned.port,sniHost:owned.item.domain}},
       authorizedDnsNames:[owned.item.domain],keyAlgorithm:"rsa",keySize:2048}); assert.equal(created.status,201);
@@ -80,9 +81,60 @@ async function qualifyRecovery(context) {
     await jobFinished(cleaned.jobId); assert.equal((await getEnrollment(id)).state,"cancelled"); absent(owned.item,id,owned.site,owned.port);
   }, { evidenceLevel:"real-host", oracle:"actual SCM restart, persisted CSR/request identity, concurrent signed continuation and native CA request-count oracle" });
 
+  await gate.scenario("adcs-real-deleted-request-bounded-reconciliation-preserves-key", async () => {
+    const owned=pendingRecoveryFixtures.cancel;assert.ok(owned);
+    const certificateId=await require("./certops-adcs-local-rules").provisionSurvivorSource({fixture,agentRowId,
+      domain:owned.item.domain,site:owned.site,port:owned.port,ownedCertificateIds});
+    assert.equal(typeof registerOwnedUnacceptedEnrollment,"function");
+    const custodyReceipt=registerOwnedUnacceptedEnrollment({certificateId,domain:owned.item.domain});
+    const created=await fixture.request(`${api}/enrollments`,"POST",{issuerId:owned.issuerId,certificateId,agentId:agentRowId,
+      target:{type:"windows-iis",reference:owned.item.domain,store:"My",binding:{site:owned.site,port:owned.port,sniHost:owned.item.domain}},
+      authorizedDnsNames:[owned.item.domain],keyAlgorithm:"rsa",keySize:2048});assert.equal(created.status,201);
+    const id=created.body.enrollmentId;ownedEnrollmentIds.push(id);custodyReceipt.enrollmentIds.push(id);
+    const pending=await until(async()=>{const row=await getEnrollment(id);return row?.state==="pending_issuance"&&row.request_id?row:null;});
+    const original=readEnrollmentJournal(configDir,id);assert.equal(original.kind,"valid");
+    const native=observe(owned.item,pending.request_id);assert.equal(native.disposition,9);
+    command("powershell.exe",["-NoProfile","-NonInteractive","-File",path.resolve(__dirname,"../../../infra/certops-adcs/officer-action.ps1"),
+      "-RequestId",String(pending.request_id),"-Action","delete-pending","-CommonName",owned.item.domain]);
+    const removed=()=>JSON.parse(command("powershell.exe",["-NoProfile","-NonInteractive","-File",
+      path.resolve(__dirname,"../../../infra/certops-adcs/owned-request-observation.ps1"),"-CommonName",owned.item.domain,
+      "-RequestId",String(pending.request_id),"-AllowMissing"]));
+    const absence=removed();assert.equal(absence.requestAbsent,true);assert.equal(absence.subjectRequestCount,native.subjectRequestCount-1);
+    const continuation=(await scheduler.scheduleDueEnrollments({client:fixture.pool,now:new Date(new Date(pending.next_poll_at).getTime()+1000)})).find(row=>row.enrollmentId===id);assert.ok(continuation);
+    await until(async()=>{const row=(await fixture.pool.query("SELECT e.state,e.last_error_code,j.status FROM certificate_enrollments e JOIN certificate_jobs j ON j.id=e.current_job_id WHERE e.id=$1",[id])).rows[0];return row?.status==="failed"&&row.state==="pending_issuance"&&row.last_error_code==="ADCS_DISPOSITION_UNKNOWN";});
+    const keyPresent=()=>assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(original.journal.containerName));
+    keyPresent();assert.deepEqual(removed(),absence);
+    const stored=(await fixture.pool.query("SELECT pending_since,snapshot_bytes FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    const snapshot=JSON.parse(Buffer.from(stored.snapshot_bytes).toString("utf8"));
+    // Exercise the frozen policy through its supported scheduler clock; native CA/host clocks and rows stay untouched.
+    const deadline=new Date(new Date(stored.pending_since).getTime()+snapshot.pendingTimeout*1000);
+    assert.equal((await scheduler.scheduleDueEnrollments({client:fixture.pool,now:deadline})).filter(row=>row.enrollmentId===id).length,0);
+    const stopped=(await fixture.pool.query("SELECT state,request_id,next_poll_at,last_error_code FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    assert.equal(stopped.state,"submission_uncertain");assert.equal(stopped.next_poll_at,null);
+    assert.equal(stopped.last_error_code,"ADCS_RETRIEVAL_RECONCILIATION_REQUIRED");assert.equal(String(stopped.request_id),String(pending.request_id));
+    keyPresent();const preserved=readEnrollmentJournal(configDir,id);assert.equal(preserved.kind,"valid");
+    for(const field of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","requestId"])assert.equal(preserved.journal[field],original.journal[field]);
+    assert.equal((await fixture.request(`${api}/enrollments/${id}/reconcile`,"POST",{requestId:Number(pending.request_id)})).status,204);
+    const proposed=(await fixture.pool.query("SELECT operator_request_id,next_poll_at FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    assert.equal(String(proposed.operator_request_id),String(pending.request_id));assert.ok(proposed.next_poll_at);
+    const retry=(await scheduler.scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+1000)})).find(row=>row.enrollmentId===id);assert.ok(retry);
+    await until(async()=>{const row=(await fixture.pool.query("SELECT e.state,e.last_error_code,j.status FROM certificate_enrollments e JOIN certificate_jobs j ON j.id=e.current_job_id WHERE e.id=$1",[id])).rows[0];return row?.status==="failed"&&row.state==="pending_issuance"&&row.last_error_code==="ADCS_DISPOSITION_UNKNOWN";});
+    keyPresent();assert.deepEqual(removed(),absence);
+    await scheduler.scheduleDueEnrollments({client:fixture.pool,now:deadline});
+    assert.equal((await getEnrollment(id)).state,"submission_uncertain");
+    // Explicit operator abandonment is distinct from automatic HRESULT-based deletion.
+    assert.equal((await fixture.request(`${api}/enrollments/${id}/abandon`,"POST",{})).status,204);
+    const cleanup=(await scheduler.scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+1000)})).find(row=>row.enrollmentId===id);assert.ok(cleanup);await jobFinished(cleanup.jobId);
+    absent(owned.item,id,owned.site,owned.port);assert.deepEqual(removed(),absence);
+    gate.report.nativeDeletedRequest={requestId:String(pending.request_id),nativeRowDeletionObserved:true,uncertainRetrieveObserved:true,
+      boundedReconciliation:true,policySeconds:snapshot.pendingTimeout,schedulerClock:"supported-now-input",hostAndCaClocks:"actual",
+      keyPreservedUntilExplicitAbandon:true,frozenIdentityPreserved:true,operatorReconcileAccepted:true,noResubmission:true,explicitAbandonCleanup:true};
+  },{evidenceLevel:"real-host",oracle:"exact owned pending CA row deletion, real native uncertain retrieve, frozen deadline, protected key retention and public reconcile/abandon"});
+
   await gate.scenario("adcs-real-installation-failure-audited-retry", async () => {
     const owned=pendingRecoveryFixtures.cancel; assert.ok(owned);
-    const certificateId=crypto.randomUUID(); ownedCertificateIds.push(certificateId);
+    const certificateId=await require("./certops-adcs-local-rules").provisionSurvivorSource({fixture,agentRowId,
+      domain:owned.item.domain,site:owned.site,port:owned.port,ownedCertificateIds});
     const created=await fixture.request(`${api}/enrollments`,"POST",{issuerId:owned.issuerId,certificateId,agentId:agentRowId,
       target:{type:"windows-iis",reference:owned.item.domain,store:"My",binding:{site:owned.site,port:owned.port,sniHost:owned.item.domain}},
       authorizedDnsNames:[owned.item.domain],keyAlgorithm:"rsa",keySize:2048});assert.equal(created.status,201);

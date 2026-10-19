@@ -124,6 +124,18 @@ beforeEach(() => {
 });
 
 describe('CertOpsAdcs', () => {
+  it('shows the exact installed enrollment and its status together after Show finished', async () => {
+    isAdminMock.mockReturnValue(true);
+    const id='a24bf631-19c7-4257-918f-e84e22d79b41';
+    listEnrollmentsMock.mockResolvedValue({items:[{id,state:'installed',requestId:42}]});
+    renderPage();
+    const checkbox=await screen.findByRole('checkbox',{name:/^Show finished/});
+    expect(screen.queryByText(id.slice(0,8),{exact:true})).not.toBeInTheDocument();
+    fireEvent.click(checkbox.closest('label'));
+    const marker=await screen.findByText(id.slice(0,8),{exact:true});
+    expect(marker.parentElement).toHaveTextContent('Installed');
+    expect(checkbox).toBeChecked();
+  });
   it('hides issuer management from a non-admin', () => {
     isAdminMock.mockReturnValue(false);
 

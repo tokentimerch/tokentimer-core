@@ -228,6 +228,7 @@ describe("resultForAdcsOutcome", () => {
       attempt: 1,
       state: "pending_issuance",
       requestId: 4242,
+      errorCode: "ADCS_DISPOSITION_UNKNOWN",
     });
   });
 });

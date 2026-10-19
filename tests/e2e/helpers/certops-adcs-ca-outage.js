@@ -28,7 +28,7 @@ async function qualifyCaOutage({ gate, fixture, api, agentRowId, configDir, run,
     // serving a real accepted certificate. A new pending enrollment must not
     // disturb that still-working binding when the CA becomes unavailable.
     const previousLeaf = await served();
-    const certificateId = crypto.randomUUID(); ownedCertificateIds.push(certificateId);
+    const certificateId = await require("./certops-adcs-local-rules").provisionSurvivorSource({ fixture, agentRowId, domain: owned.item.domain, site: owned.site, port: owned.port, ownedCertificateIds });
     const created = await fixture.request(`${api}/enrollments`, "POST", { issuerId: owned.issuerId, certificateId, agentId: agentRowId,
       target: { type: "windows-iis", reference: owned.item.domain, store: "My", binding: { site: owned.site, port: owned.port, sniHost: owned.item.domain } },
       authorizedDnsNames: [owned.item.domain], keyAlgorithm: "rsa", keySize: 2048 }); assert.equal(created.status, 201);

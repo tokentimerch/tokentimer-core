@@ -237,3 +237,18 @@ test("later primary leaves require parent IDs and exact durable accepted store o
     ),
   );
 });
+
+test("Compose deployment proof rejects one-shot, restarted, stale and undrained workers",()=>{
+  const {verify}=require("./certops-adcs-worker-deployment-report");
+  const candidate="a".repeat(40);
+  const valid={candidateSha:candidate,containerId:"b".repeat(64),entrypoint:"src/runner.js certops",defaultCron:true,scheduledMaintenanceObserved:true,scheduledStarts:2,scheduledFinishes:2,exitCode:0,nativeDrained:true,status:"passed"};
+  assert.equal(verify(valid,candidate),true);
+  for(const patch of [{candidateSha:"c".repeat(40)},{entrypoint:"src/certops-worker.js"},{defaultCron:false},{scheduledMaintenanceObserved:false},{scheduledStarts:0,scheduledFinishes:0},{scheduledFinishes:1},{exitCode:137},{nativeDrained:false},{status:"running"},{containerId:"foreign"}]) assert.throws(()=>verify({...valid,...patch},candidate));
+});
+
+test("package pending acceptance needs a distinct claimed continuation after actual approval",()=>{
+  const {verifyProof}=require("../tests/e2e/helpers/certops-adcs-package-pending");
+  const proof={enrollmentId:"11111111-1111-1111-1111-111111111111",initialJobId:"22222222-2222-2222-2222-222222222222",continuationJobId:"33333333-3333-3333-3333-333333333333",requestId:"17",scheduler:"deployed-production-runner",pollIntervalSeconds:60,actualManagerApproval:true,claimBoundContinuation:true,originalCsrKeyAndSnapshotPreserved:true,trustedIisCutover:true,noSchedulerOrClockOverride:true};
+  assert.equal(verifyProof(proof),true);
+  for(const patch of [{continuationJobId:proof.initialJobId},{scheduler:"manual-sweep"},{actualManagerApproval:false},{claimBoundContinuation:false},{originalCsrKeyAndSnapshotPreserved:false},{trustedIisCutover:false},{noSchedulerOrClockOverride:false},{requestId:"4294967296"}])assert.throws(()=>verifyProof({...proof,...patch}));
+});

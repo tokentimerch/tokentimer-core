@@ -204,7 +204,14 @@ function decideContinuation(enrollment, snapshot, now) {
   if (enrollment.activeJob) return null;
   if (enrollment.state === "pending_issuance" && enrollment.pendingSince) {
     const deadline = enrollment.pendingSince.getTime() + snapshot.pendingTimeout * 1000;
-    if (now.getTime() >= deadline) return { state: "expired", reason: "pending_timeout" };
+    if (now.getTime() >= deadline) {
+      // Unclassified retrieval is not proof that the CA can no longer issue.
+      // Stop polling at the frozen deadline without dispatching key destruction.
+      if (enrollment.lastErrorCode === "ADCS_DISPOSITION_UNKNOWN") {
+        return { state: "submission_uncertain", reason: "retrieve_reconciliation" };
+      }
+      return { state: "expired", reason: "pending_timeout" };
+    }
   }
   if (enrollment.nextPollAt && enrollment.nextPollAt.getTime() > now.getTime()) return null;
   if (enrollment.state === "installing") return { dispatch: true, reason: "resume_installation" };

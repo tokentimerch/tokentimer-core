@@ -125,15 +125,21 @@ function verifyProof(proof, { workerDriven = false } = {}) {
   assert.ok(Number(proof.requestId) <= 0xffffffff);
   return true;
 }
-function currentAuthorityGroup(certificates, expectedKey) {
+function currentAuthorityGroup(certificates, expectedKey, nativeAuthority) {
   assert.match(expectedKey,/^[a-f0-9]{64}$/i);
+  // Issuer-list metadata deliberately omits DER. Verify the independently
+  // observed native CA, then locate its key group using the public UI metadata.
+  assert.equal(typeof nativeAuthority?.certificateB64,"string");
+  const der=Buffer.from(nativeAuthority.certificateB64,"base64"),ca=new crypto.X509Certificate(der);
+  assert.equal(ca.ca,true,"Independent native authority must be a CA certificate");
+  assert.equal(crypto.createHash("sha256").update(ca.publicKey.export({type:"spki",format:"der"})).digest("hex"),expectedKey.toLowerCase());
+  const nativeThumbprint=crypto.createHash("sha1").update(der).digest("hex");
   const group=certificates.filter(value=>value.keySha256===expectedKey).sort((a,b)=>(Date.parse(b.notBefore)||0)-(Date.parse(a.notBefore)||0));
   assert.ok(group.length,"Native preflight must contain the independently current CA key");
+  assert.ok(group.some(value=>typeof value.thumbprintSha1==="string" && value.thumbprintSha1.toLowerCase()===nativeThumbprint),"Public CA group must include the independently observed native certificate");
   const certificate=group.find(value=>value.thumbprintSha1);
   assert.ok(certificate,"Current native CA group needs its visible public certificate fingerprint");
   assert.match(certificate.thumbprintSha1,/^[a-f0-9]{40}$/i);
-  const der=Buffer.from(certificate.certificateB64,"base64");
-  assert.equal(crypto.createHash("sha1").update(der).digest("hex"),certificate.thumbprintSha1.toLowerCase());
   return certificate;
 }
 function createOwnedBrowserResource({ getServer, receipt, removeTrust }) {
@@ -342,7 +348,7 @@ async function qualifyAdcsBrowserJourney(context) {
     mutations++;
     return response;
   }
-  const peer = () => probes.observe({host:"127.0.0.1",port,servername:item.domain,ca:preflight.caCertificates.flatMap(value=>[tlsAuthority(value)].flat()),rejectUnauthorized:true}, socket => {
+  const peer = () => probes.observe({host:"127.0.0.1",port,servername:item.domain,ca:[tlsAuthority(renewalFixture.authority)].flat(),rejectUnauthorized:true}, socket => {
     assert.equal(socket.authorized,true);
     const cert=new crypto.X509Certificate(socket.getPeerCertificate().raw);
     assert.equal(cert.checkHost(item.domain),item.domain);
@@ -487,7 +493,7 @@ async function qualifyAdcsBrowserJourney(context) {
       REQUIRED_SCENARIOS[1],
       async () => {
         stage = "browser-ca-confirmation";
-        const expectedAuthority=currentAuthorityGroup(preflight.caCertificates,renewalFixture.authority.keySha256);
+        const expectedAuthority=currentAuthorityGroup(preflight.caCertificates,renewalFixture.authority.keySha256,renewalFixture.authority);
         // Each UI HStack contains one visible SHA1 label and its own confirmation
         // button. Select that known current key group, regardless of date/order.
         const currentRow=page.getByRole("dialog").getByText(new RegExp(`^${expectedAuthority.thumbprintSha1}(?: ·|$)`)).locator("xpath=../..");
@@ -517,12 +523,11 @@ async function qualifyAdcsBrowserJourney(context) {
         // or after confirmation. Use the existing Check again UI; never backdate
         // evidence or weaken the scheduler's freshness gate.
         const issuerName = `Browser native issuer ${run}`;
-        await page
-          .getByRole("button", { name: `Expand ${issuerName}`, exact: true })
-          .click();
-        const card = page
-          .getByRole("button", { name: `Collapse ${issuerName}`, exact: true })
-          .locator("xpath=..");
+        // The page automatically opens its first issuer after confirmation.
+        const toggle = page.getByRole("button", { name: new RegExp(`^(?:Expand|Collapse) ${issuerName}$`) });
+        await toggle.waitFor();
+        if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+        const card = toggle.locator("xpath=..");
         await card
           .getByRole("button", { name: "Check again", exact: true })
           .click();
@@ -824,13 +829,21 @@ async function qualifyAdcsBrowserJourney(context) {
         stage = "browser-installed-visibility";
         await page.reload();
         await openDisclosure("certops-adcs-section");
-        await page.getByRole("checkbox", { name: /^Show finished/ }).check();
+        stage="browser-installed-finished-toggle";
+        const showFinished=page.getByRole("checkbox", { name: /^Show finished/ });
+        // Chakra visually hides its input. Click the visible associated label,
+        // just as an operator does, then verify the actual control state.
+        if(!await showFinished.isChecked())await showFinished.locator("xpath=ancestor::label[1]").click();
+        assert.equal(await showFinished.isChecked(),true);
+        stage="browser-installed-id-marker";
         const marker = page.getByText(enrollment.id.slice(0, 8), {
           exact: true,
         });
         await marker.waitFor();
+        stage="browser-installed-state-badge";
         const card = marker.locator("xpath=..");
         assert.ok((await card.innerText()).includes("Installed"));
+        stage="browser-installed-api-agreement";
         const list = await fixture.request(`${api}/enrollments?limit=100`);
         assert.equal(list.status, 200);
         assert.equal(
@@ -861,6 +874,9 @@ async function qualifyAdcsBrowserJourney(context) {
     const code = /^[A-Z0-9_]{1,64}$/.test(error?.code || "")
       ? error.code
       : "UNCLASSIFIED";
+    const errorClass=["Error","AssertionError","TypeError","TimeoutError","RangeError"].includes(error?.constructor?.name)?error.constructor.name:"Error";
+    gate.report.nativeBrowserFailure = { stage, code, errorClass };
+    if ([200, 201, 204].includes(error?.expected) && Number.isInteger(error?.actual) && error.actual >= 100 && error.actual <= 599) gate.report.nativeBrowserFailure.httpStatus = error.actual;
     primary = new Error(
       `Native AD CS browser journey failed at ${stage} (${code})`,
     );

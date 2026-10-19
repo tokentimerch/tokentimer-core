@@ -122,6 +122,26 @@ describe("CertOps AD CS enrollments (real database)", function () {
     assert.equal(job.rows[0].eligible, true);
   });
 
+  it("WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",async()=>{
+    const assert=require("node:assert/strict");
+    const {provisionWebHostingSource}=require("../e2e/helpers/certops-adcs-webhosting-renewal");
+    const certificateId=crypto.randomUUID(),domain="certops-adcs-0123456789-webhosting.example.test",site="TTAdcsWebHosting0123456789",port=8443;
+    await provisionWebHostingSource({fixture:{workspaceId,pool},agentRowId,isolated:{certificateId,domain,site,port}});
+    const periods=await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId]);
+    assert.equal(periods.rows.length,1);
+    await assert.rejects(()=>pool.query("INSERT INTO certops_management_periods(workspace_id,managed_certificate_id) VALUES($1,$2)",[workspaceId,certificateId]),error=>error.code==="23505"&&error.constraint==="uq_certops_open_management_period");
+    const source=(await pool.query("SELECT key_reference,public_metadata FROM managed_certificates WHERE workspace_id=$1 AND id=$2",[workspaceId,certificateId])).rows[0];
+    assert.equal(source.key_reference,`winstore://WebHosting/${site}:${port}`);assert.equal(source.public_metadata.issuance.target.store,"WebHosting");
+    const enrollment=await createEnrollment(enrollmentInput({certificateId,authorizedDnsNames:[domain],target:{type:"windows-iis",reference:domain,store:"WebHosting",binding:{site,port,sniHost:domain}}}));
+    const {claimJobs,_test:dispatchCaps}=require("../../apps/api/services/certops/agentDispatch");
+    await pool.query("UPDATE certops_agents SET agent_version='0.18.0',declared_capabilities=$2::jsonb,capabilities_updated_at=NOW(),declared_target_selectors=$3::jsonb WHERE id=$1",[agentRowId,JSON.stringify(["adcs-enroll-v1",dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]),JSON.stringify([domain])]);
+    const agent=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
+    const claimed=await claimJobs({dbPool:pool,agent:{id:agentRowId,workspaceId,agentId:agent.agent_id,agentVersion:"0.18.0",protocolVersion:"1.0.0",status:"active"},envelope:{agentId:agent.agent_id,protocolVersion:"1.0.0"},body:{supportedActions:["renew"],maxJobs:16},deps:{enforceAgentSequence:async()=>({sequence:1}),signJobForDispatch:async({job,envelopeVersion})=>({...job,envelopeVersion})}});
+    assert.ok(claimed.jobs.some(job=>String(job.id??job.jobId)===enrollment.jobId));
+    const job=(await pool.query("SELECT status,claim_id,subject_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[workspaceId,enrollment.jobId])).rows[0];
+    assert.equal(job.status,"claimed");assert.ok(job.claim_id);assert.equal(job.subject_id,certificateId);
+  });
+
   function enrollmentInput(overrides = {}) {
     return {
       client: pool,
@@ -223,6 +243,26 @@ describe("CertOps AD CS enrollments (real database)", function () {
     } finally {
       client.release();
     }
+  });
+
+  it("stops uncertain retrieval at the frozen deadline without a cleanup job", async () => {
+    await assertNoForeignDueRows();
+    const id = await insertEnrollment("pending_issuance", {nextPollAt: new Date(Date.now()-1000)});
+    await TestUtils.execQuery(`UPDATE certificate_enrollments SET request_id=4242,
+      pending_since=NOW()-INTERVAL '15 days', last_error_code='ADCS_DISPOSITION_UNKNOWN' WHERE id=$1`,[id]);
+    const created = await scheduleDueEnrollments({client:pool,createJob:async()=>{throw new Error("Must preserve uncertain key");}});
+    expect(created.filter(row=>row.enrollmentId===id)).to.have.length(0);
+    const row=(await TestUtils.execQuery("SELECT state,request_id,next_poll_at,last_error_code,operator_request_id FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    expect(row.state).to.equal("submission_uncertain");expect(String(row.request_id)).to.equal("4242");
+    expect(row.last_error_code).to.equal("ADCS_RETRIEVAL_RECONCILIATION_REQUIRED");
+    expect(row.next_poll_at).to.equal(null);expect(row.operator_request_id).to.equal(null);
+    const audit=await TestUtils.execQuery("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND metadata->>'enrollmentId'=$2",[workspaceId,id]);
+    expect(audit.rows.some(value=>value.metadata.reason==='pending_timeout_after_uncertain_retrieve' && String(value.metadata.requestId)==='4242')).to.equal(true);
+    // Real public-service reconciliation remains possible after polling stops.
+    await require("../../apps/api/services/certops/certificateEnrollments").proposeReconcileRequestId({client:pool,workspaceId,enrollmentId:id,requestId:4242,actorUserId:ownerId});
+    const proposed=(await TestUtils.execQuery("SELECT operator_request_id,next_poll_at FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    expect(String(proposed.operator_request_id)).to.equal("4242");expect(proposed.next_poll_at).to.be.instanceOf(Date);
+    await TestUtils.execQuery("DELETE FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[workspaceId,id]);
   });
 
   it("rolls back the enrollment when creating the first job fails", async () => {

@@ -188,6 +188,20 @@ describe("AD CS enrollment lifecycle", () => {
     );
   });
 
+  it("bounds uncertain retrieval without expiring a possibly issuable key", () => {
+    const now = new Date("2026-10-11T12:00:00Z");
+    const enrollment = {state: "pending_issuance", pendingSince: new Date(now.getTime()-3600000),
+      nextPollAt: new Date(now.getTime()-1000), activeJob: false, lastErrorCode: "ADCS_DISPOSITION_UNKNOWN"};
+    const snapshot = {pendingTimeout: 3600, pollInterval: 900};
+    assert.deepEqual(decideContinuation(enrollment, snapshot, now),
+      {state: "submission_uncertain", reason: "retrieve_reconciliation"});
+    assert.deepEqual(decideContinuation(enrollment, snapshot, new Date(now.getTime()-1)),
+      {dispatch: true, reason: "poll"});
+    assert.equal(decideContinuation({...enrollment,activeJob:true},snapshot,now),null);
+    assert.deepEqual(decideContinuation({...enrollment,lastErrorCode:null},snapshot,now),
+      {state:"expired",reason:"pending_timeout"});
+  });
+
   it("does not dispatch a blind resubmit for submission_uncertain without a RequestId", () => {
     const now = new Date("2026-10-11T12:00:00.000Z");
     const snapshot = { pollInterval: 900, pendingTimeout: 3600 };

@@ -12,7 +12,7 @@ const {createApiFixture}=require("./helpers/certops-api-fixture");
 const {createHostGate}=require("../../packages/agent/scripts/host-gate");
 const {freezeSnapshot}=require("../../apps/api/services/certops/enrollmentLifecycle");
 const required=["adcs-install-retry-api-boundaries","adcs-install-retry-api-concurrent-provenance","adcs-install-retry-api-approval-policy",
-  "adcs-orphan-recovery-api-acknowledgement","adcs-orphan-recovery-api-concurrent-provenance","adcs-orphan-recovery-api-approval-and-rbac","adcs-orphan-recovery-api-terminal-refusal","adcs-install-retry-api-cleanup","adcs-original-enrollment-api-requester-approval","adcs-recovery-api-worker-principal-refused"];
+  "adcs-orphan-recovery-api-acknowledgement","adcs-orphan-recovery-api-concurrent-provenance","adcs-orphan-recovery-api-approval-and-rbac","adcs-orphan-recovery-api-terminal-refusal","adcs-install-retry-api-cleanup","adcs-original-enrollment-api-requester-approval","adcs-recovery-api-worker-principal-refused","adcs-uncertain-retrieve-api-bounded-reconciliation"];
 test("AD CS installation retry through real API and PostgreSQL",{timeout:120000},async t=>{
   const url=process.env.CERTOPS_CSR_API_URL;
   if(!url&&process.env.CERTOPS_E2E_REQUIRED!=="1"){
@@ -60,6 +60,26 @@ test("AD CS installation retry through real API and PostgreSQL",{timeout:120000}
         assert.equal(job.operation,"renew");assert.equal(job.source,"api");assert.equal(job.status,"pending_approval");assert.equal(String(job.requested_by_user_id),String(fixture.userId));
         const refused=await fixture.request(`${api}/jobs/${admitted.body.jobId}/approve`,"POST",{});assert.ok(refused.status>=400,"Original enrollment requester must not approve their own job");
       }finally{await fixture.pool.query("UPDATE workspaces SET certops_require_approval_always=false WHERE id=$1",[fixture.workspaceId]);}
+    });
+    await gate.scenario(required[10],async()=>{
+      const row=await failedEnrollment();
+      await fixture.pool.query(`UPDATE certificate_enrollments SET state='pending_issuance',
+        pending_since=NOW()-INTERVAL '15 days',next_poll_at=NOW()-INTERVAL '1 second',
+        last_error_code='ADCS_DISPOSITION_UNKNOWN' WHERE id=$1`,[row.id]);
+      const service=require("../../apps/api/services/certops/certificateEnrollments");
+      const before=Number((await fixture.pool.query("SELECT count(*)::int n FROM certificate_jobs WHERE enrollment_id=$1",[row.id])).rows[0].n);
+      await service.scheduleDueEnrollments({client:fixture.pool});
+      const listed=await fixture.request(`${api}/enrollments`,"GET");assert.equal(listed.status,200);
+      const visible=listed.body.items.find(value=>value.id===row.id);assert.ok(visible);
+      assert.equal(visible.state,"submission_uncertain");assert.equal(visible.lastErrorCode,"ADCS_RETRIEVAL_RECONCILIATION_REQUIRED");
+      assert.equal(String(visible.requestId),"42");
+      const audit=(await fixture.pool.query("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_ENROLLMENT_RETRIEVAL_RECONCILIATION_REQUIRED' AND metadata->>'enrollmentId'=$2",[fixture.workspaceId,row.id])).rows;
+      assert.equal(audit.length,1);assert.equal(String(audit[0].metadata.requestId),"42");
+      assert.equal(Number((await fixture.pool.query("SELECT count(*)::int n FROM certificate_jobs WHERE enrollment_id=$1",[row.id])).rows[0].n),before);
+      assert.equal((await fixture.request(`${api}/enrollments/${row.id}/reconcile`,"POST",{requestId:42})).status,204);
+      const proposed=(await fixture.pool.query("SELECT operator_request_id,next_poll_at FROM certificate_enrollments WHERE id=$1",[row.id])).rows[0];
+      assert.equal(String(proposed.operator_request_id),"42");assert.ok(proposed.next_poll_at);
+      assert.equal((await fixture.request(`${api}/enrollments/${row.id}/abandon`,"POST",{})).status,204);
     });
     await gate.scenario(required[0],async()=>{
       const row=await failedEnrollment();const route=`${api}/enrollments/${row.id}/retry-installation`;
@@ -129,7 +149,8 @@ test("AD CS installation retry through real API and PostgreSQL",{timeout:120000}
       assert.equal(Number((await fixture.pool.query("SELECT count(*)::int AS n FROM certificate_jobs WHERE enrollment_id=$1",[orphan.id])).rows[0].n),1);
     });
   }catch(error){primaryError=error;throw error;}finally{
-    try{await gate.scenario(required[7],async()=>{for(const id of seed)await fixture.pool.query("DELETE FROM certificate_jobs WHERE enrollment_id=$1",[id]);await fixture.cleanup();});await gate.finish({requiredScenarios:required});}
+    try{await gate.scenario(required[7],async()=>{for(const id of seed)await fixture.pool.query("DELETE FROM certificate_jobs WHERE enrollment_id=$1",[id]);await fixture.cleanup();});await gate.finish({requiredScenarios:required});
+      assert.deepEqual(require("../../scripts/certops-qualification-report").verifyReport(gate.report),[],"Completed API report must satisfy the committed collector contract");}
     catch(error){if(primaryError)throw new AggregateError([primaryError,error],"Recovery API fixture and finalization failed");throw error;}
   }
 });

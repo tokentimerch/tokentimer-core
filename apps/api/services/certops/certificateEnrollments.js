@@ -458,7 +458,7 @@ async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = 
   const result = await db.query(
     `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
-            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
+            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id, e.request_id,
             e.deploy_target, j.status AS job_status
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
@@ -937,6 +937,17 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
       const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
       const decision = decideContinuation(view, snapshot, now);
       if (!decision) return null;
+      if (decision.reason === "retrieve_reconciliation") {
+        if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
+        await tx.query(`UPDATE certificate_enrollments
+          SET state = 'submission_uncertain', last_error_code = 'ADCS_RETRIEVAL_RECONCILIATION_REQUIRED',
+              operator_request_id = NULL, next_poll_at = NULL, updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2`, [row.workspace_id, row.id]);
+        await writeAudit({client: tx, workspaceId: row.workspace_id, actorUserId: null, subjectUserId: null,
+          action: "CERTOPS_ENROLLMENT_RETRIEVAL_RECONCILIATION_REQUIRED", targetType: "certificate_enrollment",
+          metadata: {enrollmentId: row.id, requestId: row.request_id, reason: "pending_timeout_after_uncertain_retrieve"}});
+        return null;
+      }
       if (!decision.dispatch && decision.state !== "expired") return null;
       const target = row.deploy_target;
       if (!target || target.type !== "windows-iis") {
