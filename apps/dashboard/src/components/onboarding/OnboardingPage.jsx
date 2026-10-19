@@ -389,6 +389,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                 align='flex-start'
               >
                 <DashboardPanel
+                  as='aside'
+                  aria-label='Setup progress'
                   w={{ base: 'full', lg: '320px' }}
                   flexShrink={0}
                 >
@@ -411,7 +413,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                     continue on any device.
                   </Text>
                 </DashboardPanel>
-                <Box flex='1' minW={0} w='full'>
+                <Box as='main' flex='1' minW={0} w='full'>
                   {plan.complete ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
