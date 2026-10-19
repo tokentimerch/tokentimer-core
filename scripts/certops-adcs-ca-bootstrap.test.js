@@ -103,13 +103,20 @@ Write-Output 'ACTUAL_PREFLIGHT_DEADLINE_PASSED'
 
 test("CA process watchdog bounds a stalled worker independently of PowerShell jobs",t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"adcs-ca-process-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
- const wrapper=path.join(dir,"probe.ps1"),child=path.join(dir,"child.ps1");
+ const wrapper=path.join(dir,"probe.ps1"),child=path.join(dir,"worker-é.ps1");
  fs.writeFileSync(child,"param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)\nStart-Sleep -Seconds 60");
  fs.writeFileSync(wrapper,String.raw`
 $ErrorActionPreference='Stop'
 $ast=[Management.Automation.Language.Parser]::ParseFile($env:CA_PRODUCTION,[ref]$null,[ref]$null)
 $d=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-CaBootstrapProcess'},$true)
-. ([scriptblock]::Create($d.Extent.Text))
+# Reproduce hosted Windows: the writer emits UTF-8 BOM while Console.In in
+# the fresh worker uses an OEM code page. A binary stream reader must detect it.
+$definition=$d.Extent.Text
+if($env:OS -eq 'Windows_NT'){
+ [Console]::InputEncoding=[Text.UTF8Encoding]::new($true)
+ $definition=$definition.Replace('$ErrorActionPreference="Stop"; $phase=', '[Console]::InputEncoding=[Text.Encoding]::GetEncoding(437); $ErrorActionPreference="Stop"; $phase=')
+}
+. ([scriptblock]::Create($definition))
 $clock=[Diagnostics.Stopwatch]::StartNew();$failed=$false
 try{Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 1 -GraceSeconds 0}catch [TimeoutException]{$failed=$true}
 if(-not $failed -or $clock.Elapsed.TotalSeconds -gt 10){throw 'Worker escaped process deadline'}

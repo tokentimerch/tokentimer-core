@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Role,[int]$Seconds,[int]$GraceSeconds=30){
  $start=[Diagnostics.ProcessStartInfo]::new()
  $start.FileName=Join-Path $PSHOME $(if($env:OS -eq 'Windows_NT'){'powershell.exe'}else{'pwsh'})
- $command='$ErrorActionPreference="Stop"; $phase="input"; try {$raw=[Console]::In.ReadToEnd(); $phase="json"; $p=$raw|ConvertFrom-Json; $raw=$null; $phase="worker"; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker; exit 0} catch {$kind=$_.Exception.GetType().Name; if($kind -cnotmatch "^[A-Za-z][A-Za-z0-9]{0,79}$"){$kind="Exception"}; [Console]::Out.WriteLine("CERTOPS_CA_PROCESS_ERROR="+$phase+":"+$kind+":"+$_.Exception.HResult); if($phase -eq "json" -and $raw.Length -gt 0){[Console]::Out.WriteLine("CERTOPS_CA_INPUT_PREFIX="+[int][char]$raw[0])}; exit 1}'
+ $command='$ErrorActionPreference="Stop"; $phase="input"; try {$reader=[IO.StreamReader]::new([Console]::OpenStandardInput(),[Text.Encoding]::UTF8,$true); $raw=$reader.ReadToEnd(); $phase="json"; $p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw))|ConvertFrom-Json; $raw=$null; $phase="worker"; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker; exit 0} catch {$kind=$_.Exception.GetType().Name; if($kind -cnotmatch "^[A-Za-z][A-Za-z0-9]{0,79}$"){$kind="Exception"}; [Console]::Out.WriteLine("CERTOPS_CA_PROCESS_ERROR="+$phase+":"+$kind+":"+$_.Exception.HResult); exit 1}'
  $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
  $start.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '+$encoded
  $start.UseShellExecute=$false;$start.CreateNoWindow=$true
@@ -21,7 +21,11 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
   $null=$process.Start();$started=$true
   $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
   # The temporary forest password goes through a pipe, never command arguments.
-  $process.StandardInput.WriteLine((@{Script=$Script;Password=$Password;Role=$Role;Seconds=$Seconds}|ConvertTo-Json -Compress))
+  # ASCII framing survives OEM writers; the worker detects a UTF-8/UTF-16 BOM
+  # on the binary pipe before decoding the UTF-8 JSON, including Unicode paths.
+  $json=@{Script=$Script;Password=$Password;Role=$Role;Seconds=$Seconds}|ConvertTo-Json -Compress
+  $process.StandardInput.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)))
+  $json=$null
   $process.StandardInput.Close()
   if(-not $process.WaitForExit(($Seconds+$GraceSeconds)*1000)){
    $process.Kill();$null=$process.WaitForExit(5000)
@@ -36,8 +40,6 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
    $kind='Unknown'
    $match=[regex]::Match($output,'(?m)^CERTOPS_CA_PROCESS_ERROR=((?:input|json|worker):[A-Za-z][A-Za-z0-9]{0,79}:-?[0-9]{1,11})\r?$')
    if($match.Success){$kind=$match.Groups[1].Value}
-   $prefix=[regex]::Match($output,'(?m)^CERTOPS_CA_INPUT_PREFIX=([0-9]{1,5})\r?$')
-   if($prefix.Success){$kind+=':prefix-'+$prefix.Groups[1].Value}
    throw ('Owned CA bootstrap process failed: '+$kind+' (exit '+$process.ExitCode+')')
   }
  }finally{
