@@ -1,7 +1,7 @@
 {
   "catalogVersion": 1,
   "status": "proposed",
-  "description": "Tool catalog for the MCP operator interface proposed in ADR-0015. contractStatus: mvp = schemas finalized for the first read-only release (still subject to ADR acceptance); outline = tool named and scoped, schema not yet written; draft = schema exists but governing ADR decisions are open and it must not be treated as final. Annotations are advisory UX hints for clients and are never an authorization control. Routes are proposed backing REST routes; routeStatus tells whether the route exists today.",
+  "description": "Tool catalog for the MCP operator interface proposed in ADR-0015. contractStatus: mvp = schemas finalized for the first read-only release (still subject to ADR acceptance); outline = tool named and scoped, schema not yet written; draft = schema exists but governing ADR decisions are open and it must not be treated as final. Annotations are advisory UX hints for clients and are never an authorization control. Routes live in the operator namespace (/api/v1/operator/*), which accepts only an operator connection credential and takes the workspace from the connection, never from the path. routeStatus is implemented or planned. sessionRouteMinRole records the role the existing session route requires for the same data; a tool may never be looser than it.",
   "mcpProtocol": {
     "version": "2026-07-28",
     "source": "https://modelcontextprotocol.io/specification/versioning",
@@ -24,11 +24,11 @@
     { "name": "mcp:certs:read", "minRole": "viewer", "stage": "read-only" },
     { "name": "mcp:agents:read", "minRole": "workspace_manager", "stage": "read-only" },
     { "name": "mcp:jobs:read", "minRole": "viewer", "stage": "read-only" },
-    { "name": "mcp:assets:read", "minRole": "viewer", "stage": "read-only-wave-2" },
-    { "name": "mcp:renewals:read", "minRole": "viewer", "stage": "read-only-wave-2" },
-    { "name": "mcp:evidence:read", "minRole": "viewer", "stage": "read-only-wave-2" },
-    { "name": "mcp:logs:read", "minRole": "workspace_manager", "stage": "read-only-wave-2" },
-    { "name": "mcp:audit:read", "minRole": "viewer", "stage": "read-only-wave-2" },
+    { "name": "mcp:assets:read", "minRole": "viewer", "stage": "read-only-extended" },
+    { "name": "mcp:renewals:read", "minRole": "viewer", "stage": "read-only-extended" },
+    { "name": "mcp:evidence:read", "minRole": "viewer", "stage": "read-only-extended" },
+    { "name": "mcp:logs:read", "minRole": "workspace_manager", "stage": "read-only-extended" },
+    { "name": "mcp:audit:read", "minRole": "viewer", "stage": "read-only-extended" },
     { "name": "mcp:requests:read", "minRole": "viewer", "stage": "operations" },
     { "name": "mcp:ops:request", "minRole": "workspace_manager", "stage": "operations" },
     { "name": "mcp:lifecycle:request", "minRole": "workspace_manager", "stage": "operations" },
@@ -83,8 +83,8 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_whoami_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_whoami_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/mcp/whoami",
-      "routeStatus": "new"
+      "route": "GET /api/v1/operator/whoami",
+      "routeStatus": "implemented"
     },
     {
       "name": "tt_list_certificates",
@@ -96,8 +96,9 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_list_certificates_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/certops/certificate-identities",
-      "routeStatus": "existing-needs-operator-projection"
+      "route": "GET /api/v1/operator/certificates",
+      "routeStatus": "planned",
+      "backingService": "listCertificateIdentities"
     },
     {
       "name": "tt_get_certificate",
@@ -109,8 +110,9 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId",
-      "routeStatus": "existing-needs-operator-projection"
+      "route": "GET /api/v1/operator/certificates/:identityId",
+      "routeStatus": "planned",
+      "backingService": "listCertificateIdentities"
     },
     {
       "name": "tt_get_certificate_observations",
@@ -122,8 +124,9 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_certificate_observations_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId/observations",
-      "routeStatus": "new"
+      "route": "GET /api/v1/operator/certificates/:identityId/observations",
+      "routeStatus": "planned",
+      "backingService": "listCertificateIdentities"
     },
     {
       "name": "tt_get_agent_health",
@@ -135,8 +138,9 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_agent_health_output",
       "sessionRouteMinRole": "workspace_manager",
-      "route": "GET /api/v1/workspaces/:id/certops/agents",
-      "routeStatus": "existing-needs-operator-projection"
+      "route": "GET /api/v1/operator/agents",
+      "routeStatus": "planned",
+      "backingService": "listAgents"
     },
     {
       "name": "tt_get_job",
@@ -148,8 +152,9 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_get_job_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_get_job_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/certops/jobs/:jobId",
-      "routeStatus": "existing-needs-operator-projection"
+      "route": "GET /api/v1/operator/jobs/:jobId",
+      "routeStatus": "planned",
+      "backingService": "getCertificateJob"
     },
     {
       "name": "tt_list_jobs",
@@ -161,8 +166,9 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_list_jobs_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/certops/jobs",
-      "routeStatus": "existing-needs-operator-projection"
+      "route": "GET /api/v1/operator/jobs",
+      "routeStatus": "planned",
+      "backingService": "listCertificateJobs"
     },
     {
       "name": "tt_explain_certificate_state",
@@ -174,17 +180,18 @@
       "input": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_input",
       "output": "mcp-read-tools.schema.json#/definitions/tt_explain_certificate_state_output",
       "sessionRouteMinRole": "viewer",
-      "route": "GET /api/v1/workspaces/:id/certops/certificate-identities/:identityId/explain",
-      "routeStatus": "new"
+      "route": "GET /api/v1/operator/certificates/:identityId/explain",
+      "routeStatus": "planned",
+      "backingService": "resolveRenewalPathForCertificate, explainAgentJobEligibility, jobPendingReason"
     },
 
-    { "name": "tt_search_assets", "scope": "mcp:assets:read", "minRole": "viewer", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
-    { "name": "tt_list_expiring", "scope": "mcp:assets:read", "minRole": "viewer", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
-    { "name": "tt_list_renewals", "scope": "mcp:renewals:read", "minRole": "viewer", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
-    { "name": "tt_get_job_evidence", "scope": "mcp:evidence:read", "minRole": "viewer", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
-    { "name": "tt_get_job_log", "scope": "mcp:logs:read", "minRole": "workspace_manager", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
-    { "name": "tt_list_audit_events", "scope": "mcp:audit:read", "minRole": "viewer", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
-    { "name": "tt_explain_alert_eligibility", "scope": "mcp:certs:read", "minRole": "viewer", "contractStatus": "outline", "wave": 2, "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_search_assets", "scope": "mcp:assets:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_list_expiring", "scope": "mcp:assets:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_list_renewals", "scope": "mcp:renewals:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_get_job_evidence", "scope": "mcp:evidence:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_get_job_log", "scope": "mcp:logs:read", "minRole": "workspace_manager", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_list_audit_events", "scope": "mcp:audit:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
+    { "name": "tt_explain_alert_eligibility", "scope": "mcp:certs:read", "minRole": "viewer", "contractStatus": "outline", "releaseSet": "extended-read", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
 
     { "name": "tt_get_action_request", "scope": "mcp:requests:read", "minRole": "viewer", "contractStatus": "draft", "output": "mcp-write-envelope.draft.schema.json#/definitions/requestRecord", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },
     { "name": "tt_list_my_requests", "scope": "mcp:requests:read", "minRole": "viewer", "contractStatus": "draft", "output": "mcp-write-envelope.draft.schema.json#/definitions/requestRecord", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } },

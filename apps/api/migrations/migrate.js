@@ -4808,6 +4808,11 @@ const migrations = [
     name: "certops_distribution_transfer",
     sql: fs.readFileSync(require("path").join(__dirname, "076-certops-distribution-transfer.sql"), "utf8"),
   },
+  {
+    version: 77,
+    name: "operator_connections",
+    sql: fs.readFileSync(require("path").join(__dirname, "077-operator-connections.sql"), "utf8"),
+  },
 ];
 
 

@@ -44,6 +44,7 @@ const {
 } = require("./services/rbac");
 const { hideWorkspaceExistence } = require("./middleware/workspace-access-policy");
 const { generateCsrfToken, csrfExempt } = require("./middleware/csrf");
+const { guardOperatorCredentials } = require("./middleware/operator-connection-auth");
 const {
   createCertOpsMachineWritePreParserBoundary,
 } = require("./middleware/certops-executor-body-parser");
@@ -307,6 +308,11 @@ app.use(cookieParser());
 // middleware on the route so it sits in the same setup as those handlers.
 app.use("/api", csrfExempt);
 app.use("/auth", csrfExempt);
+
+// Operator connection credentials are only valid on the operator namespace.
+// Reject them everywhere else before any other authentication runs.
+app.use("/api", guardOperatorCredentials);
+app.use("/auth", guardOperatorCredentials);
 
 const {
   speedLimiter,
@@ -667,6 +673,8 @@ app.use(require("./routes/certops-enrollments"));
 app.use(require("./routes/certops-executor"));
 // --- CERTOPS AGENT (agent-protocol machine routes) ---
 app.use(require("./routes/certops-agent"));
+// --- OPERATOR INTERFACE (connection management and the operator namespace) ---
+app.use(require("./routes/operator"));
 // --- ADMIN (extracted to routes/admin.js) ---
 app.use(require("./routes/admin"));
 

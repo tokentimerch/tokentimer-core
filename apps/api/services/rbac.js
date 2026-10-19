@@ -120,6 +120,29 @@ function resolveWorkspaceId(req) {
 }
 
 /**
+ * The role a user holds in a workspace, as one decision shared by every caller
+ * that authorizes on a user's behalf (sessions and operator connections). A
+ * membership row wins. Otherwise the workspace creator is treated as an
+ * implicit admin until the planned role-model cleanup replaces that behavior.
+ * System admin status confers no workspace role here.
+ * @param {{membershipRole?: string|null, workspaceCreatedBy?: *, userId?: *}} args
+ * @returns {string|null}
+ */
+function effectiveWorkspaceRole({ membershipRole, workspaceCreatedBy, userId }) {
+  if (membershipRole) return membershipRole;
+  if (
+    workspaceCreatedBy !== undefined &&
+    workspaceCreatedBy !== null &&
+    userId !== undefined &&
+    userId !== null &&
+    String(workspaceCreatedBy) === String(userId)
+  ) {
+    return "admin";
+  }
+  return null;
+}
+
+/**
  * Express middleware to load workspace and set authorization context
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
@@ -159,14 +182,11 @@ async function loadWorkspace(req, res, next) {
       // Grant admin access so they can reach any workspace endpoint without a membership row.
       req.authz = { ...(req.authz || {}), workspaceRole: "admin" };
     } else if (req.user && req.user.id) {
-      let role = await getUserWorkspaceRole(req.user.id, workspaceIdString);
-      // Treat workspace owner as implicit admin even if no membership row exists
-      if (
-        !role &&
-        String(req.workspace.created_by || "") === String(req.user.id)
-      ) {
-        role = "admin";
-      }
+      const role = effectiveWorkspaceRole({
+        membershipRole: await getUserWorkspaceRole(req.user.id, workspaceIdString),
+        workspaceCreatedBy: req.workspace.created_by,
+        userId: req.user.id,
+      });
       req.authz = { ...(req.authz || {}), workspaceRole: role };
     }
     // Core: no paid plans; always "oss" for rate limiters and compatibility
@@ -446,6 +466,7 @@ async function requireNotViewer(req, res, next) {
 module.exports = {
   can,
   currentWorkspaceAccessSql,
+  effectiveWorkspaceRole,
   loadWorkspace,
   loadSection,
   requireWorkspaceMembership,
