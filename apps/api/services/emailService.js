@@ -1148,7 +1148,6 @@ const sendEmail = async (options) => {
 const sendWelcomeEmail = async (email, displayName) => {
   const frontendUrl = process.env.APP_URL || "http://localhost:5173";
   const tourUrl = `${frontendUrl}/dashboard?tour=dashboard`;
-  const setupUrl = `${frontendUrl}/onboarding`;
 
   const { html, text, useEmbeddedLogo } = generateEmailTemplate({
     title: "Welcome to TokenTimer!",
@@ -1167,15 +1166,7 @@ const sendWelcomeEmail = async (email, displayName) => {
         <li>Integrate with popular services like AWS, Azure, GitHub, and more</li>
       </ul>
       
-      <p style="margin-top: 20px;">Ready to get started? The quickest way is the guided setup: it walks you through monitoring your first site or asset, choosing who gets alerted, and connecting your servers or integrations. Your progress is saved, so you can leave and come back.</p>
-
-      <div style="text-align: center; margin: 20px 0;">
-        <a href="${setupUrl}" style="background-color: #2B6CB0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: 600; font-size: 14px;">
-          Set up my environment
-        </a>
-      </div>
-
-      <p style="margin-top: 10px; color: #718096; font-size: 14px;">Prefer to explore on your own? Head to your <a href="${frontendUrl}/dashboard" style="color: #2B6CB0; text-decoration: none;">dashboard</a>.</p>
+      <p style="margin-top: 20px;">Ready to get started? Head to your <a href="${frontendUrl}/dashboard" style="color: #2B6CB0; text-decoration: none;">dashboard</a> to add your first token or certificate and configure your alerts.</p>
       
       <p style="margin-top: 30px; padding-top: 30px; border-top: 1px solid #e2e8f0; color: #4a5568; font-size: 16px;">
         If you did not already, you can take our interactive product tour to see the key features in action. During the tour, you'll learn how to:
@@ -1216,11 +1207,7 @@ With TokenTimer you can:
 - Set up custom contact groups for team-wide notifications
 - Integrate with popular services like AWS, Azure, GitHub, and more
 
-Ready to get started? The quickest way is the guided setup: it walks you through monitoring your first site or asset, choosing who gets alerted, and connecting your servers or integrations. Your progress is saved, so you can leave and come back.
-
-Set up my environment: ${setupUrl}
-
-Prefer to explore on your own? Open your dashboard: ${frontendUrl}/dashboard
+Ready to get started? Head to your dashboard to add your first token or certificate and configure your alerts: ${frontendUrl}/dashboard
 
 If you did not already, you can take our interactive product tour to see the key features in action. During the tour, you'll learn how to:
 - Add and manage your tokens
