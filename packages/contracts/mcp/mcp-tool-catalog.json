@@ -6,17 +6,16 @@
     "version": "2026-07-28",
     "source": "https://modelcontextprotocol.io/specification/versioning",
     "verifiedOn": "2026-10-19",
-    "sdkPin": {
-      "status": "proposed",
-      "server": "@modelcontextprotocol/server@2.3.1",
-      "conformanceClient": "@modelcontextprotocol/client@2.3.1",
-      "checkedOn": "2026-10-19",
-      "evidence": "The v1.x line (@modelcontextprotocol/sdk 1.32.1, npm latest) implements the specification only up to 2025-11-25 and its README says 2026-07-28 support is not planned for v1.x. The v2 packages export a modern-revision server with a stdio entry point; their dependency set and node floor (>=20) fit this repository's node range (>=22 <25).",
-      "openQuestions": [
-        "behavior toward clients that still use the 2025-11-25 handshake (the package ships a legacy path whose behavior is unverified here)",
-        "exact transitive dependency set and license review (zod ^4, Apache-2.0) before adding it to the workspace"
-      ]
-    },
+  "sdkPin": {
+    "status": "pinned",
+    "server": "@modelcontextprotocol/server@2.3.1",
+    "conformanceClient": "@modelcontextprotocol/client@2.3.1",
+    "checkedOn": "2026-10-19",
+    "evidence": "The v1.x line (@modelcontextprotocol/sdk 1.32.1, npm latest) implements the specification only up to 2025-11-25 and its README says 2026-07-28 support is not planned for v1.x. The v2 packages serve the modern revision over stdio and need node 20 or later, which fits this repository's node range (>=22 <25). Verified by conformance test: a client pinned to 2026-07-28 and a client using the 2025-11-25 handshake are both served when legacy is 'serve'; only the pinned client is served when legacy is 'reject'.",
+    "openQuestions": [
+      "full license audit of the transitive dependency set before release"
+    ]
+  },
     "clientCompatibility": "unproven: established by conformance tests, not by the existence of the specification"
   },
   "scopes": [

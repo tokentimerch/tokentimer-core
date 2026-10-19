@@ -499,10 +499,24 @@ Workspace pause blocks new write requests, subject to section 11.
   revision server with a stdio entry point and need Node 20 or later, which this
   repository's Node range satisfies. The proposal is to pin
   `@modelcontextprotocol/server` exactly (2.3.1 today) and use the matching
-  client package in conformance tests. Not yet verified: how the server treats
-  clients that still send the older handshake, and the transitive dependency and
-  license review (zod 4, Apache-2.0). Those are checked before the dependency is
-  added.
+  client package in conformance tests.
+- **Verified by test on 2026-10-19** against the pinned packages, over real
+  stdio with the real client (`packages/mcp/src/stdio.test.js`): a client pinned
+  to `2026-07-28` is served; a client using the `2025-11-25` handshake is served
+  when the adapter runs with `legacy: serve` (the default) and refused with an
+  unsupported-version error under `legacy: reject`; schema enforcement (unknown
+  fields, over-long values) is identical in both eras. The client defaults to
+  the older handshake, so a modern connection is an explicit client opt-in. The
+  package's own `LATEST_PROTOCOL_VERSION` constant still reports `2025-11-25`;
+  the modern revision is selected through the client's version-negotiation
+  option, not that constant.
+- **Dependency review.** The server package adds only its core package and
+  `zod` 4.6.7 at runtime (Apache-2.0, Node 20 or later). The larger set (`jose`,
+  `eventsource`, `pkce-challenge`, `cross-spawn`) arrives only with the client
+  package, which is a development dependency used by the conformance tests and
+  is not shipped. The lockfile change is purely additive (81 lines, none
+  removed) and passes pnpm's supply-chain policy check. A full license audit of
+  the transitive set is still to be run before release.
 - State the compatibility policy for older clients (negotiate the pinned
   revision plus a stated fallback, refuse the rest with a clear error). Validate
   inputs and outputs on both sides. Conformance tests per supported transport are
