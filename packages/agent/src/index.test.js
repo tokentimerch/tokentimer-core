@@ -4018,12 +4018,8 @@ describe("renew chain deployment", () => {
     assert.equal(client.calls.reportEvidence.length, 0);
   });
 
-  // Material capabilities are qualified in the manifest but only declared on
-  // Linux, so this refusal applies to every other host.
-  it(
-    "refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities",
-    { skip: process.platform === "linux" },
-    async () => {
+  // skip-reason: no-host - Linux declares the material capabilities, so this refusal only applies to other hosts.
+  it("refuses signed publication and deploy-from-store on hosts that cannot declare material capabilities", { skip: process.platform === "linux" }, async () => {
     const shared = {
       jobId: "job-material",
       claimId: "claim-material",
@@ -4056,8 +4052,7 @@ describe("renew chain deployment", () => {
       /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
     );
     assert.equal(shared.client.calls.reportEvidence.length, 0);
-    },
-  );
+  });
 });
 
 /**
