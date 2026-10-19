@@ -4,13 +4,6 @@
 const fs=require("node:fs"),path=require("node:path");
 function validateWorkflow(workflow,name="workflow"){
 
-  // Temporary manual qualification exception for this exact reviewed branch only.
-  if (["certops-qualification.yml", "certops-distribution-qualification.yml", "certops-enterprise-adcs-qualification.yml"].includes(name)) {
-    workflow = structuredClone(workflow);
-    for (const job of Object.values(workflow.jobs || {})) {
-      if (typeof job.if === "string") job.if = job.if.replace("(github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/adcs-018-qualification'))", "github.ref == 'refs/heads/main'");
-    }
-  }
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
   for(const issue of require("./certops-azure-scope-policy").validate(name,workflow))fail(issue);
   if(/^certops-.*\.yml$/.test(name)&&!workflow.name?.startsWith("CertOps / "))fail("qualification workflow display name must use the CertOps / prefix");

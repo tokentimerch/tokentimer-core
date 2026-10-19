@@ -11,7 +11,7 @@ test("distribution qualification requires explicit dispatch even for relevant ma
  assert.deepEqual(Object.keys(workflow.on),["workflow_dispatch"]);
  const guard=require("./certops-workflow-security");
  assert.deepEqual(guard.validateWorkflow(workflow,"certops-distribution-qualification.yml"),[]);
- for(const condition of ["github.event_name == 'workflow_dispatch'","github.ref == 'refs/heads/foreign'",workflow.jobs["agent-lab"].if.replace("refs/heads/test/adcs-018-qualification","refs/heads/foreign")].filter(value=>value!==workflow.jobs["agent-lab"].if)){
+ for(const condition of ["github.event_name == 'workflow_dispatch'","github.ref == 'refs/heads/foreign'"].filter(value=>value!==workflow.jobs["agent-lab"].if)){
   const invalid=structuredClone(workflow);invalid.jobs["agent-lab"].if=condition;assert.ok(guard.validateWorkflow(invalid,"certops-distribution-qualification.yml").length);
  }
 });
