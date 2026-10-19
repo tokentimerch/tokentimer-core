@@ -1765,14 +1765,14 @@ describe("LIFE-04 retired identity installation guards", () => {
       "utf8",
     );
     assert.match(dispatch, /cj\.operation = 'continue-enrollment'/);
-    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred', 'submission_uncertain', 'submitting'\)/);
+    assert.match(dispatch, /continuation\.state NOT IN \('cancelled', 'expired', 'abandoned'\)/);
     assert.match(dispatch, /'renew', 'deploy', 'deploy-from-store', 'reload'/);
     const guard = fs.readFileSync(
       path.join(__dirname, "../../apps/api/migrations/certops-distribution-lifecycle-guards.sql"),
       "utf8",
     );
     assert.match(guard, /install_continuation/);
-    assert.match(guard, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred', 'submission_uncertain', 'submitting'\)/);
+    assert.match(guard, /continuation\.state NOT IN \('cancelled', 'expired', 'abandoned'\)/);
     assert.match(guard, /NEW\.operation NOT IN \('renew','deploy','deploy-from-store','reload'\)/);
   });
 });

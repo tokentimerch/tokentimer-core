@@ -67,7 +67,7 @@ BEGIN
       SELECT 1 FROM certificate_enrollments continuation
        WHERE continuation.workspace_id = NEW.workspace_id
          AND continuation.id = NEW.enrollment_id
-         AND continuation.state IN ('installing', 'install_failed', 'pending_issuance', 'validation_deferred', 'submission_uncertain', 'submitting')
+         AND continuation.state NOT IN ('cancelled', 'expired', 'abandoned')
     ) THEN
       RETURN NEW;
     END IF;
