@@ -30,8 +30,9 @@ function Invoke-Command {
  if($env:CA_MODE -ne 'timeout'){try{$global:jobOutput=@(& $ScriptBlock @ArgumentList)}catch{$global:capturedError=$_}}
  [pscustomobject]@{State=$(if($env:CA_MODE -eq 'timeout'){'Running'}elseif($global:capturedError){'Failed'}else{'Completed'})}
 }
-function Wait-Job {param($Job,$Timeout)if($Timeout -ne 600){throw 'Execution deadline changed'};if($env:CA_MODE -ne 'timeout'){$Job}}
-function Receive-Job {param($Job,$ErrorAction)$global:received=$true;if($global:capturedError){throw $global:capturedError};$global:jobOutput}
+function Start-Job {param($ScriptBlock,$ArgumentList)$global:preflightError=$null;try{& $ScriptBlock @ArgumentList|Out-Null}catch{$global:preflightError=$_};[pscustomobject]@{State='Completed';Preflight=$true}}
+function Wait-Job {param($Job,$Timeout)if($Timeout -lt 1 -or $Timeout -gt 600){throw 'Invalid remaining execution deadline'};if($Job.Preflight -or $env:CA_MODE -ne 'timeout'){$Job}}
+function Receive-Job {param($Job,$ErrorAction)if($Job.Preflight){if($global:preflightError){throw $global:preflightError};return};$global:received=$true;if($global:capturedError){throw $global:capturedError};$global:jobOutput}
 function Stop-Job {param($Job,$ErrorAction)$global:stopped=$true;$Job.State='Stopped'}
 function Remove-Job {param($Job,[switch]$Force,$ErrorAction)$global:removed=$true}
 $failed=$false
@@ -51,6 +52,7 @@ Write-Output ('CA_FIXTURE_OK='+$env:CA_MODE)
 }
 for(const mode of ["success","timeout","role-failure"])test(`CA bootstrap ${mode} executes once with bounded sanitized diagnosis`,t=>{const result=run(t,mode);assert.equal(result.status,0,result.stderr+result.stdout);assert.match(result.stdout,new RegExp(`CA_FIXTURE_OK=${mode}`));assert.doesNotMatch(result.stdout+result.stderr,/fixture-sensitive-password/);});
 
+
 test("real provisioner forwards only bounded CA phases and gives only CA setup a 900s outer deadline",t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"adcs-ca-stage-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const wrapper=path.join(dir,"stage.ps1");
@@ -69,8 +71,32 @@ $ResourceGroup='tt-certops-123-1';$receipts=[Collections.Generic.List[string]]::
 Invoke-Stage domain-ca $env:CA_STAGE_SCRIPT 'CERTOPS_STAGE=enterprise-ca-service-running'
 `);
  const invoke=(leaf,response)=>spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",wrapper],{encoding:"utf8",windowsHide:true,timeout:10000,env:{...process.env,CA_PROVISION:path.resolve(__dirname,"../infra/certops-adcs/provision-lab.ps1"),CA_STAGE_SCRIPT:path.resolve(__dirname,"../infra/certops-adcs",leaf),CA_EXPECT_TIMEOUT:leaf==="domain-ca.ps1"?"900":"3600",CA_RESPONSE:response}});
+ for(const phase of ["membership","directory-ready"]){const bounded=invoke("domain-ca.ps1",`CERTOPS_CA_FAILED_STAGE=${phase}\n`);assert.notEqual(bounded.status,0);assert.match(bounded.stdout,new RegExp(`CERTOPS_CA_FAILED_STAGE=${phase}`));assert.doesNotMatch(bounded.stdout+bounded.stderr,/Wrong outer/);}
  const failed=invoke("domain-ca.ps1","private-credential-needle\nCERTOPS_CA_FAILED_STAGE=role-install\n");
  assert.notEqual(failed.status,0);assert.match(failed.stdout,/CERTOPS_CA_FAILED_STAGE=role-install/);assert.doesNotMatch(failed.stdout+failed.stderr,/private-credential-needle|Wrong outer/);
  for(const phase of ["private-credential-needle","role-install private-credential-needle","role-install\\nprivate-credential-needle"]){const bad=invoke("domain-ca.ps1",`CERTOPS_CA_FAILED_STAGE=${phase}`);assert.notEqual(bad.status,0);assert.doesNotMatch(bad.stdout+bad.stderr,/private-credential-needle|CERTOPS_CA_FAILED_STAGE=/);}
  const ordinary=invoke("templates.ps1","CERTOPS_STAGE=enterprise-ca-service-running");assert.equal(ordinary.status,0,ordinary.stderr);
+});
+
+test("a real local job stalled in directory readiness is stopped before its one-second deadline escapes",t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),"adcs-ca-real-deadline-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const wrapper=path.join(dir,"probe.ps1");
+ fs.writeFileSync(wrapper,String.raw`
+$ErrorActionPreference='Stop'
+$ast=[Management.Automation.Language.Parser]::ParseFile($env:CA_PRODUCTION,[ref]$null,[ref]$null)
+$d=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-CaBoundedLocalJob'},$true)
+. ([scriptblock]::Create($d.Extent.Text))
+$before=@(Get-Job).Count;$clock=[Diagnostics.Stopwatch]::StartNew();$timedOut=$false
+try{Invoke-CaBoundedLocalJob -ScriptBlock {function Get-ADDomain {Start-Sleep -Seconds 60};Get-ADDomain} -Arguments @() -TimeoutSeconds 1}catch [TimeoutException]{$timedOut=$true}
+if(-not $timedOut -or $clock.Elapsed.TotalSeconds -gt 20 -or @(Get-Job).Count -ne $before){throw 'Directory readiness escaped its deadline or left a job'}
+$normal=@(Invoke-CaBoundedLocalJob -ScriptBlock {'READY'} -Arguments @() -TimeoutSeconds 10)
+if($normal.Count -ne 1 -or $normal[0] -cne 'READY' -or @(Get-Job).Count -ne $before){throw 'Normal preflight behavior changed'}
+$failed=$false
+try{Invoke-CaBoundedLocalJob -ScriptBlock {throw 'Expected fixture preflight failure'} -Arguments @() -TimeoutSeconds 10}catch{$failed=$true}
+if(-not $failed -or @(Get-Job).Count -ne $before){throw 'Failed preflight was accepted or retained'}
+Write-Output 'ACTUAL_PREFLIGHT_DEADLINE_PASSED'
+`);
+ const production=path.resolve(__dirname,"../infra/certops-adcs/domain-ca.ps1");
+ const source=fs.readFileSync(production,"utf8");assert.match(source,/Invoke-CaBoundedLocalJob -ScriptBlock \$prepare/);assert.ok(source.indexOf("stage='membership'")<source.indexOf("if((Get-CimInstance"));
+ const result=spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-File",wrapper],{encoding:"utf8",windowsHide:true,timeout:45000,env:{...process.env,CA_PRODUCTION:production}});
+ assert.equal(result.status,0,result.stdout+result.stderr);assert.match(result.stdout,/ACTUAL_PREFLIGHT_DEADLINE_PASSED/);
 });

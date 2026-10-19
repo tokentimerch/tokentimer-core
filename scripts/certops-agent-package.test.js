@@ -28,6 +28,8 @@ test("AD CS package receipt rejects missing execution, skipped scenarios and rel
       actualManagerApproval: true, claimBoundContinuation: true, originalCsrKeyAndSnapshotPreserved: true, trustedIisCutover: true, noSchedulerOrClockOverride: true },
     missingScenarios: [], missingCapabilities: [], scenarios: ADCS_ACCEPTANCE_SCENARIOS.map(id => ({ id, status: "passed" })),
   };
+  const browser=require("../tests/e2e/helpers/certops-adcs-browser-journey");
+  report.nativeBrowserAdcs={scope:browser.SCOPE,lifecycle:"renew-existing-inventory-not-first-issue-or-manual-job",scheduler:"production-maintenance-worker",browserEngine:"chromium",browserMutationCount:6,successfulEnrollments:1,fingerprints:["1".repeat(64),"2".repeat(64)],spkiFingerprints:["3".repeat(64),"4".repeat(64)],requestId:"41",...Object.fromEntries(["enrollmentId","jobId","profileId","issuerId"].map((field,i)=>[field,`${i+1}1111111-1111-4111-8111-111111111111`])),...Object.fromEntries(browser.FLAGS.map(flag=>[flag,true]))};
   assert.equal(verifyAdcsAcceptance(report, artifact, candidateSha), true);
   const previousSha=process.env.GITHUB_SHA;
   try{
@@ -36,6 +38,8 @@ test("AD CS package receipt rejects missing execution, skipped scenarios and rel
     assert.equal(verifyOperatorScope(infrastructure,report),true);
     for(const mutate of [value=>{delete value.scope;},value=>{value.scope="other";},value=>{value.qualificationScope="comprehensive";},value=>{value.scenarioReport="enterprise-adcs-real.json";},value=>{value.stages.pop();},value=>{value.stages.shift();},value=>{value.stages.push("CERTOPS_STAGE=real-enterprise-adcs-tests-passed");}]){const invalid=structuredClone(infrastructure);mutate(invalid);assert.throws(()=>verifyOperatorScope(invalid,report));}
     const invalid=structuredClone(report);invalid.nativeEnvironment.language="fr-FR";assert.throws(()=>verifyOperatorScope(infrastructure,invalid));
+    for(const mutate of [value=>{delete value.nativeBrowserAdcs;},value=>{value.nativeBrowserAdcs.scheduler="production-default-sweep-not-background-worker-loop";},value=>{value.nativeBrowserAdcs.nonexportableMachineCng=false;},value=>{value.nativeBrowserAdcs.nativeCaRequestMatched=false;},value=>{value.nativeBrowserAdcs.requestId="0";}]){const invalid=structuredClone(report);mutate(invalid);assert.throws(()=>verifyOperatorScope(infrastructure,invalid));assert.throws(()=>verifyAdcsAcceptance(invalid,artifact,candidateSha));}
+
     for(const mutate of [value=>{value.buildMode="release";},value=>{delete value.buildMode;},value=>{value.packageSha256="not-a-digest";},value=>{delete value.packageSha256;}]){const invalid=structuredClone(report);mutate(invalid);assert.throws(()=>verifyOperatorScope(infrastructure,invalid));}
   }finally{if(previousSha===undefined)delete process.env.GITHUB_SHA;else process.env.GITHUB_SHA=previousSha;}
   for (const change of [

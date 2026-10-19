@@ -42,6 +42,7 @@ function verifyAdcsAcceptance(report, artifact, expectedSha) {
   assert.equal(report.cleanup?.status, "passed");
   verifyNativeEnvironment(report.nativeEnvironment);
   require("../tests/e2e/helpers/certops-adcs-package-pending").verifyProof(report.packagePendingWorker);
+  require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(report.nativeBrowserAdcs,{workerDriven:true});
   assert.deepEqual(report.requiredScenarios, ADCS_ACCEPTANCE_SCENARIOS);
   assert.deepEqual(report.missingScenarios, []); assert.deepEqual(report.missingCapabilities, []);
   for (const id of ADCS_ACCEPTANCE_SCENARIOS) {
@@ -68,6 +69,7 @@ function verifyOperatorScope(infrastructure,report) {
   assert.equal(report.publishedReleaseQualified,false);assert.equal(report.cleanup?.status,"passed");
   assert.equal(report.workerDriven,true);assert.equal(report.certificateDatabaseInjection,false);
   require("../tests/e2e/helpers/certops-adcs-package-pending").verifyProof(report.packagePendingWorker);
+  require("../tests/e2e/helpers/certops-adcs-browser-journey").verifyProof(report.nativeBrowserAdcs,{workerDriven:true});
   verifyNativeEnvironment(report.nativeEnvironment);
   assert.deepEqual(report.requiredScenarios,ADCS_ACCEPTANCE_SCENARIOS);assert.deepEqual(report.missingScenarios,[]);assert.deepEqual(report.missingCapabilities,[]);
   for(const id of ADCS_ACCEPTANCE_SCENARIOS){const rows=report.scenarios.filter(row=>row.id===id);assert.equal(rows.length,1);assert.equal(rows[0].status,"passed");}

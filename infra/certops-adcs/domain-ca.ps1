@@ -5,21 +5,44 @@ not simulated certutil output.
 #>
 param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[ValidateRange(60,900)][int]$StageTimeoutSeconds=600)
 $ErrorActionPreference = 'Stop'
-if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Expected isolated qualification forest' }
-Import-Module ActiveDirectory
-$directoryReady=$false
-for($attempt=0;$attempt -lt 60;$attempt++){
-  try{$null=Get-ADDomain -ErrorAction Stop;$directoryReady=$true;break}catch{Start-Sleep -Seconds 2}
+$bootstrapClock=[Diagnostics.Stopwatch]::StartNew()
+$stageFile='C:\ttqualification\domain-ca-stage.json'
+function Invoke-CaBoundedLocalJob([scriptblock]$ScriptBlock,[object[]]$Arguments,[int]$TimeoutSeconds){
+ $localJob=$null
+ try{
+  $localJob=Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Arguments
+  if(-not(Wait-Job -Job $localJob -Timeout $TimeoutSeconds)){throw [TimeoutException]::new('Owned CA preflight deadline exceeded')}
+  Receive-Job -Job $localJob -ErrorAction Stop
+  if($localJob.State -ne 'Completed'){throw 'Owned CA preflight did not complete'}
+ }finally{
+  if($localJob){if($localJob.State -notin @('Completed','Failed','Stopped')){Stop-Job -Job $localJob -ErrorAction SilentlyContinue};Remove-Job -Job $localJob -Force -ErrorAction SilentlyContinue}
+ }
 }
-if(-not $directoryReady){throw 'New qualification directory did not become ready after reboot'}
-$stageDirectory='C:\ttqualification'
-New-Item -ItemType Directory -Path $stageDirectory -Force|Out-Null
-$stageFile=Join-Path $stageDirectory 'domain-ca-stage.json'
-@{stage='remoting-setup';status='running';updatedAt=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath $stageFile
 $job=$null
 $credential=$null
 try{
-Enable-PSRemoting -Force
+ # The owned lab's diagnostic directory is the only write before membership
+ # verification; privileged directory/CA operations remain guarded below.
+ New-Item -ItemType Directory -Path (Split-Path $stageFile) -Force|Out-Null
+ @{stage='membership';status='running';updatedAt=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath $stageFile
+ $prepare={
+  param([string]$StageFile)
+  $ErrorActionPreference='Stop'
+  if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Expected isolated qualification forest'}
+  New-Item -ItemType Directory -Path (Split-Path $StageFile) -Force|Out-Null
+  @{stage='directory-ready';status='running';updatedAt=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath $StageFile
+  Import-Module ActiveDirectory
+  $ready=$false
+  for($attempt=0;$attempt -lt 60;$attempt++){
+   try{$null=Get-ADDomain -ErrorAction Stop;$ready=$true;break}catch{Start-Sleep -Seconds 2}
+  }
+  if(-not $ready){throw 'Directory was not ready after reboot'}
+  @{stage='remoting-setup';status='running';updatedAt=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath $StageFile
+  Enable-PSRemoting -Force
+ }
+ $remaining=[int][Math]::Floor($StageTimeoutSeconds-$bootstrapClock.Elapsed.TotalSeconds)
+ if($remaining -lt 1){throw [TimeoutException]::new('Owned CA bootstrap deadline exceeded')}
+ Invoke-CaBoundedLocalJob -ScriptBlock $prepare -Arguments @($stageFile) -TimeoutSeconds ([Math]::Min(120,$remaining))
 $credential = [PSCredential]::new('TTQUAL\ttqualification', (ConvertTo-SecureString $DomainPassword -AsPlainText -Force))
 $sessionOption=New-PSSessionOption -OpenTimeout 30000 -OperationTimeout 60000
 $job=Invoke-Command -ComputerName localhost -Credential $credential -SessionOption $sessionOption -AsJob -ArgumentList $DomainPassword,$HierarchyRole,$stageFile -ScriptBlock {
@@ -58,16 +81,18 @@ Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
 }
 # Remoting's OperationTimeout is a transport heartbeat, not an execution limit.
 # Bound the complete owned bootstrap job separately; never retry CA creation.
-if(-not(Wait-Job -Job $job -Timeout $StageTimeoutSeconds)){throw [TimeoutException]::new('Owned CA bootstrap deadline exceeded')}
+$remaining=[int][Math]::Floor($StageTimeoutSeconds-$bootstrapClock.Elapsed.TotalSeconds)
+if($remaining -lt 1){throw [TimeoutException]::new('Owned CA bootstrap deadline exceeded')}
+if(-not(Wait-Job -Job $job -Timeout $remaining)){throw [TimeoutException]::new('Owned CA bootstrap deadline exceeded')}
 Receive-Job -Job $job -ErrorAction Stop
 if($job.State -ne 'Completed'){throw 'Owned CA bootstrap did not complete'}
 $receipt=Get-Content -LiteralPath $stageFile -Raw|ConvertFrom-Json
 $receipt.status='completed';$receipt|ConvertTo-Json|Set-Content -LiteralPath $stageFile
 }catch{
 $timedOut=$_.Exception -is [TimeoutException]
-$stage='remoting-setup'
-try{$observed=Get-Content -LiteralPath $stageFile -Raw|ConvertFrom-Json;if($observed.stage -in @('remoting-setup','directory-officer','role-install','ca-configure','service-check')){$stage=$observed.stage}}catch{}
-@{stage=$stage;status='failed';timedOut=$timedOut;updatedAt=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath $stageFile
+$stage='membership'
+try{$observed=Get-Content -LiteralPath $stageFile -Raw|ConvertFrom-Json;if($observed.stage -in @('membership','directory-ready','remoting-setup','directory-officer','role-install','ca-configure','service-check')){$stage=$observed.stage}}catch{}
+if(Test-Path (Split-Path $stageFile)){@{stage=$stage;status='failed';timedOut=$timedOut;updatedAt=[DateTimeOffset]::UtcNow.ToString('o')}|ConvertTo-Json|Set-Content -LiteralPath $stageFile}
 Write-Output ('CERTOPS_CA_FAILED_STAGE='+$stage)
 throw 'Owned CA bootstrap failed; inspect the bounded stage receipt'
 }finally{
