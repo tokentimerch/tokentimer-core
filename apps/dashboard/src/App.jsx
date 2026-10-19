@@ -59,11 +59,7 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
-import {
-  isTourCompleted,
-  markTourCompleted,
-  resetTourCompleted,
-} from './utils/tourStorage.js';
+import { isTourCompleted, markTourCompleted } from './utils/tourStorage.js';
 import { FiTrash2, FiPlus, FiX } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
@@ -79,6 +75,7 @@ import SEO from './components/SEO.jsx';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
 import WelcomeModal from './components/WelcomeModal';
+import SetupNudge from './components/onboarding/SetupNudge.jsx';
 import ProductTour from './components/ProductTour';
 import { AccessibleSpinner } from './components/Accessibility';
 import ImportTokensModal from './components/ImportTokensModal.jsx';
@@ -2951,6 +2948,7 @@ function DashboardWrapper({
 }) {
   const { pageBg } = useDashboardTheme();
   const navigateToOnboarding = useNavigate();
+  const { workspaceId: nudgeWorkspaceId } = useWorkspace();
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
@@ -3105,6 +3103,17 @@ function DashboardWrapper({
         </div>
       </main>
 
+      <SetupNudge
+        workspaceId={nudgeWorkspaceId}
+        isViewer={isViewer}
+        suppress={
+          showWelcomeModal ||
+          _showProductTour ||
+          location.pathname !== '/dashboard'
+        }
+        onStart={() => navigateToOnboarding('/onboarding')}
+      />
+
       <WelcomeModal
         isOpen={showWelcomeModal && location.pathname === '/dashboard'}
         onClose={() => {
@@ -3160,35 +3169,6 @@ function DashboardWrapper({
                   localStorage.removeItem('tt_welcome_pending');
                 } catch (_) {}
                 navigateToOnboarding('/onboarding');
-              }
-        }
-        onStartTour={
-          isViewer || isProductTourMobile
-            ? undefined
-            : () => {
-                setShowWelcomeModal(false);
-                try {
-                  const url = new URL(window.location.href);
-                  [
-                    'new_user',
-                    'first_login',
-                    'registered',
-                    'verification_success',
-                  ].forEach(k => url.searchParams.delete(k));
-                  window.history.replaceState({}, '', url.toString());
-                } catch (_) {}
-                try {
-                  localStorage.removeItem('tt_welcome_pending');
-                  resetTourCompleted('dashboard');
-                } catch (_) {}
-
-                if (window.location.pathname === '/dashboard') {
-                  setForceRunTour(true);
-                  setTimeout(() => {
-                    setTourType('dashboard');
-                    setShowProductTour(true);
-                  }, 500);
-                }
               }
         }
         introductionVideoUrl={
