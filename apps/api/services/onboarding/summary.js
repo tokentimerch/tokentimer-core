@@ -42,6 +42,15 @@ function summarizeContactGroups(settings, contacts) {
     Array.isArray(g.email_contact_ids) &&
     g.email_contact_ids.some((id) => emailById.has(String(id)));
   const groupsWithEmail = groups.filter(hasEmailRecipient);
+  // A webhook only counts if it still exists; a group can name one that was deleted.
+  const webhookNames = new Set(
+    (Array.isArray(settings?.webhook_urls) ? settings.webhook_urls : [])
+      .filter((w) => w && typeof w.name === "string" && w.name && w.url)
+      .map((w) => w.name),
+  );
+  const hasWebhookRecipient = (g) =>
+    Array.isArray(g.webhook_names) && g.webhook_names.some((n) => webhookNames.has(n));
+  const hasRecipient = (g) => hasEmailRecipient(g) || hasWebhookRecipient(g);
   const defaultId = settings?.default_contact_group_id || null;
   const defaultGroup = defaultId
     ? groups.find((g) => String(g.id) === String(defaultId))
@@ -50,7 +59,10 @@ function summarizeContactGroups(settings, contacts) {
     count: groups.length,
     defaultId,
     defaultHasEmailRecipient: Boolean(defaultGroup && hasEmailRecipient(defaultGroup)),
+    defaultHasWebhookRecipient: Boolean(defaultGroup && hasWebhookRecipient(defaultGroup)),
+    defaultHasRecipient: Boolean(defaultGroup && hasRecipient(defaultGroup)),
     withEmailRecipient: groupsWithEmail.length,
+    webhookCount: webhookNames.size,
     emailAlertsEnabled: settings ? settings.email_alerts_enabled !== false : null,
   };
 }
@@ -93,7 +105,8 @@ async function buildSummary(
         [workspaceId],
       ),
       pool.query(
-        `SELECT contact_groups, default_contact_group_id, email_alerts_enabled
+        `SELECT contact_groups, default_contact_group_id, email_alerts_enabled,
+                webhook_urls
            FROM workspace_settings WHERE workspace_id = $1`,
         [workspaceId],
       ),
