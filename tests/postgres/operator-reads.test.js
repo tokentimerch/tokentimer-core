@@ -308,26 +308,29 @@ describe("operator read routes on PostgreSQL", { concurrency: false }, () => {
     assertNoSentinels(detail.body, "certificate B");
   });
 
-  it("wraps the one operator-written text field as untrusted data, and keeps it out of list search", async () => {
+  it("never returns or lets search find the operator-written retire reason", async () => {
     const detail = await get(`/api/v1/operator/certificates/${certB.identityId}`);
-    assert.deepEqual(detail.body.certificate.lifecycle.reason, {
-      value: "replaced by new load balancer",
-      untrusted: true,
-      truncated: false,
-    });
+    assert.deepEqual(Object.keys(detail.body.certificate.lifecycle), ["status"]);
+    assert.ok(!JSON.stringify(detail.body).includes("load balancer"), "the reason text must not appear");
+    const explained = await get(`/api/v1/operator/certificates/${certB.identityId}/explain`);
+    assert.ok(!JSON.stringify(explained.body).includes("load balancer"));
     const hits = await get(`/api/v1/operator/certificates${q({ query: "load balancer" })}`);
     assert.equal(hits.body.completeness.total, 0, "list search must not match the lifecycle reason");
   });
 
-  it("wraps over-long operator text and truncates it", async () => {
-    await pool.query("UPDATE certops_certificate_identities SET lifecycle_reason = $2 WHERE id = $1", [
-      certB.identityId,
-      "x".repeat(512),
-    ]);
-    const detail = await get(`/api/v1/operator/certificates/${certB.identityId}`);
-    assert.equal(detail.body.certificate.lifecycle.reason.value.length, 512);
-    assert.equal(detail.body.certificate.lifecycle.reason.untrusted, true);
-    await pool.query("UPDATE certops_certificate_identities SET lifecycle_reason = 'replaced by new load balancer' WHERE id = $1", [certB.identityId]);
+  it("cannot confirm a managed label that is not the displayed name", async () => {
+    // The shown name is the certificate's common name when it has one, so a
+    // different managed label is hidden, and searching for it must find nothing.
+    await pool.query("UPDATE managed_certificates SET name = 'HIDDEN_MANAGED_LABEL' WHERE id = $1", [certA.managedId]);
+    try {
+      const hits = await get(`/api/v1/operator/certificates${q({ query: "hidden_managed_label" })}`);
+      assert.equal(hits.body.completeness.total, 0);
+      const detail = await get(`/api/v1/operator/certificates/${certA.identityId}`);
+      assert.ok(!JSON.stringify(detail.body).includes("HIDDEN_MANAGED_LABEL"));
+      assert.equal(detail.body.certificate.summary.commonName.value, "alpha.example.com");
+    } finally {
+      await pool.query("UPDATE managed_certificates SET name = NULL WHERE id = $1", [certA.managedId]);
+    }
   });
 
   describe("search, filters and pagination", () => {

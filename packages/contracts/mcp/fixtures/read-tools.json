@@ -262,12 +262,7 @@
               "sansTruncated": false
             },
             "lifecycle": {
-              "status": "decommissioned",
-              "reason": {
-                "value": "Replaced by new load balancer",
-                "untrusted": true,
-                "truncated": false
-              }
+              "status": "decommissioned"
             },
             "managementPeriods": [
               {
@@ -315,8 +310,7 @@
               "sansTruncated": false
             },
             "lifecycle": {
-              "status": "active",
-              "reason": null
+              "status": "active"
             },
             "managementPeriods": [],
             "managementPeriodsTruncated": false,

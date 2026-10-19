@@ -177,7 +177,10 @@ function projectCertificateDetail(record, { renewalPath = null, workspacePaused 
       sans: sans.slice(0, MAX_SANS),
       sansTruncated: sans.length > MAX_SANS,
     },
-    lifecycle: { status: lifecycle, reason: untrustedText(record.lifecycleReason) },
+    // The retire reason is operator-written free text, which the ADR keeps out
+    // of connections entirely (a note field is a place to paste secrets or
+    // plant instructions). The status alone says what happened.
+    lifecycle: { status: lifecycle },
     managementPeriods: periods.items,
     managementPeriodsTruncated: periods.truncated,
     renewal: {

@@ -212,9 +212,10 @@ async function listCertificateIdentities({
     // names, issuer and subject alternative names. The full search below also
     // reads certificate bodies, lifecycle reasons, key references and deployed
     // paths, so a match there would reveal fields a connection must not see.
+    // Operators see the same value that is displayed, nothing else: a
+    // non-displayed label must not be confirmable by searching for it.
     const restrictedTextMatch = `(
       position($${textParam} in lower(COALESCE(common_name, ''))) > 0 OR
-      position($${textParam} in lower(COALESCE(managed_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(issuer, ''))) > 0 OR
       EXISTS (
