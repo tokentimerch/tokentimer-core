@@ -1,0 +1,517 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-read-tools.schema.json",
+  "title": "MCP read-only tool contracts (first read-only release)",
+  "description": "Input and output shapes for the read-only tools in the first MCP release described by ADR-0015. Each tool has a <name>_input and <name>_output definition. Outputs are what the REST API returns to an operator connection after the operator-safe projection; the MCP adapter returns them as structuredContent unchanged.",
+  "$comment": "Status: proposed with ADR-0015. Closed objects only. Deliberately absent from every output: job claimId and lease data, signed payloads and nonces, dispatch secrets, key_reference and certificate/deployment filesystem paths, notes and other free-form operator text, PEM bodies, and any credential-like value. Reason codes are format-constrained here; the enumerations are frozen by the field-to-source inventory that precedes the read-only implementation, which composes renewalPathHealth, jobPendingReason and explainAgentJobEligibility.",
+  "definitions": {
+    "uuid": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid" },
+    "fingerprintSha256": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/fingerprintSha256" },
+    "timestamp": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp" },
+    "nullableTimestamp": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/timestamp" }]
+    },
+    "snakeCode": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/snakeCode" },
+    "workspaceRole": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/workspaceRole" },
+    "scope": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/scope" },
+    "untrustedText": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText" },
+    "nullableUntrustedText": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/nullableUntrustedText" },
+    "limit": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/limit" },
+    "cursor": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/cursor" },
+    "completeness": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/completeness" },
+    "lifecycleStatus": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/lifecycleStatus" },
+    "renewalPathState": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/renewalPathState" },
+    "jobStatus": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/jobStatus" },
+    "jobOperation": { "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/jobOperation" },
+
+    "tt_whoami_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "tt_whoami_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "workspace", "role", "connection", "certops"],
+      "properties": {
+        "contractVersion": { "type": "integer", "const": 1 },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name"],
+          "properties": {
+            "id": { "$ref": "#/definitions/uuid" },
+            "name": { "$ref": "#/definitions/untrustedText" }
+          }
+        },
+        "role": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["current", "ceiling", "effective"],
+          "properties": {
+            "current": { "$ref": "#/definitions/workspaceRole" },
+            "ceiling": { "$ref": "#/definitions/workspaceRole" },
+            "effective": { "$ref": "#/definitions/workspaceRole" }
+          }
+        },
+        "connection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "scopes", "expiresAt"],
+          "properties": {
+            "id": { "$ref": "#/definitions/uuid" },
+            "scopes": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 16,
+              "items": { "$ref": "#/definitions/scope" }
+            },
+            "expiresAt": { "$ref": "#/definitions/timestamp" }
+          }
+        },
+        "certops": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "paused", "approvalRequiredAlways", "mcpWritesEnabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "paused": { "type": "boolean" },
+            "approvalRequiredAlways": { "type": "boolean" },
+            "mcpWritesEnabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "certificateSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityId",
+        "fingerprintSha256",
+        "subject",
+        "sans",
+        "sansTruncated",
+        "issuer",
+        "notBefore",
+        "notAfter",
+        "daysUntilExpiry",
+        "lifecycleStatus",
+        "renewalPathState",
+        "stillObserved"
+      ],
+      "properties": {
+        "identityId": { "$ref": "#/definitions/uuid" },
+        "fingerprintSha256": { "$ref": "#/definitions/fingerprintSha256" },
+        "subject": { "$ref": "#/definitions/nullableUntrustedText" },
+        "sans": {
+          "type": "array",
+          "maxItems": 25,
+          "items": { "$ref": "#/definitions/untrustedText" }
+        },
+        "sansTruncated": { "type": "boolean" },
+        "issuer": { "$ref": "#/definitions/nullableUntrustedText" },
+        "notBefore": { "$ref": "#/definitions/nullableTimestamp" },
+        "notAfter": { "$ref": "#/definitions/nullableTimestamp" },
+        "daysUntilExpiry": {
+          "oneOf": [{ "type": "null" }, { "type": "integer" }]
+        },
+        "lifecycleStatus": { "$ref": "#/definitions/lifecycleStatus" },
+        "renewalPathState": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
+        },
+        "stillObserved": { "type": "boolean" }
+      }
+    },
+
+    "tt_list_certificates_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lifecycleStatus": { "$ref": "#/definitions/lifecycleStatus" },
+        "expiresWithinDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+        "expiresBefore": { "$ref": "#/definitions/timestamp" },
+        "renewalPathState": { "$ref": "#/definitions/renewalPathState" },
+        "query": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "limit": { "$ref": "#/definitions/limit" },
+        "cursor": { "$ref": "#/definitions/cursor" }
+      },
+      "not": { "required": ["expiresWithinDays", "expiresBefore"] }
+    },
+    "tt_list_certificates_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "completeness"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/definitions/certificateSummary" }
+        },
+        "completeness": { "$ref": "#/definitions/completeness" }
+      }
+    },
+
+    "tt_get_certificate_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "identityId": { "$ref": "#/definitions/uuid" },
+        "fingerprintSha256": { "$ref": "#/definitions/fingerprintSha256" }
+      },
+      "oneOf": [{ "required": ["identityId"] }, { "required": ["fingerprintSha256"] }]
+    },
+    "tt_get_certificate_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["certificate"],
+      "properties": {
+        "certificate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary", "lifecycle", "managementPeriods", "managementPeriodsTruncated", "renewal", "observation"],
+          "properties": {
+            "summary": { "$ref": "#/definitions/certificateSummary" },
+            "lifecycle": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "changedAt", "reason"],
+              "properties": {
+                "status": { "$ref": "#/definitions/lifecycleStatus" },
+                "changedAt": { "$ref": "#/definitions/nullableTimestamp" },
+                "reason": { "$ref": "#/definitions/nullableUntrustedText" }
+              }
+            },
+            "managementPeriods": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["periodId", "sourceKind", "openedAt", "closedAt"],
+                "properties": {
+                  "periodId": { "$ref": "#/definitions/uuid" },
+                  "sourceKind": { "$ref": "#/definitions/snakeCode" },
+                  "openedAt": { "$ref": "#/definitions/timestamp" },
+                  "closedAt": { "$ref": "#/definitions/nullableTimestamp" }
+                }
+              }
+            },
+            "managementPeriodsTruncated": { "type": "boolean" },
+            "renewal": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pathState", "autoRenewEnabled", "nextRenewalAt", "profileId"],
+              "properties": {
+                "pathState": {
+                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
+                },
+                "autoRenewEnabled": {
+                  "oneOf": [{ "type": "null" }, { "type": "boolean" }]
+                },
+                "nextRenewalAt": { "$ref": "#/definitions/nullableTimestamp" },
+                "profileId": {
+                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/uuid" }]
+                }
+              }
+            },
+            "observation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["lastObservedAt", "observedLocationCount"],
+              "properties": {
+                "lastObservedAt": { "$ref": "#/definitions/nullableTimestamp" },
+                "observedLocationCount": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "tt_get_certificate_observations_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityId"],
+      "properties": {
+        "identityId": { "$ref": "#/definitions/uuid" },
+        "presence": {
+          "type": "string",
+          "enum": ["present", "authoritative_absence", "unknown"]
+        },
+        "limit": { "$ref": "#/definitions/limit" },
+        "cursor": { "$ref": "#/definitions/cursor" }
+      }
+    },
+    "tt_get_certificate_observations_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityId", "items", "completeness"],
+      "properties": {
+        "identityId": { "$ref": "#/definitions/uuid" },
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "instanceId",
+              "locationKind",
+              "location",
+              "observedAt",
+              "presence",
+              "matchesIdentity",
+              "deploymentStatus"
+            ],
+            "properties": {
+              "instanceId": { "$ref": "#/definitions/uuid" },
+              "locationKind": {
+                "type": "string",
+                "enum": ["endpoint", "domain", "agent_host", "kubernetes", "other"]
+              },
+              "location": { "$ref": "#/definitions/nullableUntrustedText" },
+              "observedAt": { "$ref": "#/definitions/nullableTimestamp" },
+              "presence": {
+                "type": "string",
+                "enum": ["present", "authoritative_absence", "unknown"]
+              },
+              "matchesIdentity": { "type": "boolean" },
+              "deploymentStatus": {
+                "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
+              }
+            }
+          }
+        },
+        "completeness": { "$ref": "#/definitions/completeness" }
+      }
+    },
+
+    "tt_get_agent_health_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agentId": { "$ref": "#/definitions/uuid" },
+        "includeRetired": { "type": "boolean", "default": false },
+        "limit": { "$ref": "#/definitions/limit" },
+        "cursor": { "$ref": "#/definitions/cursor" }
+      }
+    },
+    "tt_get_agent_health_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "completeness"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "agentId",
+              "hostname",
+              "liveness",
+              "lastSeenAt",
+              "agentVersion",
+              "protocolVersion",
+              "declaredOperations"
+            ],
+            "properties": {
+              "agentId": { "$ref": "#/definitions/uuid" },
+              "hostname": { "$ref": "#/definitions/nullableUntrustedText" },
+              "liveness": {
+                "type": "string",
+                "enum": ["live", "stale", "offline", "retired"]
+              },
+              "lastSeenAt": { "$ref": "#/definitions/nullableTimestamp" },
+              "agentVersion": {
+                "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 64 }]
+              },
+              "protocolVersion": {
+                "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 32 }]
+              },
+              "declaredOperations": {
+                "type": "array",
+                "maxItems": 32,
+                "items": { "$ref": "#/definitions/jobOperation" }
+              }
+            }
+          }
+        },
+        "completeness": { "$ref": "#/definitions/completeness" }
+      }
+    },
+
+    "jobSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "operation", "status", "mode", "identityId", "createdAt", "completedAt"],
+      "properties": {
+        "jobId": { "$ref": "#/definitions/uuid" },
+        "operation": { "$ref": "#/definitions/jobOperation" },
+        "status": { "$ref": "#/definitions/jobStatus" },
+        "mode": { "type": "string", "enum": ["real", "dry_run"] },
+        "identityId": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/uuid" }]
+        },
+        "createdAt": { "$ref": "#/definitions/timestamp" },
+        "completedAt": { "$ref": "#/definitions/nullableTimestamp" }
+      }
+    },
+
+    "tt_get_job_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId"],
+      "properties": {
+        "jobId": { "$ref": "#/definitions/uuid" }
+      }
+    },
+    "tt_get_job_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job"],
+      "properties": {
+        "job": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "summary",
+            "updatedAt",
+            "attemptCount",
+            "requestedByKind",
+            "approval",
+            "pendingReason"
+          ],
+          "properties": {
+            "summary": { "$ref": "#/definitions/jobSummary" },
+            "updatedAt": { "$ref": "#/definitions/nullableTimestamp" },
+            "attemptCount": { "type": "integer", "minimum": 0 },
+            "requestedByKind": {
+              "type": "string",
+              "enum": ["user", "api_token", "operator_connection", "system"]
+            },
+            "approval": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["required", "state", "decidedAt"],
+              "properties": {
+                "required": { "type": "boolean" },
+                "state": {
+                  "type": "string",
+                  "enum": ["not_required", "pending", "approved", "rejected"]
+                },
+                "decidedAt": { "$ref": "#/definitions/nullableTimestamp" }
+              }
+            },
+            "pendingReason": {
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["code", "message"],
+                  "properties": {
+                    "code": { "$ref": "#/definitions/snakeCode" },
+                    "message": { "type": "string", "maxLength": 300 }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+
+    "tt_list_jobs_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "$ref": "#/definitions/jobStatus" },
+        "operation": { "$ref": "#/definitions/jobOperation" },
+        "identityId": { "$ref": "#/definitions/uuid" },
+        "limit": { "$ref": "#/definitions/limit" },
+        "cursor": { "$ref": "#/definitions/cursor" }
+      }
+    },
+    "tt_list_jobs_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "completeness"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/definitions/jobSummary" }
+        },
+        "completeness": { "$ref": "#/definitions/completeness" }
+      }
+    },
+
+    "tt_explain_certificate_state_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityId"],
+      "properties": {
+        "identityId": { "$ref": "#/definitions/uuid" }
+      }
+    },
+    "tt_explain_certificate_state_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityId", "evaluatedAt", "lifecycleStatus", "overall", "reasons", "unknownAreas"],
+      "properties": {
+        "identityId": { "$ref": "#/definitions/uuid" },
+        "evaluatedAt": { "$ref": "#/definitions/timestamp" },
+        "lifecycleStatus": { "$ref": "#/definitions/lifecycleStatus" },
+        "overall": {
+          "type": "string",
+          "enum": ["healthy", "attention", "blocked", "retired", "unknown"]
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 40,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "domain", "severity", "message", "evidenceAt", "sourceRef"],
+            "properties": {
+              "code": { "$ref": "#/definitions/snakeCode" },
+              "domain": {
+                "type": "string",
+                "enum": ["lifecycle", "renewal_path", "job", "observation"]
+              },
+              "severity": { "type": "string", "enum": ["info", "warning", "blocking"] },
+              "message": { "type": "string", "maxLength": 300 },
+              "evidenceAt": { "$ref": "#/definitions/nullableTimestamp" },
+              "sourceRef": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "id"],
+                    "properties": {
+                      "kind": { "type": "string", "enum": ["job", "agent", "profile", "identity"] },
+                      "id": { "$ref": "#/definitions/uuid" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "unknownAreas": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 4,
+          "items": {
+            "type": "string",
+            "enum": ["renewal_path", "observations", "jobs", "agents"]
+          }
+        }
+      }
+    }
+  }
+}

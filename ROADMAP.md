@@ -1,7 +1,8 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-18 for the AD CS and customer Vault qualification
-candidate targeting **0.18.0**. Agent capabilities remain gated until their
+Last reviewed: 2026-10-19 for the AD CS and customer Vault qualification
+candidate targeting **0.18.0** and the proposed MCP operator interface design.
+Agent capabilities remain gated until their
 real-host qualification passes. Other certificate testing expansion remains
 follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
@@ -87,6 +88,18 @@ called stable while it is open.
   (`feat/adcs-dashboard`). The agent contacts a CA only when a local
   enrollment rule names that CA and template, and only when it has
   declared `adcs-enroll-v1`.
+- **MCP operator interface**
+  ([ADR-0015](docs/adr/0015-mcp-operator-interface.md), proposed).
+  Goal: let an operator query TokenTimer and start supported certificate
+  workflows from an MCP client such as an AI assistant. A separate operator
+  connection is limited by scopes and the user's live workspace role, and
+  those limits are enforced in the REST API, not in the MCP adapter. The first
+  release is a small read-only toolset. Certificate lifecycle changes need a
+  human approval outside the assistant, from someone other than the requester.
+  CA-backed revocation waits on [#246](https://github.com/tokentimerch/tokentimer-core/issues/246)
+  and [#233](https://github.com/tokentimerch/tokentimer-core/issues/233).
+  Tool contracts are drafted under `packages/contracts/mcp/`; no runtime
+  ships yet.
 
 ---
 
