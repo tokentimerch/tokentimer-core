@@ -9759,6 +9759,176 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/operator/enrollments:
+    get:
+      tags: [Operator]
+      summary: List operator enrollments
+      operationId: listOperatorEnrollments
+      description: >-
+        Session only. A member sees the enrollments they created; a workspace
+        admin sees everyone's. Only the newest 100 are returned. A setup code is
+        never shown after creation.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Enrollments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorEnrollmentList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Operator]
+      summary: Create an operator enrollment (Connect an assistant)
+      operationId: createOperatorEnrollment
+      description: >-
+        Session only. Creates a single-use setup code that fixes the user,
+        workspace, scopes, role ceiling, connection name and connection
+        lifetime. It is valid for 10 minutes. The same checks as creating a
+        connection apply now, so a request that could never be redeemed is
+        refused immediately. The code is returned once, with Cache-Control
+        no-store, and cannot be recovered afterwards. Redeeming it creates the
+        connection; nothing about the resulting credential is kept.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorEnrollmentCreateRequest"
+      responses:
+        "201":
+          description: Enrollment created; the setup code is shown once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorEnrollmentCreateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/operator/enrollments/{enrollmentId}/revoke:
+    post:
+      tags: [Operator]
+      summary: Revoke an operator enrollment
+      operationId: revokeOperatorEnrollment
+      description: >-
+        Session only. The person who created it or a workspace admin can revoke
+        a pending setup code. Revoking is idempotent and does nothing to a code
+        that was already used. Another member's enrollment is reported as not
+        found.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/operatorEnrollmentIdParam"
+      responses:
+        "200":
+          description: Enrollment revoked, or already in a final state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorEnrollmentRevokeResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/operator/enroll/redeem:
+    post:
+      tags: [Operator]
+      summary: Redeem a setup code for an operator connection credential
+      operationId: redeemOperatorEnrollment
+      description: >-
+        The only operator route that takes no connection credential. It takes the
+        single-use setup code as a bearer (ttopg_ prefix), which is accepted
+        here and nowhere else. A cookie or session next to it is refused. The
+        request body is ignored: the code fixes the user, workspace, scopes,
+        role ceiling, name and lifetime, and the issuing person's access is
+        checked again at this moment. On success the credential is returned once
+        with Cache-Control no-store and is not stored or recoverable; if the
+        response is lost, revoke the new connection and create a new setup code.
+        Every failure before the code is proven valid looks the same, so a wrong
+        or unknown code reveals nothing. Rate limited per client address.
+      security:
+        - operatorEnrollmentGrant: []
+      responses:
+        "201":
+          description: Connection created; the credential is shown once
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorConnectionCreateResponse"
+        "401":
+          description: The setup code is not valid, or a session accompanied it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Enrollment code is not valid
+                code: OPERATOR_ENROLLMENT_INVALID
+        "403":
+          description: The person who issued the code no longer has the access it needs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: The person who issued this enrollment code no longer has the access it needs
+                code: OPERATOR_ENROLLMENT_AUTHORITY_LOST
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The setup code was already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: This enrollment code has already been used
+                code: OPERATOR_ENROLLMENT_USED
+        "410":
+          description: The setup code expired or was revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: This enrollment code has expired
+                code: OPERATOR_ENROLLMENT_EXPIRED
+        "429":
+          description: Too many attempts from this address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: Too many enrollment attempts. Please wait before trying again.
+                code: OPERATOR_ENROLLMENT_RATE_LIMITED
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/operator/connections:
     get:
       tags: [Operator]
@@ -9914,6 +10084,15 @@ components:
       type: http
       scheme: bearer
       description: Per-agent credential (bearer) issued at registration, used for agent heartbeat, job claim, and result/evidence calls. CSRF-exempt. Not valid for registration.
+    operatorEnrollmentGrant:
+      type: http
+      scheme: bearer
+      description: >-
+        Single-use operator enrollment code (ttopg_ prefix). Valid only on
+        POST /api/v1/operator/enroll/redeem and refused on every other route,
+        including the rest of the operator namespace. It is never a connection
+        credential and cannot read anything. CSRF-exempt only at that route and
+        only when no cookie is present.
     operatorConnectionAuth:
       type: http
       scheme: bearer
@@ -9975,6 +10154,13 @@ components:
     operatorJobIdParam:
       in: path
       name: jobId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    operatorEnrollmentIdParam:
+      in: path
+      name: enrollmentId
       required: true
       schema:
         type: string
@@ -10414,6 +10600,95 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OperatorConnection"
+    OperatorEnrollment:
+      type: object
+      required: [id, name, userId, scopes, roleCeiling, connectionLifetimeDays, status, expiresAt, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        userId:
+          type: integer
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorScope"
+        roleCeiling:
+          $ref: "#/components/schemas/OperatorWorkspaceRole"
+        connectionLifetimeDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+        status:
+          type: string
+          enum: [pending, redeemed, revoked, expired]
+        expiresAt:
+          type: string
+          format: date-time
+        redeemedAt:
+          type: string
+          format: date-time
+          nullable: true
+        redeemedConnectionId:
+          type: string
+          format: uuid
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    OperatorEnrollmentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OperatorEnrollment"
+    OperatorEnrollmentCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, scopes, roleCeiling]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/OperatorScope"
+        roleCeiling:
+          $ref: "#/components/schemas/OperatorWorkspaceRole"
+        connectionLifetimeDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+          description: How long the connection lives once the code is redeemed.
+    OperatorEnrollmentCreateResponse:
+      type: object
+      required: [enrollment, grant]
+      properties:
+        enrollment:
+          $ref: "#/components/schemas/OperatorEnrollment"
+        grant:
+          type: string
+          description: The single-use setup code (ttopg_ prefix). Returned once and never recoverable. Valid for 10 minutes.
+    OperatorEnrollmentRevokeResponse:
+      type: object
+      required: [enrollment]
+      properties:
+        enrollment:
+          $ref: "#/components/schemas/OperatorEnrollment"
     OperatorConnectionCreateRequest:
       type: object
       additionalProperties: false

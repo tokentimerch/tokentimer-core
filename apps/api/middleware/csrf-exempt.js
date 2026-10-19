@@ -21,6 +21,21 @@ function isCertOpsMachineTokenCsrfExemptPath(requestPath, req = null) {
 function isOperatorBearerCsrfExemptRequest(requestPath, req = null) {
   if (!req) return false;
   const path = String(requestPath || "");
+  const header = req.headers?.authorization;
+  const cookieHeader = req.headers?.cookie;
+  const hasCookieHeader = typeof cookieHeader === "string" && cookieHeader.trim() !== "";
+  const hasParsedCookies =
+    req.cookies && typeof req.cookies === "object" && Object.keys(req.cookies).length > 0;
+  if (hasCookieHeader || hasParsedCookies) return false;
+
+  // Redeeming an enrollment grant: one exact route, a grant bearer, no cookies.
+  if (
+    String(req.method || "").toUpperCase() === "POST" &&
+    (path === "/api/v1/operator/enroll/redeem" || path === "/v1/operator/enroll/redeem")
+  ) {
+    return typeof header === "string" && /^Bearer[ \t]+ttopg_/i.test(header.trim());
+  }
+
   const remainder = path.startsWith("/api/v1/operator/")
     ? path.slice("/api/v1/operator/".length)
     : path.startsWith("/v1/operator/")
@@ -30,15 +45,7 @@ function isOperatorBearerCsrfExemptRequest(requestPath, req = null) {
   if (remainder === null || !/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/i.test(remainder)) {
     return false;
   }
-  const header = req.headers?.authorization;
-  if (typeof header !== "string" || !/^Bearer[ \t]+ttopc_/i.test(header.trim())) {
-    return false;
-  }
-  const cookieHeader = req.headers?.cookie;
-  const hasCookieHeader = typeof cookieHeader === "string" && cookieHeader.trim() !== "";
-  const hasParsedCookies =
-    req.cookies && typeof req.cookies === "object" && Object.keys(req.cookies).length > 0;
-  return !hasCookieHeader && !hasParsedCookies;
+  return typeof header === "string" && /^Bearer[ \t]+ttopc_/i.test(header.trim());
 }
 
 function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {

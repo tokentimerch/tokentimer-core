@@ -222,7 +222,12 @@ function computeAuthority({ connection, currentRole }) {
   return { currentRole, ceiling: connection.roleCeiling, effectiveRole, scopes: grantedScopes };
 }
 
-async function createConnection(options) {
+// The checks every connection request goes through, whether it is created
+// directly or by redeeming an enrollment grant: normalized name, scopes and
+// ceiling, and proof that the user really holds the authority being delegated.
+// Redemption runs this again at redemption time, so authority lost between
+// issuing a grant and spending it is caught.
+async function validateConnectionRequest(options) {
   const db = options.client || pool;
   const workspaceId = typeof options.workspaceId === "string" ? options.workspaceId.trim() : "";
   if (!workspaceId) {
@@ -234,7 +239,6 @@ async function createConnection(options) {
   const name = normalizeName(options.name);
   const scopes = normalizeScopes(options.scopes);
   const roleCeiling = normalizeRoleCeiling(options.roleCeiling);
-  const expiresAt = resolveExpiry(options.expiresAt, options.now);
 
   // A connection can only be created with authority its user actually holds.
   const currentRole = await resolveCurrentWorkspaceRole(db, {
@@ -258,6 +262,13 @@ async function createConnection(options) {
       );
     }
   }
+  return { workspaceId, userId: options.userId, name, scopes, roleCeiling };
+}
+
+async function createConnection(options) {
+  const db = options.client || pool;
+  const expiresAt = resolveExpiry(options.expiresAt, options.now);
+  const { workspaceId, name, scopes, roleCeiling } = await validateConnectionRequest(options);
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const plaintextCredential = CONNECTION_CREDENTIAL.generate();
@@ -454,5 +465,6 @@ module.exports = {
   resolveCurrentWorkspaceRole,
   revokeConnection,
   rotateCredential,
+  validateConnectionRequest,
   _test: { resolveExpiry, normalizeName, normalizeScopes, connectionStatusFromRow },
 };

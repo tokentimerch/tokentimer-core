@@ -422,7 +422,7 @@ narrow exception:
 This refines the kill-switch semantics: disable new operational work, keep
 narrowly scoped safety and recovery actions.
 
-### 12. Enrollment (settled direction for the separation; open proposal for recovery)
+### 12. Enrollment (settled; strict one-time delivery, decided at implementation)
 
 Onboarding ("Connect an assistant") reuses the bootstrap pattern without reusing
 the agent identity. It is a later step and is not required for the first
@@ -438,20 +438,41 @@ read-only release, which can use a directly provisioned credential shown once.
   authorizing user still has access.
 - The redemption service follows the registration transaction pattern without
   calling the agent registration function: lock the grant, validate current
-  authority, create the connection, consume the grant, record recovery data,
-  audit, commit.
-- Open proposal, recovery after a lost response. Recommended: recoverable
-  enrollment with a client-generated enrollment id and an AES-256-GCM encrypted
-  replay record under a dedicated key, as agent registration does. The
-  enrollment id is an idempotency key and never proof of authority: replay also
-  needs the grant secret. Recovery has its own short deadline (not extended by
-  any "allow used grant" path), is bound to the grant and connection, and fails
-  if the connection is revoked, access was lost or scopes changed; it never
-  extends lifetime. The runbook covers key rotation, cleanup and unreadable
-  records. Documentation states that the long-term credential is hash-only while
-  a short-lived encrypted recoverable copy exists during the replay window.
-  Alternative: strict one-time delivery as diagnostic bootstrap does, where a
-  lost response means a new grant.
+  authority, create the connection, consume the grant, audit, commit. No
+  recovery data is recorded (see the decision below).
+- **Decision: strict one-time delivery.** This reverses the earlier
+  recommendation of recoverable enrollment, after reading what recovery costs in
+  agent registration. That mechanism needs a dedicated 32-byte encryption key
+  that every deployment must provision and rotate, a sweeper job, a runbook for
+  unreadable records, and a plaintext-equivalent secret held in the database for
+  days. Agents need it because they install unattended on servers. Here a person
+  is at the terminal and a new grant is one click, so the cost is not justified.
+  If the response to a redemption is lost, nothing about the credential was
+  kept: the unused connection is revoked and a new grant is created. The setup
+  command never retries a spent code, says plainly when the outcome is unknown,
+  and explains that recovery. The credential stays hash-only in the database at
+  all times. Revisit only if real use shows lost responses are common.
+- The grant is a separate credential family (`ttopg_`), stored as a hash in its
+  own table, valid for 10 minutes by default and at most 15 (a database
+  constraint, so a manual insert cannot lengthen it). It fixes the connection's
+  name and lifetime as well as user, workspace, scopes and ceiling, so the person
+  redeeming it chooses nothing. It is accepted at exactly one route,
+  `POST /api/v1/operator/enroll/redeem`, and refused on every other route
+  including the rest of the operator namespace; a connection credential is in
+  turn refused there. A cookie or session beside it is refused.
+- Failures before the secret is proven (unknown, malformed, wrong) look
+  identical and cost the same to compute. After it is proven, the reason is
+  specific (used, expired, revoked, issuer lost access), since the caller already
+  holds the secret and needs to know what to do. Redemption is rate limited per
+  client address. A refused redemption does not consume the grant, so an issuer
+  who regains access within the grant's life can still use it.
+- The setup command reads the code from standard input or a hidden prompt and
+  refuses it anywhere on the command line, including as a flag value. It checks
+  the destination before spending the code, writes the credential to a private
+  file (mode 0600 in a 0700 directory; on Windows the inherited permissions are
+  removed and the file is deleted if that fails) and never prints either secret.
+  The server refuses a credential file other users can read. An operating-system
+  keychain is not implemented; the file is the supported store.
 - Credentials are never transmitted through MCP tool arguments, results,
   resources or logs. The local host, credential store and MCP runtime are
   trusted components. This design does not protect against compromise of that
@@ -544,7 +565,7 @@ proposals with the rationale given in the section cited.
   preview submission deadline 10 minutes; pending-approval expiry 24 hours with
   a 72 hour maximum.
 - Withdrawal exception: section 11.
-- Enrollment recovery (recoverable versus strict one-time): section 12.
+- Enrollment recovery: decided in favour of strict one-time delivery (section 12).
 - Connection lifetime: default 30 days, maximum 90. Connection expiry behaves
   like revocation for new requests, pending approvals and undispatched jobs
   (recommended). Credential rotation inside a live connection does not.
@@ -627,13 +648,14 @@ must not be inferred from it.
   an encrypted replay record (AES-256-GCM, dedicated key) lets an authenticated
   retry with the same registration id recover the original credential; the
   default window is 15 minutes (`CERTOPS_REGISTRATION_REPLAY_TTL_MS`) and the
-  consumed token is accepted only on register (`allowUsed`). Reused: the pattern,
-  if recoverable enrollment is chosen. Note the long-term credential is
-  hash-only while the replay record holds a recoverable encrypted copy.
+  consumed token is accepted only on register (`allowUsed`). Not reused: the
+  replay record, because enrollment uses strict one-time delivery (section 12).
+  Agents need it for unattended installs; a person at a terminal does not. The
+  long-term connection credential therefore stays hash-only at all times.
 - **Diagnostic bootstrap** (`diagnosticBootstrap.js`): a session-authorized,
   user-attributed bootstrap transaction that refuses replay of a consumed
   request (`diagnostic_bootstrap_already_consumed`). Reused: precedent for the
-  strict one-time alternative. Not reused: its restricted agent identity.
+  strict one-time delivery that enrollment now follows. Not reused: its restricted agent identity.
 - **Executor and controller API tokens**
   (`services/certops/apiTokens.js`, `middleware/api-token-auth.js`): `ttx_`
   credentials, workspace-bound, scopes limited to executor and controller

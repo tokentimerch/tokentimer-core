@@ -15,13 +15,15 @@ const router = require("express").Router();
 
 const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
-const { getApiLimiter } = require("../middleware/rateLimit");
+const { getApiLimiter, getOperatorEnrollmentLimiter } = require("../middleware/rateLimit");
 const { rejectKeyMaterial } = require("../middleware/reject-key-material");
 const { requireCertOpsEnabled } = require("../middleware/require-certops-enabled");
 const {
   requireOperatorInterfaceEnabled,
 } = require("../middleware/require-operator-interface");
 const {
+  bearerFromRequest,
+  hasSessionIdentity,
   requireOperatorConnection,
 } = require("../middleware/operator-connection-auth");
 const { writeAudit } = require("../services/audit");
@@ -30,6 +32,7 @@ const {
   getWorkspaceCertOpsPauseState,
 } = require("../services/certops/workspaceKillSwitch");
 const connections = require("../services/operator/connections");
+const enrollments = require("../services/operator/enrollments");
 const { projectWhoami } = require("../services/operator/projections");
 const reads = require("../services/operator/reads");
 const queries = require("../services/operator/queryParsers");
@@ -474,5 +477,219 @@ router.get("/api/v1/operator/jobs/:jobId", ...operatorRead("mcp:jobs:read"), asy
     return readError(res, err, "Failed to read job");
   }
 });
+
+// ---------------------------------------------------------------------------
+// Enrollment. A signed-in person creates a short-lived, single-use grant; a
+// local setup command redeems it for the runtime credential. Grants are
+// managed under the workspace prefix (session only). Redemption is the one
+// operator-namespace route that takes no connection credential: it takes the
+// grant, once.
+
+const ENROLLMENT_VALIDATION_CODES = new Set([
+  enrollments.ENROLLMENT_LIFETIME_INVALID,
+]);
+
+function enrollmentView(grant) {
+  return {
+    id: grant.id,
+    name: grant.name,
+    userId: grant.userId,
+    scopes: grant.scopes,
+    roleCeiling: grant.roleCeiling,
+    connectionLifetimeDays: grant.connectionLifetimeDays,
+    status: grant.status,
+    expiresAt: grant.expiresAt,
+    redeemedAt: grant.redeemedAt,
+    redeemedConnectionId: grant.redeemedConnectionId,
+    revokedAt: grant.revokedAt,
+    createdAt: grant.createdAt,
+  };
+}
+
+function handleEnrollmentError(res, err, message) {
+  if (ENROLLMENT_VALIDATION_CODES.has(err?.code)) {
+    return res.status(400).json({ error: err.message, code: err.code });
+  }
+  return handleError(res, err, message);
+}
+
+function auditEnrollment({ client, actorUserId, grant, action, connection = null }) {
+  return writeAudit({
+    client,
+    actorUserId,
+    subjectUserId: grant.userId,
+    action,
+    targetType: "operator_enrollment",
+    targetId: null,
+    workspaceId: grant.workspaceId,
+    metadata: {
+      enrollment_id: grant.id,
+      name: grant.name,
+      scopes: grant.scopes,
+      role_ceiling: grant.roleCeiling,
+      connection_lifetime_days: grant.connectionLifetimeDays,
+      status: grant.status,
+      expires_at: grant.expiresAt,
+      connection_id: connection ? connection.id : grant.redeemedConnectionId,
+    },
+  });
+}
+
+router.post(
+  "/api/v1/workspaces/:id/operator/enrollments",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireOperatorInterfaceEnabled,
+  requireSessionUser,
+  async (req, res) => {
+    try {
+      const created = await withTransaction(async (client) => {
+        const result = await enrollments.createGrant({
+          client,
+          workspaceId: req.workspace.id,
+          userId: req.user.id,
+          createdBy: req.user.id,
+          name: req.body?.name,
+          scopes: req.body?.scopes,
+          roleCeiling: req.body?.roleCeiling,
+          connectionLifetimeDays: req.body?.connectionLifetimeDays,
+        });
+        await auditEnrollment({
+          client,
+          actorUserId: req.user.id,
+          grant: result.grant,
+          action: "OPERATOR_ENROLLMENT_CREATED",
+        });
+        return result;
+      });
+      // The grant is shown once, here, and is not recoverable afterwards.
+      res.set("Cache-Control", "no-store");
+      return res.status(201).json({
+        enrollment: enrollmentView(created.grant),
+        grant: created.plaintextGrant,
+      });
+    } catch (err) {
+      return handleEnrollmentError(res, err, "Failed to create operator enrollment");
+    }
+  },
+);
+
+router.get(
+  "/api/v1/workspaces/:id/operator/enrollments",
+  getApiLimiter(),
+  requireOperatorInterfaceEnabled,
+  requireSessionUser,
+  async (req, res) => {
+    try {
+      const isAdmin = hasAtLeastRole(req.authz?.workspaceRole, "admin");
+      const items = await enrollments.listGrants({
+        workspaceId: req.workspace.id,
+        userId: isAdmin ? null : req.user.id,
+      });
+      return res.json({ items: items.map(enrollmentView) });
+    } catch (err) {
+      return handleEnrollmentError(res, err, "Failed to list operator enrollments");
+    }
+  },
+);
+
+router.post(
+  "/api/v1/workspaces/:id/operator/enrollments/:enrollmentId/revoke",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireOperatorInterfaceEnabled,
+  requireSessionUser,
+  async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(String(req.params.enrollmentId || ""))) {
+        return res.status(404).json({ error: "Enrollment not found", code: "NOT_FOUND" });
+      }
+      const outcome = await withTransaction(async (client) => {
+        const existing = await enrollments.getGrant({
+          client,
+          workspaceId: req.workspace.id,
+          grantId: req.params.enrollmentId,
+        });
+        const allowed =
+          existing &&
+          (String(existing.userId) === String(req.user.id) ||
+            hasAtLeastRole(req.authz?.workspaceRole, "admin"));
+        if (!allowed) return null;
+        const after = await enrollments.revokeGrant({
+          client,
+          workspaceId: req.workspace.id,
+          grantId: req.params.enrollmentId,
+          revokedBy: req.user.id,
+        });
+        if (existing.status === "pending" && after.status === "revoked") {
+          await auditEnrollment({
+            client,
+            actorUserId: req.user.id,
+            grant: after,
+            action: "OPERATOR_ENROLLMENT_REVOKED",
+          });
+        }
+        return after;
+      });
+      if (!outcome) {
+        return res.status(404).json({ error: "Enrollment not found", code: "NOT_FOUND" });
+      }
+      return res.json({ enrollment: enrollmentView(outcome) });
+    } catch (err) {
+      return handleEnrollmentError(res, err, "Failed to revoke operator enrollment");
+    }
+  },
+);
+
+const REDEEM_ERROR_STATUS = Object.freeze({
+  [enrollments.ENROLLMENT_INVALID]: 401,
+  [enrollments.ENROLLMENT_USED]: 409,
+  [enrollments.ENROLLMENT_REVOKED]: 410,
+  [enrollments.ENROLLMENT_EXPIRED]: 410,
+  [enrollments.ENROLLMENT_AUTHORITY_LOST]: 403,
+});
+
+router.post(
+  "/api/v1/operator/enroll/redeem",
+  getOperatorEnrollmentLimiter(),
+  requireOperatorInterfaceEnabled,
+  async (req, res) => {
+    // Only the grant, alone. A cookie or session next to it is ambiguous.
+    if (hasSessionIdentity(req)) {
+      return res.status(401).json({
+        error: "Session identity is not allowed when redeeming an enrollment code",
+        code: enrollments.ENROLLMENT_INVALID,
+      });
+    }
+    const bearer = bearerFromRequest(req);
+    try {
+      const redeemed = await withTransaction(async (client) => {
+        const result = await enrollments.redeemGrant({ client, rawGrant: bearer.raw });
+        // Nobody is signed in here, so no actor is recorded. The grant holder
+        // acts for the user who issued it; that user is the subject.
+        await auditEnrollment({
+          client,
+          actorUserId: null,
+          grant: result.grant,
+          action: "OPERATOR_ENROLLMENT_REDEEMED",
+          connection: result.connection,
+        });
+        return result;
+      });
+      res.set("Cache-Control", "no-store");
+      return res.status(201).json({
+        connection: connectionView(redeemed.connection),
+        credential: redeemed.plaintextCredential,
+      });
+    } catch (err) {
+      const status = REDEEM_ERROR_STATUS[err?.code];
+      if (status) {
+        return res.status(status).json({ error: err.message, code: err.code });
+      }
+      logger.error("Operator enrollment redemption failed", { error: err?.message, code: err?.code || null });
+      return res.status(500).json({ error: "Failed to redeem enrollment code", code: "INTERNAL_ERROR" });
+    }
+  },
+);
 
 module.exports = router;
