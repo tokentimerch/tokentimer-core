@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   postgres:
-    if: (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/certops-qualification-ci'))
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -38,7 +38,7 @@ jobs:
             qualification-results/distribution-vault-*/summary.json
           if-no-files-found: error
   agent-lab:
-    if: (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/certops-qualification-ci'))
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -134,7 +134,7 @@ jobs:
           if-no-files-found: error
   functional-summary:
     needs: [postgres, agent-lab]
-    if: ${{ always() && (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/certops-qualification-ci')) }}
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
