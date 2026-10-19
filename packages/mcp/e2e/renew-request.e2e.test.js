@@ -204,7 +204,12 @@ describe("an assistant requests a renewal, a person approves it", { concurrency:
       const withdrawn = data(await call(client, "tt_cancel_request", { requestRecordId: first.requestRecordId }));
       assert.equal(withdrawn.state, "cancelled");
 
-      const second = data(await call(client, "tt_request_renew", { planId: plan.planId, planHash: plan.planHash, requestId: crypto.randomUUID() }));
+      // A preview is spent by its first submission, so the second request needs its own.
+      const reuse = await call(client, "tt_request_renew", { planId: plan.planId, planHash: plan.planHash, requestId: crypto.randomUUID() });
+      assert.equal(reuse.isError, true);
+      assert.equal(JSON.parse(reuse.content[0].text).reason, "plan_used");
+      const plan2 = data(await call(client, "tt_preview_renew", { identityId }));
+      const second = data(await call(client, "tt_request_renew", { planId: plan2.planId, planHash: plan2.planHash, requestId: crypto.randomUUID() }));
       await approvals.approveJob({ workspaceId, jobId: second.jobId, approverUserId: approver, reason: "first" });
       const late = await call(client, "tt_cancel_request", { requestRecordId: second.requestRecordId });
       assert.equal(late.isError, true);

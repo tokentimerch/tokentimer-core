@@ -10,6 +10,7 @@ const { crypto: _c, reads, hashPlan, renewEffect, lockWorkspaceForCertOpsSideEff
 const { PLAN_TTL_MS, APPROVAL_TTL_MS, MAX_PENDING_PER_CONNECTION } = base;
 const { untrustedText } = require("./projections");
 const { resolveRenewalPerCaCap } = require("../certops/renewalCapacity");
+const { endLapsedWindows } = require("./requestMaintenance");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -191,6 +192,10 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
   // Another connection's plan and a missing one are indistinguishable.
   if (!plan || plan.plan_hash !== planHash) throw fail(CODES.PLAN_MISMATCH, "The plan does not match");
   if (new Date(plan.expires_at) <= now) throw fail(CODES.PLAN_EXPIRED, "The preview has expired; preview again");
+  // The plan row is locked, so a second submission of the same preview waits
+  // here and then sees the first. One preview becomes at most one request.
+  const spent = await client.query("SELECT 1 FROM operator_action_requests WHERE plan_id = $1", [planId]);
+  if (spent.rows[0]) throw fail(CODES.PLAN_USED, "This preview was already submitted; preview again");
 
   // 3. Bounded bookkeeping: unapproved requests are not free. They count
   // against the same per-CA capacity that real and scheduled renewals use, so
@@ -201,6 +206,10 @@ async function submitRenewRequest({ client, operator, planId, planHash, requestI
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
     `operator-pending:${operator.workspaceId}`,
   ]);
+  // Requests whose approval window has closed no longer hold a place. Ending
+  // them here, in this transaction, means the limit never depends on a
+  // background sweep having run.
+  await endLapsedWindows(client, operator.workspaceId);
   const waiting = await client.query(
     `SELECT COUNT(*)::int AS workspace_total,
             COUNT(*) FILTER (WHERE requested_by_connection_id = $2)::int AS mine

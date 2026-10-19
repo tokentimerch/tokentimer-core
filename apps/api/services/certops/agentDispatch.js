@@ -1180,6 +1180,17 @@ async function claimJobs({
               status = 'pending'
               AND (scheduled_for IS NULL OR scheduled_for <= NOW())
               AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+              -- Work an assistant connection asked for is not started once that
+              -- connection has ended, even if a person approved it earlier.
+              AND (
+                cj.requested_by_connection_id IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM operator_connections oc
+                   WHERE oc.id = cj.requested_by_connection_id
+                     AND oc.status = 'active'
+                     AND oc.expires_at > NOW()
+                )
+              )
             )
             OR (
               -- Same agent reclaiming a never-renewed expired claim after a

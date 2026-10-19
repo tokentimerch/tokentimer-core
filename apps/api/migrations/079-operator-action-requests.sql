@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS operator_action_requests (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   -- Replay is scoped to the originating connection.
   CONSTRAINT uq_operator_action_requests_connection_request UNIQUE (connection_id, request_id),
+  -- A preview is spent by its first submission, so one preview cannot become
+  -- several orders at the certificate authority.
+  CONSTRAINT uq_operator_action_requests_plan UNIQUE (plan_id),
   CONSTRAINT operator_action_requests_plan_fk
     FOREIGN KEY (workspace_id, plan_id) REFERENCES operator_action_plans(workspace_id, id)
 );

@@ -135,6 +135,14 @@ async function newConnection(userId, scopes = WRITE, roleCeiling = "workspace_ma
   return { credential: created.plaintextCredential, id: created.connection.id };
 }
 
+// Preview and submit in one step, each with its own plan and request id.
+const fileRequest = async (who = credential, identityId = certA.identityId) =>
+  submit((await preview(identityId, who)).body, crypto.randomUUID(), who);
+const mustFile = async (who = credential, identityId = certA.identityId) => {
+  const response = await fileRequest(who, identityId);
+  assert.equal(response.status, 201, `could not file a request: ${response.status} ${JSON.stringify(response.body)}`);
+  return response.body;
+};
 const preview = (identityId = certA.identityId, who = credential) => post("/api/v1/operator/renewals/preview", { identityId }, who);
 const submit = (plan, requestId = crypto.randomUUID(), who = credential) =>
   post("/api/v1/operator/renewals/requests", { planId: plan.planId, planHash: plan.planHash, requestId }, who);
@@ -154,6 +162,11 @@ async function clearInFlight() {
       WHERE workspace_id = $1 AND operation = 'renew' AND status IN ('pending_approval','approved','pending','claimed','running')`,
     [workspaceId],
   );
+}
+async function restoreRoles() {
+  await member(manager, workspaceId, "workspace_manager");
+  await member(approver, workspaceId, "workspace_manager");
+  await member(viewer, workspaceId, "viewer");
 }
 async function setWorkspaceWrites(value) {
   await pool.query("UPDATE workspaces SET operator_writes_enabled = $2 WHERE id = $1", [workspaceId, value]);
@@ -503,9 +516,8 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
 
     it("stops unapproved assistant requests at half the shared cap, so people and the scheduler keep room", async () => {
       // The default per-CA cap is 5, so the assistant may have 2 waiting.
-      const plan = (await preview()).body;
       const results = [];
-      for (let i = 0; i < 5; i += 1) results.push(await submit(plan, crypto.randomUUID()));
+      for (let i = 0; i < 5; i += 1) results.push(await fileRequest());
       assert.equal(results.filter((r) => r.status === 201).length, 2, "exactly the workspace limit gets through");
       for (const refused of results.filter((r) => r.status !== 201)) {
         assert.equal(refused.status, 429);
@@ -550,16 +562,15 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
     });
 
     it("lets withdrawing a request free its place straight away", async () => {
-      const plan = (await preview()).body;
-      const first = await submit(plan, crypto.randomUUID());
-      const second = await submit(plan, crypto.randomUUID());
+      const first = await fileRequest();
+      const second = await fileRequest();
       assert.equal(first.status, 201);
       assert.equal(second.status, 201);
-      assert.equal((await submit(plan, crypto.randomUUID())).status, 429);
+      assert.equal((await fileRequest()).status, 429);
       const cancelled = await post(`/api/v1/operator/requests/${first.body.requestRecordId}/cancel`, {});
       assert.equal(cancelled.status, 200);
       assert.equal(cancelled.body.state, "cancelled");
-      assert.equal((await submit(plan, crypto.randomUUID())).status, 201);
+      assert.equal((await fileRequest()).status, 201);
     });
 
     it("refuses a submission while the workspace is paused, and a pause that commits first always wins", async () => {
@@ -748,6 +759,325 @@ describe("operator renew requests on PostgreSQL", { concurrency: false }, () => 
       } finally {
         await member(manager, workspaceId, "workspace_manager");
       }
+    });
+  });
+
+  describe("a preview is spent once", () => {
+    const { afterEach } = require("node:test");
+    before(clearInFlight);
+    afterEach(clearInFlight);
+
+    it("turns a second submission of the same preview away, with a stable code", async () => {
+      const plan = (await preview()).body;
+      assert.equal((await submit(plan, crypto.randomUUID())).status, 201);
+      const again = await submit(plan, crypto.randomUUID());
+      assert.equal(again.status, 409);
+      assert.equal(again.body.code, "OPERATOR_PLAN_USED");
+      assert.equal(await pool.query("SELECT COUNT(*)::int AS n FROM operator_action_requests WHERE plan_id = $1", [plan.planId]).then((r) => r.rows[0].n), 1);
+    });
+
+    it("lets exactly one of many simultaneous submissions of one preview through", async () => {
+      const plan = (await preview()).body;
+      const results = await Promise.all(Array.from({ length: 6 }, () => submit(plan, crypto.randomUUID())));
+      assert.equal(results.filter((r) => r.status === 201).length, 1, JSON.stringify(results.map((r) => r.status)));
+      for (const other of results.filter((r) => r.status !== 201)) assert.equal(other.body.code, "OPERATOR_PLAN_USED");
+      const fromThisPlan = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM operator_action_requests r WHERE r.plan_id = $1 AND r.job_id IS NOT NULL`,
+        [plan.planId],
+      );
+      assert.equal(fromThisPlan.rows[0].n, 1, "one preview is one order");
+    });
+
+    it("is also enforced by the database, so a bug elsewhere cannot spend a preview twice", async () => {
+      const plan = (await preview()).body;
+      const first = await submit(plan, crypto.randomUUID());
+      assert.equal(first.status, 201);
+      await assert.rejects(
+        pool.query(
+          `INSERT INTO operator_action_requests (workspace_id, connection_id, user_id, request_id, plan_id, plan_hash, operation, identity_id, subject_id, approval_expires_at)
+           SELECT workspace_id, connection_id, user_id, gen_random_uuid(), plan_id, plan_hash, operation, identity_id, subject_id, approval_expires_at
+             FROM operator_action_requests WHERE plan_id = $1`,
+          [plan.planId],
+        ),
+        /uq_operator_action_requests_plan/,
+      );
+    });
+
+    it("still replays the one request made from it", async () => {
+      const plan = (await preview()).body;
+      const requestId = crypto.randomUUID();
+      const first = await submit(plan, requestId);
+      const again = await submit(plan, requestId);
+      assert.equal(again.status, 200);
+      assert.equal(again.body.requestRecordId, first.body.requestRecordId);
+    });
+  });
+
+  describe("requests that can no longer be approved or run", () => {
+    const { afterEach } = require("node:test");
+    const maintenance = require("../../apps/api/services/operator/requestMaintenance");
+    before(async () => {
+      await restoreRoles();
+      await clearInFlight();
+    });
+    afterEach(async () => {
+      await restoreRoles();
+      await clearInFlight();
+      await setWorkspaceWrites(true);
+    });
+    const lapse = (requestRecordId) =>
+      pool.query("UPDATE operator_action_requests SET approval_expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [requestRecordId]);
+    const run = async (fn) => {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await fn(client);
+        await client.query("COMMIT");
+        return result;
+      } finally {
+        client.release();
+      }
+    };
+
+    it("ends a request whose approval window closed, so it stops holding a slot, and says why", async () => {
+      const request = await mustFile();
+      await lapse(request.requestRecordId);
+      assert.equal((await jobRow(request.jobId)).status, "pending_approval", "only a label until something ends it");
+      const ended = await run((client) => maintenance.endLapsedWindows(client, workspaceId));
+      assert.equal(ended, 1);
+      const job = await jobRow(request.jobId);
+      assert.equal(job.status, "cancelled", "terminal, so the scheduler and the per-CA cap are free of it");
+      const read = (await get(`/api/v1/operator/requests/${request.requestRecordId}`)).body;
+      assert.equal(read.state, "expired");
+      assert.equal(read.stateReason, "approval_window_ended");
+    });
+
+    it("does not let a lapsed request hold the assistant's limit, even if the sweep never ran", async () => {
+      const first = await mustFile();
+      const second = await mustFile();
+      assert.equal((await fileRequest()).status, 429, "the workspace limit is full");
+      await lapse(first.requestRecordId);
+      await lapse(second.requestRecordId);
+      const fresh = await fileRequest();
+      assert.equal(fresh.status, 201, "submitting ended the lapsed ones itself");
+      assert.equal((await jobRow(first.jobId)).status, "cancelled");
+      assert.equal((await jobRow(second.jobId)).status, "cancelled");
+    });
+
+    it("frees the certificate for the scheduler: no non-terminal renewal is left behind", async () => {
+      const request = await mustFile();
+      await lapse(request.requestRecordId);
+      await run((client) => maintenance.sweepOperatorRequests({ client }));
+      const open = await pool.query(
+        "SELECT COUNT(*)::int AS n FROM certificate_jobs WHERE workspace_id = $1 AND subject_id = $2 AND operation = 'renew' AND status IN ('pending_approval','approved','pending','claimed','running')",
+        [workspaceId, String(certA.managedId)],
+      );
+      assert.equal(open.rows[0].n, 0);
+    });
+
+    it("leaves a request still inside its window, and one a person already approved, alone", async () => {
+      const waiting = await mustFile();
+      const approvedOne = await mustFile();
+      await approvals.approveJob({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
+      await lapse(approvedOne.requestRecordId);
+      await run((client) => maintenance.sweepOperatorRequests({ client }));
+      assert.equal((await jobRow(waiting.jobId)).status, "pending_approval");
+      assert.equal((await jobRow(approvedOne.jobId)).status, "pending", "a person approved it, so a lapsed window does not undo that");
+    });
+
+    it("never waits on a request someone is working on, so a sweep cannot deadlock with an approval", async () => {
+      const request = await mustFile();
+      await lapse(request.requestRecordId);
+      const holder = await pool.connect();
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT 1 FROM operator_action_requests WHERE id = $1 FOR UPDATE", [request.requestRecordId]);
+        const started = Date.now();
+        const ended = await run((client) => maintenance.endLapsedWindows(client, workspaceId));
+        assert.equal(ended, 0, "it skipped the row that was in use");
+        assert.ok(Date.now() - started < 2000, "and did not wait for it");
+      } finally {
+        await holder.query("ROLLBACK");
+        holder.release();
+      }
+      assert.equal(await run((client) => maintenance.endLapsedWindows(client, workspaceId)), 1, "next time it gets it");
+    });
+
+    it("ends the work of a connection that expired, including work a person already approved", async () => {
+      const own = await newConnection(manager);
+      const waiting = (await mustFile(own.credential));
+      const approvedOne = (await mustFile(own.credential));
+      await approvals.approveJob({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
+      await expireConnection(own.id);
+      const ended = await run((client) => maintenance.endOrphanedRequests(client, workspaceId));
+      assert.equal(ended, 2);
+      for (const r of [waiting, approvedOne]) {
+        assert.equal((await jobRow(r.jobId)).status, "cancelled");
+        const read = await pool.query("SELECT state_override, state_reason FROM operator_action_requests WHERE job_id = $1", [r.jobId]);
+        assert.equal(read.rows[0].state_override, "cancelled");
+        assert.equal(read.rows[0].state_reason, "connection_expired");
+      }
+    });
+
+    it("ends the work of someone who is no longer a manager, but not a request that an agent already holds", async () => {
+      const own = await newConnection(manager);
+      const request = (await mustFile(own.credential));
+      await member(manager, workspaceId, "viewer");
+      try {
+        assert.equal(await run((client) => maintenance.endOrphanedRequests(client, workspaceId)), 1);
+        assert.equal((await jobRow(request.jobId)).status, "cancelled");
+      } finally {
+        await member(manager, workspaceId, "workspace_manager");
+      }
+      const held = (await mustFile(own.credential));
+      await approvals.approveJob({ workspaceId, jobId: held.jobId, approverUserId: approver, reason: "ok" });
+      await pool.query("UPDATE certificate_jobs SET status = 'claimed', claim_id = gen_random_uuid() WHERE id = $1", [held.jobId]);
+      await member(manager, workspaceId, "viewer");
+      try {
+        assert.equal(await run((client) => maintenance.endOrphanedRequests(client, workspaceId)), 0);
+        assert.equal((await jobRow(held.jobId)).status, "claimed", "work an agent holds runs on, to be reconciled by the existing paths");
+      } finally {
+        await member(manager, workspaceId, "workspace_manager");
+        await pool.query("UPDATE certificate_jobs SET status = 'cancelled' WHERE id = $1", [held.jobId]);
+      }
+    });
+
+    it("leaves work an agent already holds when its connection expires, to be reconciled by the existing paths", async () => {
+      const own = await newConnection(manager);
+      const held = await mustFile(own.credential);
+      await approvals.approveJob({ workspaceId, jobId: held.jobId, approverUserId: approver, reason: "ok" });
+      await pool.query("UPDATE certificate_jobs SET status = 'claimed', claim_id = gen_random_uuid() WHERE id = $1", [held.jobId]);
+      await expireConnection(own.id);
+      assert.equal(await run((client) => maintenance.endOrphanedRequests(client, workspaceId)), 0);
+      assert.equal((await jobRow(held.jobId)).status, "claimed", "ending a claimed job here would strand an agent mid-run");
+      const row = await pool.query("SELECT state_override FROM operator_action_requests WHERE job_id = $1", [held.jobId]);
+      assert.equal(row.rows[0].state_override, null, "and the request is not relabelled as ended");
+      await pool.query("UPDATE certificate_jobs SET status = 'cancelled' WHERE id = $1", [held.jobId]);
+    });
+
+    it("ends the waiting requests the moment an admin switches assistant writes off, and leaves approved ones", async () => {
+      const waiting = await mustFile();
+      const approvedOne = await mustFile();
+      await approvals.approveJob({ workspaceId, jobId: approvedOne.jobId, approverUserId: approver, reason: "ok" });
+      const off = await request(app).put(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(owner)).send({ writesEnabled: false });
+      assert.equal(off.status, 200);
+      assert.equal((await jobRow(waiting.jobId)).status, "cancelled");
+      const read = await pool.query("SELECT state_override, state_reason FROM operator_action_requests WHERE job_id = $1", [waiting.jobId]);
+      assert.equal(read.rows[0].state_reason, "writes_disabled");
+      assert.equal((await jobRow(approvedOne.jobId)).status, "pending", "a person approved it; that stands");
+      await request(app).put(`/api/v1/workspaces/${workspaceId}/operator/settings`).set(as(owner)).send({ writesEnabled: true });
+    });
+
+    // eslint-disable-next-line no-inner-declarations
+    async function expireConnection(id) {
+      await pool.query("ALTER TABLE operator_connections DISABLE TRIGGER ALL");
+      try {
+        await pool.query("UPDATE operator_connections SET created_at = NOW() - INTERVAL '40 days', expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [id]);
+      } finally {
+        await pool.query("ALTER TABLE operator_connections ENABLE TRIGGER ALL");
+      }
+    }
+  });
+
+  describe("an agent will not start work from a connection that has ended", () => {
+    const { afterEach } = require("node:test");
+    const dispatch = require("../../apps/api/services/certops/agentDispatch");
+    let agentRow;
+    before(async () => {
+      await restoreRoles();
+      await clearInFlight();
+      const made = await pool.query(
+        `INSERT INTO certops_agents (workspace_id, agent_id, name, agent_version, protocol_version, credential_prefix, credential_hash,
+                                     status, declared_capabilities, capabilities_updated_at, last_seen_at, supported_operations,
+                                     declared_target_selectors, declared_command_profile_names, supported_dns_providers)
+         VALUES ($1, $2, 'claim-agent', '0.18.0', '1.0.0', $3, $4, 'active', '[]'::jsonb, NOW(), NOW(), '["renew"]'::jsonb,
+                 '["host/web"]'::jsonb, '["acme-renew-default"]'::jsonb, '["cloudflare"]'::jsonb)
+         RETURNING id, agent_id`,
+        [workspaceId, `claim-${crypto.randomUUID()}`, `ttagent_${crypto.randomBytes(8).toString("hex")}`, crypto.randomBytes(32).toString("hex")],
+      );
+      agentRow = made.rows[0];
+    });
+    afterEach(async () => {
+      await restoreRoles();
+      await clearInFlight();
+    });
+
+    // Signing is the one dependency stubbed; the selection SQL under test is real.
+    const claim = () =>
+      dispatch.claimJobs({
+        agent: { id: agentRow.id, workspaceId, agentId: agentRow.agent_id, status: "active", protocolVersion: "1.0.0", agentVersion: "0.18.0" },
+        body: { supportedActions: ["renew"], supportedDnsProviders: ["cloudflare"], maxJobs: 5 },
+        deps: {
+          // Return whatever id the claim handed to signing, whatever it is named.
+          signJobForDispatch: ({ job }) => Promise.resolve({ jobId: job.jobId || job.id || job.job_id }),
+          enforceAgentSequence: async () => {},
+          computeAgentCompatibility: () => ({ compatibilityState: "compatible" }),
+        },
+      });
+    const approved = async (who = credential) => {
+      const request = await mustFile(who);
+      await approvals.approveJob({ workspaceId, jobId: request.jobId, approverUserId: approver, reason: "ok" });
+      return request;
+    };
+    const expire = async (id) => {
+      await pool.query("ALTER TABLE operator_connections DISABLE TRIGGER ALL");
+      try {
+        await pool.query("UPDATE operator_connections SET created_at = NOW() - INTERVAL '40 days', expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [id]);
+      } finally {
+        await pool.query("ALTER TABLE operator_connections ENABLE TRIGGER ALL");
+      }
+    };
+
+    it("claims an approved request from a live connection, which proves the harness really claims", async () => {
+      const request = await approved();
+      const result = await claim();
+      assert.deepEqual(result.jobs.map((j) => j.jobId), [request.jobId]);
+      assert.equal((await jobRow(request.jobId)).status, "claimed");
+    });
+
+    it("does not claim approved work once the connection has expired", async () => {
+      const own = await newConnection(manager);
+      const request = await approved(own.credential);
+      await expire(own.id);
+      const result = await claim();
+      assert.deepEqual(result.jobs, [], "the person approved it, but the connection that asked is gone");
+      assert.equal((await jobRow(request.jobId)).status, "pending", "and the job was not touched by the attempt");
+    });
+
+    it("does not claim approved work once the connection is revoked, even if something else left the job pending", async () => {
+      const own = await newConnection(manager);
+      const request = await approved(own.credential);
+      await pool.query("UPDATE operator_connections SET status = 'revoked', revoked_at = NOW() WHERE id = $1", [own.id]);
+      assert.deepEqual((await claim()).jobs, []);
+      assert.equal((await jobRow(request.jobId)).status, "pending");
+    });
+
+    it("still claims ordinary work that came from nobody's connection, so existing behaviour is unchanged", async () => {
+      // A job a person creates, through the same service, with no connection.
+      const person = await pool.connect();
+      let plainId;
+      try {
+        await person.query("BEGIN");
+        const created = await require("../../apps/api/services/certops/jobs").manualRenewalJobCreator({ certificateId: certA.managedId })({
+          client: person,
+          workspaceId,
+          subjectType: "managed_certificate",
+          subjectId: certA.managedId,
+          payload: {},
+          source: "api",
+          requestedByUserId: owner,
+          requiresApproval: false,
+          idempotencyKey: `plain-${crypto.randomUUID()}`,
+          returnOutcome: true,
+        });
+        plainId = (created.job || created).id;
+        await person.query("COMMIT");
+      } finally {
+        person.release();
+      }
+      assert.equal((await jobRow(plainId)).requested_by_connection_id, null);
+      const result = await claim();
+      assert.ok(result.jobs.some((j) => j.jobId === plainId), "a job with no connection is claimed as before");
     });
   });
 
