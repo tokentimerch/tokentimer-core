@@ -1,0 +1,50 @@
+{
+  "_comment": "Every entry is validated against the docs sources by tests/unit/onboarding-doc-links.test.js (set TT_DOCS_ROOT to tokentimer-cloud/apps/docs). A variant of null means the page does not exist in that edition and the link is hidden.",
+  "tokens.fields": { "path": "/tokens", "anchor": "fields" },
+  "tokens.adding": { "path": "/tokens", "anchor": "adding" },
+  "quickstart.firstAsset": {
+    "path": "/quickstart",
+    "anchor": "3-create-a-sample-asset",
+    "cloud": { "path": "/quickstart", "anchor": "first-token" }
+  },
+  "quickstart.recipients": {
+    "path": "/quickstart",
+    "anchor": "2-choose-recipients",
+    "cloud": { "path": "/alerts/contact-groups", "anchor": "contacts" }
+  },
+  "quickstart.verifyAlert": {
+    "path": "/quickstart",
+    "anchor": "4-verify-an-alert",
+    "cloud": { "path": "/quickstart", "anchor": "verify" }
+  },
+  "monitoring.endpoint": {
+    "path": "/monitoring/endpoint-monitoring",
+    "anchor": "ssl-tokens"
+  },
+  "monitoring.health": {
+    "path": "/monitoring/endpoint-monitoring",
+    "anchor": "health"
+  },
+  "monitoring.network": {
+    "path": "/monitoring/endpoint-monitoring",
+    "anchor": "network"
+  },
+  "alerts.contactGroups": {
+    "path": "/alerts/contact-groups",
+    "anchor": "contacts"
+  },
+  "alerts.thresholds": { "path": "/alerts", "anchor": "thresholds" },
+  "alerts.controlCenter": {
+    "path": "/alerts/delivery",
+    "anchor": "control-center"
+  },
+  "alerts.troubleshooting": {
+    "path": "/alerts/delivery",
+    "anchor": "troubleshooting"
+  },
+  "smtp.setup": {
+    "path": "/runbooks/configuration-basics",
+    "anchor": "smtp",
+    "cloud": null
+  }
+}

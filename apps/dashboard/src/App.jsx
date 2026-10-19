@@ -59,6 +59,11 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 import { HelmetProvider } from 'react-helmet-async';
 import { trackEvent } from './utils/analytics.js';
+import {
+  isTourCompleted,
+  markTourCompleted,
+  resetTourCompleted,
+} from './utils/tourStorage.js';
 import { FiTrash2, FiPlus, FiX } from 'react-icons/fi';
 import {
   Activity as ActivityIcon,
@@ -159,6 +164,9 @@ const AlertPreferences = lazy(() => import('./pages/AlertPreferences'));
 const UserPreferences = lazy(() => import('./pages/UserPreferences'));
 const ControlCenter = lazy(() => import('./pages/ControlCenter'));
 const CertOpsRoutes = lazy(() => import('./pages/certops/CertOpsRoutes.jsx'));
+const OnboardingRoutes = lazy(
+  () => import('./components/onboarding/OnboardingRoutes.jsx')
+);
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
@@ -2632,6 +2640,21 @@ function App() {
                             element={<Navigate to='/control-center' replace />}
                           />
                           <Route
+                            path='/onboarding/*'
+                            element={
+                              <RequireManagerRoute
+                                session={session}
+                                scope='active-workspace'
+                              >
+                                <OnboardingRoutes
+                                  session={session}
+                                  onLogout={handleLogout}
+                                  onAccountClick={handleHelpAccountClick}
+                                />
+                              </RequireManagerRoute>
+                            }
+                          />
+                          <Route
                             path='/certops/*'
                             element={
                               <RequireManagerRoute
@@ -2927,6 +2950,7 @@ function DashboardWrapper({
   createTokenNotesFlushRef,
 }) {
   const { pageBg } = useDashboardTheme();
+  const navigateToOnboarding = useNavigate();
 
   // Restore product tour after hard navigation back from /workspace-preferences
   useEffect(() => {
@@ -3109,16 +3133,35 @@ function DashboardWrapper({
           try {
             const isNewUser = welcomeData?.isNewUser;
             if (isNewUser && window.location.pathname === '/dashboard') {
-              const hasCompletedTour = localStorage.getItem(
-                'tt_tour_dashboard_v1'
-              );
+              const hasCompletedTour = isTourCompleted('dashboard');
               if (!hasCompletedTour) {
                 // Mark as completed/skipped so tour doesn't auto-start
-                localStorage.setItem('tt_tour_dashboard_v1', 'true');
+                markTourCompleted('dashboard');
               }
             }
           } catch (_) {}
         }}
+        onStartSetup={
+          isViewer
+            ? undefined
+            : () => {
+                setShowWelcomeModal(false);
+                try {
+                  const url = new URL(window.location.href);
+                  [
+                    'new_user',
+                    'first_login',
+                    'registered',
+                    'verification_success',
+                  ].forEach(k => url.searchParams.delete(k));
+                  window.history.replaceState({}, '', url.toString());
+                } catch (_) {}
+                try {
+                  localStorage.removeItem('tt_welcome_pending');
+                } catch (_) {}
+                navigateToOnboarding('/onboarding');
+              }
+        }
         onStartTour={
           isViewer || isProductTourMobile
             ? undefined
@@ -3136,7 +3179,7 @@ function DashboardWrapper({
                 } catch (_) {}
                 try {
                   localStorage.removeItem('tt_welcome_pending');
-                  localStorage.removeItem('tt_tour_dashboard_v1');
+                  resetTourCompleted('dashboard');
                 } catch (_) {}
 
                 if (window.location.pathname === '/dashboard') {

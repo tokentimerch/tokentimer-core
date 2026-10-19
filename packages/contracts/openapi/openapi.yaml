@@ -2864,6 +2864,183 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/capabilities:
+    get:
+      tags: [Workspaces]
+      summary: Onboarding capability facts
+      operationId: getOnboardingCapabilities
+      description: >-
+        Returns, per capability, separate tri-state facts (supported, entitled,
+        authorized, qualified, configured; each true, false or "unknown"),
+        blockers with remediation, available actions and the derived wizard
+        state. "unknown" means the source could not be read and must not be
+        treated as unavailable.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: Capability list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  docsBaseUrl:
+                    type: string
+                    format: uri
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/{flow}:
+    get:
+      tags: [Workspaces]
+      summary: Get the caller's onboarding session
+      operationId: getOnboardingSession
+      description: >-
+        Returns the caller's persisted onboarding intent, progress and
+        non-secret operation references for this workspace. A session that has
+        never been written has revision 0.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      responses:
+        "200":
+          description: Onboarding session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Workspaces]
+      summary: Write the caller's onboarding session
+      operationId: putOnboardingSession
+      description: >-
+        Replaces the supplied sections. `expectedRevision` is required; a
+        mismatch returns 409 REVISION_CONFLICT with the current session.
+        Credentials and secret-like keys or values are rejected.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision:
+                  type: integer
+                  minimum: 0
+                plannerVersion:
+                  type: integer
+                  minimum: 1
+                status:
+                  type: string
+                  enum: [in_progress, completed, dismissed]
+                intent:
+                  type: object
+                  additionalProperties: true
+                progress:
+                  type: object
+                  additionalProperties: true
+                operation_refs:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Session changed elsewhere (REVISION_CONFLICT)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/{flow}/summary:
+    get:
+      tags: [Workspaces]
+      summary: Verified onboarding state
+      operationId: getOnboardingSummary
+      description: >-
+        Recomputes what actually exists (assets, monitors, contact groups,
+        SMTP readiness) and which stored operation references still resolve.
+        Completion is always derived from this, never from stored flags.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      responses:
+        "200":
+          description: Verified summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/onboarding/{flow}/reset:
+    post:
+      tags: [Workspaces]
+      summary: Reset the caller's onboarding session
+      operationId: resetOnboardingSession
+      description: Deletes the caller's session. Created assets are not touched.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+        - $ref: "#/components/parameters/onboardingFlowParam"
+      responses:
+        "200":
+          description: Reset result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/contacts/{contactId}:
     put:
       tags: [Workspaces]
@@ -8602,6 +8779,13 @@ components:
       schema:
         type: string
         format: uuid
+    onboardingFlowParam:
+      in: path
+      name: flow
+      required: true
+      schema:
+        type: string
+        enum: [mega, certops]
     tokenIdParam:
       in: path
       name: id
