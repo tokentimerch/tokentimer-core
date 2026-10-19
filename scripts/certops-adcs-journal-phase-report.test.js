@@ -28,3 +28,10 @@ test("issued crash recovery requires one pre-existing CA request and preserves i
   assert.equal(verify(report),true);
   for(const change of [{caRequestsAtFault:0},{caRequestsAtFault:2},{caRequestsAfterRecovery:2},{issuedRequestIdentityPreserved:false},{nativeRequestIdAtFault:undefined},{nativeRequestIdAtFault:0},{nativeRequestIdAtFault:4294967296},{nativeRequestIdAfterRecovery:18}])assert.throws(()=>verify({...report,...change}));
 });
+
+test("scoped zero-row recovery proves actionable uncertainty without installation or cleanup claims",()=>{
+ const report={...fixture("submitting"),outcome:"uncertain-no-resubmit-operator-action-required",uncertainNoResubmitVerified:true,uncertainFrozenIdentityAndKeyPreserved:true,caRequestsAtFault:0,caRequestsAfterRecovery:0,trustedNativeTls:false,scopedOperatorReconciliationOutcome:true,recoveryContinuationRefused:true,publicOperatorUncertaintyObserved:true,ordinaryPollAbsent:true,supportedSchedulerDidNotResubmit:true,ownedProtectedKeyPreserved:true,cleanupPendingOperatorReconciliation:true};
+ assert.equal(verify(report),true);
+ for(const field of ["scopedOperatorReconciliationOutcome","recoveryContinuationRefused","publicOperatorUncertaintyObserved","ordinaryPollAbsent","supportedSchedulerDidNotResubmit","ownedProtectedKeyPreserved","cleanupPendingOperatorReconciliation","sameKeyAndCsrIdentityPreserved","operatorRecoveryAuditObserved","originalUnknownEffectEvidencePreserved"]){assert.throws(()=>verify({...report,[field]:false}));}
+ for(const patch of [{trustedNativeTls:true},{caRequestsAtFault:1},{caRequestsAfterRecovery:1},{status:"failed"},{qualificationStatus:"qualified"}])assert.throws(()=>verify({...report,...patch}));
+});

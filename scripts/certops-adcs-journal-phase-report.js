@@ -33,10 +33,15 @@ function verify(report){
   }else if(report.phase==="submitting"){
     assert.equal(report.uncertainNoResubmitVerified,true);
     assert.equal(report.uncertainFrozenIdentityAndKeyPreserved,true);
-    assert.equal(report.outcome,"uncertain-no-resubmit-operator-reconciled");
-    assert.equal(report.caRequestsAfterRecovery,report.caRequestsAtFault);
-    assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);
-    assert.equal(report.sameKeyAndCsrIdentityPreserved,true);
+    if(report.outcome==="uncertain-no-resubmit-operator-action-required"){
+      for(const field of ["scopedOperatorReconciliationOutcome","recoveryContinuationRefused","publicOperatorUncertaintyObserved","ordinaryPollAbsent","supportedSchedulerDidNotResubmit","ownedProtectedKeyPreserved","cleanupPendingOperatorReconciliation","sameKeyAndCsrIdentityPreserved"])assert.equal(report[field],true);
+      assert.equal(report.caRequestsAtFault,0);assert.equal(report.caRequestsAfterRecovery,0);assert.equal(report.trustedNativeTls,false);
+    }else{
+      assert.equal(report.outcome,"uncertain-no-resubmit-operator-reconciled");
+      assert.equal(report.caRequestsAfterRecovery,report.caRequestsAtFault);
+      assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);
+      assert.equal(report.sameKeyAndCsrIdentityPreserved,true);
+    }
   }else{assert.equal(report.outcome,"same-key-installation-recovered");assert.equal(report.caRequestsAfterRecovery,1);assert.equal(report.trustedNativeTls,true);assert.equal(report.sameKeyAndCsrIdentityPreserved,true);}
   return true;
 }

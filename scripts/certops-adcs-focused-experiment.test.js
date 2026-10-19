@@ -163,3 +163,24 @@ for(const valid of [true,false])test(`scoped D foreign RequestId comes from an o
   else{await assert.rejects(operation);assert.equal(events.includes("native-owned-request"),false);}
  }finally{fs.rmSync(directory,{recursive:true});}
 });
+
+for(const fault of [null,"running-job","poll","public-state","resubmit","key","csr","late-ca-row"])test(`actual scoped uncertainty assertion seam: ${fault||"safe"}`,async()=>{
+ const sourceFile=path.join(root,"tests/e2e/helpers/certops-adcs-journal-phase-experiment.js"),module={exports:{}},actualRequire=require("node:module").createRequire(sourceFile);
+ const journal={containerName:"owned-key",csrSha256:"a",csrSpkiSha256:"b",snapshotSha256:"c",caConfig:"owned-ca",template:"owned-template"},stoppedJournal={kind:"valid",journal:{...journal,state:"submitting"},artifacts:{csrPem:"owned-csr"}};
+ const visible={id:"owned",state:fault==="public-state"?"installed":"submission_uncertain",requestId:null,operatorRequestId:null,jobStatus:"failed"};
+ const current={state:"submission_uncertain",request_id:null,operator_request_id:null,next_poll_at:fault==="poll"?new Date():null,snapshot_sha256:"c"};let scheduleCalls=0;
+ vm.runInNewContext(fs.readFileSync(sourceFile,"utf8"),{module,__filename:sourceFile,__dirname:path.dirname(sourceFile),Buffer,URL,process:{env:{}},require(name){
+  if(name==="../../../packages/agent/src/issuers/adcs-enrollment")return {readEnrollmentJournal(){return {kind:"valid",journal:{...journal,state:"submission_uncertain"},artifacts:{csrPem:fault==="csr"?"changed-csr":"owned-csr"}};}};
+  if(name==="../../../apps/api/services/certops/certificateEnrollments")return {async scheduleDueEnrollments(){scheduleCalls++;return fault==="resubmit"?[{enrollmentId:"owned"}]:[];}};
+  return actualRequire(name);
+ }});
+ const operation=module.exports.verifyActionableUncertainty({fixture:{workspaceId:"owned-workspace",pool:{async query(){return {rows:[current]};}},async request(url,method){assert.equal(url,"/owned/enrollments");assert.equal(method,"GET");return {status:200,body:{items:[visible]}};}},api:"/owned",enrollmentId:"owned",recoveryJobId:"recovery",getJob:async()=>({status:fault==="running-job"?"running":"failed"}),until:async check=>{const result=await check();assert.ok(result);return result;},configDir:"owned",stoppedJournal,command:()=>fault==="key"?"":"owned-key",observe:()=>({subjectRequestCount:fault==="late-ca-row"?1:0})});
+ if(fault)await assert.rejects(operation);else{const result=await operation;assert.equal(result.publicOperatorUncertaintyObserved,true);assert.equal(result.trustedNativeTls,false);assert.equal(result.supportedSchedulerDidNotResubmit,true);assert.equal(scheduleCalls,1);}
+});
+
+test("standalone submitting may pass only the safe operator outcome while retained custody stays guarded",()=>{
+ const p=proof();p.phase="submitting";Object.assign(p.journalExperiment,{phase:"submitting",fault:{...p.journalExperiment.fault,phase:"submitting"},outcome:"uncertain-no-resubmit-operator-action-required",uncertainNoResubmitVerified:true,uncertainFrozenIdentityAndKeyPreserved:true,caRequestsAtFault:0,caRequestsAfterRecovery:0,trustedNativeTls:false,scopedOperatorReconciliationOutcome:true,recoveryContinuationRefused:true,publicOperatorUncertaintyObserved:true,ordinaryPollAbsent:true,supportedSchedulerDidNotResubmit:true,ownedProtectedKeyPreserved:true,cleanupPendingOperatorReconciliation:true});
+ delete p.journalExperiment.issuedRequestIdentityPreserved;delete p.journalExperiment.nativeRequestIdAtFault;delete p.journalExperiment.nativeRequestIdAfterRecovery;
+ assert.equal(experiment.verifyReport(p,"a".repeat(40)),true);
+ for(const mutate of [v=>v.journalExperiment.publicOperatorUncertaintyObserved=false,v=>v.journalExperiment.trustedNativeTls=true,v=>v.ownedCleanup.nativeCustody="deleted",v=>v.baselineQualificationSatisfied=true]){const copy=structuredClone(p);mutate(copy);assert.throws(()=>experiment.verifyReport(copy,"a".repeat(40)));}
+});

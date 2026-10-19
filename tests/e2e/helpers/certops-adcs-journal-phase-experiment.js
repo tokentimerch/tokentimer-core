@@ -95,14 +95,16 @@ module.exports=async function runJournalPhaseExperiment(context){
         report.caRequestsAfterRecovery=0;report.ownedProtectedKeyPreserved=true;
         report.cleanupPendingOperatorReconciliation=true;
         fs.writeFileSync(path.join(workDir,".preserve-adcs-journal-uncertainty.json"),JSON.stringify({enrollmentId,jobId:created.body.jobId}));
-        throw Object.assign(new Error("ADCS_SUBMISSION_RECONCILIATION_REQUIRED"),{code:"ADCS_SUBMISSION_RECONCILIATION_REQUIRED"});
+        if(context.allowOperatorReconciliationOutcome===true){
+          Object.assign(report,await verifyActionableUncertainty({fixture,api,enrollmentId,recoveryJobId:recovery.body.jobId,getJob,until,configDir,stoppedJournal,command,observe}));
+        }else throw Object.assign(new Error("ADCS_SUBMISSION_RECONCILIATION_REQUIRED"),{code:"ADCS_SUBMISSION_RECONCILIATION_REQUIRED"});
       }else{
         assert.equal(native.subjectRequestCount,1);
         assert.equal((await fixture.request(`${api}/enrollments/${enrollmentId}/reconcile`,"POST",{requestId:native.requestId})).status,204);
         const dispatched=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+1000)})).find(row=>row.enrollmentId===enrollmentId);assert.ok(dispatched);await jobFinished(dispatched.jobId);report.outcome="uncertain-no-resubmit-operator-reconciled";
       }
     }else{await jobFinished(recovery.body.jobId);report.outcome="same-key-installation-recovered";}
-    if(!["uncertain-no-resubmit-abandoned-with-absent-key","pre-csr-recovery-refused-owned-key-cancelled"].includes(report.outcome)){
+    if(!["uncertain-no-resubmit-operator-action-required","uncertain-no-resubmit-abandoned-with-absent-key","pre-csr-recovery-refused-owned-key-cancelled"].includes(report.outcome)){
       const installed=await getEnrollment();assert.equal(installed.state,"installed");
       const journal=readEnrollmentJournal(configDir,enrollmentId);assert.equal(journal.kind,"valid");assert.equal(journal.journal.containerName,stoppedJournal.journal.containerName);
       for(const field of ["csrSha256","csrSpkiSha256","snapshotSha256"])assert.equal(journal.journal[field],stoppedJournal.journal[field]);
@@ -140,3 +142,20 @@ module.exports.assertCleanupSafe=function assertCleanupSafe(workDir){
   assert.equal(fs.existsSync(path.join(workDir,".preserve-adcs-journal-uncertainty.json")),false,
     "Preserve key and durable journal: an absent CA row does not exclude a late submission commit");
 };
+
+// Only the standalone runner may accept safe operator uncertainty as an
+// experimental outcome. This does not authorize native custody cleanup.
+async function verifyActionableUncertainty({fixture,api,enrollmentId,recoveryJobId,getJob,until,configDir,stoppedJournal,command,observe}){
+ const continuation=await until(async()=>{const row=await getJob(recoveryJobId);return ["failed","blocked"].includes(row?.status)?row:null;});
+ assert.ok(["failed","blocked"].includes(continuation.status));
+ const current=(await fixture.pool.query("SELECT state,request_id,operator_request_id,next_poll_at,snapshot_sha256 FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,enrollmentId])).rows[0];
+ assert.equal(current.state,"submission_uncertain");assert.equal(current.request_id,null);assert.equal(current.operator_request_id,null);assert.equal(current.next_poll_at,null);assert.equal(current.snapshot_sha256,stoppedJournal.journal.snapshotSha256);
+ const page=await fixture.request(`${api}/enrollments`,"GET");assert.equal(page.status,200);const visible=page.body.items.filter(row=>row.id===enrollmentId);assert.equal(visible.length,1);assert.equal(visible[0].state,"submission_uncertain");assert.equal(visible[0].requestId,null);assert.equal(visible[0].operatorRequestId,null);assert.ok(["failed","blocked"].includes(visible[0].jobStatus));
+ const scheduled=await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool,now:new Date(Date.now()+86400000)});assert.equal(scheduled.some(row=>row.enrollmentId===enrollmentId),false);
+ const unchanged=readEnrollmentJournal(configDir,enrollmentId);assert.equal(unchanged.kind,"valid");assert.equal(unchanged.journal.state,"submission_uncertain");
+ for(const field of ["containerName","csrSha256","csrSpkiSha256","snapshotSha256","caConfig","template"])assert.equal(unchanged.journal[field],stoppedJournal.journal[field]);
+ assert.ok(stoppedJournal.artifacts.csrPem);assert.equal(unchanged.artifacts.csrPem,stoppedJournal.artifacts.csrPem);
+ assert.ok(command("certutil.exe",["-csp","Microsoft Software Key Storage Provider","-key"]).includes(stoppedJournal.journal.containerName));assert.equal(observe().subjectRequestCount,0);
+ return {scopedOperatorReconciliationOutcome:true,recoveryContinuationRefused:true,publicOperatorUncertaintyObserved:true,ordinaryPollAbsent:true,supportedSchedulerDidNotResubmit:true,sameKeyAndCsrIdentityPreserved:true,trustedNativeTls:false};
+}
+module.exports.verifyActionableUncertainty=verifyActionableUncertainty;
