@@ -21,6 +21,7 @@ import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
 import { trackOnboarding, transitionEvents } from './analytics.js';
 import { GOALS } from './modules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
+import { resolveNavigation } from './stepNavigation.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
 import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
 import { FileImportStep, IntegrationStep } from './importSteps.jsx';
@@ -193,13 +194,13 @@ const STATUS_BADGE = {
   upcoming: { label: 'Next', colorScheme: 'gray' },
 };
 
-function JourneyRail({ steps }) {
+function JourneyRail({ steps, shownId, onSelect }) {
   const { muted } = useDashboardTheme();
   return (
     <VStack
       as='ol'
       align='stretch'
-      spacing={2}
+      spacing={1}
       aria-label='Setup steps'
       listStyleType='none'
       m={0}
@@ -207,20 +208,49 @@ function JourneyRail({ steps }) {
     >
       {steps.map(step => {
         const badge = STATUS_BADGE[step.status] || STATUS_BADGE.upcoming;
+        const reachable = step.status !== 'upcoming';
+        const shown = step.id === shownId;
+        const label = (
+          <Text
+            as='span'
+            fontSize='sm'
+            textAlign='left'
+            fontWeight={shown || step.status === 'current' ? 'bold' : 'normal'}
+            color={step.status === 'upcoming' ? muted : 'inherit'}
+          >
+            {step.title}
+          </Text>
+        );
         return (
           <HStack
             as='li'
             key={step.id}
             justify='space-between'
-            aria-current={step.status === 'current' ? 'step' : undefined}
+            aria-current={shown ? 'step' : undefined}
           >
-            <Text
-              fontSize='sm'
-              fontWeight={step.status === 'current' ? 'bold' : 'normal'}
-              color={step.status === 'upcoming' ? muted : 'inherit'}
-            >
-              {step.title}
-            </Text>
+            {reachable ? (
+              <Box
+                as='button'
+                type='button'
+                onClick={() => onSelect(step.id)}
+                flex='1'
+                minW={0}
+                py={1}
+                textAlign='left'
+                borderRadius='sm'
+                _hover={{ textDecoration: 'underline' }}
+                _focusVisible={{ boxShadow: 'outline' }}
+                aria-label={`${step.title}${
+                  step.status === 'current' ? ', current step' : ', review'
+                }`}
+              >
+                {label}
+              </Box>
+            ) : (
+              <Box flex='1' minW={0} py={1}>
+                {label}
+              </Box>
+            )}
             <Badge colorScheme={badge.colorScheme}>{badge.label}</Badge>
           </HStack>
         );
@@ -229,6 +259,49 @@ function JourneyRail({ steps }) {
   );
 }
 
+/**
+ * Back/next controls and a notice while a finished step is being reviewed.
+ * Looking at a step never changes what is recorded as done.
+ */
+function ReviewBar({ nav, titleOf, onGo, onReturn }) {
+  const { muted } = useDashboardTheme();
+  if (!nav.previousId && !nav.viewing) return null;
+  return (
+    <HStack justify='space-between' flexWrap='wrap' gap={2} mb={3}>
+      <DashboardActionButton
+        size='sm'
+        variant='ghost'
+        isDisabled={!nav.previousId}
+        onClick={() => onGo(nav.previousId)}
+      >
+        Back{nav.previousId ? `: ${titleOf(nav.previousId)}` : ''}
+      </DashboardActionButton>
+      {nav.viewing ? (
+        <HStack spacing={2}>
+          <Text fontSize='xs' color={muted}>
+            Reviewing a finished step. Nothing here is lost.
+          </Text>
+          {nav.nextId ? (
+            <DashboardActionButton
+              size='sm'
+              variant='outline'
+              onClick={() => onGo(nav.nextId)}
+            >
+              Next
+            </DashboardActionButton>
+          ) : null}
+          <DashboardActionButton
+            size='sm'
+            colorScheme='blue'
+            onClick={onReturn}
+          >
+            Back to where I was
+          </DashboardActionButton>
+        </HStack>
+      ) : null}
+    </HStack>
+  );
+}
 function DoneCard({ ctx }) {
   const { muted } = useDashboardTheme();
   const smtp = ctx.summary?.alerts?.smtpConfigured;
@@ -364,6 +437,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             refresh: onboarding.refresh,
             fetchSummary: onboarding.refresh,
             skip,
+            // Steps call this when they finish something that should leave a review.
+            onDone: () => setViewStepId(null),
             // The browser origin is the address agents must be able to reach.
             apiUrl: typeof window !== 'undefined' ? resolveApiOrigin() : '',
             isSystemAdmin:
@@ -375,9 +450,26 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [onboarding, docs, session, skip]
   );
 
-  const Current = plan?.currentStepId
-    ? STEP_COMPONENTS[plan.currentStepId]
-    : null;
+  // A finished step can be reopened. It is only a view: the planner keeps
+  // deciding what is done and what comes next from server state.
+  const [viewStepId, setViewStepId] = useState(null);
+  const nav = useMemo(
+    () => resolveNavigation(plan, viewStepId),
+    [plan, viewStepId]
+  );
+  const titleOf = useCallback(
+    id => plan?.steps.find(s => s.id === id)?.title || id,
+    [plan]
+  );
+  const goToStep = useCallback(id => setViewStepId(id), []);
+  const returnToCurrent = useCallback(() => setViewStepId(null), []);
+  // Leaving a step by doing something always returns to the live step.
+  const stepKey = plan?.currentStepId;
+  useEffect(() => {
+    setViewStepId(null);
+  }, [stepKey, chosenGoal]);
+
+  const Current = nav.shownId ? STEP_COMPONENTS[nav.shownId] : null;
 
   return (
     <>
@@ -416,7 +508,15 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   <Text fontWeight='bold' fontSize='sm' mb={3}>
                     Your setup
                   </Text>
-                  <JourneyRail steps={plan.steps} />
+                  <JourneyRail
+                    steps={plan.steps}
+                    shownId={nav.shownId}
+                    onSelect={id =>
+                      id === plan.currentStepId
+                        ? returnToCurrent()
+                        : goToStep(id)
+                    }
+                  />
                   {ctx.session.intent?.goal ? (
                     <DashboardActionButton
                       mt={3}
@@ -433,7 +533,13 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   </Text>
                 </DashboardPanel>
                 <Box as='main' flex='1' minW={0} w='full'>
-                  {plan.complete ? (
+                  <ReviewBar
+                    nav={nav}
+                    titleOf={titleOf}
+                    onGo={goToStep}
+                    onReturn={returnToCurrent}
+                  />
+                  {plan.complete && !nav.viewing ? (
                     <DoneCard ctx={ctx} />
                   ) : Current ? (
                     <Current ctx={ctx} />
