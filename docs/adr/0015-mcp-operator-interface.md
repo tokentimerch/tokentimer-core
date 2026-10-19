@@ -2,10 +2,15 @@
 
 ## Status
 
-Proposed (2026-10-19). Not yet reviewed. Nothing in this record is implemented:
-there are no migrations, credential services, runtime routes, enrollment flow
-or write execution behind it. The only artifacts that ship with it are the
-tool contracts under `packages/contracts/mcp/` and a contract test.
+Proposed (2026-10-19). Not yet reviewed. The credential and authorization
+foundation described below is implemented on a feature branch behind a rollout
+flag that is off by default: operator connections, the early route guard, the
+shared credential primitives, session-only connection management and one
+operator route (`whoami`). Nothing that reads certificate data for a connection,
+no enrollment flow, and no write execution exists. The contracts under
+`packages/contracts/mcp/` describe the full first read-only release and are
+ahead of the implementation; the catalog marks each route `implemented` or
+`planned`, and a test keeps that honest.
 
 Each decision below carries one of two labels:
 
@@ -113,6 +118,21 @@ effective authority =
   non-allowlisted route accepts a connection credential.
 - A workspace in the path that differs from the connection's workspace returns
   404, matching the existing hide-existence behavior.
+- **Amended during implementation.** Operator routes cannot live under
+  `/api/v1/workspaces/:id/...`, because every route under that prefix sits behind
+  the session authentication stack. They live in their own namespace,
+  `/api/v1/operator/*`, which accepts only a connection credential and takes the
+  workspace from the connection, never from the path. A workspace in a path
+  therefore cannot be used to reach another workspace at all. Management of
+  connections stays under the workspace prefix and is session-only.
+- The early guard refuses a connection credential on every route outside the
+  namespace, and the path check allows plain segments only, so a path with dot
+  segments, percent-encoding or empty segments cannot pass as being inside it.
+  Connection credentials are CSRF-exempt only when the request carries no cookie.
+- The interface is dark by default behind `MCP_OPERATOR_INTERFACE_ENABLED`, like
+  CertOps. Scopes for operations that do not exist yet (extended reads, requests,
+  configuration and CA revocation) are rejected at creation rather than stored,
+  so a premature grant cannot become live authority later.
 
 ### 4. Disclosure policy (settled direction)
 
@@ -510,7 +530,7 @@ proposals with the rationale given in the section cited.
 - Re-authentication freshness window for sensitive approvals: 5 minutes.
 - Whether any same-user confirmation mode ever exists: deferred.
 - The backing route and projection for token and secret metadata search: decided
-  when the second read wave is scoped.
+  when the extended read set is scoped.
 
 ## Alternatives considered
 
@@ -559,7 +579,7 @@ proposals with the rationale given in the section cited.
 3. Read-only stdio adapter with a directly provisioned credential.
 4. Qualification gate: tenant isolation, role checks, query-level disclosure,
    secret exposure, prompt-injection fixtures, protocol conformance per transport
-   and an independent security review. The second read wave is enabled only after
+   and an independent security review. The extended read set is enabled only after
    it.
 5. Bootstrap-assisted onboarding.
 6. Approval-controlled operations: low-risk discovery and verification, then
