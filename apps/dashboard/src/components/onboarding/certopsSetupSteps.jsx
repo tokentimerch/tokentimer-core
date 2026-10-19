@@ -21,6 +21,7 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
+import { scopeCertops } from './certopsScope.js';
 import { INFRASTRUCTURES, infrastructuresFor } from './certopsMatrix.js';
 import {
   DNS_PROVIDERS,
@@ -31,15 +32,25 @@ import {
   mergeInstallerFields,
 } from './certopsConfig.js';
 
+export function certopsObjectiveFor(ctx) {
+  return GOALS[ctx.session.intent?.goal]?.certopsObjective;
+}
+
 export function certopsProgress(ctx) {
-  return ctx.session.progress?.certops || {};
+  return scopeCertops(ctx.session.progress?.certops, certopsObjectiveFor(ctx));
 }
 
 export async function saveCertops(ctx, patch) {
+  const objective = certopsObjectiveFor(ctx);
   await ctx.controller.update(session => ({
     progress: {
       ...session.progress,
-      certops: { ...(session.progress?.certops || {}), ...patch },
+      // Merge onto this objective's progress only, so flags left by another
+      // goal are dropped the first time this one writes.
+      certops: {
+        ...scopeCertops(session.progress?.certops, objective),
+        ...patch,
+      },
     },
   }));
   await ctx.refresh();
