@@ -25,7 +25,7 @@ async function qualifyIisLocale({gate,issuedFixtures,ps,command,workDir,run,tlsA
   },{evidenceLevel:"real-host",oracle:"actual native deployIisBinding replay on CA-issued owned SNI endpoint, exact native registry values/IIS flags and independent trusted TLS unchanged across two repeat deployments"});
   await gate.scenario("adcs-real-localized-iis-verification-failure-rolls-back",async()=>{
     const before=snapshot(target),sibling=snapshot(unrelated),old=await observe(target),selector=`ipport=127.0.0.1:${target.port}`,appId=`{${crypto.randomUUID()}}`;
-    ps(`& netsh.exe http show sslcert ${selector}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Refusing existing concrete-IP shadow binding'}`);
+    ps(`& netsh.exe http show sslcert ${selector}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Refusing existing concrete-IP shadow binding'};exit 0`);
     const receipt={selector,appId,thumbprint:unrelated.thumbprint,runId:run};const receiptPath=path.join(workDir,`iis-locale-shadow-${run}.json`);assert.equal(fs.existsSync(receiptPath),false);fs.writeFileSync(receiptPath,JSON.stringify(receipt),{flag:"wx",mode:0o600});ownedNativeBindings.push(receipt);
     let primaryError;const cleanupErrors=[];
     try{
@@ -36,7 +36,7 @@ async function qualifyIisLocale({gate,issuedFixtures,ps,command,workDir,run,tlsA
       gate.report.localizedIisRollback={nativeLanguage:gate.report.qualificationEnvironment.nativeLanguage,fault:"actual-owned-concrete-ip-TLS-precedence",verificationFailure:"VERIFY_FAILED",nativeRolledBack:true,nativeHttpSysValuesPreserved:true,iisSslFlags:before.iisFlags,unrelatedBindingUnchanged:true,issuerEnrollmentReused:false};
     }catch(error){primaryError=error;}
     finally{
-      try{const visible=command("netsh.exe",["http","show","sslcert",selector]);assert.ok(visible.toLowerCase().includes(appId.toLowerCase()));assert.ok(visible.toLowerCase().includes(receipt.thumbprint.toLowerCase()));command("netsh.exe",["http","delete","sslcert",selector]);ps(`& netsh.exe http show sslcert ${selector}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Owned concrete-IP shadow remains'}`);fs.unlinkSync(receiptPath);}catch(error){cleanupErrors.push(error);}
+      try{const visible=command("netsh.exe",["http","show","sslcert",selector]);assert.ok(visible.toLowerCase().includes(appId.toLowerCase()));assert.ok(visible.toLowerCase().includes(receipt.thumbprint.toLowerCase()));command("netsh.exe",["http","delete","sslcert",selector]);ps(`& netsh.exe http show sslcert ${selector}|Out-Null;if($LASTEXITCODE -eq 0){throw 'Owned concrete-IP shadow remains'};exit 0`);fs.unlinkSync(receiptPath);}catch(error){cleanupErrors.push(error);}
       try{const restored=await deployIisBinding({binding,certificatePem:target.observed.toString(),verifyTimeoutMs:15000});assert.equal(restored.ok,true);assert.deepEqual(preservedSnapshot(snapshot(target)),preservedSnapshot(before));assert.deepEqual(snapshot(unrelated),sibling);assert.equal((await observe(target)).fingerprint256,old.fingerprint256);}catch(error){cleanupErrors.push(error);}
     }
     if(cleanupErrors.length)throw new AggregateError([...(primaryError?[primaryError]:[]),...cleanupErrors],"Native localized IIS rollback or owned shadow cleanup failed");if(primaryError)throw primaryError;

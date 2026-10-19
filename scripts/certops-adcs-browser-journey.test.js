@@ -219,3 +219,19 @@ test("native CA isolation runs before package acceptance adds another pass's req
   assert.ok(focused>0 && focused<packaged);
   assert.ok(fs.readFileSync(path.resolve(__dirname,"../infra/certops-adcs/owned-ca-checkpoint.ps1"),"utf8").includes("Foreign agent request encountered in isolated checkpoint"));
 });
+
+test("actual native cleanup accounts for only dispatched browser preflights after an earlier failure",async()=>{
+ const source=fs.readFileSync(path.join(__dirname,"../tests/e2e/certops-adcs-real-e2e.test.js"),"utf8");
+ const body=source.match(/await clean\(async\(\)=>\{(const measured=Number[\s\S]*?gate\.report\.primaryNativePreflightDispatchCount=measured;)\}\);/)[1];
+ const execute=new (Object.getPrototypeOf(async function(){}).constructor)("fixture","assert","primaryPreflightCount","elapsedPending","issuerSwitch","ownedBrowserPreflightJobIds","gate",body);
+ const ids=["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"];
+ async function check({count,failed=true,orphan=false,foreign=false,duplicate=false}){
+  const owned=ids.slice(0,count);if(duplicate)owned.push(owned[0]);const gate={report:failed?{originalFailure:{errorClass:"AssertionError"}}:{}};
+  const fixture={workspaceId:"owned",pool:{async query(sql,args){assert.equal(args[0],"owned");if(sql.includes("count(*)"))return {rows:[{count:2+owned.length+(orphan?1:0)}]};assert.deepEqual(args[1],owned);return {rows:owned.map(id=>({id:foreign?"33333333-3333-4333-8333-333333333333":id}))};}}};
+  await execute(fixture,assert,2,false,false,owned,gate);return gate.report;
+ }
+ for(const count of [0,1,2]){const report=await check({count});assert.equal(report.browserNativePreflightDispatch.count,count);assert.equal(report.primaryNativePreflightDispatchCount,2+count);assert.ok(report.originalFailure);}
+ await assert.rejects(check({count:0,failed:false}));await assert.rejects(check({count:1,failed:false}));
+ assert.equal((await check({count:2,failed:false})).browserNativePreflightDispatch.count,2);
+ await assert.rejects(check({count:0,orphan:true}));await assert.rejects(check({count:1,foreign:true}));await assert.rejects(check({count:1,duplicate:true}));
+});
