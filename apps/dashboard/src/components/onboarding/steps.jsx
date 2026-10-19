@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Badge,
   Box,
   FormControl,
   FormHelperText,
@@ -20,6 +21,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import { availableGoals } from './journeyPlanner.js';
+import { GOAL_AREAS } from './modules.js';
 import { normalizeMonitorUrl, runIdempotent } from './operations.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 
@@ -35,11 +37,26 @@ export function GoalStep({ ctx }) {
     setSaving(true);
     setError('');
     try {
-      await ctx.controller.update(session => ({
-        intent: { ...session.intent, goal: choice },
-        progress: { ...session.progress, verified: false },
-        plannerVersion: ctx.plannerVersion,
-      }));
+      await ctx.controller.update(session => {
+        const changed = (session.intent?.goal || '') !== choice;
+        return {
+          intent: {
+            ...session.intent,
+            goal: choice,
+            // A provider or objective belongs to the previous goal.
+            ...(changed ? { provider: '' } : {}),
+          },
+          // Keep what was imported or created; only reset flags that were
+          // about the old goal's steps.
+          progress: changed
+            ? {
+                imported: session.progress?.imported || [],
+                certops: session.progress?.certops || {},
+              }
+            : { ...session.progress, verified: false },
+          plannerVersion: ctx.plannerVersion,
+        };
+      });
       await ctx.refresh();
     } catch (e) {
       setError(e.message || 'Could not save your choice.');
@@ -51,8 +68,8 @@ export function GoalStep({ ctx }) {
   return (
     <StepFrame
       kind='ui'
-      title='What do you want to track first?'
-      description='Pick one. You can add more later, and nothing is created until you confirm a step.'
+      title='What do you want to do first?'
+      description='Pick one. You can come back for the others, and nothing is created until you confirm a step.'
       docs={ctx.docs('quickstart.firstAsset', 'First asset guide')}
       actions={
         <DashboardActionButton
@@ -65,29 +82,49 @@ export function GoalStep({ ctx }) {
         </DashboardActionButton>
       }
     >
-      <VStack align='stretch' spacing={3}>
+      <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
         <RadioGroup value={choice} onChange={setChoice}>
-          <Stack spacing={3}>
-            {goals.map(goal => (
-              <Box key={goal.id}>
-                <Radio value={goal.id} isDisabled={Boolean(goal.blocker)}>
-                  <Text fontWeight='semibold' fontSize='sm'>
-                    {goal.label}
+          <VStack align='stretch' spacing={4}>
+            {GOAL_AREAS.map(area => {
+              const inArea = goals.filter(g => g.area === area.id);
+              if (inArea.length === 0) return null;
+              return (
+                <Box key={area.id} role='group' aria-label={area.label}>
+                  <Text fontSize='xs' fontWeight='bold' color={muted} mb={2}>
+                    {area.label.toUpperCase()}
                   </Text>
-                </Radio>
-                <Text fontSize='xs' color={muted} ml={6}>
-                  {goal.blocker?.remediation || goal.description}
-                </Text>
-              </Box>
-            ))}
-          </Stack>
+                  <Stack spacing={3}>
+                    {inArea.map(goal => (
+                      <Box key={goal.id}>
+                        <HStack>
+                          <Radio
+                            value={goal.id}
+                            isDisabled={Boolean(goal.blocker)}
+                          >
+                            <Text fontWeight='semibold' fontSize='sm'>
+                              {goal.label}
+                            </Text>
+                          </Radio>
+                          {goal.candidate ? (
+                            <Badge colorScheme='orange'>Candidate</Badge>
+                          ) : null}
+                        </HStack>
+                        <Text fontSize='xs' color={muted} ml={6}>
+                          {goal.blocker?.remediation || goal.description}
+                        </Text>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
+              );
+            })}
+          </VStack>
         </RadioGroup>
       </VStack>
     </StepFrame>
   );
 }
-
 export function MonitorStep({ ctx }) {
   const [url, setUrl] = useState(ctx.session.operationRefs?.monitorUrl || '');
   const [error, setError] = useState('');

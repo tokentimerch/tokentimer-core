@@ -110,6 +110,49 @@ export const onboardingActions = {
       return rethrow(e);
     }
   },
+  // System settings: system administrators only. The server masks the SMTP
+  // password and reports environment-supplied fields as locked.
+  async getSystemSettings() {
+    try {
+      const res = await apiClient.get('/api/admin/system-settings');
+      return res.data;
+    } catch (e) {
+      return rethrow(e);
+    }
+  },
+
+  async putSmtpSettings(smtp) {
+    try {
+      const res = await apiClient.put('/api/admin/system-settings', { smtp });
+      return res.data;
+    } catch (e) {
+      return rethrow(e);
+    }
+  },
+
+  async testSmtp(email) {
+    try {
+      const res = await apiClient.post('/api/admin/test-smtp', { email });
+      return res.data;
+    } catch (e) {
+      const data = e?.response?.data;
+      const error = new Error(data?.error || handleApiError(e));
+      error.code = data?.code;
+      throw error;
+    }
+  },
+
+  /** The soonest-expiring asset: the most useful sample for routing checks. */
+  async soonestToken(workspaceId) {
+    try {
+      const res = await apiClient.get('/api/tokens', {
+        params: { workspace_id: workspaceId, sort: 'expiration_asc', limit: 1 },
+      });
+      return res.data?.items?.[0] || null;
+    } catch (e) {
+      return rethrow(e);
+    }
+  },
 };
 
 /**

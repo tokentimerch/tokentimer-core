@@ -303,7 +303,13 @@ export function VerifyStep({ ctx }) {
         monitor?.tokenId ||
         (summary.references.tokenIds.existing || [])[0] ||
         null;
-      const token = tokenId ? await onboardingActions.getToken(tokenId) : null;
+      let token = tokenId ? await onboardingActions.getToken(tokenId) : null;
+      // Imports and discovery return no ids. Sample the asset closest to
+      // expiry, which is the one most likely to alert first, and use the
+      // list row's own alert state so one request is enough.
+      if (!token && (summary.assets?.total || 0) > 0) {
+        token = await onboardingActions.soonestToken(ctx.workspaceId);
+      }
       setState({
         loading: false,
         result: evaluateVerification({ goal, monitor, token, summary }),

@@ -20,8 +20,41 @@ import StepFrame from './StepFrame.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
 import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
 import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
+import { FileImportStep, IntegrationStep } from './importSteps.jsx';
+import { NotificationsStep, SmtpStep } from './notificationSteps.jsx';
+import { ConfigStep, ObjectiveStep } from './certopsSetupSteps.jsx';
+import { AgentStep } from './certopsAgentStep.jsx';
+import { ExecutionStep } from './certopsExecutionStep.jsx';
+import { FirstCertificateStep, VaultStep } from './certopsFinalSteps.jsx';
+import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
+
+// Agents reach the API from outside the browser, so a relative API base
+// resolves to the page origin.
+function resolveApiOrigin() {
+  const base = resolveApiBaseUrl();
+  if (base) return String(base).replace(/\/+$/, '');
+  return window.location.origin;
+}
 
 const FLOW = 'mega';
+
+export const STEP_COMPONENTS = {
+  goal: GoalStep,
+  monitor: MonitorStep,
+  asset: AssetStep,
+  file_import: FileImportStep,
+  integration: IntegrationStep,
+  recipients: RecipientsStep,
+  notifications: NotificationsStep,
+  smtp: SmtpStep,
+  verify: VerifyStep,
+  certops_objective: ObjectiveStep,
+  certops_config: ConfigStep,
+  certops_agent: AgentStep,
+  certops_execution: ExecutionStep,
+  certops_first: FirstCertificateStep,
+  certops_vault: VaultStep,
+};
 
 /**
  * Loads the three sources the wizard reasons about: the persisted session
@@ -235,6 +268,21 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
     [onboarding]
   );
 
+  const skip = useCallback(
+    async stepId => {
+      await onboarding.controller.update(s => ({
+        progress: {
+          ...s.progress,
+          skipped: Array.from(
+            new Set([...(s.progress?.skipped || []), stepId])
+          ),
+        },
+      }));
+      await onboarding.refresh();
+    },
+    [onboarding]
+  );
+
   const ctx = useMemo(
     () =>
       onboarding.status === 'ready'
@@ -248,20 +296,18 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
             docs,
             refresh: onboarding.refresh,
             fetchSummary: onboarding.refresh,
+            skip,
+            // The browser origin is the address agents must be able to reach.
+            apiUrl: typeof window !== 'undefined' ? resolveApiOrigin() : '',
+            isSystemAdmin:
+              onboarding.capabilities?.viewer?.isSystemAdmin === true,
             userEmail: session?.email || '',
             userName: session?.name || session?.displayName || '',
           }
         : null,
-    [onboarding, docs, session]
+    [onboarding, docs, session, skip]
   );
 
-  const STEP_COMPONENTS = {
-    goal: GoalStep,
-    monitor: MonitorStep,
-    asset: AssetStep,
-    recipients: RecipientsStep,
-    verify: VerifyStep,
-  };
   const Current = plan?.currentStepId
     ? STEP_COMPONENTS[plan.currentStepId]
     : null;

@@ -71,6 +71,106 @@ export function evaluateVerification({ goal, monitor, token, summary }) {
     );
   }
 
+  // Goals that bring in assets without a single known id (imports) or that
+  // are about alerting: the soonest-expiring asset is the sample to check.
+  if (
+    goal === 'import_file' ||
+    goal === 'import_integration' ||
+    goal === 'alerting'
+  ) {
+    const total = summary?.assets?.total || 0;
+    if (goal !== 'alerting') {
+      checks.push(
+        total > 0
+          ? check(
+              'assets',
+              CHECK_STATUS.PASS,
+              'Assets are in this workspace',
+              `${total} in total`
+            )
+          : check(
+              'assets',
+              CHECK_STATUS.FAIL,
+              'Assets are in this workspace',
+              'No assets were found. The import may have been cancelled or removed.'
+            )
+      );
+    } else if (total === 0) {
+      checks.push(
+        check(
+          'assets',
+          CHECK_STATUS.WARN,
+          'There are no assets to alert on yet',
+          'Alerts apply once you add or import assets.'
+        )
+      );
+    }
+  }
+
+  if (goal && goal.startsWith('certops_')) {
+    const certops = summary?.certops;
+    if (!certops || certops === 'unknown') {
+      checks.push(
+        check(
+          'certops',
+          CHECK_STATUS.WARN,
+          'Agent status could not be read',
+          'You may not have permission to see agents, or certificate management is off.'
+        )
+      );
+    } else {
+      const live = certops.agents?.live || 0;
+      checks.push(
+        live > 0
+          ? check(
+              'agent',
+              CHECK_STATUS.PASS,
+              'An agent is connected',
+              `${live} live`
+            )
+          : check(
+              'agent',
+              CHECK_STATUS.FAIL,
+              'An agent is connected',
+              'No agent has checked in recently. Check the service on the server.'
+            )
+      );
+      const certs = certops.certificates?.total || 0;
+      checks.push(
+        certs > 0
+          ? check(
+              'certificates',
+              CHECK_STATUS.PASS,
+              'Certificates are being reported',
+              `${certs} in the inventory`
+            )
+          : check(
+              'certificates',
+              CHECK_STATUS.WARN,
+              'No certificates reported yet',
+              'Discovery runs about hourly. The folders must contain a readable PEM certificate.'
+            )
+      );
+      if (goal === 'certops_vault') {
+        // Never report a candidate feature as working without evidence.
+        checks.push(
+          certops.distribution?.verified
+            ? check(
+                'distribution',
+                CHECK_STATUS.PASS,
+                'Distribution verified by a rollout'
+              )
+            : check(
+                'distribution',
+                CHECK_STATUS.WARN,
+                'Distribution is not verified',
+                'Configuration may be prepared, but no rollout has been verified yet. This feature is a candidate.'
+              )
+        );
+      }
+    }
+  }
+
   const channels = token?.alert_state?.eligibility?.eligible_channels;
   if (token) {
     if (Array.isArray(channels) && channels.length > 0) {
