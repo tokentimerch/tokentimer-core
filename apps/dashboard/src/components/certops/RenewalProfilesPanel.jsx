@@ -424,8 +424,11 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
-  const { certificates: boundCertificates, loading: boundCertificatesLoading, incomplete: inventoryIncomplete } =
-    useBoundCertificates(workspaceId);
+  const {
+    certificates: boundCertificates,
+    loading: boundCertificatesLoading,
+    incomplete: inventoryIncomplete,
+  } = useBoundCertificates(workspaceId);
   const [issuers, setIssuers] = useState([]);
   const [profileWizardOpen, setProfileWizardOpen] = useState(false);
   // Both lists on this tab page independently, so each scopes its own search

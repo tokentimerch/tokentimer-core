@@ -713,6 +713,10 @@ async function proposeReconcileRequestId({
         "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
       );
     }
+    // Reconcile can end in an install, so a retired identity must be abandoned instead.
+    if (await identityRetired(tx, workspaceId, current.certificate_id)) {
+      throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
+    }
     const updated = await tx.query(
       `UPDATE certificate_enrollments
           SET operator_request_id = $3, next_poll_at = NOW(), updated_at = NOW()
@@ -1016,12 +1020,15 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         return null;
       }
       if (!decision.dispatch && decision.state !== "expired") return null;
-      if (decision.reason === "resume_installation" &&
+      // Poll, retry and operator reconcile can all retrieve an approved leaf
+      // and install it. Only key cleanup and timeout expiry stay allowed.
+      if (decision.dispatch && decision.reason !== "free_key" &&
           await identityRetired(tx, row.workspace_id, row.certificate_id)) {
         if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
         logger.warn("certops enrollment installation blocked by certificate lifecycle", {
           workspaceId: row.workspace_id,
           enrollmentId: row.id,
+          reason: decision.reason,
         });
         return null;
       }
@@ -1088,7 +1095,6 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
         workspaceId: candidate.workspace_id,
         enrollmentId: candidate.id,
         code: error.code || null,
-        error: error.message,
       });
       continue;
     }

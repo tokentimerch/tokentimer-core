@@ -780,9 +780,16 @@ describe("CertOps AD CS enrollments (real database)", function () {
       operatorRequestId: 88,
       nextPollAt: due,
     });
+    // Reconcile can retrieve and install an issued leaf, so it is fenced like an install.
     const reconcileJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
       .find((row) => row.enrollmentId === reconcile);
-    expect(reconcileJob).to.exist;
+    expect(reconcileJob).to.equal(undefined);
+    const reconcileRow = await TestUtils.execQuery(
+      "SELECT state, current_job_id FROM certificate_enrollments WHERE id=$1",
+      [reconcile],
+    );
+    expect(reconcileRow.rows[0].state).to.equal("submission_uncertain");
+    expect(reconcileRow.rows[0].current_job_id).to.equal(null);
 
     const otherFingerprint = crypto.randomBytes(32).toString("hex");
     const otherCertificateId = (await TestUtils.execQuery(

@@ -59,14 +59,15 @@ BEGIN
   IF NEW.subject_type IS DISTINCT FROM 'managed_certificate' THEN
     RETURN NEW;
   END IF;
-  -- Installation retries are new installs. Key cleanup and operator reconcile
-  -- stay claimable after retirement; a missing identity is not retirement.
+  -- Installation retries are new installs. Any continuation that can retrieve
+  -- and install a leaf is fenced. Key cleanup stays claimable after retirement;
+  -- a missing identity is not retirement.
   IF NEW.operation = 'continue-enrollment' THEN
     IF NEW.enrollment_id IS NULL OR NOT EXISTS (
       SELECT 1 FROM certificate_enrollments continuation
        WHERE continuation.workspace_id = NEW.workspace_id
          AND continuation.id = NEW.enrollment_id
-         AND continuation.state IN ('installing', 'install_failed')
+         AND continuation.state IN ('installing', 'install_failed', 'pending_issuance', 'validation_deferred', 'submission_uncertain', 'submitting')
     ) THEN
       RETURN NEW;
     END IF;

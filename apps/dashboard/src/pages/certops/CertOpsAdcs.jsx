@@ -23,7 +23,10 @@ import { useOutletContext } from 'react-router';
 import CopyableId from '../../components/CopyableId.jsx';
 import { listAgents } from '../../components/certops/certopsAgentsApi';
 import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
-import { findListedIssuer, formatDate } from '../../components/certops/certopsFormat.js';
+import {
+  findListedIssuer,
+  formatDate,
+} from '../../components/certops/certopsFormat.js';
 import {
   abandonEnrollment,
   cancelEnrollment,
@@ -888,26 +891,29 @@ export default function CertOpsAdcs() {
     setWaitingForPreflight(false);
   }, []);
 
-  const reload = useCallback(async (signal) => {
-    if (!workspaceId || !isAdmin) return;
-    const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
-      listIssuers(workspaceId, {
-        limit: PAGE_LIMIT,
-        includeUnconfigured: true,
-        signal,
-      }),
-      listEnrollments(workspaceId, { limit: PAGE_LIMIT, signal }),
-      listAgents(workspaceId, { signal }),
-    ]);
-    setIssuers(previous => refreshPage(issuerPage.items || [], previous));
-    setEnrollments(previous =>
-      refreshPage(enrollmentPage.items || [], previous)
-    );
-    setAgents(agentPage.items || []);
-    setIssuerTotal(Number(issuerPage.pagination?.total || 0));
-    setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
-    setLoadError('');
-  }, [workspaceId, isAdmin]);
+  const reload = useCallback(
+    async signal => {
+      if (!workspaceId || !isAdmin) return;
+      const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
+        listIssuers(workspaceId, {
+          limit: PAGE_LIMIT,
+          includeUnconfigured: true,
+          signal,
+        }),
+        listEnrollments(workspaceId, { limit: PAGE_LIMIT, signal }),
+        listAgents(workspaceId, { signal }),
+      ]);
+      setIssuers(previous => refreshPage(issuerPage.items || [], previous));
+      setEnrollments(previous =>
+        refreshPage(enrollmentPage.items || [], previous)
+      );
+      setAgents(agentPage.items || []);
+      setIssuerTotal(Number(issuerPage.pagination?.total || 0));
+      setEnrollmentTotal(Number(enrollmentPage.pagination?.total || 0));
+      setLoadError('');
+    },
+    [workspaceId, isAdmin]
+  );
 
   useEffect(() => {
     if (!isAdmin) {

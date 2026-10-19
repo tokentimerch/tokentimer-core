@@ -209,4 +209,44 @@ describe('AgentJobLogsModal merged access', () => {
     });
     await screen.findByText(/Privileged fleet line/);
   });
-});
+
+  it('ignores an initial load that resolves after access was withdrawn', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    listAgentFleetLog.mockReset();
+    listAgentJobLog.mockReset();
+    let releaseFleet;
+    listAgentFleetLog
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            releaseFleet = () =>
+              resolve({ items: [{ jobId: 'job-1', jobStatus: 'succeeded' }] });
+          })
+      )
+      .mockRejectedValueOnce({ response: { status: 403 } });
+    listAgentJobLog.mockResolvedValue({
+      items: [{ seq: 1, message: 'Stale privileged line', claimId: 'c', ts: '2026-10-06T08:43:51.000Z' }],
+      hasMore: false,
+    });
+
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <AgentJobLogsModal
+            isOpen
+            onClose={() => {}}
+            agent={{ id: 'agent-1', name: 'edge' }}
+            workspaceId='ws-1'
+          />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    await act(async () => {
+      releaseFleet();
+    });
+    expect(listAgentJobLog).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Stale privileged line/)).not.toBeInTheDocument();
+  });});
