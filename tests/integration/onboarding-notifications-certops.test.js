@@ -186,4 +186,23 @@ describe("Onboarding notifications and CertOps reality (API contract)", function
     expect(s).to.not.contain(token.body.plaintextToken);
     expect(s).to.not.contain("ttboot_");
   });
+
+  it("creates the wizard's test job as a dry run, only when mode is top level", async () => {
+    // Same shape as buildDryRunJob in the dashboard.
+    const good = await request(BASE)
+      .post(ws("/certops/jobs"))
+      .set("Cookie", manager.cookie)
+      .send({ operation: "noop", mode: "dry_run", idempotencyKey: `wizard-dryrun-${crypto.randomUUID()}` });
+    expect(good.status, JSON.stringify(good.body)).to.be.oneOf([200, 201]);
+    // The job response exposes the persisted mode through payload.mode.
+    expect((good.body.job || good.body).payload.mode).to.equal("dry_run");
+
+    // The old shape hid mode in the payload, which silently made a real job.
+    const bad = await request(BASE)
+      .post(ws("/certops/jobs"))
+      .set("Cookie", manager.cookie)
+      .send({ operation: "noop", payload: { mode: "dry_run" }, idempotencyKey: `wizard-dryrun-${crypto.randomUUID()}` });
+    expect(bad.status, JSON.stringify(bad.body)).to.be.oneOf([200, 201]);
+    expect((bad.body.job || bad.body).payload.mode).to.equal("real");
+  });
 });

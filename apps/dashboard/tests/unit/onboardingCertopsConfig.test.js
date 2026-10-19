@@ -284,10 +284,16 @@ describe('jobs', () => {
       buildDryRunJob({ assignedAgentId: 'a', idempotencyKey: 'k' })
     ).toEqual({
       operation: 'noop',
-      payload: { mode: 'dry_run' },
+      mode: 'dry_run',
       idempotencyKey: 'k',
       assignedAgentId: 'a',
     });
+  });
+
+  it('keeps mode out of the payload, where the server would ignore it', () => {
+    const job = buildDryRunJob({ assignedAgentId: 'a', idempotencyKey: 'k' });
+    expect(job.payload).toBeUndefined();
+    expect(job.mode).toBe('dry_run');
   });
 });
 

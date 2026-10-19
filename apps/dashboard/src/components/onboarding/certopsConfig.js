@@ -284,11 +284,15 @@ export function buildIssueJob({
 export const STAGING_CA = LETS_ENCRYPT_STAGING;
 export const PRODUCTION_CA = LETS_ENCRYPT_PRODUCTION;
 
-/** The harmless job used to prove signed dispatch works before real work. */
+/**
+ * The harmless job used to prove signed dispatch works before real work.
+ * `mode` is a top-level field: inside the payload it would be ignored and the
+ * server would create a real job instead of a dry run.
+ */
 export function buildDryRunJob({ assignedAgentId, idempotencyKey }) {
   return {
     operation: 'noop',
-    payload: { mode: 'dry_run' },
+    mode: 'dry_run',
     idempotencyKey,
     assignedAgentId,
   };
