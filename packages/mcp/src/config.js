@@ -5,6 +5,7 @@
 // logging or inspecting the config object cannot reveal it.
 
 const fs = require("node:fs");
+const { CredentialStoreError, assertPrivateFile, defaultCredentialPath } = require("./credentialStore");
 
 const CREDENTIAL_PATTERN = /^ttopc_[a-f0-9]{16}_[a-f0-9]{64}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
@@ -41,19 +42,26 @@ function resolveBaseUrl(raw) {
   return { origin: url.origin, basePath };
 }
 
-function readCredential(env, readFile) {
-  const file = env.TOKENTIMER_MCP_CREDENTIAL_FILE;
+function readCredential(env, { readFile, checkFile, defaultFile, exists }) {
   const direct = env.TOKENTIMER_MCP_CREDENTIAL;
+  let file = env.TOKENTIMER_MCP_CREDENTIAL_FILE;
   if (file && direct) {
     throw new ConfigError("Set TOKENTIMER_MCP_CREDENTIAL or TOKENTIMER_MCP_CREDENTIAL_FILE, not both");
   }
+  // Nothing given explicitly: use the file that `tokentimer-mcp enroll` wrote.
+  if (!file && !direct && defaultFile && exists(defaultFile)) file = defaultFile;
   let value = direct;
   if (file) {
     try {
+      // A credential other users can read is refused before it is opened.
+      checkFile(file);
       value = readFile(file, "utf8");
-    } catch (_error) {
-      // The path may be sensitive; the message names the variable only.
-      throw new ConfigError("TOKENTIMER_MCP_CREDENTIAL_FILE could not be read");
+    } catch (error) {
+      if (error instanceof CredentialStoreError && /readable by other users/.test(error.message)) {
+        throw new ConfigError(error.message);
+      }
+      // The path may be sensitive; the message names the setting only.
+      throw new ConfigError("The credential file could not be read");
     }
   }
   value = typeof value === "string" ? value.trim() : "";
@@ -76,9 +84,17 @@ function parsePositiveInt(raw, name, fallback, { min, max }) {
   return parsed;
 }
 
-function loadConfig(env = process.env, { readFile = fs.readFileSync } = {}) {
+function loadConfig(
+  env = process.env,
+  {
+    readFile = fs.readFileSync,
+    checkFile = assertPrivateFile,
+    defaultFile = defaultCredentialPath({ env }),
+    exists = fs.existsSync,
+  } = {},
+) {
   const { origin, basePath } = resolveBaseUrl(env.TOKENTIMER_API_URL);
-  const credential = readCredential(env, readFile);
+  const credential = readCredential(env, { readFile, checkFile, defaultFile, exists });
   const legacy = (env.TOKENTIMER_MCP_LEGACY || "serve").trim().toLowerCase();
   if (legacy !== "serve" && legacy !== "reject") {
     throw new ConfigError("TOKENTIMER_MCP_LEGACY must be serve or reject");
@@ -107,4 +123,4 @@ function loadConfig(env = process.env, { readFile = fs.readFileSync } = {}) {
   return Object.freeze(config);
 }
 
-module.exports = { ConfigError, CREDENTIAL_PATTERN, loadConfig };
+module.exports = { ConfigError, CREDENTIAL_PATTERN, loadConfig, resolveBaseUrl };
