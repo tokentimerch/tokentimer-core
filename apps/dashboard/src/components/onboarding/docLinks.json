@@ -126,6 +126,14 @@
     "path": "/runbooks/certops-agent-install-windows",
     "anchor": "windows-install"
   },
+  "certops.adcs": {
+    "path": "/certops/adcs",
+    "anchor": "enrollment-rules",
+    "cloud": {
+      "path": "/certops/adcs",
+      "anchor": "today"
+    }
+  },
   "certops.agentConfig": {
     "path": "/certops/agent-configuration",
     "anchor": "policy"

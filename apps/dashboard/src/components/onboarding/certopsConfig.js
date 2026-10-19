@@ -1,3 +1,4 @@
+import { WINDOWS_ACME_PROFILE } from './certopsMatrix.js';
 // Generates the host-side artifacts the wizard hands to the operator. The
 // control plane cannot edit agent configuration, so these are copy-paste
 // runbooks. Nothing here ever contains a credential: only file paths and
@@ -170,6 +171,10 @@ export function buildObserveConfig({ os, directories = [] }) {
  * The validate command is always the server's own config test, so a broken
  * config is never reloaded. argv is exact: policy refuses anything else.
  */
+/** Name the Windows job and policy use for the operator's ACME client. */
+export { WINDOWS_ACME_PROFILE };
+const WINDOWS_PATH = /^([A-Za-z]:[\\/]|\\\\)[^\n\r]+$/;
+
 export const RELOAD_SERVICES = {
   nginx: {
     label: 'nginx',
@@ -211,9 +216,15 @@ export function buildAutomateConfig({
   certPath,
   credentialsFile,
   reloadService = '',
+  acmeClientPath = '',
+  acmeProfile = WINDOWS_ACME_PROFILE,
   dryRun = true,
 }) {
   const problems = [];
+  if (os === 'windows' && !WINDOWS_PATH.test(String(acmeClientPath || '')))
+    problems.push(
+      'Enter the full path of the ACME client on the Windows host, for example C:\\acme\\acme.sh.'
+    );
   if (reloadService && os === 'windows')
     problems.push('Reloading a web server is for Linux hosts.');
   if (reloadService && !RELOAD_SERVICES[reloadService])
@@ -234,6 +245,10 @@ export function buildAutomateConfig({
   }
   if (problems.length) return { ok: false, problems };
 
+  // Windows uses an operator-supplied ACME client under a name the job refers
+  // to; Linux uses certbot.
+  const windowsAcme =
+    os === 'windows' ? { argv: [String(acmeClientPath).trim()] } : undefined;
   const certbot =
     os === 'windows'
       ? undefined
@@ -251,6 +266,7 @@ export function buildAutomateConfig({
     // dry run but never claims an issuance job.
     declaredTargetSelectors: list,
     ...(certbot ? { declaredCommandProfileNames: ['certbot'] } : {}),
+    ...(windowsAcme ? { declaredCommandProfileNames: [acmeProfile] } : {}),
     execution: {
       enabled: true,
       dryRun,
@@ -265,10 +281,11 @@ export function buildAutomateConfig({
       allowedCaEndpoints: [caEndpoint],
       allowedDnsZones: [zone],
       allowedDnsProviders: [dnsProvider],
-      ...(certbot || reloadService
+      ...(certbot || windowsAcme || reloadService
         ? {
             allowedCommands: {
               ...(certbot ? { certbot } : {}),
+              ...(windowsAcme ? { [acmeProfile]: windowsAcme } : {}),
               ...(reloadService ? reloadCommands(reloadService) : {}),
             },
           }
@@ -292,6 +309,48 @@ function stripUndefined(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+/**
+ * Windows IIS issuance: the certificate goes to a machine store and an IIS
+ * binding, never a file path. Shape follows the server's windows-iis target
+ * contract. Not yet verified on a real Windows host.
+ */
+function buildWindowsIssueJob({
+  names,
+  zone,
+  dnsProvider,
+  caEndpoint,
+  iisSite,
+  iisPort,
+  iisStore,
+  sniHost,
+  acmeProfile,
+  assignedAgentId,
+  idempotencyKey,
+}) {
+  const list = (names || []).map(n => String(n).trim()).filter(Boolean);
+  const binding = { site: iisSite, port: Number(iisPort) };
+  if (String(sniHost || '').trim()) binding.sniHost = String(sniHost).trim();
+  return {
+    operation: 'issue',
+    payload: {
+      target: {
+        type: 'windows-iis',
+        reference: list[0],
+        store: iisStore,
+        binding,
+      },
+      sans: list,
+      commandRef: acmeProfile,
+      acmeKind: 'acme.sh',
+      caEndpoint,
+      dnsZone: zone,
+      dnsProvider,
+    },
+    idempotencyKey,
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+  };
+}
+
 /** The issue job body for the Jobs API (never contains a private key). */
 export function buildIssueJob({
   os,
@@ -303,13 +362,28 @@ export function buildIssueJob({
   commandRef = 'certbot',
   verifyHost,
   reloadService = '',
+  iisSite = 'Default Web Site',
+  iisPort = 443,
+  iisStore = 'My',
+  sniHost = '',
+  acmeProfile = WINDOWS_ACME_PROFILE,
   assignedAgentId,
   idempotencyKey,
 }) {
-  // The server needs a Windows command profile and an IIS binding that the
-  // wizard cannot verify, so Windows issuance stays a documented runbook.
   if (os === 'windows') {
-    throw new Error('Windows issuance is not built by the wizard.');
+    return buildWindowsIssueJob({
+      names,
+      zone,
+      dnsProvider,
+      caEndpoint,
+      iisSite,
+      iisPort,
+      iisStore,
+      sniHost,
+      acmeProfile,
+      assignedAgentId,
+      idempotencyKey,
+    });
   }
   if (reloadService && !RELOAD_SERVICES[reloadService]) {
     throw new Error(`Unknown web server: ${reloadService}.`);

@@ -8,7 +8,11 @@ import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
-import { INFRASTRUCTURES, capabilityGap } from './certopsMatrix.js';
+import {
+  INFRASTRUCTURES,
+  capabilityGap,
+  commandProfileFor,
+} from './certopsMatrix.js';
 import {
   REGISTRATION_NOTES,
   buildControllerSecretCommand,
@@ -77,16 +81,14 @@ export function AgentStep({ ctx }) {
 
   const poll = useCallback(() => ctx.refresh().catch(() => {}), [ctx]);
   // Same rule as the planner: keep watching until a usable agent exists.
-  const wantsProfile =
-    (saved.objective === 'automate' || saved.objective === 'vault') &&
-    infra === 'linux';
+  const wantedProfile = commandProfileFor(saved.objective, infra);
   const usableAgent =
     (agents?.live || 0) > 0 &&
-    (!wantsProfile ||
+    (!wantedProfile ||
       items.some(
         a =>
           a.livenessState === 'live' &&
-          (a.commandProfiles || []).includes('certbot')
+          (a.commandProfiles || []).includes(wantedProfile)
       ));
   useEffect(() => {
     if (infra === 'kubernetes' || usableAgent) return undefined;
@@ -188,13 +190,11 @@ export function AgentStep({ ctx }) {
   const verdict = target ? describeAgent(target, gap) : null;
   // Automation needs the certbot profile, which is only reported at
   // registration. A discovery-only agent is connected but cannot be used.
-  const automating =
-    saved.objective === 'automate' || saved.objective === 'vault';
+  const wantedProfileName = commandProfileFor(saved.objective, infra);
   const lacksProfile =
-    automating &&
-    infra === 'linux' &&
+    Boolean(wantedProfileName) &&
     Boolean(target) &&
-    !(target.commandProfiles || []).includes('certbot');
+    !(target.commandProfiles || []).includes(wantedProfileName);
   const healthy = Boolean(verdict?.healthy) && !lacksProfile;
 
   return (
@@ -266,12 +266,12 @@ export function AgentStep({ ctx }) {
             </Text>
             {lacksProfile ? (
               <Text fontSize='xs' color='orange.400'>
-                This agent was registered without the certbot command profile,
-                usually because it was set up for discovery only. Profiles are
-                reported only when an agent registers, so it cannot place
-                orders. Save the configuration above, create a one-time token
-                and register the agent again, then retire the old entry in
-                Certificate Management.
+                This agent was registered without the {wantedProfileName}{' '}
+                command profile, usually because it was set up for discovery
+                only. Profiles are reported only when an agent registers, so it
+                cannot place orders. Save the configuration above, create a
+                one-time token and register the agent again, then retire the old
+                entry in Certificate Management.
               </Text>
             ) : null}
             {verdict.problems.map(p => (

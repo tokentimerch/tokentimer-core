@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   GOALS,
   availableGoals,
@@ -223,8 +223,47 @@ describe('certops_first completion', () => {
     expect(done(p, job({ status: 'succeeded', mode: 'real' }))).toBe(true);
   });
 
-  it('falls back to inventory on Windows, where the wizard cannot verify issuance', () => {
+  it('requires a succeeded real issue job on Windows too, since the wizard now builds it', () => {
     const p = { certops: { objective: 'automate', infrastructure: 'windows' } };
-    expect(done(p, { certificates: { observed: 1 } })).toBe(true);
+    const withJob = issueJob => ({ certificates: { observed: 1 }, issueJob });
+    // An observed certificate alone could predate the order.
+    expect(done(p, { certificates: { observed: 1 } })).toBe(false);
+    expect(done(p, withJob({ status: 'succeeded', mode: 'real' }))).toBe(true);
+  });
+});
+
+describe('AD CS goal', () => {
+  const progress = {
+    certops: { objective: 'adcs', infrastructure: 'windows' },
+  };
+  const adcsDone = adcs =>
+    isStepSatisfied('certops_adcs', {
+      reality: { monitors: { items: [] }, certops: { adcs } },
+      progress,
+    });
+  const safeIssuer = { confirmed: true, safe: true };
+
+  it('has its own steps and never borrows the ACME ones', () => {
+    const ids = GOALS.certops_adcs.steps;
+    expect(ids).toContain('certops_adcs');
+    expect(ids).not.toContain('certops_first');
+    expect(ids).not.toContain('certops_execution');
+    expect(GOALS.certops_adcs.candidate).toBe(true);
+  });
+
+  it('is not done for an unconfirmed or unsafe issuer, or without a profile', () => {
+    expect(adcsDone({ issuers: [], profiles: 0 })).toBe(false);
+    expect(adcsDone({ issuers: [safeIssuer], profiles: 0 })).toBe(false);
+    expect(
+      adcsDone({ issuers: [{ confirmed: false, safe: true }], profiles: 1 })
+    ).toBe(false);
+    expect(
+      adcsDone({ issuers: [{ confirmed: true, safe: false }], profiles: 1 })
+    ).toBe(false);
+    expect(adcsDone(undefined)).toBe(false);
+  });
+
+  it('is done once a confirmed, safe issuer has a profile', () => {
+    expect(adcsDone({ issuers: [safeIssuer], profiles: 1 })).toBe(true);
   });
 });

@@ -68,7 +68,11 @@ export function canRequestIssue({ agents, dryRun, saved }) {
   if (!(agents?.live > 0)) missing.push('a live agent');
   if (agents?.executionEnabled !== true) missing.push('execution enabled');
   if (dryRun?.status !== 'dry_run_complete') missing.push('a passing dry run');
-  if (!saved.zone || !saved.dnsProvider || !saved.certPath || !saved.names) {
+  // Windows hands the certificate to IIS, so it needs the ACME client rather
+  // than a file path.
+  const target =
+    saved.infrastructure === 'windows' ? saved.acmeClientPath : saved.certPath;
+  if (!saved.zone || !saved.dnsProvider || !target || !saved.names) {
     missing.push('the saved agent configuration');
   }
   return { ok: missing.length === 0, missing };
@@ -88,6 +92,7 @@ export default function IssueStep({ ctx }) {
     dryRun: certops?.dryRun,
     saved,
   });
+  const windows = saved.infrastructure === 'windows';
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   const attempt = saved.issueAttempt || 1;
   const caEndpoint = saved.caEndpoint || STAGING_CA;
@@ -107,18 +112,23 @@ export default function IssueStep({ ctx }) {
       const res = await createJob(
         ctx.workspaceId,
         buildIssueJob({
-          os: 'linux',
+          os: windows ? 'windows' : 'linux',
           names,
           zone: saved.zone,
           dnsProvider: saved.dnsProvider,
-          certPath: saved.certPath,
+          certPath: windows ? undefined : saved.certPath,
           caEndpoint,
-          reloadService: saved.reloadService || '',
+          reloadService: windows ? '' : saved.reloadService || '',
+          iisSite: saved.iisSite || 'Default Web Site',
+          iisPort: saved.iisPort || 443,
+          sniHost: saved.sniHost || '',
           assignedAgentId: agent.id,
           idempotencyKey: issueIdempotencyKey({
             names,
             zone: saved.zone,
-            certPath: saved.certPath,
+            certPath: windows
+              ? `iis:${saved.iisSite || 'Default Web Site'}:${saved.iisPort || 443}`
+              : saved.certPath,
             caEndpoint,
             reloadService: saved.reloadService || '',
             attempt,
@@ -207,7 +217,14 @@ export default function IssueStep({ ctx }) {
             </AlertDescription>
           </Alert>
         ) : null}
-        {view.failed ? (
+        {view.failed && windows ? (
+          <Text fontSize='sm'>
+            Check the job log, then request again. The ACME client path and the
+            IIS site must exist on the host, and the agent must be allowed to
+            run that client.
+          </Text>
+        ) : null}
+        {view.failed && !windows ? (
           <Text fontSize='sm'>
             A failed order leaves an entry in <code>provisioning</code> that
             still holds <code>{saved.certPath}</code>, so asking again with the
@@ -234,13 +251,17 @@ export default function IssueStep({ ctx }) {
           CAs rate limit repeated orders.
         </Text>
         <Text fontSize='sm' data-testid='reload-note'>
-          {saved.reloadService
-            ? `After writing the certificate, the agent tests the ${reloadLabel} configuration and reloads it only if the test passes.`
-            : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
+          {windows
+            ? `The agent stores the certificate in the ${saved.iisStore || 'My'} machine store and binds it to ${saved.iisSite || 'Default Web Site'} on port ${saved.iisPort || 443}, replacing the existing binding.`
+            : saved.reloadService
+              ? `After writing the certificate, the agent tests the ${reloadLabel} configuration and reloads it only if the test passes.`
+              : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
         </Text>
         {view.done ? (
           <Text fontSize='sm'>
-            The certificate was issued and written to {saved.certPath}.
+            {windows
+              ? `The certificate was issued and bound to ${saved.iisSite || 'Default Web Site'}.`
+              : `The certificate was issued and written to ${saved.certPath}.`}{' '}
             Installing it into a web server and renewal are separate steps.
           </Text>
         ) : null}

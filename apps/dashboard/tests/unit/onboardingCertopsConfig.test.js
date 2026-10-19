@@ -10,6 +10,7 @@ import {
   buildVaultConfigs,
   buildVaultPolicies,
   isLoopbackHttp,
+  WINDOWS_ACME_PROFILE,
   RELOAD_SERVICES,
   reloadCommands,
   issueIdempotencyKey,
@@ -264,14 +265,18 @@ describe('automate config', () => {
     expect(isValidHostname('a b.com')).toBe(false);
   });
 
-  it('omits Linux-only settings for Windows', () => {
+  it('omits Linux-only settings for Windows and allows only the ACME client', () => {
     const { config } = buildAutomateConfig({
       ...base,
       os: 'windows',
       certPath: undefined,
+      acmeClientPath: 'C:\\acme\\acme.sh.exe',
     });
     expect(config.execution.keysDir).toBeUndefined();
-    expect(config.policy.allowedCommands).toBeUndefined();
+    expect(Object.keys(config.policy.allowedCommands)).toEqual([
+      WINDOWS_ACME_PROFILE,
+    ]);
+    expect(config.policy.allowedPaths).toEqual([]);
   });
 });
 
@@ -295,16 +300,47 @@ describe('jobs', () => {
     expect(JSON.stringify(job)).not.toMatch(/keyPath|privateKey/);
   });
 
-  it('refuses to build a Windows issue job it cannot verify', () => {
-    expect(() =>
-      buildIssueJob({
-        os: 'windows',
-        names: ['www.example.com'],
-        zone: 'example.com',
-        dnsProvider: 'cloudflare',
-        idempotencyKey: 'wizard-2',
-      })
-    ).toThrow(/Windows issuance/);
+  it('builds a Windows IIS issue job with a store and binding, never a path', () => {
+    const job = buildIssueJob({
+      os: 'windows',
+      names: ['iis.example.com'],
+      zone: 'example.com',
+      dnsProvider: 'cloudflare',
+      iisSite: 'Default Web Site',
+      iisPort: 443,
+      sniHost: 'iis.example.com',
+      assignedAgentId: 'row-9',
+      idempotencyKey: 'wizard-win-1',
+    });
+    expect(job.operation).toBe('issue');
+    expect(job.payload.target).toEqual({
+      type: 'windows-iis',
+      reference: 'iis.example.com',
+      store: 'My',
+      binding: {
+        site: 'Default Web Site',
+        port: 443,
+        sniHost: 'iis.example.com',
+      },
+    });
+    expect(job.payload.certPath).toBeUndefined();
+    expect(job.payload.commandRef).toBe(WINDOWS_ACME_PROFILE);
+    expect(job.assignedAgentId).toBe('row-9');
+    expect(JSON.stringify(job)).not.toMatch(/keyPath|privateKey/);
+  });
+
+  it('omits the SNI host when none is given', () => {
+    const job = buildIssueJob({
+      os: 'windows',
+      names: ['iis.example.com'],
+      zone: 'example.com',
+      dnsProvider: 'cloudflare',
+      idempotencyKey: 'wizard-win-2',
+    });
+    expect(job.payload.target.binding).toEqual({
+      site: 'Default Web Site',
+      port: 443,
+    });
   });
 
   it('builds a harmless dry-run noop pinned to the agent', () => {
@@ -546,5 +582,47 @@ describe('optional web server reload', () => {
       withNginx
     );
     expect(withNginx).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  });
+});
+
+describe('windows ACME configuration', () => {
+  const base = {
+    os: 'windows',
+    names: ['iis.example.com'],
+    zone: 'example.com',
+    dnsProvider: 'cloudflare',
+    acmeClientPath: 'C:\\acme\\acme.sh.exe',
+  };
+
+  it('needs the full path of the ACME client', () => {
+    expect(buildAutomateConfig({ ...base, acmeClientPath: '' }).ok).toBe(false);
+    expect(buildAutomateConfig({ ...base, acmeClientPath: 'acme.sh' }).ok).toBe(
+      false
+    );
+    expect(buildAutomateConfig(base).ok).toBe(true);
+  });
+
+  it('allows exactly that client under the name the job uses', () => {
+    const { config } = buildAutomateConfig(base);
+    expect(config.policy.allowedCommands[WINDOWS_ACME_PROFILE]).toEqual({
+      argv: ['C:\\acme\\acme.sh.exe'],
+    });
+    expect(config.declaredCommandProfileNames).toEqual([WINDOWS_ACME_PROFILE]);
+    expect(config.policy.allowedCommands.certbot).toBeUndefined();
+  });
+
+  it('declares the names and keeps the same routing fields as Linux', () => {
+    const { config } = buildAutomateConfig(base);
+    expect(config.declaredTargetSelectors).toEqual(['iis.example.com']);
+    expect(config.execution.enabled).toBe(true);
+  });
+
+  it('accepts a UNC path too', () => {
+    expect(
+      buildAutomateConfig({
+        ...base,
+        acmeClientPath: '\\\\fileserver\\tools\\acme.exe',
+      }).ok
+    ).toBe(true);
   });
 });

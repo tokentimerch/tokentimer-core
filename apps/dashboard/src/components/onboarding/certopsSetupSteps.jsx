@@ -19,6 +19,7 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
+import { buildAdcsConfig } from './adcsModel.js';
 import { scopeCertops } from './certopsScope.js';
 import { INFRASTRUCTURES, infrastructuresFor } from './certopsMatrix.js';
 import {
@@ -123,6 +124,14 @@ export function ConfigStep({ ctx }) {
     certPath: saved.certPath || '/etc/ssl/tokentimer/example.pem',
     caEndpoint: saved.caEndpoint || STAGING_CA,
     reloadService: saved.reloadService || '',
+    acmeClientPath: saved.acmeClientPath || '',
+    iisSite: saved.iisSite || 'Default Web Site',
+    iisPort: saved.iisPort || '443',
+    sniHost: saved.sniHost || '',
+    caHost: saved.caHost || '',
+    caName: saved.caName || '',
+    template: saved.template || 'WebServer',
+    dnsScopes: saved.dnsScopes || '',
     directories: saved.directories || '/etc/ssl/certs',
   });
   const [error, setError] = useState('');
@@ -148,10 +157,19 @@ export function ConfigStep({ ctx }) {
       .map(s => s.trim())
       .filter(Boolean);
     result = { ok: true, config: buildObserveConfig({ os, directories }) };
+  } else if (objective === 'adcs') {
+    result = buildAdcsConfig({
+      caHost: form.caHost,
+      caName: form.caName,
+      template: form.template,
+      dnsScopes: form.dnsScopes,
+      names,
+    });
   } else {
     result = buildAutomateConfig({
       os,
       names,
+      acmeClientPath: form.acmeClientPath,
       zone: form.zone,
       dnsProvider: form.dnsProvider,
       certPath: form.certPath,
@@ -178,6 +196,14 @@ export function ConfigStep({ ctx }) {
         certPath: form.certPath,
         caEndpoint: form.caEndpoint,
         reloadService: form.reloadService,
+        acmeClientPath: form.acmeClientPath,
+        iisSite: form.iisSite,
+        iisPort: form.iisPort,
+        sniHost: form.sniHost,
+        caHost: form.caHost,
+        caName: form.caName,
+        template: form.template,
+        dnsScopes: form.dnsScopes,
         directories: form.directories,
         configReviewed: true,
       });
@@ -215,6 +241,82 @@ export function ConfigStep({ ctx }) {
               onChange={set('directories')}
             />
           </FormControl>
+        ) : objective === 'adcs' ? (
+          <>
+            <FormControl isRequired>
+              <FormLabel fontSize='sm'>Names (comma separated)</FormLabel>
+              <Input
+                size='sm'
+                value={form.names}
+                onChange={set('names')}
+                placeholder='web.corp.example.com'
+              />
+            </FormControl>
+            <HStack align='start' spacing={3} flexWrap='wrap'>
+              <FormControl flex='1 1 240px' isRequired>
+                <FormLabel fontSize='sm'>CA server</FormLabel>
+                <Input
+                  size='sm'
+                  value={form.caHost}
+                  onChange={set('caHost')}
+                  placeholder='ca01.corp.example.com'
+                />
+              </FormControl>
+              <FormControl flex='1 1 240px' isRequired>
+                <FormLabel fontSize='sm'>CA name</FormLabel>
+                <Input
+                  size='sm'
+                  value={form.caName}
+                  onChange={set('caName')}
+                  placeholder='Corp Issuing CA'
+                />
+              </FormControl>
+            </HStack>
+            <HStack align='start' spacing={3} flexWrap='wrap'>
+              <FormControl flex='1 1 200px' isRequired>
+                <FormLabel fontSize='sm'>Template</FormLabel>
+                <Input
+                  size='sm'
+                  value={form.template}
+                  onChange={set('template')}
+                />
+              </FormControl>
+              <FormControl flex='1 1 240px' isRequired>
+                <FormLabel fontSize='sm'>Allowed DNS scopes</FormLabel>
+                <Input
+                  size='sm'
+                  value={form.dnsScopes}
+                  onChange={set('dnsScopes')}
+                  placeholder='corp.example.com'
+                />
+              </FormControl>
+            </HStack>
+            <Text fontSize='xs'>
+              The rule below lets this one host contact this one CA with this
+              one template, for names inside these scopes. TokenTimer never
+              stores CA credentials: the agent authenticates as the computer
+              account.
+            </Text>
+            <HStack align='start' spacing={3} flexWrap='wrap'>
+              <FormControl flex='1 1 200px'>
+                <FormLabel fontSize='sm'>IIS site</FormLabel>
+                <Input
+                  size='sm'
+                  value={form.iisSite}
+                  onChange={set('iisSite')}
+                />
+              </FormControl>
+              <FormControl flex='0 1 110px'>
+                <FormLabel fontSize='sm'>Port</FormLabel>
+                <Input
+                  size='sm'
+                  type='number'
+                  value={form.iisPort}
+                  onChange={set('iisPort')}
+                />
+              </FormControl>
+            </HStack>
+          </>
         ) : (
           <>
             <FormControl isRequired>
@@ -251,6 +353,53 @@ export function ConfigStep({ ctx }) {
                 </Select>
               </FormControl>
             </HStack>
+            {os === 'windows' ? (
+              <>
+                <FormControl isRequired>
+                  <FormLabel fontSize='sm'>
+                    ACME client on the Windows host
+                  </FormLabel>
+                  <Input
+                    size='sm'
+                    value={form.acmeClientPath}
+                    onChange={set('acmeClientPath')}
+                    placeholder='C:\acme\acme.sh.exe'
+                  />
+                  <Text fontSize='xs' mt={1}>
+                    Full path of the ACME client the agent may run (acme.sh or a
+                    compatible tool). Certbot is not supported on Windows. The
+                    agent is allowed to run exactly this file.
+                  </Text>
+                </FormControl>
+                <HStack align='start' spacing={3} flexWrap='wrap'>
+                  <FormControl flex='1 1 200px'>
+                    <FormLabel fontSize='sm'>IIS site</FormLabel>
+                    <Input
+                      size='sm'
+                      value={form.iisSite}
+                      onChange={set('iisSite')}
+                    />
+                  </FormControl>
+                  <FormControl flex='0 1 110px'>
+                    <FormLabel fontSize='sm'>Port</FormLabel>
+                    <Input
+                      size='sm'
+                      type='number'
+                      value={form.iisPort}
+                      onChange={set('iisPort')}
+                    />
+                  </FormControl>
+                  <FormControl flex='1 1 200px'>
+                    <FormLabel fontSize='sm'>SNI host (optional)</FormLabel>
+                    <Input
+                      size='sm'
+                      value={form.sniHost}
+                      onChange={set('sniHost')}
+                    />
+                  </FormControl>
+                </HStack>
+              </>
+            ) : null}
             {os === 'linux' ? (
               <FormControl>
                 <FormLabel fontSize='sm'>Certificate file path</FormLabel>
