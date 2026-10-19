@@ -1699,12 +1699,47 @@ describe("LIFE-04 retired identity installation guards", () => {
     assert.equal(created[0].jobId, JOB_ID);
   });
 
-  it("still dispatches free_key cleanup and operator reconcile after retirement", async () => {
+  it("does not reconcile or retry a submission for a retired identity, since both can install", async () => {
+    for (const [state, extra] of [
+      ["submission_uncertain", { operator_request_id: 77 }],
+      ["submitting", { last_error_code: "ADCS_CA_UNREACHABLE" }],
+    ]) {
+      const db = retiredEnrollment(state, "revoked", extra);
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => {
+          throw new Error("must not install");
+        },
+      });
+      assert.deepEqual(created, [], state);
+      assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, null, state);
+      assert.equal(db.enrollments.get(ENROLLMENT).state, state);
+    }
+  });
+
+  it("refuses an operator RequestId proposal for a retired identity", async () => {
+    const db = retiredEnrollment("submission_uncertain", "revoked", { next_poll_at: null });
+    await assert.rejects(
+      proposeReconcileRequestId({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        requestId: 77,
+        audit: async () => {
+          throw new Error("must not audit");
+        },
+      }),
+      (error) => error.code === "CERTOPS_CERTIFICATE_RETIRED",
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).operator_request_id ?? null, null);
+  });
+
+  it("still dispatches free_key cleanup after retirement", async () => {
     for (const [state, extra] of [
       ["cancelled", {}],
       ["expired", {}],
       ["abandoned", {}],
-      ["submission_uncertain", { operator_request_id: 77 }],
     ]) {
       const db = retiredEnrollment(state, "revoked", extra);
       const created = await scheduleDueEnrollments({
@@ -1726,14 +1761,14 @@ describe("LIFE-04 retired identity installation guards", () => {
       "utf8",
     );
     assert.match(dispatch, /cj\.operation = 'continue-enrollment'/);
-    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred'\)/);
+    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred', 'submission_uncertain', 'submitting'\)/);
     assert.match(dispatch, /'renew', 'deploy', 'deploy-from-store', 'reload'/);
     const guard = fs.readFileSync(
       path.join(__dirname, "../../apps/api/migrations/certops-distribution-lifecycle-guards.sql"),
       "utf8",
     );
     assert.match(guard, /install_continuation/);
-    assert.match(guard, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred'\)/);
+    assert.match(guard, /continuation\.state IN \('installing', 'install_failed', 'pending_issuance', 'validation_deferred', 'submission_uncertain', 'submitting'\)/);
     assert.match(guard, /NEW\.operation NOT IN \('renew','deploy','deploy-from-store','reload'\)/);
   });
 });
