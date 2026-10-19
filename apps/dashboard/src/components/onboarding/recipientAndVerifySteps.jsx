@@ -6,6 +6,7 @@ import {
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 
 import { evaluateVerification, CHECK_STATUS } from './verification.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
@@ -99,14 +100,13 @@ export function VerifyStep({ ctx }) {
           >
             Check again
           </DashboardActionButton>
-          <DashboardActionButton
-            colorScheme='blue'
+          <PrimaryButton
             onClick={finish}
             isLoading={busy}
             isDisabled={!result?.ok}
           >
             Finish setup
-          </DashboardActionButton>
+          </PrimaryButton>
         </>
       }
     >

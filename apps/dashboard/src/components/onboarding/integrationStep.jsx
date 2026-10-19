@@ -15,6 +15,7 @@ import {
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import ImportTokensModal from '../ImportTokensModal.jsx';
 import { INTEGRATIONS } from './modules.js';
 import {
@@ -276,13 +277,9 @@ export function IntegrationStep({ ctx }) {
           >
             Skip for now
           </DashboardActionButton>
-          <DashboardActionButton
-            colorScheme='blue'
-            onClick={begin}
-            isDisabled={!provider || !usable}
-          >
+          <PrimaryButton onClick={begin} isDisabled={!provider || !usable}>
             {mode === 'sync' ? 'Connect and keep in sync' : 'Scan and import'}
-          </DashboardActionButton>
+          </PrimaryButton>
         </>
       }
     >

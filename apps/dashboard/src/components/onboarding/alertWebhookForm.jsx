@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import PrimaryButton from './PrimaryButton.jsx';
 import {
   FormControl,
   FormLabel,
@@ -134,14 +135,9 @@ export default function WebhookForm({
         <DashboardActionButton variant='ghost' size='sm' onClick={onCancel}>
           Cancel
         </DashboardActionButton>
-        <DashboardActionButton
-          colorScheme='blue'
-          size='sm'
-          onClick={testAndSave}
-          isLoading={busy}
-        >
+        <PrimaryButton size='sm' onClick={testAndSave} isLoading={busy}>
           Send test and save
-        </DashboardActionButton>
+        </PrimaryButton>
       </HStack>
     </VStack>
   );

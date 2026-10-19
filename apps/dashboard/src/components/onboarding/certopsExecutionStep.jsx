@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, HStack, Text, VStack } from '@chakra-ui/react';
-import {
-  DashboardActionButton,
-  DashboardErrorAlert,
-} from '../DashboardPrimitives';
+import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
 import { buildDryRunJob } from './certopsConfig.js';
@@ -82,13 +80,12 @@ export function ExecutionStep({ ctx }) {
           The agent reports what it finds and cannot run jobs. You can enable
           execution later from this guide.
         </Text>
-        <DashboardActionButton
+        <PrimaryButton
           mt={3}
-          colorScheme='blue'
           onClick={() => saveCertops(ctx, { executionAcknowledged: true })}
         >
           Continue
-        </DashboardActionButton>
+        </PrimaryButton>
       </StepFrame>
     );
   }
@@ -125,14 +122,13 @@ export function ExecutionStep({ ctx }) {
       docs={ctx.docs('certops.dryRun', 'Dry-run guide')}
       actions={
         agent && !saved.dryRunJobId ? (
-          <DashboardActionButton
-            colorScheme='blue'
+          <PrimaryButton
             onClick={createDryRun}
             isLoading={busy}
             isDisabled={!state.done.includes('enabled')}
           >
             Send a test job
-          </DashboardActionButton>
+          </PrimaryButton>
         ) : null
       }
     >

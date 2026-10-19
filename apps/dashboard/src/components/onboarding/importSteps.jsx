@@ -6,6 +6,7 @@ import {
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import ImportTokensModal from '../ImportTokensModal.jsx';
 
 /**
@@ -104,9 +105,7 @@ export function FileImportStep({ ctx }) {
           >
             Skip for now
           </DashboardActionButton>
-          <DashboardActionButton colorScheme='blue' onClick={host.start}>
-            Choose a file
-          </DashboardActionButton>
+          <PrimaryButton onClick={host.start}>Choose a file</PrimaryButton>
         </>
       }
     >

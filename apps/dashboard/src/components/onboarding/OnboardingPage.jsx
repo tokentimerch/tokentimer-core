@@ -17,6 +17,7 @@ import { SessionController } from './sessionController.js';
 import { reconcilePending } from './reconcile.js';
 import { docUrl } from './docLinks.js';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
 import { GOALS } from './modules.js';
 import { clearGoal, skipStep } from './sessionTransitions.js';
@@ -289,13 +290,9 @@ function ReviewBar({ nav, titleOf, onGo, onReturn }) {
               Next
             </DashboardActionButton>
           ) : null}
-          <DashboardActionButton
-            size='sm'
-            colorScheme='blue'
-            onClick={onReturn}
-          >
+          <PrimaryButton size='sm' onClick={onReturn}>
             Back to where I was
-          </DashboardActionButton>
+          </PrimaryButton>
         </HStack>
       ) : null}
     </HStack>
@@ -328,13 +325,9 @@ function DoneCard({ ctx }) {
           <DashboardActionButton variant='outline' onClick={restart}>
             Track something else
           </DashboardActionButton>
-          <DashboardActionButton
-            as={RouterLink}
-            to='/dashboard'
-            colorScheme='blue'
-          >
+          <PrimaryButton as={RouterLink} to='/dashboard'>
             Go to dashboard
-          </DashboardActionButton>
+          </PrimaryButton>
         </>
       }
     >

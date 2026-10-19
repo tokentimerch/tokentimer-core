@@ -13,12 +13,10 @@ import {
   Textarea,
   VStack,
 } from '@chakra-ui/react';
-import {
-  DashboardActionButton,
-  DashboardErrorAlert,
-} from '../DashboardPrimitives';
+import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
 import { scopeCertops } from './certopsScope.js';
@@ -80,13 +78,9 @@ export function ObjectiveStep({ ctx }) {
       description='Only combinations that are supported for your goal are listed.'
       docs={ctx.docs('certops.overview', 'About certificate management')}
       actions={
-        <DashboardActionButton
-          colorScheme='blue'
-          onClick={save}
-          isDisabled={!infra}
-        >
+        <PrimaryButton onClick={save} isDisabled={!infra}>
           Continue
-        </DashboardActionButton>
+        </PrimaryButton>
       }
     >
       <VStack align='stretch' spacing={3}>
@@ -198,13 +192,9 @@ export function ConfigStep({ ctx }) {
         ...ctx.docs('certops.dns', 'DNS providers'),
       ]}
       actions={
-        <DashboardActionButton
-          colorScheme='blue'
-          onClick={confirm}
-          isDisabled={!result.ok}
-        >
+        <PrimaryButton onClick={confirm} isDisabled={!result.ok}>
           I saved this file
-        </DashboardActionButton>
+        </PrimaryButton>
       }
     >
       <VStack align='stretch' spacing={3}>

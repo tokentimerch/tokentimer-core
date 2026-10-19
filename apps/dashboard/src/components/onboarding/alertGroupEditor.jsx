@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import PrimaryButton from './PrimaryButton.jsx';
 import {
   Badge,
   Checkbox,
@@ -360,13 +361,9 @@ export default function GroupEditor({
             Cancel
           </DashboardActionButton>
         ) : null}
-        <DashboardActionButton
-          colorScheme='blue'
-          onClick={save}
-          isLoading={busy}
-        >
+        <PrimaryButton onClick={save} isLoading={busy}>
           {editing ? 'Save group' : 'Create group'}
-        </DashboardActionButton>
+        </PrimaryButton>
       </HStack>
     </VStack>
   );
