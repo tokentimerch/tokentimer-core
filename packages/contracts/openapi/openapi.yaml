@@ -2888,6 +2888,18 @@ paths:
                   docsBaseUrl:
                     type: string
                     format: uri
+                  viewer:
+                    type: object
+                    description: >-
+                      The caller's workspace role and whether they are a system
+                      administrator, so the wizard can pick between a form and
+                      an administrator handoff.
+                    properties:
+                      workspaceRole:
+                        type: string
+                        nullable: true
+                      isSystemAdmin:
+                        type: boolean
                   items:
                     type: array
                     items:
