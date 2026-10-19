@@ -61,10 +61,15 @@ export function matchPreset(values) {
   return 'custom';
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 export function describeThresholds(values) {
   return (values || [])
-    .map(v =>
-      v > 0 ? `${v} days before` : v === 0 ? 'on the day' : `${-v} days after`
-    )
+    .map(v => {
+      if (v === 0) return 'on the day';
+      return v > 0
+        ? `${plural(v, 'day')} before`
+        : `${plural(-v, 'day')} after`;
+    })
     .join(', ');
 }

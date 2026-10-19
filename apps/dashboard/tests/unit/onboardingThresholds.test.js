@@ -43,4 +43,11 @@ describe('presets', () => {
       '30 days before, on the day, 2 days after'
     );
   });
+
+  it('uses the singular for one day', () => {
+    expect(describeThresholds([1, -1])).toBe('1 day before, 1 day after');
+    expect(describeThresholds([14, 1, 0])).toBe(
+      '14 days before, 1 day before, on the day'
+    );
+  });
 });

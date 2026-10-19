@@ -159,17 +159,17 @@ export function AgentStep({ ctx }) {
     );
   }
 
-  const command = (() => {
-    try {
-      return buildInstallCommand({
-        os,
-        apiUrl: ctx.apiUrl,
-        workspaceId: ctx.workspaceId,
-      });
-    } catch (e) {
-      return '';
-    }
-  })();
+  let command = '';
+  let commandError = '';
+  try {
+    command = buildInstallCommand({
+      os,
+      apiUrl: ctx.apiUrl,
+      workspaceId: ctx.workspaceId,
+    });
+  } catch (e) {
+    commandError = e.message;
+  }
   const gap = target
     ? capabilityGap(saved.objective, infra, target.declaredCapabilities)
     : [];
@@ -217,10 +217,14 @@ export function AgentStep({ ctx }) {
             />
           </>
         ) : null}
-        <CopyBlock
-          label='Install command (run as administrator)'
-          text={command}
-        />
+        {commandError ? (
+          <DashboardErrorAlert>{commandError}</DashboardErrorAlert>
+        ) : (
+          <CopyBlock
+            label='Install command (run as administrator)'
+            text={command}
+          />
+        )}
         <HStack>
           <Text fontSize='sm' fontWeight='semibold'>
             Agent status

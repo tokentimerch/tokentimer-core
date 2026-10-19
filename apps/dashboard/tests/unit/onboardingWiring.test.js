@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { STEP_COMPONENTS } from '../../src/components/onboarding/OnboardingPage.jsx';
+import {
+  STEP_COMPONENTS,
+  nextSteps,
+} from '../../src/components/onboarding/OnboardingPage.jsx';
 import { GOALS } from '../../src/components/onboarding/modules.js';
 import { planJourney } from '../../src/components/onboarding/journeyPlanner.js';
 import docLinks from '../../src/components/onboarding/docLinks.json';
@@ -46,5 +49,28 @@ describe('wizard wiring', () => {
       k => !registered.has(k) && !k.includes('${')
     );
     expect(unknown).toEqual([]);
+  });
+  it('every goal has a completion message and goal-specific follow-ups', () => {
+    for (const [id, goal] of Object.entries(GOALS)) {
+      expect(goal.doneText, id).toMatch(/\S/);
+      expect(nextSteps(id).length, id).toBeGreaterThan(0);
+    }
+  });
+
+  it('never suggests what the user just finished', () => {
+    expect(nextSteps('import_file').join(' ')).not.toMatch(
+      /Import many assets/
+    );
+    expect(nextSteps('import_integration').join(' ')).not.toMatch(
+      /Import many assets/
+    );
+    expect(nextSteps('alerting').join(' ')).not.toMatch(/thresholds/);
+  });
+
+  it('does not overclaim for the candidate Vault goal', () => {
+    expect(GOALS.certops_vault.doneText).toMatch(/not verified/i);
+    expect(GOALS.certops_vault.doneText).not.toMatch(
+      /distributed|working|complete/i
+    );
   });
 });

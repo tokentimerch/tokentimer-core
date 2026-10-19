@@ -9,6 +9,7 @@ import {
   buildObserveConfig,
   buildVaultConfigs,
   buildVaultPolicies,
+  isLoopbackHttp,
   isValidHostname,
   nameInZone,
   SENSITIVE_PATTERN,
@@ -91,6 +92,41 @@ describe('install command', () => {
     });
     expect(cmd).toMatch(/^\.\\install-agent\.ps1/);
     expect(cmd).not.toContain('sudo');
+  });
+
+  it('allows plain http only for a loopback host, with the installer flag', () => {
+    const local = buildInstallCommand({
+      os: 'linux',
+      apiUrl: 'http://localhost:4010',
+      workspaceId: WS,
+    });
+    expect(local).toContain('--allow-insecure-local-http');
+    const win = buildInstallCommand({
+      os: 'windows',
+      apiUrl: 'http://127.0.0.1:4010',
+      workspaceId: WS,
+    });
+    expect(win).toContain('--allow-insecure-local-http');
+    // The flag is never added for https.
+    expect(
+      buildInstallCommand({
+        os: 'linux',
+        apiUrl: 'https://tt.example.com',
+        workspaceId: WS,
+      })
+    ).not.toContain('--allow-insecure-local-http');
+    // A remote host over http would send the token in clear text.
+    for (const url of [
+      'http://tt.example.com',
+      'http://10.0.0.5:4000',
+      'http://localhost.evil.com',
+    ]) {
+      expect(() =>
+        buildInstallCommand({ os: 'linux', apiUrl: url, workspaceId: WS })
+      ).toThrow(/https/);
+    }
+    expect(isLoopbackHttp('http://[::1]:4000')).toBe(true);
+    expect(isLoopbackHttp('https://localhost')).toBe(false);
   });
 
   it('rejects an insecure address and a bad workspace id', () => {
