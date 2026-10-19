@@ -195,12 +195,12 @@ it('handles absent distribution, missing consumers, failures and retry', async (
   const { rerender } = render(view());
   expect(await screen.findByText('Not distributed')).toBeInTheDocument();
   get.mockRejectedValueOnce(new Error('offline'));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Deployment information unavailable'
   );
   mockData([]);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
   expect(
     await screen.findByText(/No consumer assignments/)
   ).toBeInTheDocument();
@@ -283,7 +283,7 @@ it('keeps readable destination details and the same table mounted during manual 
   expect(screen.getByText('Last confirmed version')).toBeInTheDocument();
   const pending = [];
   get.mockImplementation(() => new Promise(resolve => pending.push(resolve)));
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
   await waitFor(() => expect(pending.length).toBe(3));
   expect(screen.getByRole('table')).toBe(table);
   expect(
@@ -360,7 +360,7 @@ it('does not retain green evidence when the registration advances to another rol
   await screen.findByText('1/1 verified');
   generation = 2;
   holdConsumers = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
   await waitFor(() =>
     expect(screen.queryByText('1/1 verified')).not.toBeInTheDocument()
   );
@@ -432,11 +432,11 @@ it('organizes all publication diagnostics in one Technical information section a
   );
 });
 
-it('explains a GET-only Refresh next to the heading and keeps existing details while revalidating', async () => {
+it('explains a GET-only Refresh status next to the heading and keeps existing details while revalidating', async () => {
   render(view());
   const table = await screen.findByRole('table');
   const refresh = screen.getByRole('button', {
-    name: 'Refresh',
+    name: 'Refresh status',
     exact: true,
   });
   expect(

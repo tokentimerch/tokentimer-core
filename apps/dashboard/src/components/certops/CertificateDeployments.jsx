@@ -734,7 +734,7 @@ export default function CertificateDeployments({
         enclosed
         headerAction={
           <DeploymentHelp
-            label='Refresh'
+            label='Refresh status'
             text={refreshStatusHelp}
             busy={state.loading || state.refreshing}
             onAction={() => {

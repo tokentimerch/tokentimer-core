@@ -907,6 +907,34 @@ async function main() {
   if (state.approverRegistered)
     await approver.login(state.approverEmail, "LabApprover-2026!Only");
   const phase = process.argv[2] || "all";
+  if (phase === "observations") {
+    const material = (await versions()).find(v => v.id === (state.renewedVersionId || state.versionId));
+    assert.ok(material?.fingerprint_sha256);
+    const readIdentity = async () => {
+      const result = await owner.request(api() + "/certificate-identities/" + material.certificate_identity_id);
+      return result.certificate || result.identity || result;
+    };
+    const before = await readIdentity();
+    state.observationInvestigation = { beforeLocations: before.locations || [], fingerprintSha256: material.fingerprint_sha256 };
+    for (const name of ["nginx", "haproxy"]) {
+      const proof = await customer("tls-proof", name);
+      assert.equal(proof.authorized, true);
+      assert.equal(proof.fingerprintSha256, material.fingerprint_sha256);
+      state.observationInvestigation[name] = proof;
+      await customer("enable-discovery", name);
+    }
+    const after = await wait("genuine filesystem discovery at both destinations", async () => {
+      const identity = await readIdentity();
+      const locations = identity.locations || [];
+      return ["nginx", "haproxy"].every(name => locations.some(location =>
+        location.source === "agent_filesystem" && location.presenceState === "confirmed_present" &&
+        String(location.deploymentReference || location.sourceRef).includes("/lab/" + name + "/cert.pem"))) ? identity : false;
+    });
+    state.observationInvestigation.afterLocations = after.locations;
+    save();
+    check("trusted TLS handshakes and genuine agent discovery match the published identity at both consumers");
+    return;
+  }
   if (phase === "transfer-status") {
     await verifyTransferredInventory();
     return;
@@ -1009,8 +1037,8 @@ async function main() {
     "deployment-recovery": deploymentRecovery,
     transfer,
   }))
-    if (phase === "all" || phase === name) await step(name, fn);
-  if (phase === "all") {
+    if (phase === "all" || phase === "functional" && name !== "transfer" || phase === name) await step(name, fn);
+  if (phase === "all" || phase === "functional") {
     const facts = await customer("facts", "issuer", {
       certificateId: state.certificateId,
     });
@@ -1019,6 +1047,7 @@ async function main() {
     state.finishedAt = new Date().toISOString();
     state.databaseInjection = false;
     state.experimentalAgentBuild = true;
+    state.workspaceTransferSkipped = phase === "functional";
     state.limits = [
       "Core lab only; Cloud/Enterprise billing/license flows are not exercised here.",
       "Lab-only experimental build, Pebble CA and development Vault token; no customer/release qualification.",

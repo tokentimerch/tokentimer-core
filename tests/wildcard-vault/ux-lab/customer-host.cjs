@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 const https = require("node:https");
+const tls = require("node:tls");
 const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
 const { spawn, spawnSync } = require("node:child_process");
@@ -216,6 +217,27 @@ async function control(body) {
     return { stopped: true };
   }
   if (action === "start") return startAgent(name);
+  if (action === "enable-discovery") {
+    assert.ok(["nginx", "haproxy"].includes(name));
+    await stopAgent(name);
+    config(name, { discovery: { directories: ["/lab/" + name], intervalMs: 30000 } });
+    return startAgent(name);
+  }
+  if (action === "tls-proof") {
+    assert.ok(["nginx", "haproxy"].includes(name));
+    return new Promise((resolve, reject) => {
+      const socket = tls.connect({ host: "127.0.0.1", port: name === "nginx" ? 8443 : 9443,
+        servername: name + ".wildcard.test", ca: fs.readFileSync("/lab/issuer-root.pem"), rejectUnauthorized: true });
+      socket.setTimeout(5000, () => socket.destroy(new Error("TLS proof timed out")));
+      socket.once("error", reject);
+      socket.once("secureConnect", () => {
+        const cert = socket.getPeerCertificate();
+        resolve({ name, authorized: socket.authorized, fingerprintSha256: cert.fingerprint256.replace(/:/g, "").toLowerCase(),
+          subjectAltName: cert.subjectaltname, protocol: socket.getProtocol(), observedAt: new Date().toISOString() });
+        socket.destroy();
+      });
+    });
+  }
   if (["fail-reload", "repair-reload", "reconcile-binding"].includes(action)) {
     assert.ok(["nginx", "haproxy"].includes(name));
     const dir = path.join(root, name);
