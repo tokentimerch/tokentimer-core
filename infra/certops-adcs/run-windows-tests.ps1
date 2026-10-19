@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 if($JournalPhaseExperiment -notin @('none','submitting','issued','installing') -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0'){throw 'Extended campaigns are deferred'}
 if($ResponseLossExperiment -eq '1' -and $JournalPhaseExperiment -ne 'none'){throw 'Only one fault experiment may own an execution'}
 if($Scope -eq 'acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Package acceptance must run without fault injection'}
-if($Scope -eq 'experiment' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -notin @('submitting','issued'))){throw 'Standalone experiments require exactly one supported journal phase'}
+if($Scope -eq 'experiment' -and -not (($ResponseLossExperiment -eq '1' -and $JournalPhaseExperiment -eq 'none') -or ($ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -in @('submitting','issued')))){throw 'Standalone experiments require exactly one supported fault mode'}
 if ((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test') { throw 'Tests require isolated domain member' }
 $runtime=Get-Content 'C:\ttqualification\runtime.json' -Raw | ConvertFrom-Json
 $env:PATH=$runtime.path
@@ -61,7 +61,8 @@ if($Scope -eq 'acceptance'){
   if($LASTEXITCODE -ne 0){throw 'Package acceptance evidence is incomplete or mismatched'}
 }
 if($Scope -eq 'experiment'){
-  & $runtime.node tests/e2e/certops-adcs-focused-experiment.cjs verify 'C:\ttqualification\focused-journal-experiment.json'
+  $experimentReport=if($ResponseLossExperiment -eq '1'){'C:\ttqualification\focused-response-loss-experiment.json'}else{'C:\ttqualification\focused-journal-experiment.json'}
+  & $runtime.node tests/e2e/certops-adcs-focused-experiment.cjs verify $experimentReport
   if($LASTEXITCODE -ne 0){throw 'Standalone experiment evidence is incomplete or mismatched'}
-  Write-Output 'CERTOPS_STAGE=focused-journal-experiment-passed-not-qualified'
+  if($ResponseLossExperiment -eq '1'){Write-Output 'CERTOPS_STAGE=focused-response-loss-experiment-passed-not-qualified'}else{Write-Output 'CERTOPS_STAGE=focused-journal-experiment-passed-not-qualified'}
 }elseif($Scope -eq 'acceptance'){Write-Output 'CERTOPS_STAGE=operator-package-acceptance-passed'}else{Write-Output 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed'}

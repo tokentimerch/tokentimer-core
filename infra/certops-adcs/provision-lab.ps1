@@ -65,9 +65,12 @@ function New-TemplateStageScript([string]$TemplatePath, [string]$DescriptorPath,
   [IO.File]::WriteAllText($Destination,$source,[Text.UTF8Encoding]::new($false))
 }
 function Invoke-Stage([string]$Machine, [string]$Script, [string]$Marker, [string[]]$Parameters = @()) {
-  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $Machine -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -RefreshAuthentication ${function:Refresh-LabAuthentication}
+  $stageTimeout=if([IO.Path]::GetFileName($Script) -ceq 'domain-ca.ps1'){900}else{3600}
+  $response=Invoke-CertOpsVmRunCommand -SubscriptionId $env:AZURE_SUBSCRIPTION_ID -ResourceGroup $ResourceGroup -Machine $Machine -Script ([IO.File]::ReadAllText($Script)) -Parameters $Parameters -TimeoutSeconds $stageTimeout -RefreshAuthentication ${function:Refresh-LabAuthentication}
   $message = ($response.value | ForEach-Object message) -join "`n"
   if (-not $message.Contains($Marker)) {
+    $caDiagnostic=[regex]::Match($message,'(?m)^CERTOPS_CA_FAILED_STAGE=(remoting-setup|directory-officer|role-install|ca-configure|service-check)[\t ]*\r?$')
+    if($caDiagnostic.Success){Write-Output $caDiagnostic.Value.Trim()}
     foreach($exportDiagnostic in [regex]::Matches($message,'(?m)^CERTOPS_CA_EXPORT_(?:EXIT=-?[0-9]{1,11}|HRESULT=0X[0-9A-F]{8})\s*$')){
       Write-Output $exportDiagnostic.Value.Trim()
     }
