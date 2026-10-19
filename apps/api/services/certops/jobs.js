@@ -1877,6 +1877,21 @@ async function resolveWorkspaceRequiresApprovalAlways(
   return fromDb || explicitOption === true;
 }
 
+async function assertDeployFromStoreIdentityAllowsMutation({ db, workspaceId, subjectId }) {
+  const lifecycle = await db.query(
+    `SELECT identity.lifecycle_status
+       FROM managed_certificates mc
+       LEFT JOIN certops_certificate_identities identity
+         ON identity.workspace_id = mc.workspace_id
+        AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+      WHERE mc.workspace_id = $1 AND mc.id = $2::uuid`,
+    [workspaceId, subjectId],
+  );
+  if (["revoked", "decommissioned"].includes(lifecycle.rows[0]?.lifecycle_status)) {
+    throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
+  }
+}
+
 async function createCertificateJob(options) {
   if ((options.payload?.publication || options.payload?.materialDeployment || options.payload?.distributionRollout) && !options.client) {
     throw serviceError("Material distribution requires a transaction-owned client", "CERTOPS_PUBLICATION_TRANSACTION_REQUIRED");
@@ -2036,6 +2051,15 @@ async function createCertificateJob(options) {
       source === "automation" || options.requireRenewalProfile === true,
   });
   assertModeAllowsTerminalStatus(mode, status);
+  // Retirement is immutable. Refuse a store deployment before distribution
+  // resolution so a revoked identity cannot be admitted as a version mismatch.
+  if (
+    operation === "deploy-from-store" &&
+    subjectType === "managed_certificate" &&
+    SUBJECT_ID_UUID_PATTERN.test(subjectId || "")
+  ) {
+    await assertDeployFromStoreIdentityAllowsMutation({ db, workspaceId, subjectId });
+  }
   const { autoAssignedAgentId } = await resolveManagedCertificateJobDefaults({
     db,
     workspaceId,
