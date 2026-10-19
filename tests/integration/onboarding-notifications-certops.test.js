@@ -259,6 +259,53 @@ describe("Onboarding notifications and CertOps reality (API contract)", function
     expect(groups.webhookCount).to.equal(0);
   });
 
+  it("reports auto-sync connections by name and outcome, never their credentials", async () => {
+    const inserted = await client.query(
+      `INSERT INTO auto_sync_configs
+         (workspace_id, provider, credentials_encrypted, scan_params, created_by,
+          connection_key, frequency, last_sync_status, last_sync_items_count, last_sync_at)
+       VALUES ($1, 'github', 'ENCRYPTED-SECRET-VALUE', '{"org":"private-org"}'::jsonb, $2,
+               'acme-org', 'daily', 'success', 12, NOW())
+       RETURNING id`,
+      [workspaceId, manager.user.id],
+    );
+    try {
+      const s = await summary(manager);
+      expect(s.autoSync.total).to.equal(1);
+      expect(s.autoSync.items[0]).to.deep.include({
+        provider: "github",
+        name: "acme-org",
+        enabled: true,
+        frequency: "daily",
+        lastStatus: "success",
+        lastItems: 12,
+        running: false,
+      });
+      const text = JSON.stringify(s);
+      expect(text).to.not.contain("ENCRYPTED-SECRET-VALUE");
+      expect(text).to.not.contain("private-org");
+    } finally {
+      await client.query("DELETE FROM auto_sync_configs WHERE id = $1", [inserted.rows[0].id]);
+    }
+    expect((await summary(manager)).autoSync.total).to.equal(0);
+  });
+
+  it("does not report another workspace's auto-sync connections", async () => {
+    const otherWs = crypto.randomUUID();
+    await client.query(`INSERT INTO workspaces (id, name, plan, created_by) VALUES ($1, 'Other sync', 'oss', $2)`, [otherWs, admin.user.id]);
+    const row = await client.query(
+      `INSERT INTO auto_sync_configs (workspace_id, provider, credentials_encrypted, created_by, connection_key)
+       VALUES ($1, 'gitlab', 'x', $2, 'someone-elses') RETURNING id`,
+      [otherWs, admin.user.id],
+    );
+    try {
+      expect((await summary(manager)).autoSync.total).to.equal(0);
+    } finally {
+      await client.query("DELETE FROM workspaces WHERE id = $1", [otherWs]);
+      void row;
+    }
+  });
+
   it("reports the wizard's issue job from the database, and separates observed from provisioning", async () => {
     const issue = await request(BASE)
       .post(ws("/certops/jobs"))

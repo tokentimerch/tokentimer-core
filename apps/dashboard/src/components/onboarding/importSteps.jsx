@@ -1,13 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  Badge,
-  HStack,
-  Radio,
-  RadioGroup,
-  Stack,
-  Text,
-  VStack,
-} from '@chakra-ui/react';
+import { useCallback, useState } from 'react';
+import { Text, VStack } from '@chakra-ui/react';
 import {
   DashboardActionButton,
   DashboardErrorAlert,
@@ -15,8 +7,6 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import ImportTokensModal from '../ImportTokensModal.jsx';
-import { INTEGRATIONS } from './modules.js';
-import { availableProviders } from './journeyPlanner.js';
 
 /**
  * Hosts the existing import modal. The modal does the scanning, preview,
@@ -143,89 +133,4 @@ export function FileImportStep({ ctx }) {
   );
 }
 
-export function IntegrationStep({ ctx }) {
-  const { muted } = useDashboardTheme();
-  const providers = availableProviders(ctx.capabilities, INTEGRATIONS);
-  const [provider, setProvider] = useState(ctx.session.intent?.provider || '');
-  const host = useImportHost(ctx, 'integration', provider);
-
-  useEffect(() => {
-    if (ctx.session.intent?.provider) setProvider(ctx.session.intent.provider);
-  }, [ctx.session.intent?.provider]);
-
-  const begin = async () => {
-    await ctx.controller.update(session => ({
-      intent: { ...session.intent, provider },
-    }));
-    await host.start();
-  };
-
-  return (
-    <StepFrame
-      kind='ui'
-      title='Import from an integration'
-      description='Connect once, preview what was found and pick what to import. Credentials are used for this scan only and are not stored.'
-      docs={[
-        ...ctx.docs('integrations.overview', 'How integrations work'),
-        ...(provider
-          ? ctx.docs(
-              `integrations.${provider}`,
-              `${INTEGRATIONS[provider]?.label} permissions`
-            )
-          : []),
-      ]}
-      actions={
-        <>
-          <DashboardActionButton
-            variant='ghost'
-            onClick={() => ctx.skip('integration')}
-          >
-            Skip for now
-          </DashboardActionButton>
-          <DashboardActionButton
-            colorScheme='blue'
-            onClick={begin}
-            isDisabled={!provider}
-          >
-            Connect and scan
-          </DashboardActionButton>
-        </>
-      }
-    >
-      <VStack align='stretch' spacing={3}>
-        {host.error ? (
-          <DashboardErrorAlert>{host.error}</DashboardErrorAlert>
-        ) : null}
-        <RadioGroup value={provider} onChange={setProvider}>
-          <Stack spacing={2}>
-            {providers.map(p => (
-              <HStack key={p.id} align='start'>
-                <Radio value={p.id} isDisabled={Boolean(p.blocker)}>
-                  <Text fontSize='sm' fontWeight='semibold'>
-                    {p.label}
-                  </Text>
-                </Radio>
-                <Text fontSize='xs' color={muted}>
-                  {p.blocker?.remediation || p.hint}
-                </Text>
-                {p.blocker ? <Badge>Not available</Badge> : null}
-              </HStack>
-            ))}
-          </Stack>
-        </RadioGroup>
-        <Text fontSize='xs' color={muted}>
-          A scan is read-only. Cleanup of assets that disappeared is off unless
-          you turn it on in the preview, and it permanently deletes.
-        </Text>
-        <ImportOutcome outcome={host.outcome} />
-      </VStack>
-      <ImportTokensModal
-        isOpen={host.open}
-        onClose={host.close}
-        onImported={() => {}}
-        openRequest={host.open ? { provider } : null}
-        onOpenRequestHandled={() => {}}
-      />
-    </StepFrame>
-  );
-}
+export { IntegrationStep } from './integrationStep.jsx';
