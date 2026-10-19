@@ -1705,13 +1705,17 @@ describe("LIFE-04 retired identity installation guards", () => {
       ["submitting", { last_error_code: "ADCS_CA_UNREACHABLE" }],
     ]) {
       const db = retiredEnrollment(state, "revoked", extra);
+      let createJobCalls = 0;
       const created = await scheduleDueEnrollments({
         client: db,
         now,
         createJob: async () => {
-          throw new Error("must not install");
+          createJobCalls += 1;
+          return { id: JOB_ID };
         },
       });
+      // The scheduler swallows per-row errors, so count calls outside it.
+      assert.equal(createJobCalls, 0, state);
       assert.deepEqual(created, [], state);
       assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, null, state);
       assert.equal(db.enrollments.get(ENROLLMENT).state, state);
