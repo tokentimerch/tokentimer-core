@@ -39,6 +39,9 @@ function boundedFailureMetadata(error, report, phase, depth=0) {
   else if(typeof failed?.id==="string" && /^adcs-[a-z0-9-]{1,120}$/.test(failed.id))result.scenario=failed.id;
   const line=typeof error?.stack==="string" ? error.stack.match(/certops-adcs-real-e2e\.test\.js:(\d{1,6}):(\d{1,5})/) : null;
   if(line)result.sourceLine=Number(line[1]);
+  // Most native assertions fire inside a journey helper; keep only its repository file name and line.
+  const helper=typeof error?.stack==="string" ? error.stack.match(/tests[\\/]e2e[\\/]helpers[\\/](certops-adcs-[a-z0-9-]{1,60}\.js):(\d{1,6}):\d{1,5}/) : null;
+  if(helper)result.helperFrame=`${helper[1]}:${helper[2]}`;
   if(error?.qualificationCommand){
     const detail=error.qualificationCommand;
     const executables=new Set(["powershell.exe","certutil.exe","certreq.exe","sc.exe","netsh.exe","node.exe","icacls.exe"]);

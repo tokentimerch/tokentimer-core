@@ -84,6 +84,50 @@ Write-Output 'NATIVE_FAILURE_PRESERVATION_PASSED'
   }
 });
 
+test("post-reboot nudge retries a read-only managed command and gives up without touching real stages", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "certops-channel-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const probe = path.join(directory, "probe.ps1");
+  fs.writeFileSync(probe, String.raw`
+$ErrorActionPreference='Stop'
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($env:CERTOPS_PROVISION_SCRIPT,[ref]$null,[ref]$null)
+$fn=$ast.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Wait-GuestCommandChannel'},$true)
+if(-not $fn){throw 'Wait-GuestCommandChannel missing'}
+$restart=$ast.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Restart-LabMachine'},$true)
+if(-not $restart.Extent.Text.Contains('Wait-GuestCommandChannel $Machine')){throw 'Restart does not wait for the command channel'}
+$ResourceGroup='tt-certops-1-1';$Location='swedencentral';$env:AZURE_SUBSCRIPTION_ID='00000000-0000-0000-0000-000000000000'
+function Refresh-LabAuthentication {}
+function Start-Sleep { param($Seconds) }
+$script:calls=@()
+function Invoke-CertOpsArmOperation {
+  param($Uri,$Method,$Body,$SubscriptionId,$RefreshAuthentication,$TimeoutSeconds)
+  $script:calls+=[pscustomobject]@{Uri=[string]$Uri;Method=$Method;Body=$Body}
+  if($script:calls.Count -le [int]$env:CERTOPS_STALL_COUNT){throw 'Lab ARM operation timed out; action was not resubmitted'}
+  $null
+}
+. ([scriptblock]::Create($fn.Extent.Text))
+$failed=$false
+try { Wait-GuestCommandChannel 'domain-ca' | Out-Null } catch { $failed=$true; if($_.Exception.Message -ne 'Guest command channel did not recover after reboot: domain-ca'){throw} }
+if($env:CERTOPS_EXPECT_FAILURE -eq '1' -and -not $failed){throw 'Permanent stall was accepted'}
+if($env:CERTOPS_EXPECT_FAILURE -ne '1' -and $failed){throw 'Transient stall was not recovered'}
+if($script:calls.Count -ne [int]$env:CERTOPS_EXPECT_CALLS){throw ('Unexpected attempt count '+$script:calls.Count)}
+foreach($c in $script:calls){
+  if($c.Method -ne 'PUT' -or $c.Uri -notmatch '/virtualMachines/domain-ca/runCommands/ttready[0-9a-f]{12}\?'){throw 'Nudge must be a managed run command on the rebooted machine'}
+  if($c.Uri -match '/runCommand\?'){throw 'Legacy stage channel must not be used for the nudge'}
+  if(-not $c.Body.Contains('CERTOPS_GUEST_COMMAND_CHANNEL_READY') -or $c.Body -match 'password|Password'){throw 'Nudge must be a read-only ping'}
+}
+Write-Output 'CHANNEL_NUDGE_PASSED'
+`);
+  for (const [stall, expectFailure, calls] of [["0", "0", 1], ["2", "0", 3], ["99", "1", 6]]) {
+    const result = spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", probe], {
+      encoding: "utf8", windowsHide: true, timeout: 30000,
+      env: { ...process.env, CERTOPS_PROVISION_SCRIPT: path.resolve(__dirname, "../infra/certops-adcs/provision-lab.ps1"), CERTOPS_STALL_COUNT: stall, CERTOPS_EXPECT_FAILURE: expectFailure, CERTOPS_EXPECT_CALLS: String(calls) },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /CHANNEL_NUDGE_PASSED/);
+  }
+});
+
 test("native CA exports retain the dotted certutil verb as one PowerShell argument", () => {
   // Unquoted -ca.cert parses as two arguments (-ca and .cert), so the native
   // program selects the unrelated -CA verb and exits before contacting the CA.

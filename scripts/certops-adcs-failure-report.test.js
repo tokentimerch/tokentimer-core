@@ -28,6 +28,15 @@ test("untrusted error fields and arbitrary FQID strings never enter reports",()=
   const supplied={constructor:{name:"SECRET"},code:"SECRET",message:"SECRET",stack:"SECRET",qualificationCommand:{executable:"SECRET",exitStatus:"SECRET",powerShellCode:"SECRET"}};
   assert.deepEqual(plain(api.boundedFailureMetadata(supplied,{})),{errorClass:"Error",command:{executable:"other",exitStatus:null}});
 });
+test("helper assertion location keeps only the repository file name and line",()=>{
+  const api=producer({status:0,stdout:"ok"});
+  const stack="AssertionError: SECRET\n at verifyDecision (C:/private/SECRET/tests/e2e/helpers/certops-adcs-browser-job-approval.js:118:12)\n at C:/private/SECRET/tests/e2e/certops-adcs-real-e2e.test.js:303:41";
+  const bounded=plain(api.boundedFailureMetadata({constructor:{name:"AssertionError"},message:"SECRET",stack},{scenarios:[]}));
+  assert.equal(bounded.helperFrame,"certops-adcs-browser-job-approval.js:118");assert.equal(bounded.sourceLine,303);
+  assert.doesNotMatch(JSON.stringify(bounded),/SECRET|private/);
+  const outside=plain(api.boundedFailureMetadata({constructor:{name:"Error"},stack:"Error\n at C:/x/tests/e2e/helpers/../../evil.js:9:1"},{scenarios:[]}));
+  assert.equal(outside.helperFrame,undefined);
+});
 test("cleanup failure metadata preserves the original failure separately and strips stack paths",()=>{
   const api=producer({status:0,stdout:"ok"});
   const report={scenarios:[{id:"adcs-real-rsa2048-issued-cng-iis",status:"failed"}]};
