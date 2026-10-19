@@ -12,6 +12,10 @@
       },
       {
         "file": "certops-adcs-enrollments.test.js",
+        "name": "stops uncertain retrieval at the frozen deadline without a cleanup job"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
         "name": "rolls back the enrollment when creating the first job fails"
       },
       {
