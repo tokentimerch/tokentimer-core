@@ -71,7 +71,10 @@ async function findMonitorByUrl(pool, workspaceId, url) {
   return rows[0] || null;
 }
 
-async function buildSummary(pool, { workspaceId, refs = {}, smtpConfigured }) {
+async function buildSummary(
+  pool,
+  { workspaceId, refs = {}, smtpConfigured, certops = null },
+) {
   const tokenIds = intIds(refs.tokenIds);
   const monitorIds = uuidIds(refs.monitorIds);
 
@@ -128,6 +131,7 @@ async function buildSummary(pool, { workspaceId, refs = {}, smtpConfigured }) {
         certificateExpiresAt: m.ssl_valid_to,
       })),
     },
+    certops: certops === null ? "unknown" : certops,
     alerts: {
       smtpConfigured: smtpConfigured === undefined ? "unknown" : smtpConfigured,
       contactGroups: summarizeContactGroups(settings.rows[0], contacts.rows),

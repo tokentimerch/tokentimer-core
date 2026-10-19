@@ -27,6 +27,23 @@ const BASE_CAPABILITIES = Object.freeze([
   { id: "assets.manual", group: "assets", minRole: "workspace_manager" },
   { id: "assets.file_import", group: "assets", minRole: "workspace_manager" },
   { id: "monitoring.endpoint", group: "monitoring", minRole: "workspace_manager" },
+  // Manual scan-and-import per provider. Scheduled auto-sync is deliberately
+  // a separate capability: it has its own role, entitlement and edition rules.
+  ...[
+    "github",
+    "gitlab",
+    "vault",
+    "aws",
+    "azure",
+    "azure-ad",
+    "gcp",
+  ].map((provider) => ({
+    id: `integrations.${provider}`,
+    group: "integrations",
+    minRole: "workspace_manager",
+  })),
+  { id: "autosync.github", group: "integrations", minRole: "workspace_manager" },
+  { id: "autosync.gitlab", group: "integrations", minRole: "workspace_manager" },
   { id: "alerts.contact_groups", group: "alerts", minRole: "workspace_manager" },
   { id: "alerts.email_delivery", group: "alerts", minRole: "workspace_manager", needs: "smtp" },
   { id: "certops.core", group: "certops", minRole: "workspace_manager", needs: "certops" },

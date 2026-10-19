@@ -22,6 +22,7 @@ const {
 } = require("../services/onboarding/sessionStore");
 const { evaluateCapabilities, getDocsBaseUrl, UNKNOWN } = require("../services/onboarding/capabilities");
 const { buildSummary } = require("../services/onboarding/summary");
+const { loadCertopsReality } = require("../services/onboarding/certopsReality");
 
 const router = express.Router({ mergeParams: true });
 const BASE = "/api/v1/workspaces/:id/onboarding";
@@ -37,6 +38,17 @@ async function settle(fn, fallback = UNKNOWN) {
   }
 }
 
+// Mirrors the admin guard: trust a hydrated flag, otherwise ask the database.
+async function resolveIsSystemAdmin(req) {
+  if (req.user?.is_admin === true) return true;
+  return settle(async () => {
+    const { rows } = await pool.query(
+      "SELECT is_admin FROM users WHERE id = $1 LIMIT 1",
+      [req.user.id],
+    );
+    return rows[0]?.is_admin === true;
+  }, false);
+}
 async function readSignals() {
   const [smtpConfigured, certopsEnabled] = await Promise.all([
     settle(() => isSmtpConfigured(pool)),
@@ -78,13 +90,21 @@ function handleError(res, e, label) {
 router.get(`${BASE}/capabilities`, ...guards, async (req, res) => {
   try {
     const signals = await readSignals();
+    const isSystemAdmin = await resolveIsSystemAdmin(req);
     const items = evaluateCapabilities({
       workspaceRole: req.authz?.workspaceRole,
-      isSystemAdmin: req.user.is_admin === true,
+      isSystemAdmin,
       ...signals,
     });
     res.set("Cache-Control", "no-store");
-    res.json({ items, docsBaseUrl: getDocsBaseUrl() });
+    res.json({
+      items,
+      docsBaseUrl: getDocsBaseUrl(),
+      viewer: {
+        workspaceRole: req.authz?.workspaceRole || null,
+        isSystemAdmin,
+      },
+    });
   } catch (e) {
     handleError(res, e, "capabilities");
   }
@@ -99,10 +119,24 @@ router.get(`${BASE}/:flow/summary`, ...guards, async (req, res) => {
       flow,
     });
     const smtpConfigured = await settle(() => isSmtpConfigured(pool));
+    const certopsEnabled = await settle(() => isCertOpsEnabled({ dbPool: pool }));
+    // Null (unknown) when CertOps is off, the caller is a viewer, or the read fails.
+    const certops = await settle(
+      () =>
+        loadCertopsReality(pool, {
+          workspaceId: req.workspace.id,
+          role: req.authz?.workspaceRole,
+          enabled: certopsEnabled,
+          since: session.createdAt,
+          dryRunJobId: session.progress?.certops?.dryRunJobId,
+        }),
+      null,
+    );
     const summary = await buildSummary(pool, {
       workspaceId: req.workspace.id,
       refs: session.operationRefs,
       smtpConfigured,
+      certops,
     });
     res.set("Cache-Control", "no-store");
     res.json({ summary });
