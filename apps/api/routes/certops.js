@@ -120,6 +120,7 @@ const {
   CERTOPS_JOB_METADATA_INVALID,
   CERTOPS_JOB_NOT_FOUND,
   CERTOPS_JOB_OPERATION_INVALID,
+  CERTOPS_JOB_MODE_INVALID,
   CERTOPS_JOB_SOURCE_INVALID,
   CERTOPS_JOB_STATUS_INVALID,
   CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED,
@@ -680,6 +681,7 @@ function handleCertOpsError(res, err) {
   const certOpsJobBadRequestCodes = new Set([
     CERTOPS_JOB_INVALID,
     CERTOPS_JOB_OPERATION_INVALID,
+    CERTOPS_JOB_MODE_INVALID,
     CERTOPS_JOB_SOURCE_INVALID,
     CERTOPS_JOB_STATUS_INVALID,
     CERTOPS_JOB_LOG_EVENT_TYPE_INVALID,
@@ -990,6 +992,7 @@ function jobCreateOptionsFromRequest(req) {
   return {
     workspaceId: req.workspace.id,
     operation: req.body?.operation,
+    mode: req.body?.mode,
     subjectType: req.body?.subjectType,
     subjectId: req.body?.subjectId,
     payload: req.body?.payload,

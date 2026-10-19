@@ -71,7 +71,8 @@ services:
     mem_limit: 128m
     depends_on: [challtestsrv]
   api:
-    # Reuse dependencies only; current API/package source is mounted read-only.
+    # Use the candidate image's source and Linux dependency links together.
+    # Mounting a Windows checkout over the app hides pnpm's installed modules.
     image: ${TT_UX_API_IMAGE:-tt-wildcard-core-api:20261008}
     environment:
       <<: *api-env
@@ -80,11 +81,6 @@ services:
       ADMIN_PASSWORD: "LabOwner-2026!Only"
       ADMIN_NAME: Lab Owner
       SESSION_COOKIE_SECURE_LOCALHOST_OVERRIDE: "true"
-    volumes:
-      [
-        "../../../apps/api:/app/apps/api:ro",
-        "../../../packages:/app/packages:ro",
-      ]
     ports: ["127.0.0.1:${TT_UX_API_PORT:-58800}:4000"]
     cpus: 1
     mem_limit: 512m
@@ -102,9 +98,6 @@ services:
       CERTOPS_SWEEP_AGENT_RECOVERY_ALERTS_ENABLED: "false"
     volumes:
       [
-        "../../../apps/api:/app/apps/api:ro",
-        "../../../apps/worker:/app/apps/worker:ro",
-        "../../../packages:/app/packages:ro",
         ".:/app/tests/wildcard-vault/ux-lab:ro",
       ]
     command: [node, /app/tests/wildcard-vault/ux-lab/worker-loop.cjs]
@@ -115,8 +108,11 @@ services:
   customers:
     image: ${TT_UX_CUSTOMER_IMAGE:-tt-wildcard-vault-fixture:20261008}
     command: [node, tests/wildcard-vault/ux-lab/customer-host.cjs]
+    cap_add: [IPC_LOCK]
     environment:
       TT_UX_CERTIFICATE_MODE: ${TT_UX_CERTIFICATE_MODE:-san}
+      TT_UX_PACKAGE_ACCEPTANCE: ${TT_UX_PACKAGE_ACCEPTANCE:-0}
+      TT_UX_CORE_COMMIT: ${TT_UX_CORE_COMMIT}
     volumes: ["../../..:/repo:ro", "customers:/lab", "${TT_WILDCARD_UX_OUTPUT}:/lab-input:ro"]
     ports:
       [

@@ -10,6 +10,9 @@ const root = path.resolve(
     path.resolve(__dirname, "../../../.scratch/wildcard-ux"),
 );
 fs.mkdirSync(root, { recursive: true });
+const qualification = require("./qualification.cjs");
+const gate = process.env.CERTOPS_DISTRIBUTION_QUALIFICATION === "1"
+  ? qualification.createGate({root,candidateSha:process.env.TT_UX_CORE_COMMIT,mode:process.env.TT_UX_CERTIFICATE_MODE || "san"}) : null;
 const file = root + "/journey-state.json",
   state = fs.existsSync(file)
     ? JSON.parse(fs.readFileSync(file))
@@ -22,6 +25,7 @@ state.certificateMode ||= process.env.TT_UX_CERTIFICATE_MODE || "san";
 state.coreCommit ||= process.env.TT_UX_CORE_COMMIT || null;
 const certificateSans = state.certificateMode === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
+  : state.certificateMode === "ordinary" ? ["nginx.wildcard.test"]
   : ["nginx.wildcard.test", "haproxy.wildcard.test"];
 const save = () =>
   fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n", {
@@ -245,7 +249,8 @@ async function converge(ids = state.bindings.map((b) => b.id)) {
 async function step(name, fn) {
   if (state.completed.includes(name)) return;
   console.log("RUN " + name);
-  await fn();
+  if (gate) await gate.scenario("distribution-"+name, fn, {evidenceLevel:"e2e"});
+  else await fn();
   state.completed.push(name);
   save();
 }
@@ -339,6 +344,20 @@ async function setup() {
     state.agents[name] = enrolled;
     save();
     await customer("stop", name);
+    if (process.env.TT_UX_PACKAGE_ACCEPTANCE === "1") {
+      await customer("prepare-signed-dry-run", name);
+      const preview = await owner.request(api() + "/jobs", "POST", {
+        operation: "noop", mode: "dry_run", assignedAgentId: enrolled.id, requiresApproval: true,
+      }, 201);
+      assert.equal(preview.job.payload.mode, "dry_run", "The public API must persist the requested preview mode");
+      await approve(preview.job.id);
+      await wait("signed package dry run " + name, async () => {
+        const row = await job(preview.job.id);
+        assert.ok(!["failed", "rejected", "cancelled", "succeeded"].includes(row.status));
+        return row.status === "dry_run_complete";
+      });
+      await customer("stop", name);
+    }
   }
   check(
     "normal admin bootstrap, email invitation/verification and three enrolled agents",
@@ -379,8 +398,15 @@ async function preparePublication() {
 }
 async function publish() {
   await preparePublication();
+  if (gate) await customer("revoke-material-token");
   if ((await job(state.issueJob)).status === "pending_approval")
     await approve(state.issueJob);
+  if (gate) {
+    await terminal(state.issueJob,["failed","orphaned_unknown_effect"]);
+    await customer("rotate-material-token");
+    await owner.request(api()+"/distribution-jobs/"+state.issueJob+"/retry","POST",{});
+    check("revoked customer-local Vault credential fails closed; original publication recovers after rotation");
+  }
   const j = await terminal(state.issueJob);
     assert.equal(j.operation, "issue", "Initial publication must exercise issuance, not renewal");
     assert.equal(j.status, "succeeded");
@@ -664,6 +690,7 @@ async function deploymentRecovery() {
       ? candidate : false;
   });
   assert.equal(uncertain.needsOperatorReconciliation, true);
+  if (gate) await require("./browser.cjs").inspect({state,owner,base,matrix,root,label:"reconciliation-required"});
   const blocked = await transferInventory(409);
   assert.equal(blocked.code, "CERTOPS_DISTRIBUTION_TRANSFER_RECONCILIATION_REQUIRED");
   await customer("repair-reload", "nginx");
@@ -710,9 +737,17 @@ async function authorization() {
     ).id,
     pending.id,
   );
-  await approver.request(api() + "/jobs/" + pending.id + "/reject", "POST", {
-    reason: "Binding authorization changed; request a fresh reviewed rollout",
-  });
+  if (gate) {
+    await approve(pending.id);
+    const stale = await terminal(pending.id, "failed");
+    assert.equal(stale.errorCode, "CERTOPS_ROLLOUT_APPROVAL_STALE");
+  } else {
+    await approver.request(api() + "/jobs/" + pending.id + "/reject", "POST", {
+      reason: "Binding authorization changed; request a fresh reviewed rollout",
+    });
+  }
+  b.body.freshnessSeconds = 1800;
+  save();
   check(
     "real binding change advances revision, invalidates proof and preserves original request identity",
   );
@@ -886,6 +921,10 @@ async function verifyTransferredInventory(before) {
     { destinationWorkspaceId: state.transferDestinationId, tokenId: state.inventoryTokenId });
 }
 async function main() {
+  if (gate) {
+    assert.equal(process.argv[2] || "all", "all", "Strict qualification cannot resume or run a partial phase");
+    await gate.preflight();
+  }
   await wait(
     "API startup",
     async () => {
@@ -903,6 +942,13 @@ async function main() {
     },
     60000,
   );
+  await wait("customer host startup", async () => {
+    try {
+      const response = await fetch(controlBase, { signal: AbortSignal.timeout(2000) });
+      const ready = await response.json();
+      return response.ok && ready.lab === "wildcard-ux" && ready.databaseAccess === false;
+    } catch { return false; }
+  }, 60000);
   await owner.login("owner@wildcard.test", "LabOwner-2026!Only");
   if (state.approverRegistered)
     await approver.login(state.approverEmail, "LabApprover-2026!Only");
@@ -1035,6 +1081,13 @@ async function main() {
     authorization,
     recovery,
     "deployment-recovery": deploymentRecovery,
+    ...(gate ? {
+      qualification: () => qualification.extend({state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root}),
+      security: () => require("./adversarial.cjs").security(module.exports.context),
+      "runtime-controls": () => require("./adversarial.cjs").runtimeControls(module.exports.context),
+      browser: () => require("./browser.cjs").inspect({state,owner,base,matrix,root}),
+      privacy: async () => { require("../../../scripts/certops-distribution-privacy").audit(process.env.TT_UX_PROJECT, path.join(root,"privacy.json"), (await versions()).filter(v=>v.state==="published").map(v=>v.id)); if(gate)gate.report.privacyEvidence={file:"privacy.json",sha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(root,"privacy.json"))).digest("hex")}; },
+    } : {}),
     transfer,
   }))
     if (phase === "all" || phase === "functional" && name !== "transfer" || phase === name) await step(name, fn);
@@ -1079,9 +1132,16 @@ async function main() {
         "; workspace " +
         state.workspaceId,
     );
+    if (gate && process.env.TT_UX_PACKAGE_ACCEPTANCE === "1") {
+      gate.report.packageAcceptance = await customer("package-proof", "issuer");
+      assert.equal(gate.report.packageAcceptance.candidateSha, process.env.TT_UX_CORE_COMMIT);
+    }
+    if (gate) await gate.finish({requiredScenarios:qualification.PHASES.map(p=>"distribution-"+p)});
   }
 }
-main().catch((e) => {
+module.exports = { main, context: {state,owner,approver,api,group,versions,matrix,rollout,approve,terminal,job,customer,wait,converge,check,save,root} };
+if (require.main === module) main().catch(async (e) => {
+  if (gate) { gate.report.status="failed"; try {await gate.finish({requiredScenarios:qualification.PHASES.map(p=>"distribution-"+p)});} catch {} }
   state.passed = false;
   state.finishedAt = new Date().toISOString();
   save();

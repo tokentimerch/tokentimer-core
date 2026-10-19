@@ -95,7 +95,11 @@
     "// --- Helm ---": "",
     "helm:lint": "helm lint deploy/helm --set config.disableAdminBootstrap=true && helm lint deploy/helm -f deploy/helm/ci/ci-values.yaml",
     "helm:template": "helm template tokentimer deploy/helm -f deploy/helm/ci/ci-values.yaml",
-    "helm:verify": "bash scripts/helm-template-verify.sh"
+    "helm:verify": "bash scripts/helm-template-verify.sh",
+    "test:certops:qualification": "node scripts/run-certops-tooling-tests.js",
+    "test:certops:release-collector": "node scripts/run-certops-collector-tests.js",
+    "check:certops:release-qualification": "node scripts/certops-release-qualification.js",
+    "check:certops:catalog": "node scripts/certops-qualification-catalog.js docs/certops/e2e-scenario-catalog.json"
   },
   "packageManager": "pnpm@11.13.0",
   "engines": {

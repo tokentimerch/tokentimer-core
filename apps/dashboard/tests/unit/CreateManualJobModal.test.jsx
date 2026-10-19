@@ -798,4 +798,85 @@ describe('CreateManualJobModal operation and subject pairing', () => {
     fireEvent.click(create);
     expect(createJobMock).not.toHaveBeenCalled();
   });
+
+  it('does not apply a stale AD CS profile lookup to the replacement certificate', async () => {
+    const firstId = 'af0a812e-3557-4694-b294-63e6e83f24c8';
+    const secondId = 'b10a812e-3557-4694-b294-63e6e83f24c9';
+    let resolveFirstCertificate;
+    let resolveFirstProfile;
+    getCertificateMock.mockImplementation((_workspaceId, certificateId) => {
+      if (certificateId === firstId) {
+        return new Promise(resolve => {
+          resolveFirstCertificate = resolve;
+        });
+      }
+      return Promise.resolve({ certificate: {} });
+    });
+    getRenewalProfileMock.mockImplementation(() => {
+      return new Promise(resolve => {
+        resolveFirstProfile = resolve;
+      });
+    });
+    renderModal();
+    selectOperation('renew');
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: firstId },
+    });
+    await waitFor(() => expect(getCertificateMock).toHaveBeenCalledWith(
+      'ws-1',
+      firstId,
+      expect.any(Object)
+    ));
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: secondId },
+    });
+    await waitFor(() => expect(getCertificateMock).toHaveBeenCalledWith(
+      'ws-1',
+      secondId,
+      expect.any(Object)
+    ));
+    resolveFirstCertificate({ certificate: { profileId: 'profile-stale' } });
+    await waitFor(() => expect(resolveFirstProfile).toEqual(expect.any(Function)));
+    resolveFirstProfile({ issuerId: 'issuer-stale' });
+    await waitFor(() => {
+      expect(screen.queryByText(/Open Renewals/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/could not confirm the renewal profile/)).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Create job' })).not.toBeDisabled();
+  });
+
+  it('does not keep a stale profile lookup error on the replacement certificate', async () => {
+    const firstId = 'af0a812e-3557-4694-b294-63e6e83f24c8';
+    const secondId = 'b10a812e-3557-4694-b294-63e6e83f24c9';
+    let rejectFirst;
+    getCertificateMock.mockImplementation((_workspaceId, certificateId) => {
+      if (certificateId === firstId) {
+        return new Promise((_resolve, reject) => {
+          rejectFirst = reject;
+        });
+      }
+      return Promise.resolve({ certificate: {} });
+    });
+    renderModal();
+    selectOperation('renew');
+    fireEvent.change(screen.getByLabelText(/^Subject type/), {
+      target: { value: 'managed_certificate' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: firstId },
+    });
+    await waitFor(() => expect(rejectFirst).toEqual(expect.any(Function)));
+    fireEvent.change(screen.getByLabelText(/^Subject ID/), {
+      target: { value: secondId },
+    });
+    await screen.findByRole('button', { name: 'Create job' });
+    rejectFirst(new Error('stale profile lookup'));
+    await waitFor(() => {
+      expect(screen.queryByText(/could not confirm the renewal profile/)).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Create job' })).not.toBeDisabled();
+  });
 });

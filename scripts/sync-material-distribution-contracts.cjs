@@ -30,7 +30,7 @@ for (const file of ["job-payload.schema.json", "agent-protocol.schema.json", "re
   } else {
     schema.properties.publicationDestination = { $ref: "#/definitions/materialDistribution_publicationProfile" };
     schema.properties.deploymentTargets.minItems = 0;
-    schema.allOf = [{ if: { required: ["publicationDestination"] }, then: { properties: { deploymentTargets: { maxItems: 0 } } },
+    schema.allOf = [...(schema.allOf || []).filter(clause => !clause.if?.required?.includes("publicationDestination")), { if: { required: ["publicationDestination"] }, then: { properties: { deploymentTargets: { maxItems: 0 } } },
       else: { properties: { deploymentTargets: { minItems: 1 } } } }];
   }
   fs.writeFileSync(target, JSON.stringify(schema, null, 2) + "\n");

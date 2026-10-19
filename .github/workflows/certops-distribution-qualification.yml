@@ -1,0 +1,162 @@
+name: "CertOps / Distribution supporting E2E"
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: certops-distribution-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  postgres:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/certops-distribution-postgres.js
+      - name: Real isolated Vault adapter and ACL regressions
+        if: ${{ !cancelled() }}
+        run: node scripts/certops-distribution-vault.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: distribution-postgres
+          path: |
+            qualification-results/distribution-postgres-*/*.jsonl
+            qualification-results/distribution-postgres-*/summary.json
+            qualification-results/distribution-vault-*/*.jsonl
+            qualification-results/distribution-vault-*/summary.json
+          if-no-files-found: error
+  agent-lab:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        certificate-mode: [ordinary, san, wildcard]
+    env:
+      LAB_PROJECT: tt-wildcard-ux-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.certificate-mode }}
+      CERTIFICATE_MODE: ${{ matrix.certificate-mode }}
+      CERTOPS_DISTRIBUTION_QUALIFICATION: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: '11.13.0'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Build and start uniquely owned lab
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Up -Project $env:LAB_PROJECT -BasePort 60800 -CertificateMode $env:CERTIFICATE_MODE -BuildImages
+      - name: Execute all mandatory API, agent and browser phases
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $env:LAB_PROJECT
+      - name: Verify supporting scope and copy only public evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/certops-distribution-report.js ".scratch/$LAB_PROJECT/qualification.json"
+          mkdir -p qualification-results/distribution
+          cp ".scratch/$LAB_PROJECT/qualification.json" qualification-results/distribution/
+          cp ".scratch/$LAB_PROJECT/privacy.json" qualification-results/distribution/
+          cp ".scratch/$LAB_PROJECT/"distribution-*.png qualification-results/distribution/
+      - name: Preserve failed bounded qualification report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p qualification-results/distribution
+          if test -f ".scratch/$LAB_PROJECT/qualification.json"; then
+            cp ".scratch/$LAB_PROJECT/qualification.json" qualification-results/distribution/
+          fi
+      - name: Stop focused lab before package acceptance
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Stop -Project $env:LAB_PROJECT
+      - name: Run packaged agent and Vault AppRole operator acceptance
+        shell: pwsh
+        run: |
+          $images=Get-Content ".scratch/$env:LAB_PROJECT/runtime-images.json" -Raw | ConvertFrom-Json
+          $env:TT_UX_API_IMAGE=$images.api
+          $env:TT_UX_WORKER_IMAGE=$images.worker
+          $env:TT_UX_CUSTOMER_IMAGE=$images.customers
+          $packageProject="$env:LAB_PROJECT-package"
+          ./tests/wildcard-vault/ux-lab/run.ps1 -Action Up -Project $packageProject -BasePort 60800 -CertificateMode $env:CERTIFICATE_MODE -PackageAcceptance
+          ./tests/wildcard-vault/ux-lab/run.ps1 -Action Test -Project $packageProject
+          node scripts/certops-distribution-report.js ".scratch/$packageProject/qualification.json"
+          if($LASTEXITCODE -ne 0){throw 'Package acceptance report verification failed'}
+      - name: Copy only package acceptance public receipts
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p qualification-results/operator-package
+          for file in qualification.json privacy.json agent-package/artifact.json; do
+            if test -f ".scratch/$LAB_PROJECT-package/$file"; then
+              cp ".scratch/$LAB_PROJECT-package/$file" qualification-results/operator-package/
+            fi
+          done
+      - name: Preserve package acceptance public receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: operator-acceptance-vault-${{ matrix.certificate-mode }}
+          path: qualification-results/operator-package/
+          if-no-files-found: warn
+      - name: Stop the owned package lab
+        if: always()
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Stop -Project "$env:LAB_PROJECT-package"
+      - name: Stop only the owned lab
+        if: always()
+        shell: pwsh
+        run: ./tests/wildcard-vault/ux-lab/run.ps1 -Action Stop -Project $env:LAB_PROJECT
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: distribution-agent-${{ matrix.certificate-mode }}
+          path: qualification-results/distribution/
+          if-no-files-found: error
+  functional-summary:
+    needs: [postgres, agent-lab]
+    if: ${{ always() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: distribution-*
+          path: qualification-results/cohorts
+      - name: Require all seven current-candidate supporting cohorts
+        if: always()
+        env:
+          DISTRIBUTION_POSTGRES_RESULT: ${{ needs.postgres.result }}
+          DISTRIBUTION_AGENT_LAB_RESULT: ${{ needs.agent-lab.result }}
+        run: node scripts/certops-distribution-functional-summary.js qualification-results/cohorts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: distribution-functional-summary
+          path: qualification-results/distribution-functional-summary.json
+          if-no-files-found: error

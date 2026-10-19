@@ -400,6 +400,7 @@ describe("certops renewal scheduler", () => {
             keyRotationPolicy: { rotateOnRenew: true },
             deploymentTargets: [windowsTarget],
             target: windowsTarget,
+            keyRotationPolicy: { rotateOnRenew: true },
           },
         }),
       ],
@@ -508,6 +509,15 @@ describe("certops renewal scheduler", () => {
     });
 
     assert.strictEqual(createdJobs[0].payload.keyRotation, true);
+  });
+
+  it("classifies only a final retired-identity refusal as a normal skip", async () => {
+    const pool = createSchedulerPool({ dueRows: [dueCertificate()] });
+    const summary = await runRenewalSchedulerSweep({ dbPool: pool, env: {},
+      jobCreator: async () => { const error = new Error("Retired identity"); error.code = "CERTOPS_CERTIFICATE_NOT_RENEWABLE"; throw error; },
+    });
+    assert.equal(summary.scanned, 1); assert.equal(summary.created, 0);
+    assert.equal(summary.skippedRetired, 1); assert.deepEqual(summary.errors, []);
   });
 
   it("counts idempotent replays without creating duplicates", async () => {

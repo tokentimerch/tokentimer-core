@@ -20,6 +20,40 @@ describe("resolveAdcsChainHelperPath", () => {
     assert.ok(resolved.error);
     assert.match(resolved.error, /tokentimer-adcs-chain/);
   });
+
+  it("resolves actual default Windows build output for AMD64 and ARM64", () => {
+    const fs = require("node:fs"), os = require("node:os"), vm = require("node:vm");
+    const source = fs.readFileSync(path.resolve(__dirname,"../../reference/adcs-chain/build.cjs"),"utf8");
+    for (const arch of ["x64","arm64"]) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(),"chain-build-resolver-"));
+      const moduleDir = path.join(root,"reference","adcs-chain");
+      fs.mkdirSync(moduleDir,{recursive:true});
+      let calls = 0;
+      try {
+        // Execute the real build script against an isolated package layout.
+        // Only Go compilation is replaced: this tests filename/resolver
+        // compatibility, and is not native executable qualification.
+        vm.runInNewContext(source,{
+          __dirname:moduleDir,
+          process:{platform:"win32",arch,argv:[],env:{},exit(code){throw new Error(`Unexpected compiler failure ${code}`);}},
+          console:{log(){},error(){}},
+          require(name){
+            if(name!=="node:child_process")return require(name);
+            return {spawnSync(file,args,options){
+              calls++; assert.equal(file,"go"); assert.equal(options.env.GOOS,"windows");
+              assert.equal(options.env.GOARCH,arch==="x64"?"amd64":"arm64");
+              fs.writeFileSync(args[args.indexOf("-o")+1],"compiler-output-placeholder");
+              return {status:0};
+            }};
+          },
+        });
+        assert.equal(calls,1);
+        const resolved=resolveAdcsChainHelperPath({packageRoot:root,platform:"win32",arch});
+        assert.equal(resolved.error,undefined);
+        assert.equal(resolved.path,path.join(moduleDir,"dist",`tokentimer-adcs-chain-windows-${arch==="x64"?"amd64":"arm64"}.exe`));
+      } finally { fs.rmSync(root,{recursive:true,force:true}); }
+    }
+  });
 });
 
 describe("validateCertificateChain", () => {

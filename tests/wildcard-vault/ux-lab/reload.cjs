@@ -11,6 +11,16 @@ if (
 )
   process.exit(2);
 const config = dir + "/service.conf";
+if (action === "reload") {
+  fs.appendFileSync(dir + "/reload-events.jsonl", JSON.stringify({ event: "start", at: Date.now() }) + "\n", { mode: 0o600 });
+  process.on("exit", (code) => fs.appendFileSync(dir + "/reload-events.jsonl", JSON.stringify({ event: "end", at: Date.now(), code }) + "\n", { mode: 0o600 }));
+  // Customer-only barrier allows the API test to prove actual overlapping
+  // service-hook processes without changing agent clocks, leases or receipts.
+  const until = Date.now() + 20000;
+  while (fs.existsSync(dir + "/hold-reload") && Date.now() < until)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  if (fs.existsSync(dir + "/hold-reload")) process.exit(3);
+}
 // Customer-side fault only: fail before signaling the listener, after the
 // product agent has installed the requested pair and recorded uncertainty.
 if (action === "reload" && fs.existsSync(dir + "/fail-reload")) process.exit(1);
@@ -22,6 +32,11 @@ async function finish(status) {
   const expected = new crypto.X509Certificate(
     fs.readFileSync(dir + "/cert.pem"),
   ).fingerprint256;
+  // Agent command children intentionally receive a restricted environment.
+  // Read the customer's approved probe instead of relying on a lab env var.
+  const bindings = JSON.parse(fs.readFileSync(dir + "/config.json", "utf8")).materialBindings;
+  const servername = Object.values(bindings || {})[0]?.probes?.[0]?.sni;
+  if (typeof servername !== "string" || !servername) process.exit(2);
   const deadline = Date.now() + 15000;
   let readySince = null;
   while (Date.now() < deadline) {
@@ -29,7 +44,7 @@ async function finish(status) {
       const socket = tls.connect({
         host: "127.0.0.1",
         port: name === "nginx" ? 8443 : 9443,
-        servername: name + ".wildcard.test",
+        servername,
         ca: fs.readFileSync("/lab/issuer-root.pem"),
         rejectUnauthorized: true,
       });
@@ -66,7 +81,7 @@ async function finish(status) {
 if (name === "nginx") {
   fs.writeFileSync(
     config,
-    `pid ${dir}/service.pid; error_log ${dir}/service.log; events {} http { access_log off; server { listen 8443 ssl; ssl_certificate ${dir}/cert.pem; ssl_certificate_key ${dir}/key.pem; return 200 'Wildcard UX lab nginx'; } }`,
+    `pid ${dir}/service.pid; error_log ${dir}/service.log; events {} http { client_body_temp_path ${dir}/client-body; proxy_temp_path ${dir}/proxy-temp; fastcgi_temp_path ${dir}/fastcgi-temp; uwsgi_temp_path ${dir}/uwsgi-temp; scgi_temp_path ${dir}/scgi-temp; access_log off; server { listen 8443 ssl; ssl_certificate ${dir}/cert.pem; ssl_certificate_key ${dir}/key.pem; return 200 'Wildcard UX lab nginx'; } }`,
   );
   let args = ["-p", dir, "-c", config, "-t"];
   const pid = fs.existsSync(dir + "/service.pid")

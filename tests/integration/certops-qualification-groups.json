@@ -1,0 +1,95 @@
+{
+  "adcs": {
+    "files": [
+      "certops-adcs-enrollments.test.js",
+      "certops-adcs-readiness.test.js",
+      "certops-adcs-profile-issuer-switch.test.js"
+    ],
+    "requiredTests": [
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "decodes a BIGINT RequestId and schedules reconciliation"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "stops uncertain retrieval at the frozen deadline without a cleanup job"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "rolls back the enrollment when creating the first job fails"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "lets only one of two scheduler connections claim a due enrollment"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "leaves a due enrollment alone while another transaction holds its row lock"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "cancels the continuation job the scheduler created for a cancelled enrollment"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "rolls back an issuer version when confirmation does not finish"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "dispatches abandonment cleanup and refuses a bad snapshot or a revalidation hold"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "keeps concurrent preflights inside the hourly limit and stores the agent result"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "keeps the latest dispatched preflight when an older job finishes later"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "orders preflight results by the locked sequence when transaction time is reversed"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "qualifies an agent whose safe preflight matches the confirmed CA, template, and key"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "does not qualify a preflight older than the 24-hour freshness bound"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "qualifies a preflight 23 hours old, inside the freshness bound"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "does not qualify a preflight that checked a different template"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "does not qualify a preflight that pinned a different CA key"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "stops qualifying evidence once the issuer is re-confirmed with a different template"
+      },
+      {
+        "file": "certops-adcs-readiness.test.js",
+        "name": "requires a new preflight job created after re-confirmation even when nothing changed"
+      },
+      {
+        "file": "certops-adcs-profile-issuer-switch.test.js",
+        "name": "applies AD CS edit rules after an ACME-shaped Windows/IIS profile is moved to an AD CS issuer"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "survivor fixture uses the insert-trigger management period and creates eligible enrollment work"
+      }
+    ]
+  }
+}

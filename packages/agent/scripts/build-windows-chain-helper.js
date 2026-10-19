@@ -26,8 +26,8 @@ function assertPeArchitecture(file, arch) {
   )
     throw new Error("Windows helper PE architecture mismatch");
 }
-function buildOne(arch, outDir, { run = spawnSync } = {}) {
-  const output = path.join(outDir, binaryName(arch)),
+function buildOne(arch, outDir, { run = spawnSync, sourceDir = moduleDir, outputName = binaryName(arch) } = {}) {
+  const output = path.join(outDir, outputName),
     temporary = output + `.building-${process.pid}`;
   try {
     fs.rmSync(temporary, { force: true });
@@ -44,7 +44,7 @@ function buildOne(arch, outDir, { run = spawnSync } = {}) {
         ".",
       ],
       {
-        cwd: moduleDir,
+        cwd: sourceDir,
         encoding: "utf8",
         windowsHide: true,
         env: {

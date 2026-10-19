@@ -10,13 +10,21 @@ const crypto = require("node:crypto");
 const dns = require("node:dns/promises");
 const { spawn, spawnSync } = require("node:child_process");
 const assert = require("node:assert/strict");
-const root = "/lab",
-  build = "/lab/experimental-agent";
+const root = "/lab";
+let build = "/lab/experimental-agent", acceptance;
+const packageMode = process.env.TT_UX_PACKAGE_ACCEPTANCE === "1";
 const source = "/repo/packages/agent";
 const agents = new Map();
+const agentAccounts = new Set();
+const processAccount = packageMode ? { uid: 10001, gid: 10001 } : {};
 const scannerRequests = [];
+// Retain only genuine signed dispatches, in customer memory. The adversarial
+// transport re-delivers these bytes; it never signs jobs or fabricates results.
+const dispatches = new Map(), credentials = new Map();
+const transportFault = { armed: false, injected: 0, mode: null, target: null, source: null };
 const certificateSans = process.env.TT_UX_CERTIFICATE_MODE === "wildcard"
   ? ["*.wildcard.test", "wildcard.test"]
+  : process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? ["nginx.wildcard.test"]
   : ["nginx.wildcard.test", "haproxy.wildcard.test"];
 const fault = {
   armed: false,
@@ -29,9 +37,11 @@ function json(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 });
   fs.chmodSync(file, 0o600);
+  if (packageMode) { fs.chownSync(path.dirname(file), 10001, 10001); fs.chownSync(file, 10001, 10001); }
 }
 function run(command, args) {
-  const r = spawnSync(command, args, { encoding: "utf8" });
+  const service = command === process.execPath && args[0] === "/repo/tests/wildcard-vault/ux-lab/reload.cjs";
+  const r = spawnSync(command, args, { encoding: "utf8", ...(service ? processAccount : {}) });
   if (r.status !== 0) throw new Error(command + ": " + r.stderr);
   return r.stdout;
 }
@@ -40,6 +50,7 @@ function reply(res, value, status = 200) {
   res.end(JSON.stringify(value));
 }
 function forward(req, res, host, port, { vault = false } = {}) {
+  const claim = host === "api" && req.url === "/api/v1/certops/agent/jobs/claim";
   if (
     vault &&
     fault.blockedReads &&
@@ -67,9 +78,55 @@ function forward(req, res, host, port, { vault = false } = {}) {
       port,
       path: req.url,
       method: req.method,
-      headers: { ...req.headers, host },
+      headers: { ...req.headers, host, ...(claim ? { "accept-encoding": "identity" } : {}) },
     },
     (r) => {
+      if (claim && r.statusCode === 200) {
+        const chunks = [];
+        let size = 0;
+        r.on("data", chunk => { size += chunk.length; if (size > 2097152) r.destroy(); else chunks.push(chunk); });
+        r.on("end", () => {
+          try {
+            const result = JSON.parse(Buffer.concat(chunks));
+            for (const envelope of result.jobs || []) {
+              const signed = envelope.envelopeVersion === 2
+                ? JSON.parse(Buffer.from(envelope.payloadB64, "base64")) : envelope;
+              if (!signed.materialDeployment) continue;
+              for (const name of ["nginx", "haproxy"]) {
+                if (config(name).agentId === signed.agentId) {
+                  dispatches.set(name, structuredClone(envelope));
+                  credentials.set(name, req.headers.authorization);
+                }
+              }
+            }
+            const f = transportFault;
+            // Only idle polls are attacked: never discard a newly claimed job.
+            if (f.armed && result.jobs?.length === 0 && req.headers.authorization === credentials.get(f.target)) {
+              const envelope = structuredClone(dispatches.get(f.source));
+              assert.ok(envelope, "A genuine distribution dispatch must have been captured");
+              if (f.mode === "signature") {
+                const field = envelope.envelopeVersion === 2 ? "signatureB64" : "signature";
+                envelope[field] = Buffer.alloc(64, 1).toString("base64");
+              } else if (f.mode === "payload") {
+                if (envelope.envelopeVersion === 2) {
+                  const signed = JSON.parse(Buffer.from(envelope.payloadB64, "base64"));
+                  signed.materialDeployment.materialVersionId = crypto.randomUUID();
+                  envelope.payloadB64 = Buffer.from(JSON.stringify(signed)).toString("base64");
+                } else envelope.materialDeployment.materialVersionId = crypto.randomUUID();
+              }
+              result.jobs = [envelope];
+              f.armed = false;
+              f.injected++;
+            }
+            const headers = { ...r.headers };
+            delete headers["content-length"]; delete headers.etag;
+            res.writeHead(r.statusCode, headers);
+            res.end(JSON.stringify(result));
+          } catch { res.writeHead(502); res.end(); }
+        });
+        r.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+        return;
+      }
       if (drop && r.statusCode === 200) {
         r.resume();
         r.once("end", () => {
@@ -103,6 +160,7 @@ async function stopAgent(name) {
 async function startAgent(name, token) {
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
   await stopAgent(name);
+  if (acceptance) acceptance.verify(build);
   const dir = path.join(root, name),
     out = fs.openSync(path.join(dir, "agent.log"), "a", 0o600);
   const env = {
@@ -110,12 +168,19 @@ async function startAgent(name, token) {
     TOKENTIMER_AGENT_CONFIG_DIR: dir,
     NODE_EXTRA_CA_CERTS: "/lab/transport.crt",
     REQUESTS_CA_BUNDLE: "/lab-input/pebble-ca.pem",
+    ...(packageMode ? { HOME: dir } : {}),
   };
   if (token) env.TOKENTIMER_AGENT_BOOTSTRAP_TOKEN = token;
   const child = spawn(process.execPath, [build + "/bin/tokentimer-agent.js"], {
     env,
     stdio: ["ignore", out, out],
+    ...processAccount,
   });
+  if (packageMode) {
+    fs.fchownSync(out, 10001, 10001);
+    assert.match(fs.readFileSync(`/proc/${child.pid}/status`, "utf8"), /^Uid:\s+10001\s+10001\s+10001\s+10001$/m);
+    agentAccounts.add(name);
+  }
   fs.closeSync(out);
   agents.set(name, child);
   return { started: true, name };
@@ -142,7 +207,7 @@ function config(name, extra = {}) {
           argv: [
             "node",
             "/repo/tests/wildcard-vault/ux-lab/certbot-record.cjs",
-            "--no-verify-ssl",
+            ...(packageMode ? [] : ["--no-verify-ssl"]),
             "--agree-tos",
             "--register-unsafely-without-email",
           ],
@@ -151,7 +216,7 @@ function config(name, extra = {}) {
     },
     execution: {
       enabled: false,
-      dryRun: false,
+      dryRun: packageMode,
       keysDir: dir + "/custom-issuer-custody",
     },
     dnsProviders: {
@@ -172,18 +237,18 @@ function config(name, extra = {}) {
   });
   return JSON.parse(fs.readFileSync(file));
 }
-function store(workspaceId, groupId, wireId, issuer) {
+function store(workspaceId, groupId, wireId, issuer, name) {
   return {
     customer: {
       address: "https://127.0.0.1:18200",
       caFile: "/lab/transport.crt",
       mount: "secret",
-      tokenFile: "/lab/vault-token",
+      tokenFile: "/lab/"+name+"/material-token",
       timeoutMs: 2000,
       groups: {
         [groupId]: {
           workspaceId,
-          prefix: workspaceId + "/" + groupId,
+          prefix: (packageMode ? "tokentimer/" : "") + workspaceId + "/" + groupId,
           sans: certificateSans,
           keyAlgorithm: "ec",
           ...(issuer
@@ -201,9 +266,65 @@ function store(workspaceId, groupId, wireId, issuer) {
     },
   };
 }
+async function vaultApi(route, method, body) {
+  const response = await fetch("http://vault:8200/v1"+route,{method,headers:{"X-Vault-Token":"ux-lab-only-vault-token","Content-Type":"application/json"},body:JSON.stringify(body)});
+  assert.ok(response.ok,"Customer-local Vault control failed");
+  return response.status===204 ? {} : response.json();
+}
+async function rotateMaterialToken(name, workspaceId, groupId) {
+  if (acceptance) return acceptance.rotate(name, workspaceId, groupId);
+  const policy="qualification-"+name+"-"+crypto.randomUUID();
+  const capabilities=name.includes("issuer") ? ["create","read"] : ["read"];
+  await vaultApi("/sys/policies/acl/"+policy,"PUT",{policy:`path "secret/data/${workspaceId}/${groupId}/bundles/*" { capabilities = ${JSON.stringify(capabilities)} }`});
+  const issued=await vaultApi("/auth/token/create","POST",{policies:[policy],no_default_policy:true,ttl:"2h"});
+  const history = "/lab/" + name + "/credential-history";
+  fs.mkdirSync(history, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(history + "/" + crypto.randomUUID() + ".vault-token", issued.auth.client_token, { mode: 0o600 });
+  fs.writeFileSync("/lab/"+name+"/material-token",issued.auth.client_token,{mode:0o600});
+  fs.chmodSync("/lab/"+name+"/material-token",0o600);
+}
 async function control(body) {
   const { action, name = "issuer" } = body;
   assert.ok(["issuer", "nginx", "haproxy", "cancel-issuer"].includes(name));
+  if (action === "package-proof") {
+    assert.ok(acceptance, "Package acceptance was not requested");
+    assert.ok(["issuer", "nginx", "haproxy"].every(role => agentAccounts.has(role)));
+    return { ...acceptance.proof(build), agentAccountUid: 10001 };
+  }
+  if (action === "transport-fault") {
+    assert.ok(["signature", "payload", "replay", "foreign-agent"].includes(body.mode));
+    assert.ok(["nginx", "haproxy"].includes(name));
+    const source = body.mode === "foreign-agent" ? (name === "nginx" ? "haproxy" : "nginx") : name;
+    assert.ok(dispatches.has(source) && credentials.has(name));
+    assert.equal(transportFault.armed, false);
+    Object.assign(transportFault, { armed: true, mode: body.mode, target: name, source });
+    return { armed: true, injected: transportFault.injected };
+  }
+  if (["hold-reload", "release-reload"].includes(action)) {
+    assert.ok(["nginx", "haproxy"].includes(name));
+    const file = "/lab/" + name + "/hold-reload";
+    if (action === "hold-reload") fs.writeFileSync(file, "owned lab barrier", { mode: 0o600 });
+    else fs.rmSync(file, { force: true });
+    return { held: action === "hold-reload" };
+  }
+  if (action === "replace-local-material") {
+    // Customer-controlled filesystem drift: fetch the retained version locally;
+    // neither private material nor the Vault token leaves this customer host.
+    assert.ok(["nginx", "haproxy"].includes(name));
+    assert.match(body.materialVersionId || "", /^[0-9a-f-]{36}$/);
+    await stopAgent(name);
+    const c = config(name), groupId = Object.keys(c.materialStores.customer.groups)[0];
+    const prefix = c.materialStores.customer.groups[groupId].prefix;
+    const token = fs.readFileSync("/lab/" + name + "/material-token", "utf8");
+    const response = await fetch(`http://vault:8200/v1/secret/data/${prefix}/bundles/${body.materialVersionId}?version=1`, { headers: { "X-Vault-Token": token } });
+    assert.equal(response.status, 200);
+    const material = (await response.json()).data.data;
+    assert.equal(material.materialVersionId, body.materialVersionId);
+    fs.writeFileSync("/lab/" + name + "/cert.pem", material.certificatePem, { mode: 0o600 });
+    fs.writeFileSync("/lab/" + name + "/key.pem", material.privateKeyPem, { mode: 0o600 });
+    run(process.execPath, ["/repo/tests/wildcard-vault/ux-lab/reload.cjs", name, "reload"]);
+    return { replaced: true, fingerprint: material.fingerprintSha256 };
+  }
   if (action === "scanner-requests") return { requests: [...scannerRequests] };
   if (action === "enroll") {
     config(
@@ -238,6 +359,26 @@ async function control(body) {
       });
     });
   }
+  if (action === "prepare-signed-dry-run") {
+    assert.ok(acceptance, "Signed operator preview is package acceptance only");
+    await stopAgent(name);
+    const credential = fs.readFileSync(path.join(root, name, "credential"));
+    const old = config(name);
+    config(name, { execution: { ...old.execution, enabled: true, dryRun: true } });
+    await startAgent(name);
+    assert.deepEqual(fs.readFileSync(path.join(root, name, "credential")), credential);
+    return { prepared: true };
+  }
+  if (action === "revoke-material-token") {
+    if (acceptance) { await acceptance.revoke(name); return { revoked: true }; }
+    await vaultApi("/auth/token/revoke","POST",{token:fs.readFileSync("/lab/"+name+"/material-token","utf8")});
+    return {revoked:true};
+  }
+  if (action === "rotate-material-token") {
+    const c=config(name),groupId=Object.keys(c.materialStores.customer.groups)[0];
+    await rotateMaterialToken(name,c.materialStores.customer.groups[groupId].workspaceId,groupId);
+    return {rotated:true};
+  }
   if (["fail-reload", "repair-reload", "reconcile-binding"].includes(action)) {
     assert.ok(["nginx", "haproxy"].includes(name));
     const dir = path.join(root, name);
@@ -254,6 +395,7 @@ async function control(body) {
     await stopAgent(name);
     const result = spawnSync(process.execPath, [build + "/bin/reconcile-material-binding.js", body.bindingId], {
       encoding: "utf8", env: { ...process.env, TOKENTIMER_AGENT_CONFIG_DIR: dir },
+      ...processAccount,
     });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
@@ -264,14 +406,16 @@ async function control(body) {
       wireId = old.agentId;
     assert.ok(wireId, "normal enrollment must persist wire agent ID");
     const dir = "/lab/" + name;
+    await rotateMaterialToken(name,body.workspaceId,body.groupId);
     const update = {
       materialStores: store(
         body.workspaceId,
         body.groupId,
         wireId,
         name.includes("issuer"),
+        name,
       ),
-      execution: { ...old.execution, enabled: true },
+      execution: { ...old.execution, enabled: true, dryRun: false },
     };
     if (!name.includes("issuer")) {
       const { bindingId, authorizationRevision = 1 } = body;
@@ -301,7 +445,7 @@ async function control(body) {
             {
               dialAddress: "127.0.0.1",
               port: name === "nginx" ? 8443 : 9443,
-              sni: name + ".wildcard.test",
+              sni: process.env.TT_UX_CERTIFICATE_MODE === "ordinary" ? "nginx.wildcard.test" : name + ".wildcard.test",
               trustCaFile: "/lab/issuer-root.pem",
             },
           ],
@@ -348,6 +492,8 @@ async function control(body) {
       wireId: c.agentId,
       running: agents.get(name)?.exitCode === null,
       fault: { ...fault },
+      transport: { ...transportFault },
+      publicTrustCaPem: fs.readFileSync("/lab/issuer-root.pem", "utf8"),
       orders: fs.existsSync("/lab/orders.jsonl")
         ? fs
             .readFileSync("/lab/orders.jsonl", "utf8")
@@ -357,11 +503,20 @@ async function control(body) {
             .map(JSON.parse)
         : [],
     };
+    const log = fs.existsSync(dir + "/agent.log") ? fs.readFileSync(dir + "/agent.log", "utf8") : "";
+    facts.security = {
+      signatureRejected: (log.match(/failed signature verification/g) || []).length,
+      foreignAgentRejected: (log.match(/agent-id binding gate rejected/g) || []).length,
+      replayRejected: (log.match(/job_replay_rejected/g) || []).length,
+    };
+    facts.reloadEvents = fs.existsSync(dir + "/reload-events.jsonl")
+      ? fs.readFileSync(dir + "/reload-events.jsonl", "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
     if (!name.includes("issuer") && fs.existsSync(dir + "/cert.pem")) {
       const certificate = new crypto.X509Certificate(fs.readFileSync(dir + "/cert.pem"));
       facts.certificate = {
         fingerprint256: certificate.fingerprint256,
         subjectAltName: certificate.subjectAltName,
+        modifiedAt: fs.statSync(dir + "/cert.pem").mtimeMs,
       };
     }
     if (body.certificateId) {
@@ -391,6 +546,22 @@ async function control(body) {
 }
 async function main() {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  if (packageMode) fs.chownSync(root, 10001, 10001);
+  if (packageMode) {
+    const receiptPath = "/lab-input/agent-package/artifact.json";
+    assert.equal(JSON.parse(fs.readFileSync(receiptPath, "utf8")).candidateSha, process.env.TT_UX_CORE_COMMIT);
+    acceptance = require("./package-acceptance.cjs").create({ root, build: "/lab/packaged-agent", receiptPath, artifactsRoot: "/lab-input/agent-package/artifacts" });
+    build = acceptance.prepare();
+    // Administrative host preparation precedes all unprivileged processes.
+    // The ACME subprocess intentionally does not inherit arbitrary CA env vars.
+    for (let attempt = 0; !fs.existsSync("/lab-input/pebble-ca.pem"); attempt++) {
+      assert.ok(attempt < 60, "Owned ACME transport CA was not delivered");
+      await sleep(1000);
+    }
+    fs.copyFileSync("/lab-input/pebble-ca.pem", "/usr/local/share/ca-certificates/tt-owned-pebble.crt");
+    run("update-ca-certificates", []);
+    run("setcap", ["cap_ipc_lock=+ep", "/usr/local/bin/vault"]);
+  } else {
   // Disposable artifact only. The repository/shipped capability files are read-only.
   if (!fs.existsSync(build))
     fs.cpSync(source, build, {
@@ -408,6 +579,7 @@ async function main() {
       "deploy-from-store-v1",
     ]),
   );
+  }
   if (!fs.existsSync(root + "/transport.crt"))
     run("openssl", [
       "req",
@@ -546,5 +718,6 @@ main().catch((e) => {
 });
 process.on("SIGTERM", async () => {
   for (const name of agents.keys()) await stopAgent(name);
+  if (acceptance) await acceptance.close();
   process.exit(0);
 });

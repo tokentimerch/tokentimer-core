@@ -18,6 +18,7 @@ function assertSchema(validate, value, code) {
   throw serviceError("enrollment report does not match its contract", code);
 }
 const { writeAudit } = require("../audit");
+const { logger } = require("../../utils/logger");
 const { redactGenericSecrets } = require("../../utils/secretMaterial");
 const { createCertificateJob } = require("./jobs");
 const { adcsCaBucket } = require("./renewalCapacity");
@@ -40,6 +41,23 @@ const {
 
 function dbOf(client) {
   return client || pool;
+}
+
+const CERTIFICATE_ID_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function identityRetired(client, workspaceId, certificateId) {
+  if (!CERTIFICATE_ID_UUID.test(String(certificateId || ""))) return false;
+  const result = await client.query(
+    `SELECT identity.lifecycle_status
+       FROM managed_certificates mc
+       LEFT JOIN certops_certificate_identities identity
+         ON identity.workspace_id = mc.workspace_id
+        AND identity.fingerprint_sha256 = certops_normalize_fingerprint(mc.fingerprint_sha256)
+      WHERE mc.workspace_id = $1 AND mc.id = $2::uuid`,
+    [workspaceId, certificateId],
+  );
+  return ["revoked", "decommissioned"].includes(result.rows[0]?.lifecycle_status);
 }
 
 function isPool(db) {
@@ -458,7 +476,7 @@ async function loadEnrollment(db, workspaceId, enrollmentId, { lock = false } = 
   const result = await db.query(
     `SELECT e.id, e.workspace_id, e.state, e.attempt, e.snapshot_bytes, e.snapshot_sha256,
             e.operator_request_id, e.pending_since, e.next_poll_at,
-            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id,
+            e.last_error_code, e.current_job_id, e.certificate_id, e.agent_id, e.request_id,
             e.deploy_target, j.status AS job_status
        FROM certificate_enrollments e
        LEFT JOIN certificate_jobs j
@@ -540,7 +558,7 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
     enrollmentResult.state === "installing" ||
     (enrollmentResult.state === "submitting" && enrollmentResult.errorCode === UNREACHABLE_ERROR);
   if (!keepsPolling) nextAt = null;
-  await db.query(
+  const updated = await db.query(
     `UPDATE certificate_enrollments
         SET state = $3,
             request_id = COALESCE($4, request_id),
@@ -549,7 +567,8 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
             next_poll_at = $7,
             installed_at = CASE WHEN $3 = 'installed' THEN COALESCE(installed_at, NOW()) ELSE installed_at END,
             updated_at = NOW()
-      WHERE workspace_id = $1 AND id = $2`,
+      WHERE workspace_id = $1 AND id = $2 AND state = $8
+      RETURNING id`,
     [
       workspaceId,
       job.enrollment_id,
@@ -558,8 +577,15 @@ async function recordEnrollmentResult(client, { workspaceId, job, enrollmentResu
       enrollmentResult.errorCode || null,
       pendingSince,
       nextAt,
+      row.state,
     ],
   );
+  if (updated.rows.length !== 1) {
+    throw serviceError(
+      "enrollment state changed before the agent result was recorded",
+      "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+  }
   if (enrollmentResult.errorCode === "ADCS_CA_KEY_CHANGED") {
     await db.query(
       `UPDATE certificate_issuers
@@ -678,20 +704,41 @@ async function proposeReconcileRequestId({
       "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
     );
   }
-  await db.query(
-    `UPDATE certificate_enrollments
-        SET operator_request_id = $3, next_poll_at = NOW(), updated_at = NOW()
-      WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, enrollmentId, parsedRequestId],
-  );
-  await audit({
-    client: db,
-    actorUserId: actorUserId || null,
-    subjectUserId: actorUserId || null,
-    action: "CERTOPS_ENROLLMENT_RECONCILE_PROPOSED",
-    targetType: "certificate_enrollment",
-    workspaceId,
-    metadata: { enrollmentId, requestId: parsedRequestId },
+  await withTransaction(db, async (tx) => {
+    const current = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!current) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+    if (current.state !== "submission_uncertain") {
+      throw serviceError(
+        "a RequestId can be proposed only while submission_uncertain",
+        "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+      );
+    }
+    // Reconcile can end in an install, so a retired identity must be abandoned instead.
+    if (await identityRetired(tx, workspaceId, current.certificate_id)) {
+      throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
+    }
+    const updated = await tx.query(
+      `UPDATE certificate_enrollments
+          SET operator_request_id = $3, next_poll_at = NOW(), updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2 AND state = 'submission_uncertain'
+        RETURNING id`,
+      [workspaceId, enrollmentId, parsedRequestId],
+    );
+    if (updated.rows.length !== 1) {
+      throw serviceError(
+        "enrollment state changed before the RequestId was proposed",
+        "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+      );
+    }
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "CERTOPS_ENROLLMENT_RECONCILE_PROPOSED",
+      targetType: "certificate_enrollment",
+      workspaceId,
+      metadata: { enrollmentId, requestId: parsedRequestId },
+    });
   });
 }
 
@@ -728,12 +775,19 @@ async function cancelEnrollment({
     }
     assertDirectTransition(row.state, "cancelled");
     const beforeCa = row.state === "requested" || row.state === "prepared";
-    await tx.query(
+    const cancelled = await tx.query(
       `UPDATE certificate_enrollments
           SET state = 'cancelled', next_poll_at = $3, updated_at = NOW()
-        WHERE workspace_id = $1 AND id = $2`,
-      [workspaceId, enrollmentId, beforeCa ? null : new Date()],
+        WHERE workspace_id = $1 AND id = $2 AND state = $4
+        RETURNING id`,
+      [workspaceId, enrollmentId, beforeCa ? null : new Date(), row.state],
     );
+    if (cancelled.rows.length !== 1) {
+      throw serviceError(
+        "enrollment state changed before cancellation",
+        "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+      );
+    }
     if (row.current_job_id && UNSTARTED_JOB.has(row.job_status)) {
       await tx.query(
         `UPDATE certificate_jobs
@@ -763,23 +817,32 @@ async function abandonEnrollment({
   audit = writeAudit,
 }) {
   const db = dbOf(client);
-  const row = await loadEnrollment(db, workspaceId, enrollmentId);
-  if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
-  assertDirectTransition(row.state, "abandoned");
-  await db.query(
-    `UPDATE certificate_enrollments
-        SET state = 'abandoned', next_poll_at = NOW(), updated_at = NOW()
-      WHERE workspace_id = $1 AND id = $2`,
-    [workspaceId, enrollmentId],
-  );
-  await audit({
-    client: db,
-    actorUserId: actorUserId || null,
-    subjectUserId: actorUserId || null,
-    action: "CERTOPS_ENROLLMENT_ABANDONED",
-    targetType: "certificate_enrollment",
-    workspaceId,
-    metadata: { enrollmentId },
+  await withTransaction(db, async (tx) => {
+    const row = await loadEnrollment(tx, workspaceId, enrollmentId, { lock: true });
+    if (!row) throw serviceError("enrollment not found", "CERTOPS_ENROLLMENT_NOT_FOUND");
+    assertDirectTransition(row.state, "abandoned");
+    const updated = await tx.query(
+      `UPDATE certificate_enrollments
+          SET state = 'abandoned', next_poll_at = NOW(), updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2 AND state = $3
+        RETURNING id`,
+      [workspaceId, enrollmentId, row.state],
+    );
+    if (updated.rows.length !== 1) {
+      throw serviceError(
+        "enrollment state changed before abandon",
+        "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+      );
+    }
+    await audit({
+      client: tx,
+      actorUserId: actorUserId || null,
+      subjectUserId: actorUserId || null,
+      action: "CERTOPS_ENROLLMENT_ABANDONED",
+      targetType: "certificate_enrollment",
+      workspaceId,
+      metadata: { enrollmentId },
+    });
   });
 }
 
@@ -814,6 +877,9 @@ async function retryEnrollmentInstallation({ client, workspaceId, enrollmentId, 
     }
     if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
       throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
+    }
+    if (await identityRetired(tx, workspaceId, row.certificate_id)) {
+      throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
     }
     const attempt = Number(row.attempt || 0) + 1;
     const job = await createJob({ client: tx, workspaceId, operation: "continue-enrollment",
@@ -869,6 +935,9 @@ async function recoverOrphanedEnrollment({ client, workspaceId, enrollmentId, or
     }
     if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
       throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
+    }
+    if (row.state === "installing" && await identityRetired(tx, workspaceId, row.certificate_id)) {
+      throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
     }
     const attempt=Number(row.attempt || 0)+1;
     const job=await createJob({client:tx,workspaceId,operation:"continue-enrollment",allowEnrollmentContinuation:true,
@@ -928,7 +997,9 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
   // inside its own transaction, so a cancel or claim that committed after the
   // list was read wins.
   for (const candidate of due.rows) {
-    const dispatched = await withTransaction(db, async (tx) => {
+    let dispatched = null;
+    try {
+      dispatched = await withTransaction(db, async (tx) => {
       const row = await loadEnrollment(tx, candidate.workspace_id, candidate.id, {
         lock: "skip",
       });
@@ -937,7 +1008,30 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
       const snapshot = JSON.parse(Buffer.from(row.snapshot_bytes).toString("utf8"));
       const decision = decideContinuation(view, snapshot, now);
       if (!decision) return null;
+      if (decision.reason === "retrieve_reconciliation") {
+        if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
+        await tx.query(`UPDATE certificate_enrollments
+          SET state = 'submission_uncertain', last_error_code = 'ADCS_RETRIEVAL_RECONCILIATION_REQUIRED',
+              operator_request_id = NULL, next_poll_at = NULL, updated_at = NOW()
+          WHERE workspace_id = $1 AND id = $2`, [row.workspace_id, row.id]);
+        await writeAudit({client: tx, workspaceId: row.workspace_id, actorUserId: null, subjectUserId: null,
+          action: "CERTOPS_ENROLLMENT_RETRIEVAL_RECONCILIATION_REQUIRED", targetType: "certificate_enrollment",
+          metadata: {enrollmentId: row.id, requestId: row.request_id, reason: "pending_timeout_after_uncertain_retrieve"}});
+        return null;
+      }
       if (!decision.dispatch && decision.state !== "expired") return null;
+      // Poll, retry and operator reconcile can all retrieve an approved leaf
+      // and install it. Only key cleanup and timeout expiry stay allowed.
+      if (decision.dispatch && decision.reason !== "free_key" &&
+          await identityRetired(tx, row.workspace_id, row.certificate_id)) {
+        if (!await claimDueEnrollment(tx, row.workspace_id, row.id, now)) return null;
+        logger.warn("certops enrollment installation blocked by certificate lifecycle", {
+          workspaceId: row.workspace_id,
+          enrollmentId: row.id,
+          reason: decision.reason,
+        });
+        return null;
+      }
       const target = row.deploy_target;
       if (!target || target.type !== "windows-iis") {
         throw serviceError(
@@ -995,6 +1089,15 @@ async function scheduleDueEnrollments({ client, now = new Date(), createJob = cr
       }
       return { enrollmentId: row.id, jobId: job.id, attempt, target: payload.target };
     });
+    } catch (error) {
+      // One malformed row must not abort continuations already due in other workspaces.
+      logger.warn("certops enrollment continuation skipped", {
+        workspaceId: candidate.workspace_id,
+        enrollmentId: candidate.id,
+        code: error.code || null,
+      });
+      continue;
+    }
     if (dispatched) created.push(dispatched);
   }
   return created;
@@ -1061,7 +1164,7 @@ async function listIssuers({
   const [rows, total] = await Promise.all([
     db.query(
       `SELECT i.id, i.kind, i.name, i.current_version, i.revalidation_required,
-              i.last_preflight, i.updated_at, v.ca_key_sha256 AS confirmed_key_sha256,
+              i.last_preflight, i.last_preflight_job_id, i.updated_at, v.ca_key_sha256 AS confirmed_key_sha256,
               v.ca_config, v.template
          FROM certificate_issuers i
          LEFT JOIN certificate_issuer_versions v
@@ -1093,6 +1196,7 @@ async function listIssuers({
       caConfig: row.ca_config || null,
       template: row.template || null,
       lastPreflight: publicPreflight(row.last_preflight),
+      lastPreflightJobId: row.last_preflight_job_id || null,
       updatedAt: row.updated_at,
     })),
     pagination: { limit: pageSize, offset: pageOffset, total: Number(total.rows[0]?.n || 0) },

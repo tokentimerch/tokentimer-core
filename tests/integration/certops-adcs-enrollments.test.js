@@ -16,7 +16,9 @@ const {
   dispatchPreflight,
   recordPreflightResult,
   scheduleDueEnrollments,
+  retryEnrollmentInstallation,
 } = require("../../apps/api/services/certops/certificateEnrollments");
+const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
 const { freezeSnapshot } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { executeAdcsPreflight } = require("../../packages/agent/src/issuers/adcs-preflight");
 
@@ -100,6 +102,48 @@ describe("CertOps AD CS enrollments (real database)", function () {
     }
   });
 
+  it("survivor fixture uses the insert-trigger management period and creates eligible enrollment work", async () => {
+    const assert = require("node:assert/strict");
+    const { provisionSurvivorSource } = require("../e2e/helpers/certops-adcs-local-rules");
+    const ownedCertificateIds = [];
+    const certificateId = await provisionSurvivorSource({
+      fixture: { workspaceId, pool, request: async () => { throw new Error("Unexpected readd of an open source"); } },
+      agentRowId, domain: "app.example.com", site: "Survivor", port: 443, ownedCertificateIds,
+    });
+    assert.deepEqual(ownedCertificateIds, [certificateId]);
+    const periods = await pool.query("SELECT id, ended_at, current_identity_id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2", [workspaceId, certificateId]);
+    assert.equal(periods.rows.length, 1);
+    assert.equal(periods.rows[0].ended_at, null);
+    assert.equal(periods.rows[0].current_identity_id, null);
+    const enrollment = await createEnrollment(enrollmentInput({ certificateId }));
+    const job = await pool.query(`SELECT j.subject_id,
+      certops_is_initial_provisioning(j.workspace_id,j.subject_id::uuid,j.operation,j.executor_kind,j.source) AS eligible
+      FROM certificate_jobs j WHERE j.workspace_id=$1 AND j.id=$2`, [workspaceId, enrollment.jobId]);
+    assert.equal(job.rows.length, 1);
+    assert.equal(job.rows[0].subject_id, certificateId);
+    assert.equal(job.rows[0].eligible, true);
+  });
+
+  it("WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable",async()=>{
+    const assert=require("node:assert/strict");
+    const {provisionWebHostingSource}=require("../e2e/helpers/certops-adcs-webhosting-renewal");
+    const certificateId=crypto.randomUUID(),domain="certops-adcs-0123456789-webhosting.example.test",site="TTAdcsWebHosting0123456789",port=8443;
+    await provisionWebHostingSource({fixture:{workspaceId,pool},agentRowId,isolated:{certificateId,domain,site,port}});
+    const periods=await pool.query("SELECT id FROM certops_management_periods WHERE workspace_id=$1 AND managed_certificate_id=$2 AND ended_at IS NULL",[workspaceId,certificateId]);
+    assert.equal(periods.rows.length,1);
+    await assert.rejects(()=>pool.query("INSERT INTO certops_management_periods(workspace_id,managed_certificate_id) VALUES($1,$2)",[workspaceId,certificateId]),error=>error.code==="23505"&&error.constraint==="uq_certops_open_management_period");
+    const source=(await pool.query("SELECT key_reference,public_metadata FROM managed_certificates WHERE workspace_id=$1 AND id=$2",[workspaceId,certificateId])).rows[0];
+    assert.equal(source.key_reference,`winstore://WebHosting/${site}:${port}`);assert.equal(source.public_metadata.issuance.target.store,"WebHosting");
+    const enrollment=await createEnrollment(enrollmentInput({certificateId,authorizedDnsNames:[domain],target:{type:"windows-iis",reference:domain,store:"WebHosting",binding:{site,port,sniHost:domain}}}));
+    const {claimJobs,_test:dispatchCaps}=require("../../apps/api/services/certops/agentDispatch");
+    await pool.query("UPDATE certops_agents SET agent_version='0.18.0',declared_capabilities=$2::jsonb,capabilities_updated_at=NOW(),declared_target_selectors=$3::jsonb WHERE id=$1",[agentRowId,JSON.stringify(["adcs-enroll-v1",dispatchCaps.EVIDENCE_CLAIM_BINDING_CAPABILITY,dispatchCaps.SIGNED_PAYLOAD_B64_CAPABILITY]),JSON.stringify([domain])]);
+    const agent=(await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1",[agentRowId])).rows[0];
+    const claimed=await claimJobs({dbPool:pool,agent:{id:agentRowId,workspaceId,agentId:agent.agent_id,agentVersion:"0.18.0",protocolVersion:"1.0.0",status:"active"},envelope:{agentId:agent.agent_id,protocolVersion:"1.0.0"},body:{supportedActions:["renew"],maxJobs:16},deps:{enforceAgentSequence:async()=>({sequence:1}),signJobForDispatch:async({job,envelopeVersion})=>({...job,envelopeVersion})}});
+    assert.ok(claimed.jobs.some(job=>String(job.id??job.jobId)===enrollment.jobId));
+    const job=(await pool.query("SELECT status,claim_id,subject_id FROM certificate_jobs WHERE workspace_id=$1 AND id=$2",[workspaceId,enrollment.jobId])).rows[0];
+    assert.equal(job.status,"claimed");assert.ok(job.claim_id);assert.equal(job.subject_id,certificateId);
+  });
+
   function enrollmentInput(overrides = {}) {
     return {
       client: pool,
@@ -160,7 +204,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
       [
         id,
         workspaceId,
-        crypto.randomUUID(),
+        extra.certificateId || crypto.randomUUID(),
         issuerId,
         agentRowId,
         state,
@@ -201,6 +245,26 @@ describe("CertOps AD CS enrollments (real database)", function () {
     } finally {
       client.release();
     }
+  });
+
+  it("stops uncertain retrieval at the frozen deadline without a cleanup job", async () => {
+    await assertNoForeignDueRows();
+    const id = await insertEnrollment("pending_issuance", {nextPollAt: new Date(Date.now()-1000)});
+    await TestUtils.execQuery(`UPDATE certificate_enrollments SET request_id=4242,
+      pending_since=NOW()-INTERVAL '15 days', last_error_code='ADCS_DISPOSITION_UNKNOWN' WHERE id=$1`,[id]);
+    const created = await scheduleDueEnrollments({client:pool,createJob:async()=>{throw new Error("Must preserve uncertain key");}});
+    expect(created.filter(row=>row.enrollmentId===id)).to.have.length(0);
+    const row=(await TestUtils.execQuery("SELECT state,request_id,next_poll_at,last_error_code,operator_request_id FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    expect(row.state).to.equal("submission_uncertain");expect(String(row.request_id)).to.equal("4242");
+    expect(row.last_error_code).to.equal("ADCS_RETRIEVAL_RECONCILIATION_REQUIRED");
+    expect(row.next_poll_at).to.equal(null);expect(row.operator_request_id).to.equal(null);
+    const audit=await TestUtils.execQuery("SELECT metadata FROM audit_events WHERE workspace_id=$1 AND metadata->>'enrollmentId'=$2",[workspaceId,id]);
+    expect(audit.rows.some(value=>value.metadata.reason==='pending_timeout_after_uncertain_retrieve' && String(value.metadata.requestId)==='4242')).to.equal(true);
+    // Real public-service reconciliation remains possible after polling stops.
+    await require("../../apps/api/services/certops/certificateEnrollments").proposeReconcileRequestId({client:pool,workspaceId,enrollmentId:id,requestId:4242,actorUserId:ownerId});
+    const proposed=(await TestUtils.execQuery("SELECT operator_request_id,next_poll_at FROM certificate_enrollments WHERE id=$1",[id])).rows[0];
+    expect(String(proposed.operator_request_id)).to.equal("4242");expect(proposed.next_poll_at).to.be.instanceOf(Date);
+    await TestUtils.execQuery("DELETE FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[workspaceId,id]);
   });
 
   it("rolls back the enrollment when creating the first job fails", async () => {
@@ -650,5 +714,150 @@ describe("CertOps AD CS enrollments (real database)", function () {
     );
     expect(stored.rows[0].template).to.equal(earlyTemplate);
     expect(stored.rows[0].last_preflight_job_id).to.equal(earlyJob.id);
+  });
+
+  it("blocks install continuation and deploy-from-store after retirement while cleanup still claims", async () => {
+    await assertNoForeignDueRows();
+    const fingerprint = crypto.randomBytes(32).toString("hex");
+    const certificateId = (await TestUtils.execQuery(
+      `INSERT INTO managed_certificates(
+         workspace_id, source, source_ref, fingerprint_sha256, name, common_name, status, key_mode
+       ) VALUES($1,'agent_filesystem',$2,$3,'retired install','retired.example','discovered','os-store-managed')
+       RETURNING id`,
+      [workspaceId, crypto.randomUUID(), fingerprint],
+    )).rows[0].id;
+    const identityId = (await TestUtils.execQuery(
+      `SELECT id FROM certops_certificate_identities
+        WHERE workspace_id=$1 AND fingerprint_sha256=$2`,
+      [workspaceId, fingerprint],
+    )).rows[0].id;
+    const due = new Date(Date.now() - 1000);
+    const installing = await insertEnrollment("installing", { certificateId, nextPollAt: due });
+    const installJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
+      .find((row) => row.enrollmentId === installing);
+    expect(installJob).to.exist;
+
+    await TestUtils.execQuery(
+      `UPDATE certops_certificate_identities
+          SET lifecycle_status='revoked', retired_at=NOW()
+        WHERE workspace_id=$1 AND id=$2`,
+      [workspaceId, identityId],
+    );
+    try {
+      await TestUtils.execQuery("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [installJob.jobId]);
+      throw new Error("installing continuation claim should fail");
+    } catch (error) {
+      expect(error.code).to.equal("55000");
+    }
+    const stillPending = await TestUtils.execQuery(
+      "SELECT status FROM certificate_jobs WHERE id=$1",
+      [installJob.jobId],
+    );
+    expect(stillPending.rows[0].status).to.equal("pending");
+
+    const failed = await insertEnrollment("install_failed", { certificateId });
+    try {
+      await retryEnrollmentInstallation({
+        client: pool,
+        workspaceId,
+        enrollmentId: failed,
+        actorUserId: ownerId,
+        env: { CERTOPS_ENABLED: "true" },
+      });
+      throw new Error("installation retry should fail");
+    } catch (error) {
+      expect(error.code).to.equal("CERTOPS_CERTIFICATE_RETIRED");
+    }
+
+    const cleanup = await insertEnrollment("cancelled", { certificateId, nextPollAt: due });
+    const cleanupJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
+      .find((row) => row.enrollmentId === cleanup);
+    expect(cleanupJob).to.exist;
+    await TestUtils.execQuery("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [cleanupJob.jobId]);
+
+    const reconcile = await insertEnrollment("submission_uncertain", {
+      certificateId,
+      operatorRequestId: 88,
+      nextPollAt: due,
+    });
+    // Reconcile can retrieve and install an issued leaf, so it is fenced like an install.
+    const reconcileJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
+      .find((row) => row.enrollmentId === reconcile);
+    expect(reconcileJob).to.equal(undefined);
+    const reconcileRow = await TestUtils.execQuery(
+      "SELECT state, current_job_id FROM certificate_enrollments WHERE id=$1",
+      [reconcile],
+    );
+    expect(reconcileRow.rows[0].state).to.equal("submission_uncertain");
+    expect(reconcileRow.rows[0].current_job_id).to.equal(null);
+
+    const otherFingerprint = crypto.randomBytes(32).toString("hex");
+    const otherCertificateId = (await TestUtils.execQuery(
+      `INSERT INTO managed_certificates(
+         workspace_id, source, source_ref, fingerprint_sha256, name, common_name, status, key_mode
+       ) VALUES($1,'agent_filesystem',$2,$3,'decommissioned store','store.example','discovered','os-store-managed')
+       RETURNING id`,
+      [workspaceId, crypto.randomUUID(), otherFingerprint],
+    )).rows[0].id;
+    const otherIdentityId = (await TestUtils.execQuery(
+      `SELECT id FROM certops_certificate_identities
+        WHERE workspace_id=$1 AND fingerprint_sha256=$2`,
+      [workspaceId, otherFingerprint],
+    )).rows[0].id;
+    await TestUtils.execQuery(
+      `UPDATE certops_certificate_identities
+          SET lifecycle_status='decommissioned', retired_at=NOW()
+        WHERE workspace_id=$1 AND id=$2`,
+      [workspaceId, otherIdentityId],
+    );
+    const deployment = {
+      keyMode: "vault-managed",
+      materialDeployment: {
+        groupId: crypto.randomUUID(),
+        bindingId: crypto.randomUUID(),
+        rolloutId: crypto.randomUUID(),
+        materialVersionId: crypto.randomUUID(),
+        materialStoreRef: "store",
+        providerVersion: 1,
+        fingerprintSha256: otherFingerprint,
+        generation: 1,
+        deploymentProfileRef: "profile",
+        profileRevision: 1,
+        authorizationRevision: 1,
+        verificationPolicy: "served",
+      },
+    };
+    try {
+      await createCertificateJob({
+        client: pool,
+        workspaceId,
+        operation: "deploy-from-store",
+        subjectType: "managed_certificate",
+        subjectId: otherCertificateId,
+        payload: deployment,
+      });
+      throw new Error("deploy-from-store creation should fail");
+    } catch (error) {
+      expect(error.code).to.equal("CERTOPS_CERTIFICATE_RETIRED");
+    }
+    const stored = (await TestUtils.execQuery(
+      `INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status)
+       VALUES($1,'managed_certificate',$2,'renew','pending') RETURNING id`,
+      [workspaceId, certificateId],
+    )).rows[0];
+    await TestUtils.execQuery(
+      "UPDATE certificate_jobs SET operation='deploy-from-store' WHERE id=$1",
+      [stored.id],
+    );
+    try {
+      await TestUtils.execQuery("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [stored.id]);
+      throw new Error("deploy-from-store claim should fail");
+    } catch (error) {
+      expect(error.code).to.equal("55000");
+    }
+    await TestUtils.execQuery(
+      "UPDATE certificate_enrollments SET next_poll_at=NULL WHERE workspace_id=$1 AND certificate_id=$2",
+      [workspaceId, certificateId],
+    );
   });
 });

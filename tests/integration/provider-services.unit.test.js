@@ -1336,6 +1336,42 @@ describe("Provider service unit coverage", () => {
       expect(result.unreachable).to.deep.equal(["regions/us-east1"]);
     });
 
+    it("does not treat a present wrong-type aggregated sslCertificates field as an empty cleanup", async () => {
+      const axiosMock = async (config) => {
+        const url = String(config.url || "");
+        if (url.includes("certificatemanager.googleapis.com")) {
+          return { data: { certificates: [] } };
+        }
+        if (url.includes("compute.googleapis.com")) {
+          return {
+            data: {
+              items: {
+                global: { sslCertificates: { name: "not-a-list" } },
+              },
+            },
+          };
+        }
+        return { data: { secrets: [] } };
+      };
+      const gcp = requireWithMocks(resolveServiceModule("gcpIntegration"), {
+        axios: axiosMock,
+      });
+      const result = await gcp.scanGCP({
+        projectId: "proj",
+        accessToken: "token",
+        include: { secrets: false, certificates: true },
+      });
+
+      const compute = result.summary.find(
+        (entry) => entry.sourceKind === "gcp-compute-ssl-cert",
+      );
+      expect(compute.complete).to.equal(false);
+      expect(compute.error).to.match(/Invalid GCP Compute SSL certificate scope response/);
+      expect(
+        result.items.some((item) => item.sourceKind === "gcp-compute-ssl-cert"),
+      ).to.equal(false);
+    });
+
     it("marks a cert sub-scope errored (not complete-empty) on a 404 from Certificate Manager", async () => {
       const axiosMock = async (config) => {
         const url = String(config.url || "");
