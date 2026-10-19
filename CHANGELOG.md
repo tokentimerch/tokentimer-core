@@ -13,7 +13,7 @@ Target: **0.18.0**.
 
 ### Added
 
-- **Shared certificate distribution through customer Vault.** Publish immutable certificate versions to assigned Linux consumers, including ordinary, SAN and wildcard certificates. Private keys and credentials remain customer-local. Management is API-first, with status on Renewals. Distribution and AD CS agent capabilities remain gated pending real-host qualification.
+- **Shared certificate distribution through customer Vault.** Publish immutable certificate versions to assigned Linux consumers, including ordinary, SAN and wildcard certificates. Private keys and credentials remain customer-local. Management is API-first, with status on Renewals. The agent build in this release advertises the distribution and AD CS capabilities; Vault distribution runs on Linux consumers and AD CS enrollment on Windows/IIS hosts, as independent paths.
 - **Agent output console.** Managers and admins can follow secret-filtered job output; viewers see stream status only. Console failures do not change job results. **Operator action:** apply migration 69 and keep the `certops` worker scheduled for log cleanup. Configure retention and quotas with `CERTOPS_AGENT_LOG_RETENTION_DAYS` (default `30`; `0` disables storage) and `CERTOPS_AGENT_LOG_DAILY_BYTES` (default `0`, unlimited). `TT_AGENT_LOG_STREAM=off` disables streaming per agent. See [configuration](docs/CONFIGURATION.md#certops-maintenance-sweeps-worker).
 
 ### Changed
