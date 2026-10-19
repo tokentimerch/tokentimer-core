@@ -2,6 +2,8 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   assertForwardTransition,
@@ -363,6 +365,9 @@ function rowDb() {
         return { rows: [] };
       }
       if (text.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (text.includes("certops_normalize_fingerprint(mc.fingerprint_sha256)") && text.includes("identity.lifecycle_status")) {
+        return { rows: [{ lifecycle_status: this.lifecycleStatus ?? null }] };
+      }
       if (text.includes("operation = 'adcs-preflight'") && text.includes("count")) {
         return { rows: [{ n: preflightCount }] };
       }
@@ -398,12 +403,15 @@ function rowDb() {
       }
       if (text.includes("SET state = $3")) {
         const row = enrollments.get(params[1]);
+        if (!row || (text.includes("AND state =") && row.state !== params[7])) {
+          return { rows: [] };
+        }
         row.state = params[2];
         row.request_id = params[3] || row.request_id;
         row.last_error_code = params[4];
         row.pending_since = params[5];
         row.next_poll_at = params[6];
-        return { rows: [] };
+        return { rows: [{ id: row.id }] };
       }
       if (text.includes("SET state = 'expired'")) {
         enrollments.get(params[1]).state = "expired";
@@ -411,9 +419,12 @@ function rowDb() {
       }
       if (text.includes("SET operator_request_id")) {
         const row = enrollments.get(params[1]);
+        if (!row || (text.includes("AND state =") && row.state !== "submission_uncertain")) {
+          return { rows: [] };
+        }
         row.operator_request_id = params[2];
         row.next_poll_at = new Date();
-        return { rows: [] };
+        return { rows: [{ id: row.id }] };
       }
       if (text.includes("SET attempt = $3, current_job_id = $4")) {
         const row = enrollments.get(params[1]);
@@ -470,15 +481,21 @@ function rowDb() {
       }
       if (text.includes("SET state = 'abandoned'")) {
         const row = enrollments.get(params[1]);
+        if (!row || row.workspace_id !== params[0] || (text.includes("AND state =") && row.state !== params[2])) {
+          return { rows: [] };
+        }
         row.state = "abandoned";
         row.next_poll_at = new Date();
-        return { rows: [] };
+        return { rows: [{ id: row.id }] };
       }
       if (text.includes("SET state = 'cancelled'")) {
         const row = enrollments.get(params[1]);
+        if (!row || (text.includes("AND state =") && row.state !== params[3])) {
+          return { rows: [] };
+        }
         row.state = "cancelled";
         row.next_poll_at = params[2];
-        return { rows: [] };
+        return { rows: [{ id: row.id }] };
       }
       if (text.includes("UPDATE certificate_enrollments SET next_poll_at = $3")) {
         enrollments.get(params[1]).next_poll_at = params[2];
@@ -838,16 +855,14 @@ describe("enrollment rows", () => {
       next_poll_at: due,
     }));
     const now = new Date("2026-10-11T12:05:00.000Z");
-    await assert.rejects(
-      scheduleDueEnrollments({
-        client: db,
-        now,
-        createJob: async () => {
-          throw new Error("job insert failed");
-        },
-      }),
-      /job insert failed/,
-    );
+    const failed = await scheduleDueEnrollments({
+      client: db,
+      now,
+      createJob: async () => {
+        throw new Error("job insert failed");
+      },
+    });
+    assert.deepEqual(failed, []);
     assert.equal(db.enrollments.get(id).next_poll_at, due);
     assert.equal(db.enrollments.get(id).current_job_id, null);
     const created = await scheduleDueEnrollments({
@@ -858,6 +873,34 @@ describe("enrollment rows", () => {
     assert.equal(created.length, 1);
     assert.equal(created[0].jobId, "job-retry-1");
     assert.equal(db.enrollments.get(id).current_job_id, "job-retry-1");
+  });
+
+  it("continues another workspace after a malformed due enrollment", async () => {
+    const db = rowDb();
+    const blockedId = "7c1e0a2b-4d5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const otherId = "8d2f1b3c-5e6a-4b7c-9d8e-0f1a2b3c4d5e";
+    const otherWorkspace = "33333333-3333-4333-8333-333333333333";
+    const due = new Date("2026-10-11T12:00:00.000Z");
+    const now = new Date("2026-10-11T12:05:00.000Z");
+    db.putEnrollment(storedEnrollment(blockedId, "pending_issuance", {
+      attempt: 1,
+      next_poll_at: due,
+      snapshot_bytes: Buffer.from("{"),
+    }));
+    db.putEnrollment(storedEnrollment(otherId, "pending_issuance", {
+      attempt: 1,
+      next_poll_at: due,
+      workspace_id: otherWorkspace,
+    }));
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now,
+      createJob: async () => ({ id: "job-other-workspace" }),
+    });
+    assert.deepEqual(created.map((row) => row.enrollmentId), [otherId]);
+    assert.equal(db.enrollments.get(blockedId).next_poll_at, due);
+    assert.equal(db.enrollments.get(blockedId).current_job_id, null);
+    assert.equal(db.enrollments.get(otherId).current_job_id, "job-other-workspace");
   });
 
   it("lets only one scheduler claim a due enrollment", async () => {
@@ -1106,6 +1149,74 @@ describe("enrollment rows", () => {
       );
       assert.equal(early.enrollments.get(ENROLLMENT).state, state);
     }
+  });
+
+  it("does not abandon or audit when the enrollment state changes first", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", { attempt: 1 }));
+    const original = db.query.bind(db);
+    db.query = async (sql, params) => {
+      if (String(sql).includes("SET state = 'abandoned'")) {
+        db.enrollments.get(ENROLLMENT).state = "issued";
+      }
+      return original(sql, params);
+    };
+    const audits = [];
+    await assert.rejects(
+      abandonEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        audit: async (entry) => audits.push(entry),
+      }),
+      (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).state, "submission_uncertain");
+    assert.equal(audits.length, 0);
+  });
+
+  it("rolls the abandon back when its audit fails", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "submission_uncertain", { attempt: 1 }));
+    await assert.rejects(
+      abandonEnrollment({
+        client: db,
+        workspaceId: WORKSPACE,
+        enrollmentId: ENROLLMENT,
+        audit: async () => {
+          throw new Error("audit unavailable");
+        },
+      }),
+      /audit unavailable/,
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).state, "submission_uncertain");
+    assert.equal(db.enrollments.get(ENROLLMENT).next_poll_at, null);
+  });
+
+  it("does not let an agent result overwrite a state that changed after the read", async () => {
+    const db = rowDb();
+    db.putEnrollment(storedEnrollment(ENROLLMENT, "issued", { attempt: 1 }));
+    const original = db.query.bind(db);
+    db.query = async (sql, params) => {
+      if (String(sql).includes("SET state = $3")) {
+        db.enrollments.get(ENROLLMENT).state = "abandoned";
+      }
+      return original(sql, params);
+    };
+    await assert.rejects(
+      recordEnrollmentResult(db, {
+        workspaceId: WORKSPACE,
+        job: { enrollment_id: ENROLLMENT },
+        enrollmentResult: {
+          enrollmentId: ENROLLMENT,
+          attempt: 1,
+          state: "installing",
+          requestId: 42,
+        },
+      }),
+      (error) => error.code === "CERTOPS_ENROLLMENT_TRANSITION_INVALID",
+    );
+    assert.equal(db.enrollments.get(ENROLLMENT).state, "abandoned");
   });
 
   it("cancels an enrollment that never reached the CA without scheduling key cleanup", async () => {
@@ -1491,5 +1602,112 @@ describe("enrollment rows", () => {
 describe("bounded immutable AD CS enrollment policy options",()=>{
   it("preserves omitted defaults and freezes explicit supported options into distinct canonical bytes",()=>{const defaults=freezeSnapshot(snapshotInput());assert.equal(defaults.snapshot.pollInterval,900);assert.equal(defaults.snapshot.pendingTimeout,1209600);assert.equal(defaults.snapshot.minimumRemainingValidity,0);assert.equal(defaults.snapshot.requireLaterNotAfter,false);const options={pollInterval:60,pendingTimeout:3600,minimumRemainingValidity:86400,requireLaterNotAfter:true};const chosen=freezeSnapshot({...snapshotInput(),...options});for(const [key,value] of Object.entries(options))assert.equal(chosen.snapshot[key],value);assert.notEqual(chosen.sha256,defaults.sha256);assert.equal(chosen.sha256,require("node:crypto").createHash("sha256").update(chosen.bytes).digest("hex"));});
   it("rejects explicit null strings fractional values and out-of-contract bounds instead of coercing defaults",()=>{for(const options of [{pollInterval:0},{pollInterval:59},{pollInterval:86401},{pollInterval:60.5},{pollInterval:"900"},{pollInterval:null},{pendingTimeout:3599},{pendingTimeout:7776001},{pendingTimeout:null},{minimumRemainingValidity:-1},{minimumRemainingValidity:31536001},{minimumRemainingValidity:"0"},{minimumRemainingValidity:null},{requireLaterNotAfter:"true"},{requireLaterNotAfter:1},{requireLaterNotAfter:null}])assert.throws(()=>freezeSnapshot({...snapshotInput(),...options}),error=>error.code==="CERTOPS_SNAPSHOT_INVALID");});
+
+describe("LIFE-04 retired identity installation guards", () => {
+  const CERT_ID = "44444444-4444-4444-8444-444444444444";
+  const env = { CERTOPS_ENABLED: "true" };
+  const due = new Date("2026-10-11T12:00:00.000Z");
+  const now = new Date("2026-10-11T12:05:00.000Z");
+
+  function retiredEnrollment(state, lifecycleStatus, extra = {}) {
+    const db = rowDb();
+    db.lifecycleStatus = lifecycleStatus;
+    db.putEnrollment(storedEnrollment(ENROLLMENT, state, {
+      certificate_id: CERT_ID,
+      attempt: 1,
+      next_poll_at: due,
+      ...extra,
+    }));
+    return db;
+  }
+
+  for (const lifecycleStatus of ["revoked", "decommissioned"]) {
+    it(`does not create an installing continuation after the identity is ${lifecycleStatus}`, async () => {
+      const db = retiredEnrollment("installing", lifecycleStatus);
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async () => {
+          throw new Error("must not install");
+        },
+      });
+      assert.deepEqual(created, []);
+      const row = db.enrollments.get(ENROLLMENT);
+      assert.equal(row.state, "installing");
+      assert.equal(row.current_job_id, null);
+      assert.equal(row.next_poll_at, null);
+    });
+
+    it(`refuses an install_failed retry after the identity is ${lifecycleStatus}`, async () => {
+      const db = retiredEnrollment("install_failed", lifecycleStatus);
+      await assert.rejects(
+        retryEnrollmentInstallation({
+          client: db,
+          workspaceId: WORKSPACE,
+          enrollmentId: ENROLLMENT,
+          env,
+          createJob: async () => {
+            throw new Error("must not install");
+          },
+          audit: async () => {
+            throw new Error("must not audit");
+          },
+        }),
+        (error) => error.code === "CERTOPS_CERTIFICATE_RETIRED",
+      );
+      assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, null);
+      assert.equal(db.enrollments.get(ENROLLMENT).state, "install_failed");
+    });
+  }
+
+  it("still resumes installation while the identity is active", async () => {
+    const db = retiredEnrollment("installing", "active");
+    const created = await scheduleDueEnrollments({
+      client: db,
+      now,
+      createJob: async () => ({ id: JOB_ID }),
+    });
+    assert.equal(created.length, 1);
+    assert.equal(created[0].jobId, JOB_ID);
+  });
+
+  it("still dispatches free_key cleanup and operator reconcile after retirement", async () => {
+    for (const [state, extra] of [
+      ["cancelled", {}],
+      ["expired", {}],
+      ["abandoned", {}],
+      ["submission_uncertain", { operator_request_id: 77 }],
+    ]) {
+      const db = retiredEnrollment(state, "revoked", extra);
+      const created = await scheduleDueEnrollments({
+        client: db,
+        now,
+        createJob: async (input) => {
+          assert.equal(input.operation, "continue-enrollment");
+          return { id: JOB_ID };
+        },
+      });
+      assert.equal(created.length, 1, state);
+      assert.equal(db.enrollments.get(ENROLLMENT).current_job_id, JOB_ID);
+    }
+  });
+
+  it("claim selection blocks only install continuations and still excludes deploy-from-store", () => {
+    const dispatch = fs.readFileSync(
+      path.join(__dirname, "../../apps/api/services/certops/agentDispatch.js"),
+      "utf8",
+    );
+    assert.match(dispatch, /cj\.operation = 'continue-enrollment'/);
+    assert.match(dispatch, /continuation\.state IN \('installing', 'install_failed'\)/);
+    assert.match(dispatch, /'renew', 'deploy', 'deploy-from-store', 'reload'/);
+    const guard = fs.readFileSync(
+      path.join(__dirname, "../../apps/api/migrations/certops-distribution-lifecycle-guards.sql"),
+      "utf8",
+    );
+    assert.match(guard, /install_continuation/);
+    assert.match(guard, /continuation\.state IN \('installing', 'install_failed'\)/);
+    assert.match(guard, /NEW\.operation NOT IN \('renew','deploy','deploy-from-store','reload'\)/);
+  });
+});
   it("public creation service persists the policy with first-job enrollment binding",async()=>{const db=rowDb();db.putIssuer({id:ISSUER,workspace_id:WORKSPACE,kind:"adcs",version:1,ca_config:snapshotInput().caConfig,template:snapshotInput().template,ca_key_sha256:snapshotInput().caKeySha256,revalidation_required:false});const options={pollInterval:120,pendingTimeout:7200,minimumRemainingValidity:300,requireLaterNotAfter:true};let jobOptions;const created=await createEnrollment({client:db,workspaceId:WORKSPACE,issuerId:ISSUER,certificateId:"33333333-3333-4333-8333-333333333333",agentId:"22222222-2222-4222-8222-222222222222",target:WEBHOSTING,authorizedDnsNames:["app.example.com"],keyAlgorithm:"rsa",keySize:2048,...options,audit:async()=>{},createJob:async args=>{jobOptions=args;return {id:JOB_ID};}});const stored=db.enrollments.get(created.enrollmentId);for(const [key,value]of Object.entries(options))assert.equal(JSON.parse(stored.snapshot_bytes)[key],value);assert.equal(stored.snapshot_sha256,created.snapshotSha256);assert.equal(jobOptions.enrollmentId,created.enrollmentId);});
 });

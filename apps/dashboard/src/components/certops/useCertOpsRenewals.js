@@ -249,9 +249,9 @@ export function useCertOpsUpcomingRenewals(externalRefreshSignal, page = {}) {
 export function useUpdateRenewalProfile() {
   const { workspaceId } = useWorkspace();
   const [savingIds, setSavingIds] = useState(() => new Set());
-  const [error, setError] = useState('');
+  const [errors, setErrors] = useState({});
 
-  const clearError = useCallback(() => setError(''), []);
+  const clearError = useCallback(() => setErrors({}), []);
 
   const save = useCallback(
     async (profileId, changes) => {
@@ -261,20 +261,27 @@ export function useUpdateRenewalProfile() {
         next.add(profileId);
         return next;
       });
-      setError('');
       try {
-        return await updateRenewalProfile(workspaceId, profileId, changes);
+        const updated = await updateRenewalProfile(
+          workspaceId,
+          profileId,
+          changes
+        );
+        setErrors(current => {
+          if (!current[profileId]) return current;
+          const next = { ...current };
+          delete next[profileId];
+          return next;
+        });
+        return updated;
       } catch (err) {
-        // The immutable-field refusal carries the offending field names, and it
-        // is the one failure an operator can act on, so surface it verbatim
-        // instead of collapsing it into a generic message.
         const fields = err?.response?.data?.fields;
         const detail = err?.response?.data?.error;
-        setError(
+        const message =
           Array.isArray(fields) && fields.length > 0
             ? `${detail} (${fields.join(', ')})`
-            : detail || err?.message || 'Could not update the renewal profile.'
-        );
+            : detail || err?.message || 'Could not update the renewal profile.';
+        setErrors(current => ({ ...current, [profileId]: message }));
         return null;
       } finally {
         setSavingIds(current => {
@@ -287,5 +294,5 @@ export function useUpdateRenewalProfile() {
     [workspaceId]
   );
 
-  return { savingIds, error, clearError, save };
+  return { savingIds, errors, error: Object.values(errors)[0] || '', clearError, save };
 }

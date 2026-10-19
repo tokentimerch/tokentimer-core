@@ -454,6 +454,47 @@ export function renewalSetupDescriptor(renewalSetup) {
  * token can no longer be hard-deleted, only revoked/decommissioned.
  */
 export const RETIRE_STATUSES = ['revoked', 'decommissioned'];
+
+/** Walk issuer pages until the id is found. The first page is not the catalog. */
+export async function findListedIssuer(
+  listIssuers,
+  workspaceId,
+  issuerId,
+  options = {}
+) {
+  let offset = 0;
+  for (let page = 0; page < 50; page += 1) {
+    const result = await listIssuers(workspaceId, {
+      ...options,
+      limit: 100,
+      offset,
+    });
+    const items = result?.items || [];
+    const found = items.find(item => item.id === issuerId);
+    if (found) return found;
+    if (items.length < 100) return null;
+    offset += items.length;
+  }
+  return null;
+}
+
+/** Load every issuer page the profile picker can select, not only the first. */
+export async function listAllIssuers(listIssuers, workspaceId, options = {}) {
+  const items = [];
+  let offset = 0;
+  for (let page = 0; page < 50; page += 1) {
+    const result = await listIssuers(workspaceId, {
+      ...options,
+      limit: 100,
+      offset,
+    });
+    const batch = result?.items || [];
+    items.push(...batch);
+    if (batch.length < 100) break;
+    offset += batch.length;
+  }
+  return items;
+}
 export function isRetiredStatus(status) {
   return RETIRE_STATUSES.includes(String(status || '').toLowerCase());
 }

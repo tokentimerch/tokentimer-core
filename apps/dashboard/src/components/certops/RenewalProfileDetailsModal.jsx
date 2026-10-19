@@ -66,37 +66,47 @@ function boolLabel(value) {
 export function useBoundCertificates(workspaceId) {
   const [certificates, setCertificates] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [incomplete, setIncomplete] = useState(false);
 
   useEffect(() => {
     if (!workspaceId) {
       setCertificates([]);
       setLoading(false);
+      setIncomplete(false);
       return undefined;
     }
     let cancelled = false;
     setLoading(true);
+    setIncomplete(false);
     (async () => {
       const found = [];
       let offset = 0;
-      for (let page = 0; page < 8; page += 1) {
-        const result = await listCertificates(workspaceId, {
-          limit: 100,
-          offset,
-        });
-        const items = Array.isArray(result?.items) ? result.items : [];
-        for (const item of items) {
-          if (item?.profileId) found.push(item);
+      try {
+        for (let page = 0; page < 8; page += 1) {
+          const result = await listCertificates(workspaceId, {
+            limit: 100,
+            offset,
+          });
+          const items = Array.isArray(result?.items) ? result.items : [];
+          for (const item of items) {
+            if (item?.profileId) found.push(item);
+          }
+          if (items.length < 100) break;
+          offset += items.length;
         }
-        if (items.length < 100) break;
-        offset += items.length;
+        return { found, failed: false };
+      } catch {
+        return { found, failed: true };
       }
-      return found;
     })()
-      .then(found => {
-        if (!cancelled) setCertificates(found);
+      .then(result => {
+        if (!cancelled) {
+          setCertificates(result.found);
+          setIncomplete(result.failed);
+        }
       })
       .catch(() => {
-        if (!cancelled) setCertificates([]);
+        if (!cancelled) setIncomplete(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -106,7 +116,7 @@ export function useBoundCertificates(workspaceId) {
     };
   }, [workspaceId]);
 
-  return { certificates, loading };
+  return { certificates, loading, incomplete };
 }
 
 function certificateLabel(certificate) {
@@ -126,6 +136,7 @@ export default function RenewalProfileDetailsModal({
   profile,
   boundCertificates = null,
   boundCertificatesLoading = false,
+  inventoryIncomplete = false,
 }) {
   const {
     headerProps,
@@ -142,6 +153,9 @@ export default function RenewalProfileDetailsModal({
   const ownLoad = useBoundCertificates(
     provided || !isOpen ? null : workspaceId
   );
+  const inventoryFailed = provided
+    ? inventoryIncomplete
+    : ownLoad.incomplete;
   const scanned = (provided ? boundCertificates : ownLoad.certificates).filter(
     item => item?.profileId === profile?.id
   );
@@ -269,14 +283,17 @@ export default function RenewalProfileDetailsModal({
                 </Text>
               ) : null}
               {!certificatesLoading &&
-              certificateRows.length > 0 &&
-              Number(profile.certificateCount) > certificateRows.length ? (
+              (inventoryFailed ||
+                (certificateRows.length > 0 &&
+                  Number(profile.certificateCount) > certificateRows.length)) ? (
                 <Text
                   fontSize='xs'
                   color={tokens.subtleText}
                   gridColumn='1 / -1'
                 >
-                  {`${Number(profile.certificateCount) - certificateRows.length} more certificates use this profile than this list shows.`}
+                  {inventoryFailed
+                    ? `Loaded ${certificateRows.length} certificates. A later page failed, so this list is partial.`
+                    : `${Number(profile.certificateCount) - certificateRows.length} more certificates use this profile than this list shows.`}
                 </Text>
               ) : null}
               {certificateRows.map(certificate => {

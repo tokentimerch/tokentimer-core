@@ -1,5 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, act } from '@testing-library/react';
+import { ChakraProvider } from '@chakra-ui/react';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import {
+  AgentJobLogsModal,
   loadAgentLogPages,
   loadFleetJobBatches,
   mapWithConcurrency,
@@ -10,7 +14,7 @@ vi.mock('../../src/components/certops/certopsJobsApi', () => ({
   listAgentFleetLog: vi.fn(),
 }));
 
-import { listAgentJobLog } from '../../src/components/certops/certopsJobsApi';
+import { listAgentFleetLog, listAgentJobLog } from '../../src/components/certops/certopsJobsApi';
 
 describe('AgentFleetPanel fleet log helpers', () => {
   beforeEach(() => {
@@ -159,5 +163,50 @@ describe('AgentFleetPanel fleet log helpers', () => {
     expect(ok.truncated).toBe(false);
     expect(ok.lines).toHaveLength(2);
     expect(batches.flatMap(batch => batch.lines)).toHaveLength(4);
+  });
+});
+
+describe('AgentJobLogsModal merged access', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('clears the merged snapshot when access is revoked and reloads it when access returns', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    listAgentFleetLog.mockReset();
+    listAgentJobLog.mockReset();
+    listAgentFleetLog
+      .mockResolvedValueOnce({
+        items: [{ jobId: 'job-1', jobStatus: 'succeeded' }],
+      })
+      .mockRejectedValueOnce({ response: { status: 403 } })
+      .mockResolvedValue({
+        items: [{ jobId: 'job-1', jobStatus: 'succeeded' }],
+      });
+    listAgentJobLog.mockResolvedValue({
+      items: [{ seq: 1, message: 'Privileged fleet line', claimId: 'c', ts: '2026-10-06T08:43:51.000Z' }],
+      hasMore: false,
+    });
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+        <AgentJobLogsModal
+          isOpen
+          onClose={() => {}}
+          agent={{ id: 'agent-1', name: 'edge' }}
+          workspaceId='ws-1'
+        />
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    await screen.findByText(/Privileged fleet line/);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(screen.queryByText(/Privileged fleet line/)).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    await screen.findByText(/Privileged fleet line/);
   });
 });

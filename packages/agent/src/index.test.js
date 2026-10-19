@@ -4006,6 +4006,41 @@ describe("renew chain deployment", () => {
     assert.equal(acmeExecFileImpl.calls.length, 0);
     assert.equal(client.calls.reportEvidence.length, 0);
   });
+
+  it("refuses signed publication and deploy-from-store when the release manifest has not qualified them", async () => {
+    const shared = {
+      jobId: "job-material",
+      claimId: "claim-material",
+      policyEngine: permissiveEngine(),
+      client: createRecordingClient(),
+      executionContext: makeExecutionContext(),
+      log: silentLog,
+    };
+    const publication = await executeJob({
+      ...shared,
+      job: {
+        action: "renew",
+        mode: "dry_run",
+        publication: { groupId: "11111111-1111-4111-8111-111111111111" },
+      },
+    });
+    assert.equal(publication.status, "blocked");
+    assert.match(
+      publication.errorMessage,
+      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+    );
+
+    const deployment = await executeJob({
+      ...shared,
+      job: { action: "deploy-from-store", mode: "real" },
+    });
+    assert.equal(deployment.status, "blocked");
+    assert.match(
+      deployment.errorMessage,
+      /has not qualified material-store-vault-kv2-v1; material distribution jobs are refused/,
+    );
+    assert.equal(shared.client.calls.reportEvidence.length, 0);
+  });
 });
 
 /**

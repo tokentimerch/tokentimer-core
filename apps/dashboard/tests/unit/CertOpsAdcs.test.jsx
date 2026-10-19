@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -390,9 +390,12 @@ describe('CertOpsAdcs', () => {
           currentVersion: 0,
           lastPreflight: {
             ...issuer().lastPreflight,
+            caConfig: 'ca01.corp.example.com\\Corp Issuing CA',
+            template: 'WebServer',
             caCheck: { verdict: 'safe' },
             templateCheck: { verdict: 'safe' },
           },
+          lastPreflightJobId: 'job-1',
         }),
       ],
     });
@@ -463,4 +466,189 @@ describe('CertOpsAdcs', () => {
     expect(await screen.findByText('CA 100')).toBeInTheDocument();
     expect(screen.queryByText(/Showing \d+ of \d+ issuers/)).not.toBeInTheDocument();
   });
+
+  it('finishes Check again when the new preflight repeats the same safe verdict', async () => {
+    isAdminMock.mockReturnValue(true);
+    listAgentsMock.mockResolvedValue({
+      items: [{ id: 'agent-1', name: 'member-1' }],
+    });
+    const safe = {
+      ...issuer().lastPreflight,
+      caCheck: { verdict: 'safe' },
+      templateCheck: { verdict: 'safe' },
+    };
+    listIssuersMock.mockResolvedValue({
+      items: [
+        issuer({
+          revalidationRequired: false,
+          caConfig: safe.caConfig,
+          template: safe.template,
+          lastPreflight: safe,
+          lastPreflightJobId: 'job-old',
+        }),
+      ],
+      pagination: { total: 1 },
+    });
+    dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-new' } });
+
+    renderPage();
+    await screen.findByRole('button', { name: 'Check again' });
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    fireEvent.change(screen.getByLabelText('Agent for Issuing CA'), {
+      target: { value: 'agent-1' },
+    });
+    listIssuersMock.mockResolvedValue({
+      items: [
+        issuer({
+          revalidationRequired: false,
+          caConfig: safe.caConfig,
+          template: safe.template,
+          lastPreflight: safe,
+          lastPreflightJobId: 'job-new',
+        }),
+      ],
+      pagination: { total: 1 },
+    });
+    fireEvent.submit(
+      screen.getByRole('button', { name: /Run check for Issuing CA/ }).closest('form')
+    );
+    expect(
+      await screen.findByRole('button', { name: /Use this certificate/ }, { timeout: 6000 })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/has not reported a preflight verdict yet/)).not.toBeInTheDocument();
+  }, 12000);
+
+  it('confirms the later CA pair when an older preflight finishes first', async () => {
+    isAdminMock.mockReturnValue(true);
+    listAgentsMock.mockResolvedValue({
+      items: [{ id: 'agent-1', name: 'member-1' }],
+    });
+    createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-new' } });
+    dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-b' } });
+    const older = issuer({
+      id: 'issuer-new',
+      name: 'Corp CA',
+      currentVersion: 0,
+      lastPreflightJobId: 'job-a',
+      lastPreflight: {
+        ...issuer().lastPreflight,
+        caConfig: 'old.example.com\\Old CA',
+        template: 'OldTemplate',
+        caCheck: { verdict: 'safe' },
+        templateCheck: { verdict: 'safe' },
+      },
+    });
+    const newer = issuer({
+      ...older,
+      lastPreflightJobId: 'job-b',
+      lastPreflight: {
+        ...older.lastPreflight,
+        caConfig: 'ca01.corp.example.com\\Corp Issuing CA',
+        template: 'WebServer',
+      },
+    });
+    let phase = 'old';
+    listIssuersMock.mockImplementation(() =>
+      Promise.resolve({
+        items: [phase === 'old' ? older : newer],
+        pagination: { total: 1 },
+      })
+    );
+
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'New issuer' }));
+    fireEvent.change(screen.getByLabelText('Issuer name'), {
+      target: { value: 'Corp CA' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Preflight agent'), {
+      target: { value: 'agent-1' },
+    });
+    fireEvent.change(screen.getByLabelText('CA config'), {
+      target: { value: 'ca01.corp.example.com\\Corp Issuing CA' },
+    });
+    fireEvent.change(screen.getByLabelText('Template'), {
+      target: { value: 'WebServer' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
+    await waitFor(() => expect(dispatchIssuerPreflightMock).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 3200));
+    expect(screen.queryByRole('button', { name: /Use this certificate/ })).not.toBeInTheDocument();
+    phase = 'new';
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Use this certificate/ }, { timeout: 6000 })
+    );
+    expect(confirmIssuerKeyMock).toHaveBeenCalledWith(
+      'ws-1',
+      'issuer-new',
+      expect.objectContaining({
+        caConfig: 'ca01.corp.example.com\\Corp Issuing CA',
+        template: 'WebServer',
+      })
+    );
+  }, 15000);
+
+  it('reads an issuer that sorts past the first page before confirming it', async () => {
+    isAdminMock.mockReturnValue(true);
+    listAgentsMock.mockResolvedValue({
+      items: [{ id: 'agent-1', name: 'member-1' }],
+    });
+    createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-late' } });
+    dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-late' } });
+    const filler = Array.from({ length: 100 }, (_, index) =>
+      issuer({ id: `other-${index}`, name: `Other ${index}`, currentVersion: 1 })
+    );
+    const late = issuer({
+      id: 'issuer-late',
+      name: 'Late CA',
+      currentVersion: 0,
+      lastPreflightJobId: 'job-late',
+      lastPreflight: {
+        ...issuer().lastPreflight,
+        caConfig: 'ca01.corp.example.com\\Corp Issuing CA',
+        template: 'WebServer',
+        caCheck: { verdict: 'safe' },
+        templateCheck: { verdict: 'safe' },
+      },
+    });
+    listIssuersMock.mockImplementation((_workspaceId, options = {}) => {
+      if (options.offset >= 100) {
+        return Promise.resolve({ items: [late], pagination: { total: 101 } });
+      }
+      return Promise.resolve({ items: filler, pagination: { total: 101 } });
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'New issuer' }));
+    fireEvent.change(screen.getByLabelText('Issuer name'), {
+      target: { value: 'Late CA' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.change(screen.getByLabelText('Preflight agent'), {
+      target: { value: 'agent-1' },
+    });
+    fireEvent.change(screen.getByLabelText('CA config'), {
+      target: { value: 'ca01.corp.example.com\\Corp Issuing CA' },
+    });
+    fireEvent.change(screen.getByLabelText('Template'), {
+      target: { value: 'WebServer' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
+    await waitFor(
+      () => {
+        expect(listIssuersMock).toHaveBeenCalledWith(
+          'ws-1',
+          expect.objectContaining({
+            limit: 100,
+            offset: 100,
+            includeUnconfigured: true,
+          })
+        );
+      },
+      { timeout: 6000 }
+    );
+    expect(
+      await screen.findByRole('button', { name: /Use this certificate/ }, { timeout: 6000 })
+    ).toBeInTheDocument();
+  }, 15000);
 });

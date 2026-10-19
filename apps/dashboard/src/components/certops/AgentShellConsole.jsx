@@ -361,8 +361,8 @@ export default function AgentShellConsole({
 
     const tick = async () => {
       let delay = pollMs ?? pollDelay();
+      const fresh = [];
       try {
-        const fresh = [];
         let page;
         let pages = 0;
         do {
@@ -396,6 +396,9 @@ export default function AgentShellConsole({
         } else if (page?.hasMore) delay = 0;
       } catch (error) {
         if (cancelled) return;
+        // A later page in this tick failed. Keep the lines already read and
+        // the cursor of the last complete page so the retry does not skip them.
+        if (fresh.length > 0) setItems(current => [...current, ...fresh]);
         if ([401, 403].includes(error?.response?.status)) {
           setItems([]);
           cursor = undefined;

@@ -107,6 +107,22 @@ describe("Workspace invitation replay on login", function () {
     expect(await membershipRole(invitee.id)).to.equal(null);
   });
 
+  it("does not downgrade the workspace owner from an older lower-role invitation", async () => {
+    await seedInvitation({
+      email: ownerUser.email,
+      role: "viewer",
+    });
+    await TestUtils.execQuery(
+      `UPDATE workspace_invitations
+          SET created_at = NOW() - INTERVAL '2 days'
+        WHERE workspace_id = $1 AND LOWER(email) = LOWER($2) AND accepted_at IS NULL`,
+      [workspaceId, ownerUser.email],
+    );
+
+    await TestUtils.loginTestUser(ownerUser.email, PASSWORD);
+    expect(await membershipRole(ownerUser.id)).to.equal("admin");
+  });
+
   it("does not re-elevate a downgraded role from a leftover accepted invitation", async () => {
     const invitee = await TestUtils.createVerifiedTestUser();
     inviteeUsers.push(invitee);
