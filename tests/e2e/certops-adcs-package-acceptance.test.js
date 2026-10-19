@@ -62,6 +62,16 @@ test("AD CS operator journey uses the verified package and documented installer"
   let packageRoot, files, credential, installed = false, siteOwned = false, primary, stage = "package-install";
   await gate.preflight();
   try {
+    await gate.scenario("adcs-package-native-server-language-and-system-identity",async()=>{
+      const version=process.env.CERTOPS_WINDOWS_VERSION,language=process.env.CERTOPS_WINDOWS_LANGUAGE;
+      assert.ok(["2019","2022","2025"].includes(version));assert.equal(runtime.windowsVersion,version);
+      assert.ok(["en-US","de-DE","fr-FR"].includes(language));
+      const native=JSON.parse(ps(`$os=Get-CimInstance Win32_OperatingSystem;@{build=[string]$os.BuildNumber;productType=[string]$os.ProductType;uiCulture=(Get-UICulture).Name;systemLocale=(Get-WinSystemLocale).Name;identitySid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;domain=(Get-CimInstance Win32_ComputerSystem).Domain;installedDisplayResources=[bool](Test-Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\MUI\\UILanguages\\${language}')}|ConvertTo-Json -Compress`));
+      assert.equal(native.build,{"2019":"17763","2022":"20348","2025":"26100"}[version]);assert.equal(native.productType,"3");
+      assert.equal(native.uiCulture,language);assert.equal(native.systemLocale,language);assert.equal(native.identitySid,"S-1-5-18");
+      assert.equal(native.domain,"lab.certops.test");assert.equal(native.installedDisplayResources,true);
+      gate.report.nativeEnvironment={...native,osFamily:"windows",windowsVersion:version,language,measurement:"native"};
+    });
     await gate.scenario("adcs-package-checksum-and-extraction", async () => {
       ({ root: packageRoot, files } = extractVerified({ tarball: runtime.agentPackage, expectedSha256: artifact.sha256, destination: path.join(workDir, "extracted") }));
     });

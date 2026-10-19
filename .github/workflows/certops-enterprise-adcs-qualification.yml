@@ -2,6 +2,11 @@ name: "CertOps / Disposable enterprise AD CS native qualification"
 on:
   workflow_dispatch:
     inputs:
+      qualification_scope:
+        description: Comprehensive scenarios or installed operator journey only
+        type: choice
+        options: ['comprehensive', 'operator-acceptance']
+        default: comprehensive
       location:
         description: Azure region available to the lab subscription
         type: string
@@ -49,6 +54,7 @@ jobs:
       WINDOWS_VERSION: ${{ inputs.windows_version }}
       WINDOWS_LANGUAGE: ${{ inputs.language }}
       FAULT_PROFILE: ${{ inputs.fault_profile }}
+      QUALIFICATION_SCOPE: ${{ inputs.qualification_scope }}
       CERTOPS_WINDOWS_LANGUAGE_ASSETS: ${{ secrets.CERTOPS_WINDOWS_LANGUAGE_ASSETS }}
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -71,9 +77,13 @@ jobs:
           $responseLoss = if($env:FAULT_PROFILE -eq 'response-loss'){'1'}else{'0'}
           $journalPhase = if($env:FAULT_PROFILE -in @('submitting','issued','installing')){$env:FAULT_PROFILE}else{'none'}
           if($env:FAULT_PROFILE -notin @('none','submitting','issued','installing','response-loss')){throw 'Unknown fault profile'}
-          ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase
+          ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase -QualificationScope $env:QUALIFICATION_SCOPE
       - name: Assert mandatory native scenarios and candidate source evidence
+        if: inputs.qualification_scope == 'comprehensive'
         run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
+      - name: Assert installed operator scope and native environment receipts
+        if: inputs.qualification_scope == 'operator-acceptance'
+        run: node scripts/certops-agent-package.js verify-operator-scope qualification-results/enterprise-adcs-infrastructure.json qualification-results/enterprise-adcs-package-acceptance.json
       - name: Verify production worker startup and graceful drainage
         run: node scripts/certops-adcs-worker-deployment-report.js qualification-results/enterprise-adcs-acceptance-worker.json
       - name: Verify observed journal fault without release promotion

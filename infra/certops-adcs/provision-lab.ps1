@@ -7,6 +7,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet(4,8)][int]$Hours = 4,
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022',
   [ValidateSet('en-US','de-DE','fr-FR')][string]$Language = 'en-US',
+  [ValidateSet('comprehensive','operator-acceptance')][string]$QualificationScope = 'comprehensive',
   [ValidateSet('0','1')][string]$ResponseLossExperiment = '0',
   [ValidateSet('0','1')][string]$PendingElapsedQualification = '0',
   [ValidateSet('0','1')][string]$IssuerReassignment = '0',
@@ -22,6 +23,7 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'arm-operation.ps1')
+if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Operator acceptance cannot include fault experiments'}
 if($JournalPhaseExperiment -notin @('none','submitting','issued','installing') -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0'){throw 'Only the core AD CS lab is included; extended campaigns are deferred'}
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
@@ -194,7 +196,9 @@ try {
   try {
     # The focused CA oracle requires an isolated request set. Package acceptance
     # issues its own certificate and therefore runs afterward on the same member.
-    Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
+    if($QualificationScope -eq 'comprehensive'){
+      Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
+    }
     $workerExecutionFailure=$null
     try {
       Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-started' @('action=start')
@@ -211,8 +215,11 @@ try {
     $nativeExecutionFailure=$_
     throw
   } finally {
-    $reportErrors=@();$kinds=@(if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')});if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
-    if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
+    $reportErrors=@();$kinds=@()
+    if($QualificationScope -eq 'comprehensive'){
+      $kinds=@(if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')});if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
+      if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
+    }
     $kinds+=@('acceptance-worker','package-acceptance')
     foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$reportErrors+=$kind}}
     if($reportErrors.Count){
@@ -223,10 +230,12 @@ try {
     }
   }
   $reportStatus = 'provisioned-and-native-scenarios-completed'
+  if($QualificationScope -eq 'operator-acceptance'){$receipts.Add('CERTOPS_STAGE=operator-acceptance-only-completed-not-comprehensive')}
 } finally {
   New-Item -ItemType Directory -Force 'qualification-results' | Out-Null
   $scenarioReport=if($IssuerReassignment -eq '1'){'native-issuer-reassignment.json'}elseif($RetentionCadencePrepare -eq '1'){'retention-cadence-prepare-public.json'}elseif($AdcsTtl24hPrepare -eq '1'){'adcs-ttl24h-prepare-public.json'}elseif($Retention24hPrepare -eq '1'){'retention24h-prepare-public.json'}elseif($PendingElapsedQualification -eq '1'){'enterprise-adcs-elapsed-pending-real.json'}elseif($HierarchyRole -eq 'subordinate'){'enterprise-adcs-hierarchy-real.json'}else{'enterprise-adcs-real.json'}
-  @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
+  if($QualificationScope -eq 'operator-acceptance'){$scenarioReport='enterprise-adcs-package-acceptance.json'}
+  @{ candidateSha=$candidateSha; scope='disposable-enterprise-adcs-infrastructure'; qualificationScope=$QualificationScope; status=$reportStatus; resourceGroup=$ResourceGroup; expiresAt=$expiresAt; scenarioReport=$scenarioReport; hierarchyRole=$HierarchyRole; noncoverage=@('CMC renewal','Additional uncertainty fault variants','Retention and adoption'); stages=@($receipts) } | ConvertTo-Json -Depth 6 | Set-Content 'qualification-results/enterprise-adcs-infrastructure.json'
   Remove-Item -LiteralPath $parameterPath -Force -ErrorAction SilentlyContinue
   $password = $null
 }
