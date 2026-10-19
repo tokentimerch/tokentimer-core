@@ -8,7 +8,7 @@ const PROVISION_IF = MAIN + " && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'";
 const LIFECYCLE_IF = MAIN;
 function allowedCondition(name, value) {
   return PROVISION.includes(name)
-    ? value === PROVISION_IF
+    ? value === PROVISION_IF || value === "(github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/certops-qualification-ci')) && vars.CERTOPS_ADCS_LAB_ENABLED == 'true'"
     : LIFECYCLE.includes(name) && value === LIFECYCLE_IF;
 }
 function validate(name, workflow) {

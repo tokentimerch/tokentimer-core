@@ -36,7 +36,7 @@ function Receive-Job {param($Job,$ErrorAction)if($Job.Preflight){if($global:pref
 function Stop-Job {param($Job,$ErrorAction)$global:stopped=$true;$Job.State='Stopped'}
 function Remove-Job {param($Job,[switch]$Force,$ErrorAction)$global:removed=$true}
 $failed=$false
-try{& $env:CA_SCRIPT -DomainPassword 'fixture-sensitive-password'}catch{$failed=$true;Write-Output ($_.Exception.Message.Replace('fixture-sensitive-password','[redacted]'));if($_.Exception.Message -match 'fixture-sensitive-password'){throw 'Private error escaped'}}
+try{& $env:CA_SCRIPT -DomainPassword 'fixture-sensitive-password' -BootstrapWorker}catch{$failed=$true;Write-Output ($_.Exception.Message.Replace('fixture-sensitive-password','[redacted]'));if($_.Exception.Message -match 'fixture-sensitive-password'){throw 'Private error escaped'}}
 $receipt=Get-Content (Join-Path (Split-Path $env:CA_SCRIPT) 'domain-ca-stage.json') -Raw|ConvertFrom-Json
 if(-not $global:removed){throw 'Owned remoting job was retained'}
 if($env:CA_MODE -eq 'success'){
@@ -97,6 +97,33 @@ Write-Output 'ACTUAL_PREFLIGHT_DEADLINE_PASSED'
 `);
  const production=path.resolve(__dirname,"../infra/certops-adcs/domain-ca.ps1");
  const source=fs.readFileSync(production,"utf8");assert.match(source,/Invoke-CaBoundedLocalJob -ScriptBlock \$prepare/);assert.ok(source.indexOf("stage='membership'")<source.indexOf("if((Get-CimInstance"));
- const result=spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-File",wrapper],{encoding:"utf8",windowsHide:true,timeout:45000,env:{...process.env,CA_PRODUCTION:production}});
+ const result=spawnSync(process.platform==="win32"?"powershell.exe":"pwsh",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",wrapper],{encoding:"utf8",windowsHide:true,timeout:45000,env:{...process.env,CA_PRODUCTION:production}});
  assert.equal(result.status,0,result.stdout+result.stderr);assert.match(result.stdout,/ACTUAL_PREFLIGHT_DEADLINE_PASSED/);
+});
+
+test("CA process watchdog bounds a stalled worker independently of PowerShell jobs",t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),"adcs-ca-process-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const wrapper=path.join(dir,"probe.ps1"),child=path.join(dir,"child.ps1");
+ fs.writeFileSync(child,"param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)\nStart-Sleep -Seconds 60");
+ fs.writeFileSync(wrapper,String.raw`
+$ErrorActionPreference='Stop'
+$ast=[Management.Automation.Language.Parser]::ParseFile($env:CA_PRODUCTION,[ref]$null,[ref]$null)
+$d=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-CaBootstrapProcess'},$true)
+. ([scriptblock]::Create($d.Extent.Text))
+$clock=[Diagnostics.Stopwatch]::StartNew();$failed=$false
+try{Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 1 -GraceSeconds 0}catch [TimeoutException]{$failed=$true}
+if(-not $failed -or $clock.Elapsed.TotalSeconds -gt 10){throw 'Worker escaped process deadline'}
+Set-Content -LiteralPath $env:CA_CHILD -Value @'
+param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)
+if($DomainPassword -cne 'private-fixture-password' -or -not $BootstrapWorker){throw 'Worker input missing'}
+Write-Output 'private-fixture-password'
+Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
+'@
+$receipt=@(Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 10 -GraceSeconds 0)
+if($receipt.Count -ne 1 -or $receipt[0] -cne 'CERTOPS_STAGE=enterprise-ca-service-running'){throw 'Worker receipt was lost or private output escaped'}
+Write-Output 'PROCESS_DEADLINE_PASSED'
+`);
+ const env={...process.env,CA_PRODUCTION:path.resolve(__dirname,'../infra/certops-adcs/domain-ca.ps1'),CA_CHILD:child};delete env.PSModulePath;
+ const result=spawnSync(process.platform==='win32'?'powershell.exe':'pwsh',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',wrapper],{encoding:'utf8',timeout:15000,env});
+ assert.equal(result.status,0,result.stdout+result.stderr);assert.match(result.stdout,/PROCESS_DEADLINE_PASSED/);assert.doesNotMatch(result.stdout+result.stderr,/private-fixture-password/);
 });

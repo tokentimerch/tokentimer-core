@@ -3,8 +3,51 @@ Install/configure the enterprise CA on the freshly provisioned qualification dom
 only by provision-lab.ps1 with a temporary forest credential; creates actual CA service/material,
 not simulated certutil output.
 #>
-param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[ValidateRange(60,900)][int]$StageTimeoutSeconds=600)
+param([Parameter(Mandatory)][string]$DomainPassword,[ValidateSet('root','subordinate')][string]$HierarchyRole='root',[ValidateRange(60,900)][int]$StageTimeoutSeconds=600,[switch]$BootstrapWorker)
 $ErrorActionPreference = 'Stop'
+# Run the bounded bootstrap in an owned process. Stop-Job can itself block on
+# stalled remoting/servicing; the parent must retain an enforceable deadline.
+function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Role,[int]$Seconds,[int]$GraceSeconds=30){
+ $start=[Diagnostics.ProcessStartInfo]::new()
+ $start.FileName=Join-Path $PSHOME $(if($env:OS -eq 'Windows_NT'){'powershell.exe'}else{'pwsh'})
+ $command='$p=[Console]::In.ReadToEnd()|ConvertFrom-Json; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker'
+ $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+ $start.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '+$encoded
+ $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+ $start.EnvironmentVariables.Remove('PSModulePath')
+ $start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+ $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$started=$false
+ try{
+  $null=$process.Start();$started=$true
+  $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+  # The temporary forest password goes through a pipe, never command arguments.
+  $process.StandardInput.WriteLine((@{Script=$Script;Password=$Password;Role=$Role;Seconds=$Seconds}|ConvertTo-Json -Compress))
+  $process.StandardInput.Close()
+  if(-not $process.WaitForExit(($Seconds+$GraceSeconds)*1000)){
+   $process.Kill();$null=$process.WaitForExit(5000)
+   throw [TimeoutException]::new('Owned CA bootstrap process deadline exceeded')
+  }
+  $output=$stdout.GetAwaiter().GetResult()
+  # Only fixed bootstrap receipts may cross the child-process boundary.
+  foreach($line in ($output -split '\r?\n')){
+   if($line -cmatch '^CERTOPS_STAGE=enterprise-(ca-service-running|subordinate-request-created)$' -or $line -cmatch '^CERTOPS_SUBORDINATE_REQUEST=[A-Za-z0-9+/=]+$'){Write-Output $line}
+  }
+  if($process.ExitCode -ne 0){throw 'Owned CA bootstrap process failed'}
+ }finally{
+  if($started -and -not $process.HasExited){$process.Kill()}
+  $process.Dispose()
+ }
+}
+if(-not $BootstrapWorker){
+ try{Invoke-CaBootstrapProcess -Script $PSCommandPath -Password $DomainPassword -Role $HierarchyRole -Seconds $StageTimeoutSeconds}
+ catch{
+  $stage='membership'
+  try{$r=Get-Content 'C:\ttqualification\domain-ca-stage.json' -Raw|ConvertFrom-Json;if($r.stage -in @('membership','directory-ready','remoting-setup','directory-officer','role-install','ca-configure','service-check')){$stage=$r.stage}}catch{}
+  Write-Output ('CERTOPS_CA_FAILED_STAGE='+$stage)
+  throw 'Owned CA bootstrap failed; inspect the bounded stage receipt'
+ }finally{$DomainPassword=$null}
+ return
+}
 $bootstrapClock=[Diagnostics.Stopwatch]::StartNew()
 $stageFile='C:\ttqualification\domain-ca-stage.json'
 function Invoke-CaBoundedLocalJob([scriptblock]$ScriptBlock,[object[]]$Arguments,[int]$TimeoutSeconds){

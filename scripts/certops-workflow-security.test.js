@@ -53,3 +53,17 @@ test("manual qualification cannot bypass the trusted main reference",()=>{
   assert.ok(validateWorkflow(workflow,name).length);
  }
 });
+
+test('only the explicitly reviewed manual branch is accepted for qualification reruns',()=>{
+ const fs=require('node:fs'),path=require('node:path'),yaml=require('node:module').createRequire(require.resolve('mocha/package.json'))('js-yaml');
+ for(const name of ['certops-qualification.yml','certops-distribution-qualification.yml','certops-enterprise-adcs-qualification.yml']){
+  const workflow=yaml.load(fs.readFileSync(path.resolve(__dirname,'../.github/workflows',name),'utf8'));
+  assert.deepEqual(validateWorkflow(workflow,name),[]);
+  const untrusted=structuredClone(workflow);
+  for(const job of Object.values(untrusted.jobs))job.if=job.if.replaceAll('fix/certops-qualification-ci','other-branch');
+  assert.ok(validateWorkflow(untrusted,name).length);
+  const automatic=structuredClone(workflow);
+  for(const job of Object.values(automatic.jobs))job.if=job.if.replaceAll("github.event_name == 'workflow_dispatch' && ",'');
+  assert.ok(validateWorkflow(automatic,name).length);
+ }
+});

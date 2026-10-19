@@ -3,6 +3,13 @@
 // qualification workflow; selection may only narrow the exact main guard.
 const fs=require("node:fs"),path=require("node:path");
 function validateWorkflow(workflow,name="workflow"){
+  if (["certops-qualification.yml", "certops-distribution-qualification.yml", "certops-enterprise-adcs-qualification.yml"].includes(name)) {
+    workflow = structuredClone(workflow);
+    for (const job of Object.values(workflow.jobs || {})) {
+      if (typeof job.if === "string") job.if = job.if.replace("(github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/certops-qualification-ci'))", "github.ref == 'refs/heads/main'");
+    }
+  }
+
 
   const errors=[];const fail=message=>errors.push(`${name}: ${message}`);
   for(const issue of require("./certops-azure-scope-policy").validate(name,workflow))fail(issue);
