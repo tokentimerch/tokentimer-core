@@ -4,6 +4,7 @@
 // Adding steps later therefore needs no data migration.
 
 import { GOALS, STEP_DEFS } from './modules.js';
+import { scopeCertops } from './certopsScope.js';
 
 export { GOALS, STEP_DEFS };
 export const PLANNER_VERSION = 2;
@@ -68,18 +69,37 @@ export function availableProviders(capabilities, allProviders) {
   });
 }
 
-function certopsDone(stepId, { reality, progress }) {
+function certopsDone(stepId, { reality, progress, objective }) {
   const certops = reality?.certops;
+  // Only progress saved for this goal's objective counts.
+  const saved = scopeCertops(progress?.certops, objective);
   switch (stepId) {
     case 'certops_objective':
-      return Boolean(progress?.certops?.objective);
-    case 'certops_agent':
-      return (certops?.agents?.live || 0) > 0;
+      return (
+        Boolean(saved.objective) &&
+        (!objective || saved.objective === objective)
+      );
+    case 'certops_agent': {
+      const agents = certops?.agents;
+      if ((agents?.live || 0) === 0) return false;
+      // An agent registered for discovery declares no command profile, so it
+      // can never claim an issuance order. Command profiles are only reported
+      // at registration, which makes it a different agent setup, not a setting.
+      const needsProfile =
+        (objective === 'automate' || objective === 'vault') &&
+        (saved.infrastructure || 'linux') === 'linux';
+      if (!needsProfile) return true;
+      return (agents.items || []).some(
+        a =>
+          a.livenessState === 'live' &&
+          (a.commandProfiles || []).includes('certbot')
+      );
+    }
     case 'certops_config':
-      return progress?.certops?.configReviewed === true;
+      return saved.configReviewed === true;
     case 'certops_execution':
       // Observe-only goals never enable execution, so they acknowledge instead.
-      if (progress?.certops?.executionAcknowledged === true) return true;
+      if (saved.executionAcknowledged === true) return true;
       // Stage 3 is a signed dry run that ended as dry_run_complete. The job
       // id is stored, but whether it passed is read from the server.
       return (
@@ -87,12 +107,12 @@ function certopsDone(stepId, { reality, progress }) {
         certops?.dryRun?.status === 'dry_run_complete'
       );
     case 'certops_first': {
-      const objective = progress?.certops?.objective;
-      const infra = progress?.certops?.infrastructure || 'linux';
+      const infra = saved.infrastructure || 'linux';
+      const goalObjective = objective || saved.objective;
       // Linux automation only counts once the order really succeeded, because
       // a requested order already creates an inventory row.
       if (
-        (objective === 'automate' || objective === 'vault') &&
+        (goalObjective === 'automate' || goalObjective === 'vault') &&
         infra === 'linux'
       ) {
         return (
@@ -119,7 +139,10 @@ function certopsDone(stepId, { reality, progress }) {
  * session flags for things that exist on the server: a deleted monitor or
  * removed recipient reopens the step.
  */
-export function isStepSatisfied(stepId, { reality, refs = {}, progress } = {}) {
+export function isStepSatisfied(
+  stepId,
+  { reality, refs = {}, progress, objective } = {}
+) {
   if (!reality) return false;
   switch (stepId) {
     case 'monitor': {
@@ -150,7 +173,7 @@ export function isStepSatisfied(stepId, { reality, refs = {}, progress } = {}) {
     case 'smtp':
       return reality.alerts?.smtpConfigured === true;
     default:
-      return certopsDone(stepId, { reality, progress });
+      return certopsDone(stepId, { reality, progress, objective });
   }
 }
 
@@ -199,7 +222,12 @@ export function planJourney({
       );
       status = earlierDone && !currentAssigned ? 'current' : 'upcoming';
     } else if (
-      isStepSatisfied(id, { reality, refs: operationRefs, progress })
+      isStepSatisfied(id, {
+        reality,
+        refs: operationRefs,
+        progress,
+        objective: goal.certopsObjective,
+      })
     ) {
       status = 'done';
     } else if (skipped.has(id)) {

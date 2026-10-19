@@ -75,11 +75,23 @@ export function AgentStep({ ctx }) {
   };
 
   const poll = useCallback(() => ctx.refresh().catch(() => {}), [ctx]);
+  // Same rule as the planner: keep watching until a usable agent exists.
+  const wantsProfile =
+    (saved.objective === 'automate' || saved.objective === 'vault') &&
+    infra === 'linux';
+  const usableAgent =
+    (agents?.live || 0) > 0 &&
+    (!wantsProfile ||
+      items.some(
+        a =>
+          a.livenessState === 'live' &&
+          (a.commandProfiles || []).includes('certbot')
+      ));
   useEffect(() => {
-    if (infra === 'kubernetes' || (agents?.live || 0) > 0) return undefined;
+    if (infra === 'kubernetes' || usableAgent) return undefined;
     timer.current = setInterval(poll, POLL_MS);
     return () => clearInterval(timer.current);
-  }, [poll, infra, agents?.live]);
+  }, [poll, infra, usableAgent]);
 
   if (ctx.summary?.certops === 'unknown' || ctx.summary?.certops == null) {
     return (
@@ -174,6 +186,16 @@ export function AgentStep({ ctx }) {
     ? capabilityGap(saved.objective, infra, target.declaredCapabilities)
     : [];
   const verdict = target ? describeAgent(target, gap) : null;
+  // Automation needs the certbot profile, which is only reported at
+  // registration. A discovery-only agent is connected but cannot be used.
+  const automating =
+    saved.objective === 'automate' || saved.objective === 'vault';
+  const lacksProfile =
+    automating &&
+    infra === 'linux' &&
+    Boolean(target) &&
+    !(target.commandProfiles || []).includes('certbot');
+  const healthy = Boolean(verdict?.healthy) && !lacksProfile;
 
   return (
     <StepFrame
@@ -231,7 +253,7 @@ export function AgentStep({ ctx }) {
           </Text>
           {!target ? (
             <Badge>Waiting for an agent</Badge>
-          ) : verdict.healthy ? (
+          ) : healthy ? (
             <Badge colorScheme='green'>Connected</Badge>
           ) : (
             <Badge colorScheme='orange'>Needs attention</Badge>
@@ -243,6 +265,16 @@ export function AgentStep({ ctx }) {
               {target.hostname || target.name} ({target.platform}, version{' '}
               {target.agentVersion})
             </Text>
+            {lacksProfile ? (
+              <Text fontSize='xs' color='orange.400'>
+                This agent was registered without the certbot command profile,
+                usually because it was set up for discovery only. Profiles are
+                reported only when an agent registers, so it cannot place
+                orders. Save the configuration above, create a one-time token
+                and register the agent again, then retire the old entry in
+                Certificate Management.
+              </Text>
+            ) : null}
             {verdict.problems.map(p => (
               <Text key={p} fontSize='xs' color='orange.400'>
                 {p}
