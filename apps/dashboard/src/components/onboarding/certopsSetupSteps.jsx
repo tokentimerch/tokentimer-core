@@ -25,6 +25,7 @@ import {
   DNS_PROVIDERS,
   buildAutomateConfig,
   STAGING_CA,
+  RELOAD_SERVICES,
   buildObserveConfig,
   buildPreseedSteps,
   mergeInstallerFields,
@@ -121,6 +122,7 @@ export function ConfigStep({ ctx }) {
     dnsProvider: saved.dnsProvider || 'cloudflare',
     certPath: saved.certPath || '/etc/ssl/tokentimer/example.pem',
     caEndpoint: saved.caEndpoint || STAGING_CA,
+    reloadService: saved.reloadService || '',
     directories: saved.directories || '/etc/ssl/certs',
   });
   const [error, setError] = useState('');
@@ -154,6 +156,7 @@ export function ConfigStep({ ctx }) {
       dnsProvider: form.dnsProvider,
       certPath: form.certPath,
       caEndpoint: form.caEndpoint,
+      reloadService: form.reloadService,
     });
   }
   const preseed = result.ok
@@ -174,6 +177,7 @@ export function ConfigStep({ ctx }) {
         dnsProvider: form.dnsProvider,
         certPath: form.certPath,
         caEndpoint: form.caEndpoint,
+        reloadService: form.reloadService,
         directories: form.directories,
         configReviewed: true,
       });
@@ -269,6 +273,31 @@ export function ConfigStep({ ctx }) {
                 private ACME CA address if you have one.
               </Text>
             </FormControl>
+            {os === 'linux' ? (
+              <FormControl>
+                <FormLabel fontSize='sm'>
+                  After issuing, reload a web server (optional)
+                </FormLabel>
+                <Select
+                  size='sm'
+                  value={form.reloadService}
+                  onChange={set('reloadService')}
+                >
+                  <option value=''>No, only write the certificate</option>
+                  {Object.entries(RELOAD_SERVICES).map(([id, s]) => (
+                    <option key={id} value={id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </Select>
+                <Text fontSize='xs' mt={1}>
+                  The agent first tests the server&apos;s own configuration and
+                  only reloads if the test passes. It is allowed to run exactly
+                  those two commands, nothing else. Your server must already be
+                  set up to read the certificate path above.
+                </Text>
+              </FormControl>
+            ) : null}
           </>
         )}
         {!result.ok

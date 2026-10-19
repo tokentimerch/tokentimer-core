@@ -10,6 +10,8 @@ import {
   buildVaultConfigs,
   buildVaultPolicies,
   isLoopbackHttp,
+  RELOAD_SERVICES,
+  reloadCommands,
   issueIdempotencyKey,
   isValidHostname,
   nameInZone,
@@ -447,5 +449,102 @@ describe('issuance request key', () => {
   });
   it('matches the server key pattern', () => {
     expect(issueIdempotencyKey(args)).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+  });
+});
+
+describe('optional web server reload', () => {
+  const base = {
+    os: 'linux',
+    names: ['www.example.com'],
+    zone: 'example.com',
+    dnsProvider: 'cloudflare',
+    certPath: '/etc/nginx/tls/www.pem',
+  };
+
+  it('does nothing unless the user chooses a server', () => {
+    const { config } = buildAutomateConfig(base);
+    expect(Object.keys(config.policy.allowedCommands)).toEqual(['certbot']);
+    const job = buildIssueJob({ ...base, idempotencyKey: 'k1' });
+    expect(job.payload.reloadService).toBeUndefined();
+    expect(job.payload.reloadCommandRefs).toBeUndefined();
+  });
+
+  it('allows exactly the validate and reload commands for the chosen server', () => {
+    for (const id of Object.keys(RELOAD_SERVICES)) {
+      const { config } = buildAutomateConfig({ ...base, reloadService: id });
+      const commands = config.policy.allowedCommands;
+      expect(commands[`${id}-validate`].argv).toEqual(
+        RELOAD_SERVICES[id].validate
+      );
+      expect(commands[`${id}-reload`].argv).toEqual(RELOAD_SERVICES[id].reload);
+      expect(Object.keys(commands).sort()).toEqual(
+        ['certbot', `${id}-reload`, `${id}-validate`].sort()
+      );
+    }
+  });
+
+  it('never validates after reloading, and always tests the config first', () => {
+    for (const def of Object.values(RELOAD_SERVICES)) {
+      expect(def.validate.join(' ')).toMatch(/-t$|configtest$|-c /);
+      expect(def.reload[1]).toBe('reload');
+    }
+  });
+
+  it('refers to the same command names in the job as in the policy', () => {
+    for (const id of Object.keys(RELOAD_SERVICES)) {
+      const { config } = buildAutomateConfig({ ...base, reloadService: id });
+      const job = buildIssueJob({
+        ...base,
+        reloadService: id,
+        idempotencyKey: 'k2',
+      });
+      expect(job.payload.reloadService).toBe(id);
+      expect(
+        config.policy.allowedCommands[job.payload.reloadCommandRefs.validate]
+      ).toBeTruthy();
+      expect(
+        config.policy.allowedCommands[job.payload.reloadCommandRefs.reload]
+      ).toBeTruthy();
+    }
+  });
+
+  it('uses shell-free argv only', () => {
+    for (const id of Object.keys(RELOAD_SERVICES)) {
+      for (const { argv } of Object.values(reloadCommands(id))) {
+        expect(argv.every(a => !/[;&|`$<>]/.test(a))).toBe(true);
+      }
+    }
+  });
+
+  it('rejects an unknown server and a Windows host', () => {
+    expect(buildAutomateConfig({ ...base, reloadService: 'iis' }).ok).toBe(
+      false
+    );
+    expect(
+      buildAutomateConfig({ ...base, os: 'windows', reloadService: 'nginx' }).ok
+    ).toBe(false);
+    expect(() =>
+      buildIssueJob({ ...base, reloadService: 'iis', idempotencyKey: 'k3' })
+    ).toThrow(/Unknown web server/);
+    expect(reloadCommands('iis')).toEqual({});
+  });
+
+  it('creates a new job, not a replay, when the reload choice changes', () => {
+    const args = {
+      names: ['www.example.com'],
+      zone: 'example.com',
+      certPath: '/etc/nginx/tls/www.pem',
+    };
+    const plain = issueIdempotencyKey(args);
+    const withNginx = issueIdempotencyKey({ ...args, reloadService: 'nginx' });
+    const withApache = issueIdempotencyKey({
+      ...args,
+      reloadService: 'apache',
+    });
+    expect(new Set([plain, withNginx, withApache]).size).toBe(3);
+    expect(issueIdempotencyKey({ ...args, reloadService: 'nginx' })).toBe(
+      withNginx
+    );
+    expect(withNginx).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
   });
 });

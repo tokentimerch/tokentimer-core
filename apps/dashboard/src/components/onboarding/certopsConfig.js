@@ -166,6 +166,39 @@ export function buildObserveConfig({ os, directories = [] }) {
 }
 
 /**
+ * Web servers the agent can validate and reload after it writes a certificate.
+ * The validate command is always the server's own config test, so a broken
+ * config is never reloaded. argv is exact: policy refuses anything else.
+ */
+export const RELOAD_SERVICES = {
+  nginx: {
+    label: 'nginx',
+    validate: ['/usr/sbin/nginx', '-t'],
+    reload: ['/usr/bin/systemctl', 'reload', 'nginx'],
+  },
+  apache: {
+    label: 'Apache (apache2)',
+    validate: ['/usr/sbin/apachectl', 'configtest'],
+    reload: ['/usr/bin/systemctl', 'reload', 'apache2'],
+  },
+  haproxy: {
+    label: 'HAProxy',
+    validate: ['/usr/sbin/haproxy', '-c', '-f', '/etc/haproxy/haproxy.cfg'],
+    reload: ['/usr/bin/systemctl', 'reload', 'haproxy'],
+  },
+};
+
+/** The two named commands a reload needs; names are what jobs refer to. */
+export function reloadCommands(service) {
+  const def = RELOAD_SERVICES[service];
+  if (!def) return {};
+  return {
+    [`${service}-validate`]: { argv: def.validate },
+    [`${service}-reload`]: { argv: def.reload },
+  };
+}
+
+/**
  * ACME DNS-01 issuance configuration. Policy is default-deny, so every
  * allowlist is explicit and as narrow as the request.
  */
@@ -177,9 +210,14 @@ export function buildAutomateConfig({
   caEndpoint = LETS_ENCRYPT_STAGING,
   certPath,
   credentialsFile,
+  reloadService = '',
   dryRun = true,
 }) {
   const problems = [];
+  if (reloadService && os === 'windows')
+    problems.push('Reloading a web server is for Linux hosts.');
+  if (reloadService && !RELOAD_SERVICES[reloadService])
+    problems.push('Choose nginx, Apache or HAProxy, or no reload.');
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   if (list.length === 0) problems.push('Enter at least one name.');
   for (const n of list) {
@@ -227,7 +265,14 @@ export function buildAutomateConfig({
       allowedCaEndpoints: [caEndpoint],
       allowedDnsZones: [zone],
       allowedDnsProviders: [dnsProvider],
-      ...(certbot ? { allowedCommands: { certbot } } : {}),
+      ...(certbot || reloadService
+        ? {
+            allowedCommands: {
+              ...(certbot ? { certbot } : {}),
+              ...(reloadService ? reloadCommands(reloadService) : {}),
+            },
+          }
+        : {}),
     },
     dnsProviders: {
       [dnsProvider]: {
@@ -257,6 +302,7 @@ export function buildIssueJob({
   certPath,
   commandRef = 'certbot',
   verifyHost,
+  reloadService = '',
   assignedAgentId,
   idempotencyKey,
 }) {
@@ -264,6 +310,9 @@ export function buildIssueJob({
   // wizard cannot verify, so Windows issuance stays a documented runbook.
   if (os === 'windows') {
     throw new Error('Windows issuance is not built by the wizard.');
+  }
+  if (reloadService && !RELOAD_SERVICES[reloadService]) {
+    throw new Error(`Unknown web server: ${reloadService}.`);
   }
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   const payload = {
@@ -278,6 +327,14 @@ export function buildIssueJob({
   if (verifyHost) {
     payload.verifyHost = verifyHost;
     payload.verifyPort = 443;
+  }
+  if (reloadService) {
+    payload.reloadService = reloadService;
+    // Same names the configuration step put in the agent's policy.
+    payload.reloadCommandRefs = {
+      validate: `${reloadService}-validate`,
+      reload: `${reloadService}-reload`,
+    };
   }
   return {
     operation: 'issue',
@@ -298,9 +355,18 @@ export function issueIdempotencyKey({
   zone,
   certPath,
   caEndpoint = LETS_ENCRYPT_STAGING,
+  reloadService = '',
   attempt = 1,
 }) {
-  const text = [(names || []).join(','), zone, certPath, caEndpoint].join('|');
+  // The reload choice is part of the request: changing it must create a new
+  // job, not replay the earlier one without the reload.
+  const text = [
+    (names || []).join(','),
+    zone,
+    certPath,
+    caEndpoint,
+    reloadService,
+  ].join('|');
   let hash = 5381;
   for (let i = 0; i < text.length; i += 1) {
     hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
