@@ -89,3 +89,64 @@ it('appends pages from the list endpoint when loading more', async () => {
     })
   );
 });
+
+it('drops a load-more response that arrives after the workspace changes', async () => {
+  let resolvePage;
+  getMock.mockReturnValue(
+    new Promise(resolve => {
+      resolvePage = resolve;
+    })
+  );
+  const seed = {
+    items: [{ id: 1, name: 'First' }],
+    hasMore: true,
+  };
+  const { result, rerender } = renderHook(() =>
+    useControlCenterListPage(
+      id => `/api/v1/workspaces/${id}/never-expires`,
+      seed
+    )
+  );
+  const pending = result.current.loadMore();
+  workspaceIdRef.current = 'workspace-2';
+  rerender();
+  resolvePage({
+    data: { items: [{ id: 9, name: 'Workspace A tail' }], hasMore: false },
+  });
+  await pending;
+  expect(result.current.items.map(item => item.id)).toEqual([1]);
+});
+
+it('discards a loaded tail when the same first page is refreshed', async () => {
+  getMock.mockResolvedValue({
+    data: { items: [{ id: 3, name: 'Old tail' }], hasMore: false },
+  });
+  const seed = {
+    items: [
+      { id: 1, name: 'First' },
+      { id: 2, name: 'Second' },
+    ],
+    hasMore: true,
+    refreshToken: 1,
+  };
+  const { result, rerender } = renderHook(
+    ({ nextSeed }) =>
+      useControlCenterListPage(
+        id => `/api/v1/workspaces/${id}/never-expires`,
+        nextSeed
+      ),
+    { initialProps: { nextSeed: seed } }
+  );
+  await result.current.loadMore();
+  await waitFor(() => {
+    expect(result.current.items.map(item => item.id)).toEqual([1, 2, 3]);
+  });
+  rerender({
+    nextSeed: {
+      ...seed,
+      refreshToken: 2,
+    },
+  });
+  expect(result.current.items.map(item => item.id)).toEqual([1, 2]);
+  expect(result.current.hasMore).toBe(true);
+});

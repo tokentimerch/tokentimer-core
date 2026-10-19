@@ -48,6 +48,7 @@ import {
 import { showSuccess } from '../../utils/toast.js';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { listIssuers } from './certopsEnrollmentsApi';
+import { listAllIssuers } from './certopsFormat.js';
 import { useCertOpsIsWorkspaceAdmin } from './useCertOps.js';
 import {
   useCertOpsRenewalProfiles,
@@ -423,7 +424,7 @@ function LeadTimeEditor({ profile, onSave, saving, disabled }) {
 export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { workspaceId } = useWorkspace();
-  const { certificates: boundCertificates, loading: boundCertificatesLoading } =
+  const { certificates: boundCertificates, loading: boundCertificatesLoading, incomplete: inventoryIncomplete } =
     useBoundCertificates(workspaceId);
   const [issuers, setIssuers] = useState([]);
   const [profileWizardOpen, setProfileWizardOpen] = useState(false);
@@ -439,18 +440,13 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
       offset,
       ...(sort.key ? { sort: sort.key, direction: sort.direction } : {}),
     });
-  const {
-    savingIds,
-    error: saveError,
-    clearError,
-    save,
-  } = useUpdateRenewalProfile();
+  const { savingIds, errors: saveErrors, save } = useUpdateRenewalProfile();
   useEffect(() => {
     if (!isAdmin || !workspaceId) return undefined;
     let cancelled = false;
-    listIssuers(workspaceId, { limit: 100 })
-      .then(page => {
-        if (!cancelled) setIssuers(page.items || []);
+    listAllIssuers(listIssuers, workspaceId, { includeUnconfigured: false })
+      .then(items => {
+        if (!cancelled) setIssuers(items);
       })
       .catch(() => {
         if (!cancelled) setIssuers([]);
@@ -517,7 +513,6 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
   };
 
   const applyChange = async (profile, changes, successMessage) => {
-    clearError();
     const updated = await save(profile.id, changes);
     if (updated) {
       showSuccess(successMessage);
@@ -568,9 +563,9 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         </Flex>
       ) : null}
       {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-      {saveError ? (
-        <DashboardErrorAlert>{saveError}</DashboardErrorAlert>
-      ) : null}
+      {Object.entries(saveErrors).map(([profileId, message]) => (
+        <DashboardErrorAlert key={profileId}>{message}</DashboardErrorAlert>
+      ))}
 
       {loading ? (
         <HStack spacing={2} color={muted} py={4} justify='center'>
@@ -693,7 +688,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
                             profile={profile}
                             issuers={issuers}
                             saving={rowSaving}
-                            saveError={saveError}
+                            saveError={saveErrors[profile.id] || ''}
                             onSave={next =>
                               applyChange(
                                 profile,
@@ -835,6 +830,7 @@ export default function RenewalProfilesPanel({ refreshSignal, onChanged }) {
         profile={detailsTarget}
         boundCertificates={boundCertificates}
         boundCertificatesLoading={boundCertificatesLoading}
+        inventoryIncomplete={inventoryIncomplete}
       />
     </Box>
   );

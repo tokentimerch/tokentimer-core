@@ -54,12 +54,30 @@ END $$;
 CREATE OR REPLACE FUNCTION certops_guard_job_identity_start()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE period_row RECORD; identity_row RECORD; lifecycle TEXT;
+  install_continuation BOOLEAN := FALSE;
 BEGIN
-  IF NEW.subject_type IS DISTINCT FROM 'managed_certificate'
-    OR NEW.operation NOT IN ('renew','deploy','deploy-from-store','reload') THEN
+  IF NEW.subject_type IS DISTINCT FROM 'managed_certificate' THEN
+    RETURN NEW;
+  END IF;
+  -- Installation retries are new installs. Key cleanup and operator reconcile
+  -- stay claimable after retirement; a missing identity is not retirement.
+  IF NEW.operation = 'continue-enrollment' THEN
+    IF NEW.enrollment_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM certificate_enrollments continuation
+       WHERE continuation.workspace_id = NEW.workspace_id
+         AND continuation.id = NEW.enrollment_id
+         AND continuation.state IN ('installing', 'install_failed')
+    ) THEN
+      RETURN NEW;
+    END IF;
+    install_continuation := TRUE;
+  ELSIF NEW.operation NOT IN ('renew','deploy','deploy-from-store','reload') THEN
     RETURN NEW;
   END IF;
   IF TG_OP='UPDATE' AND OLD.status IN ('claimed','running') THEN
+    IF install_continuation THEN
+      RETURN NEW;
+    END IF;
     IF OLD.mode IS DISTINCT FROM 'dry_run' THEN
       IF NEW.certificate_identity_id IS NOT NULL THEN
         -- Completion may own a token/source row that retirement needs. Never
@@ -105,6 +123,12 @@ BEGIN
   IF NOT FOUND OR period_row.ended_at IS NOT NULL THEN RETURN NEW; END IF;
   SELECT lifecycle_status INTO lifecycle FROM certops_certificate_identities
     WHERE workspace_id=NEW.workspace_id AND id=NEW.certificate_identity_id FOR SHARE;
+  IF install_continuation THEN
+    IF lifecycle IN ('revoked','decommissioned') THEN
+      RAISE EXCEPTION 'CertOps certificate lifecycle blocks this operation' USING ERRCODE='55000';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.certificate_identity_id IS NULL AND certops_is_initial_provisioning(
     NEW.workspace_id,period_row.managed_certificate_id,NEW.operation,NEW.executor_kind,NEW.source
   ) THEN RETURN NEW; END IF;

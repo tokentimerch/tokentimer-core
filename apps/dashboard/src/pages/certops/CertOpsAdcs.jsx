@@ -23,7 +23,7 @@ import { useOutletContext } from 'react-router';
 import CopyableId from '../../components/CopyableId.jsx';
 import { listAgents } from '../../components/certops/certopsAgentsApi';
 import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
-import { formatDate } from '../../components/certops/certopsFormat.js';
+import { findListedIssuer, formatDate } from '../../components/certops/certopsFormat.js';
 import {
   abandonEnrollment,
   cancelEnrollment,
@@ -54,17 +54,18 @@ function errorText(err, fallback) {
   return err?.response?.data?.error || fallback;
 }
 
-function preflightSignature(preflight) {
-  if (!preflight) return '';
-  const certs = (preflight.caCertificates || [])
+function preflightSignature(preflight, jobId) {
+  if (!preflight && !jobId) return '';
+  const certs = (preflight?.caCertificates || [])
     .map(cert => cert.keySha256)
     .join(',');
   return [
-    preflight.caConfig,
-    preflight.template,
-    preflight.templateCheck?.verdict,
-    preflight.caCheck?.verdict,
+    preflight?.caConfig,
+    preflight?.template,
+    preflight?.templateCheck?.verdict,
+    preflight?.caCheck?.verdict,
     certs,
+    jobId || '',
   ].join('|');
 }
 
@@ -438,7 +439,8 @@ function IssuerWork({
   const safe = preflightIsSafe(issuer);
   const freshResult =
     checkBaseline != null &&
-    preflightSignature(issuer.lastPreflight) !== checkBaseline;
+    preflightSignature(issuer.lastPreflight, issuer.lastPreflightJobId) !==
+      checkBaseline;
   const showResult = issuer.revalidationRequired || freshResult;
   return (
     <Stack spacing={3}>
@@ -463,7 +465,12 @@ function IssuerWork({
       {checking ? (
         <form
           onSubmit={event => {
-            setCheckBaseline(preflightSignature(issuer.lastPreflight));
+            setCheckBaseline(
+              preflightSignature(
+                issuer.lastPreflight,
+                issuer.lastPreflightJobId
+              )
+            );
             onPreflight(event, issuer.id);
           }}
         >
@@ -881,15 +888,16 @@ export default function CertOpsAdcs() {
     setWaitingForPreflight(false);
   }, []);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (signal) => {
     if (!workspaceId || !isAdmin) return;
     const [issuerPage, enrollmentPage, agentPage] = await Promise.all([
       listIssuers(workspaceId, {
         limit: PAGE_LIMIT,
         includeUnconfigured: true,
+        signal,
       }),
-      listEnrollments(workspaceId, { limit: PAGE_LIMIT }),
-      listAgents(workspaceId),
+      listEnrollments(workspaceId, { limit: PAGE_LIMIT, signal }),
+      listAgents(workspaceId, { signal }),
     ]);
     setIssuers(previous => refreshPage(issuerPage.items || [], previous));
     setEnrollments(previous =>
@@ -907,19 +915,26 @@ export default function CertOpsAdcs() {
       return undefined;
     }
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
-    reload()
+    reload(controller.signal)
       .catch(err => {
-        if (!cancelled) {
-          setLoadError(errorText(err, 'Could not load AD CS issuers.'));
-          showError(errorText(err, 'Could not load AD CS issuers.'));
+        if (
+          cancelled ||
+          err?.code === 'ERR_CANCELED' ||
+          err?.name === 'CanceledError'
+        ) {
+          return;
         }
+        setLoadError(errorText(err, 'Could not load AD CS issuers.'));
+        showError(errorText(err, 'Could not load AD CS issuers.'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [isAdmin, reload]);
 
@@ -987,16 +1002,23 @@ export default function CertOpsAdcs() {
         poll.attempts += 1;
         const attempt = poll.attempts;
         try {
-          const page = await listIssuers(workspaceId, {
-            signal: poll.controller.signal,
-            limit: PAGE_LIMIT,
-          });
+          const current = await findListedIssuer(
+            listIssuers,
+            workspaceId,
+            issuerId,
+            { signal: poll.controller.signal, includeUnconfigured: true }
+          );
           if (poll.cancelled || pollRef.current !== poll) return;
-          const items = page.items || [];
-          setIssuers(previous => refreshPage(items, previous));
-          const current = items.find(item => item.id === issuerId);
+          if (current) {
+            setIssuers(previous =>
+              previous.map(item => (item.id === issuerId ? current : item))
+            );
+          }
           const changed =
-            preflightSignature(current?.lastPreflight) !== previousSignature;
+            preflightSignature(
+              current?.lastPreflight,
+              current?.lastPreflightJobId
+            ) !== previousSignature;
           if (
             (changed || attempt >= PREFLIGHT_POLL_ATTEMPTS) &&
             pollRef.current === poll
@@ -1060,7 +1082,10 @@ export default function CertOpsAdcs() {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const previous = issuers.find(item => item.id === issuerId);
-    const previousSignature = preflightSignature(previous?.lastPreflight);
+    const previousSignature = preflightSignature(
+      previous?.lastPreflight,
+      previous?.lastPreflightJobId
+    );
     setBusyKey(`preflight:${issuerId}`);
     try {
       await dispatchIssuerPreflight(workspaceId, issuerId, {

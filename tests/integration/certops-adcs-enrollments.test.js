@@ -16,7 +16,9 @@ const {
   dispatchPreflight,
   recordPreflightResult,
   scheduleDueEnrollments,
+  retryEnrollmentInstallation,
 } = require("../../apps/api/services/certops/certificateEnrollments");
+const { createCertificateJob } = require("../../apps/api/services/certops/jobs");
 const { freezeSnapshot } = require("../../apps/api/services/certops/enrollmentLifecycle");
 const { executeAdcsPreflight } = require("../../packages/agent/src/issuers/adcs-preflight");
 
@@ -202,7 +204,7 @@ describe("CertOps AD CS enrollments (real database)", function () {
       [
         id,
         workspaceId,
-        crypto.randomUUID(),
+        extra.certificateId || crypto.randomUUID(),
         issuerId,
         agentRowId,
         state,
@@ -712,5 +714,143 @@ describe("CertOps AD CS enrollments (real database)", function () {
     );
     expect(stored.rows[0].template).to.equal(earlyTemplate);
     expect(stored.rows[0].last_preflight_job_id).to.equal(earlyJob.id);
+  });
+
+  it("blocks install continuation and deploy-from-store after retirement while cleanup still claims", async () => {
+    await assertNoForeignDueRows();
+    const fingerprint = crypto.randomBytes(32).toString("hex");
+    const certificateId = (await TestUtils.execQuery(
+      `INSERT INTO managed_certificates(
+         workspace_id, source, source_ref, fingerprint_sha256, name, common_name, status, key_mode
+       ) VALUES($1,'agent_filesystem',$2,$3,'retired install','retired.example','discovered','os-store-managed')
+       RETURNING id`,
+      [workspaceId, crypto.randomUUID(), fingerprint],
+    )).rows[0].id;
+    const identityId = (await TestUtils.execQuery(
+      `SELECT id FROM certops_certificate_identities
+        WHERE workspace_id=$1 AND fingerprint_sha256=$2`,
+      [workspaceId, fingerprint],
+    )).rows[0].id;
+    const due = new Date(Date.now() - 1000);
+    const installing = await insertEnrollment("installing", { certificateId, nextPollAt: due });
+    const installJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
+      .find((row) => row.enrollmentId === installing);
+    expect(installJob).to.exist;
+
+    await TestUtils.execQuery(
+      `UPDATE certops_certificate_identities
+          SET lifecycle_status='revoked', retired_at=NOW()
+        WHERE workspace_id=$1 AND id=$2`,
+      [workspaceId, identityId],
+    );
+    try {
+      await TestUtils.execQuery("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [installJob.jobId]);
+      throw new Error("installing continuation claim should fail");
+    } catch (error) {
+      expect(error.code).to.equal("55000");
+    }
+    const stillPending = await TestUtils.execQuery(
+      "SELECT status FROM certificate_jobs WHERE id=$1",
+      [installJob.jobId],
+    );
+    expect(stillPending.rows[0].status).to.equal("pending");
+
+    const failed = await insertEnrollment("install_failed", { certificateId });
+    try {
+      await retryEnrollmentInstallation({
+        client: pool,
+        workspaceId,
+        enrollmentId: failed,
+        actorUserId: ownerId,
+        env: { CERTOPS_ENABLED: "true" },
+      });
+      throw new Error("installation retry should fail");
+    } catch (error) {
+      expect(error.code).to.equal("CERTOPS_CERTIFICATE_RETIRED");
+    }
+
+    const cleanup = await insertEnrollment("cancelled", { certificateId, nextPollAt: due });
+    const cleanupJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
+      .find((row) => row.enrollmentId === cleanup);
+    expect(cleanupJob).to.exist;
+    await TestUtils.execQuery("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [cleanupJob.jobId]);
+
+    const reconcile = await insertEnrollment("submission_uncertain", {
+      certificateId,
+      operatorRequestId: 88,
+      nextPollAt: due,
+    });
+    const reconcileJob = (await scheduleDueEnrollments({ client: pool, now: new Date() }))
+      .find((row) => row.enrollmentId === reconcile);
+    expect(reconcileJob).to.exist;
+
+    const otherFingerprint = crypto.randomBytes(32).toString("hex");
+    const otherCertificateId = (await TestUtils.execQuery(
+      `INSERT INTO managed_certificates(
+         workspace_id, source, source_ref, fingerprint_sha256, name, common_name, status, key_mode
+       ) VALUES($1,'agent_filesystem',$2,$3,'decommissioned store','store.example','discovered','os-store-managed')
+       RETURNING id`,
+      [workspaceId, crypto.randomUUID(), otherFingerprint],
+    )).rows[0].id;
+    const otherIdentityId = (await TestUtils.execQuery(
+      `SELECT id FROM certops_certificate_identities
+        WHERE workspace_id=$1 AND fingerprint_sha256=$2`,
+      [workspaceId, otherFingerprint],
+    )).rows[0].id;
+    await TestUtils.execQuery(
+      `UPDATE certops_certificate_identities
+          SET lifecycle_status='decommissioned', retired_at=NOW()
+        WHERE workspace_id=$1 AND id=$2`,
+      [workspaceId, otherIdentityId],
+    );
+    const deployment = {
+      keyMode: "vault-managed",
+      materialDeployment: {
+        groupId: crypto.randomUUID(),
+        bindingId: crypto.randomUUID(),
+        rolloutId: crypto.randomUUID(),
+        materialVersionId: crypto.randomUUID(),
+        materialStoreRef: "store",
+        providerVersion: 1,
+        fingerprintSha256: otherFingerprint,
+        generation: 1,
+        deploymentProfileRef: "profile",
+        profileRevision: 1,
+        authorizationRevision: 1,
+        verificationPolicy: "served",
+      },
+    };
+    try {
+      await createCertificateJob({
+        client: pool,
+        workspaceId,
+        operation: "deploy-from-store",
+        subjectType: "managed_certificate",
+        subjectId: otherCertificateId,
+        payload: deployment,
+      });
+      throw new Error("deploy-from-store creation should fail");
+    } catch (error) {
+      expect(error.code).to.equal("CERTOPS_CERTIFICATE_RETIRED");
+    }
+    const stored = (await TestUtils.execQuery(
+      `INSERT INTO certificate_jobs(workspace_id,subject_type,subject_id,operation,status)
+       VALUES($1,'managed_certificate',$2,'renew','pending') RETURNING id`,
+      [workspaceId, certificateId],
+    )).rows[0];
+    await TestUtils.execQuery(
+      "UPDATE certificate_jobs SET operation='deploy-from-store' WHERE id=$1",
+      [stored.id],
+    );
+    try {
+      await TestUtils.execQuery("UPDATE certificate_jobs SET status='claimed' WHERE id=$1", [stored.id]);
+      throw new Error("deploy-from-store claim should fail");
+    } catch (error) {
+      expect(error.code).to.equal("55000");
+    }
+    await TestUtils.execQuery(
+      "UPDATE certificate_enrollments SET next_poll_at=NULL WHERE workspace_id=$1 AND certificate_id=$2",
+      [workspaceId, certificateId],
+    );
   });
 });
