@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Role,[int]$Seconds,[int]$GraceSeconds=30){
  $start=[Diagnostics.ProcessStartInfo]::new()
  $start.FileName=Join-Path $PSHOME $(if($env:OS -eq 'Windows_NT'){'powershell.exe'}else{'pwsh'})
- $command='$ErrorActionPreference="Stop"; try {$p=[Console]::In.ReadToEnd()|ConvertFrom-Json; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker; exit 0} catch {$kind=$_.Exception.GetType().Name; if($kind -notin @("CommandNotFoundException","ParameterBindingException","ParameterBindingValidationException","RuntimeException","UnauthorizedAccessException","MethodInvocationException","ParseException")){$kind="Exception"}; [Console]::Out.WriteLine("CERTOPS_CA_PROCESS_ERROR="+$kind); exit 1}'
+ $command='$ErrorActionPreference="Stop"; $phase="input"; try {$raw=[Console]::In.ReadToEnd(); $phase="json"; $p=$raw|ConvertFrom-Json; $raw=$null; $phase="worker"; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker; exit 0} catch {$kind=$_.Exception.GetType().Name; if($kind -cnotmatch "^[A-Za-z][A-Za-z0-9]{0,79}$"){$kind="Exception"}; [Console]::Out.WriteLine("CERTOPS_CA_PROCESS_ERROR="+$phase+":"+$kind+":"+$_.Exception.HResult); exit 1}'
  $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
  $start.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '+$encoded
  $start.UseShellExecute=$false;$start.CreateNoWindow=$true
@@ -34,7 +34,7 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
   }
   if($process.ExitCode -ne 0){
    $kind='Unknown'
-   $match=[regex]::Match($output,'(?m)^CERTOPS_CA_PROCESS_ERROR=(CommandNotFoundException|ParameterBindingException|ParameterBindingValidationException|RuntimeException|UnauthorizedAccessException|MethodInvocationException|ParseException|Exception)\r?$')
+   $match=[regex]::Match($output,'(?m)^CERTOPS_CA_PROCESS_ERROR=((?:input|json|worker):[A-Za-z][A-Za-z0-9]{0,79}:-?[0-9]{1,11})\r?$')
    if($match.Success){$kind=$match.Groups[1].Value}
    throw ('Owned CA bootstrap process failed: '+$kind+' (exit '+$process.ExitCode+')')
   }
