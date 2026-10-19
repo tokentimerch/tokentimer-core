@@ -1,0 +1,258 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Badge, HStack, Text, VStack } from '@chakra-ui/react';
+import {
+  DashboardActionButton,
+  DashboardErrorAlert,
+} from '../DashboardPrimitives';
+import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import StepFrame from './StepFrame.jsx';
+import { CopyBlock } from './blocks.jsx';
+import { INFRASTRUCTURES, capabilityGap } from './certopsMatrix.js';
+import {
+  REGISTRATION_NOTES,
+  buildControllerSecretCommand,
+  buildControllerValues,
+  buildInstallCommand,
+} from './certopsConfig.js';
+import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
+import { createBootstrapToken } from '../certops/certopsAgentsApi.js';
+
+const POLL_MS = 5000;
+
+/** Plain-language reading of one agent row, with the reason when unhealthy. */
+export function describeAgent(agent, gap = []) {
+  const problems = [];
+  if (agent.livenessState !== 'live')
+    problems.push('It has not checked in recently.');
+  if (agent.compatibilityState && agent.compatibilityState !== 'compatible') {
+    problems.push(`Its version is ${agent.compatibilityState}. Upgrade it.`);
+  }
+  if (
+    agent.clockDriftState &&
+    !['ok', 'in_sync', 'none'].includes(agent.clockDriftState)
+  ) {
+    problems.push('Its clock is drifting. Fix time synchronisation (NTP).');
+  }
+  if (gap.length) problems.push(`Missing capabilities: ${gap.join(', ')}.`);
+  return { healthy: problems.length === 0, problems };
+}
+
+export function AgentStep({ ctx }) {
+  const { muted } = useDashboardTheme();
+  const saved = certopsProgress(ctx);
+  const infra = saved.infrastructure || 'linux';
+  const os = INFRASTRUCTURES[infra]?.platform === 'win32' ? 'windows' : 'linux';
+  const [token, setToken] = useState(null); // shown once, never persisted
+  const [clusterId, setClusterId] = useState(saved.clusterId || '');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const timer = useRef(null);
+
+  const agents = ctx.summary?.certops?.agents;
+  const items = agents?.items || [];
+  const target =
+    items.find(a => a.platform === (os === 'windows' ? 'win32' : 'linux')) ||
+    items[0];
+
+  const issueToken = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+      const res = await createBootstrapToken(ctx.workspaceId, {
+        name: `Setup wizard ${new Date().toISOString().slice(0, 16)}`,
+        expiresAt,
+      });
+      setToken({ plaintext: res.plaintextToken, expiresAt });
+      await saveCertops(ctx, { tokenCreatedAt: new Date().toISOString() });
+    } catch (e) {
+      setError(
+        e?.response?.data?.error || e.message || 'Could not create a token.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const poll = useCallback(() => ctx.refresh().catch(() => {}), [ctx]);
+  useEffect(() => {
+    if (infra === 'kubernetes' || (agents?.live || 0) > 0) return undefined;
+    timer.current = setInterval(poll, POLL_MS);
+    return () => clearInterval(timer.current);
+  }, [poll, infra, agents?.live]);
+
+  if (ctx.summary?.certops === 'unknown' || ctx.summary?.certops == null) {
+    return (
+      <StepFrame
+        kind='handoff'
+        title='Certificate management is not available'
+        description='It is turned off on this deployment, or you do not have permission to see agents.'
+        docs={ctx.docs('certops.enable', 'Turning it on')}
+      >
+        <VStack align='stretch' spacing={2}>
+          <Text fontSize='sm'>
+            An operator must set CERTOPS_ENABLED and the two encryption keys on
+            the API, and run the certificate worker. Workspace managers can then
+            install agents.
+          </Text>
+          <DashboardActionButton variant='outline' onClick={poll}>
+            Check again
+          </DashboardActionButton>
+        </VStack>
+      </StepFrame>
+    );
+  }
+
+  if (infra === 'kubernetes') {
+    let values = '';
+    let valuesError = '';
+    try {
+      values = buildControllerValues({
+        apiUrl: ctx.apiUrl,
+        workspaceId: ctx.workspaceId,
+        clusterId,
+      });
+    } catch (e) {
+      valuesError = clusterId ? e.message : '';
+    }
+    return (
+      <StepFrame
+        kind='runbook'
+        title='Install the Kubernetes controller'
+        description='Observe mode only reads cert-manager resources. It never changes the cluster.'
+        docs={ctx.docs('certops.controller', 'Controller install')}
+        actions={
+          <DashboardActionButton
+            colorScheme='blue'
+            isDisabled={!values}
+            onClick={() =>
+              saveCertops(ctx, { clusterId, configReviewed: true })
+            }
+          >
+            I installed it
+          </DashboardActionButton>
+        }
+      >
+        <VStack align='stretch' spacing={3}>
+          <Text fontSize='sm'>
+            Create a machine token in Certificate Management, Settings, with the
+            observations scope and a cluster id, then store it in the cluster:
+          </Text>
+          <CopyBlock
+            label='Create the secret (token read from stdin)'
+            text={buildControllerSecretCommand({})}
+          />
+          <input
+            aria-label='Cluster id'
+            placeholder='prod-eu'
+            value={clusterId}
+            onChange={e => setClusterId(e.target.value)}
+          />
+          {valuesError ? (
+            <Text color='red.400' fontSize='xs'>
+              {valuesError}
+            </Text>
+          ) : null}
+          {values ? <CopyBlock label='Helm values' text={values} /> : null}
+        </VStack>
+      </StepFrame>
+    );
+  }
+
+  const command = (() => {
+    try {
+      return buildInstallCommand({
+        os,
+        apiUrl: ctx.apiUrl,
+        workspaceId: ctx.workspaceId,
+      });
+    } catch (e) {
+      return '';
+    }
+  })();
+  const gap = target
+    ? capabilityGap(saved.objective, infra, target.declaredCapabilities)
+    : [];
+  const verdict = target ? describeAgent(target, gap) : null;
+
+  return (
+    <StepFrame
+      kind='runbook'
+      title='Install the agent'
+      description='Run the command on the server that holds the certificates. This page watches for the agent to appear.'
+      docs={[
+        ...ctx.docs(
+          os === 'windows' ? 'certops.installWindows' : 'certops.installLinux',
+          'Full install guide'
+        ),
+      ]}
+      actions={
+        <DashboardActionButton
+          colorScheme='blue'
+          onClick={issueToken}
+          isLoading={busy}
+          isDisabled={Boolean(token)}
+        >
+          {token ? 'Token created' : 'Create a one-time token'}
+        </DashboardActionButton>
+      }
+    >
+      <VStack align='stretch' spacing={3}>
+        {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        {REGISTRATION_NOTES.map(n => (
+          <Text key={n} fontSize='xs' color={muted}>
+            {n}
+          </Text>
+        ))}
+        {token ? (
+          <>
+            <Text fontSize='sm' fontWeight='semibold'>
+              Paste this when the installer asks for the token. It is shown only
+              once and expires in 24 hours.
+            </Text>
+            <CopyBlock
+              label='One-time bootstrap token'
+              text={token.plaintext}
+              allowSecret
+            />
+          </>
+        ) : null}
+        <CopyBlock
+          label='Install command (run as administrator)'
+          text={command}
+        />
+        <HStack>
+          <Text fontSize='sm' fontWeight='semibold'>
+            Agent status
+          </Text>
+          {!target ? (
+            <Badge>Waiting for an agent</Badge>
+          ) : verdict.healthy ? (
+            <Badge colorScheme='green'>Connected</Badge>
+          ) : (
+            <Badge colorScheme='orange'>Needs attention</Badge>
+          )}
+        </HStack>
+        {target ? (
+          <VStack align='stretch' spacing={1}>
+            <Text fontSize='sm'>
+              {target.hostname || target.name} ({target.platform}, version{' '}
+              {target.agentVersion})
+            </Text>
+            {verdict.problems.map(p => (
+              <Text key={p} fontSize='xs' color='orange.400'>
+                {p}
+              </Text>
+            ))}
+          </VStack>
+        ) : (
+          <Text fontSize='xs' color={muted}>
+            Nothing has registered yet. Checking every few seconds. If it stays
+            empty: check outbound HTTPS to this address, that the token has not
+            expired, and the service log.
+          </Text>
+        )}
+      </VStack>
+    </StepFrame>
+  );
+}

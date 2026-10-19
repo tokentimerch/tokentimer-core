@@ -1,0 +1,70 @@
+// Alert threshold presets and validation. Mirrors the server: whole days
+// relative to expiry, -365 to 730, where 0 is the expiry day and negative
+// values fire after expiry.
+
+export const THRESHOLD_MIN = -365;
+export const THRESHOLD_MAX = 730;
+export const THRESHOLD_LIMIT = 12;
+
+export const THRESHOLD_PRESETS = {
+  standard: {
+    label: 'Standard',
+    description: '30, 14, 7 and 1 day before, and on the day',
+    values: [30, 14, 7, 1, 0],
+  },
+  early: {
+    label: 'Early warning',
+    description: 'Starts two months ahead, for slow renewals',
+    values: [60, 30, 14, 7, 1, 0],
+  },
+  minimal: {
+    label: 'Minimal',
+    description: 'Only the last week and the day itself',
+    values: [7, 1, 0],
+  },
+};
+
+export function parseThresholds(text) {
+  const parts = String(text || '')
+    .split(/[\s,;]+/)
+    .filter(Boolean);
+  const problems = [];
+  const values = [];
+  for (const part of parts) {
+    const n = Number(part);
+    if (!Number.isInteger(n)) {
+      problems.push(`"${part}" is not a whole number of days.`);
+    } else if (n < THRESHOLD_MIN || n > THRESHOLD_MAX) {
+      problems.push(
+        `${n} is outside ${THRESHOLD_MIN} to ${THRESHOLD_MAX} days.`
+      );
+    } else {
+      values.push(n);
+    }
+  }
+  const unique = Array.from(new Set(values)).sort((a, b) => b - a);
+  if (unique.length === 0 && problems.length === 0) {
+    problems.push('Enter at least one number of days.');
+  }
+  if (unique.length > THRESHOLD_LIMIT) {
+    problems.push(`Use at most ${THRESHOLD_LIMIT} thresholds.`);
+  }
+  return { values: unique, problems };
+}
+
+/** Which preset the current values match, or 'custom'. */
+export function matchPreset(values) {
+  const key = JSON.stringify([...(values || [])].sort((a, b) => b - a));
+  for (const [id, preset] of Object.entries(THRESHOLD_PRESETS)) {
+    if (JSON.stringify(preset.values) === key) return id;
+  }
+  return 'custom';
+}
+
+export function describeThresholds(values) {
+  return (values || [])
+    .map(v =>
+      v > 0 ? `${v} days before` : v === 0 ? 'on the day' : `${-v} days after`
+    )
+    .join(', ');
+}
