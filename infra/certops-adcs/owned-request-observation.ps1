@@ -12,7 +12,9 @@ if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw '
 if(-not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Isolated officer credential absent'}
 if(-not $Discover -and $RequestId -lt 1){throw 'An exact request identifier is required'}
 $credential=[PSCredential]::new('TTQUAL\tt-lab-admin',(ConvertTo-SecureString $env:CERTOPS_ADCS_OFFICER_PASSWORD -AsPlainText -Force))
-Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $CommonName,$RequestId,[bool]$Discover,[bool]$AllowMissing -ScriptBlock {
+# Evaluate casts before argument-mode parsing; bare [bool] casts become strings
+# and fail the remote ScriptBlock's Boolean parameter binding.
+Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $CommonName,$RequestId,([bool]$Discover),([bool]$AllowMissing) -ScriptBlock {
   param([string]$CommonName,[long]$RequestId,[bool]$Discover,[bool]$AllowMissing)
   $ErrorActionPreference='Stop'
   $view=New-Object -ComObject CertificateAuthority.View
