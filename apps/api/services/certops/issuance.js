@@ -79,6 +79,19 @@ function issuanceError(message) {
   return error;
 }
 
+const CERTOPS_CERTIFICATE_PATH_IN_USE = "CERTOPS_CERTIFICATE_PATH_IN_USE";
+
+/** The path is held by another certificate on the same agent. */
+function certificatePathInUse(status) {
+  const detail = status ? ` (status: ${status})` : "";
+  const error = new Error(
+    `Another certificate on this agent already uses this certificate path${detail}. ` +
+      "Choose a different path, or retire that certificate first.",
+  );
+  error.code = CERTOPS_CERTIFICATE_PATH_IN_USE;
+  return error;
+}
+
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -333,6 +346,24 @@ async function insertProvisioningCertificate(client, options) {
     ? `winstore://${windowsTarget.store}/${windowsTarget.binding.site}:${windowsTarget.binding.port}`
     : `file://${options.certPath}`;
   const deployedCertPath = windowsTarget ? null : options.certPath;
+  // A path can belong to one managed certificate per agent. Say so, with what
+  // holds it, instead of letting the unique index surface as an opaque 500.
+  if (deployedCertPath && options.assignedAgentId) {
+    const holder = await client.query(
+      `SELECT status FROM managed_certificates
+        WHERE workspace_id = $1 AND deployed_agent_id = $2
+          AND deployed_cert_path = $3
+          AND source = ANY($4::text[])
+        LIMIT 1`,
+      [
+        options.workspaceId,
+        options.assignedAgentId,
+        deployedCertPath,
+        [ISSUANCE_SOURCE, "agent_filesystem"],
+      ],
+    );
+    if (holder.rows[0]) throw certificatePathInUse(holder.rows[0].status);
+  }
   const publicMetadata = windowsTarget
     ? {
         issuance: {
@@ -354,31 +385,45 @@ async function insertProvisioningCertificate(client, options) {
         },
       };
 
-  const result = await client.query(
-    `INSERT INTO managed_certificates (
+  let result;
+  try {
+    result = await client.query(
+      `INSERT INTO managed_certificates (
        workspace_id, status, source, source_ref, name, common_name,
        subject_alt_names, key_mode, key_reference, public_metadata,
        deployed_cert_path, deployed_agent_id
      ) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9::jsonb, $10, $11)
      RETURNING id, status, source, source_ref, common_name`,
-    [
-      options.workspaceId,
-      ISSUANCE_STATUS,
-      ISSUANCE_SOURCE,
-      options.idempotencyKey,
-      options.commonName,
-      options.sans,
-      keyMode,
-      keyReference,
-      JSON.stringify(publicMetadata),
-      // Correlation key for the later filesystem scan of this same path, so the
-      // certificate this operator requested and the one an agent subsequently
-      // discovers are one identity rather than two. Null for windows-iis: there
-      // is no filesystem path to correlate against.
-      deployedCertPath,
-      options.assignedAgentId || null,
-    ],
-  );
+      [
+        options.workspaceId,
+        ISSUANCE_STATUS,
+        ISSUANCE_SOURCE,
+        options.idempotencyKey,
+        options.commonName,
+        options.sans,
+        keyMode,
+        keyReference,
+        JSON.stringify(publicMetadata),
+        // Correlation key for the later filesystem scan of this same path, so the
+        // certificate this operator requested and the one an agent subsequently
+        // discovers are one identity rather than two. Null for windows-iis: there
+        // is no filesystem path to correlate against.
+        deployedCertPath,
+        options.assignedAgentId || null,
+      ],
+    );
+  } catch (error) {
+    // A concurrent request can pass the check above and still meet the index.
+    if (
+      error?.code === "23505" &&
+      String(error.constraint || "").includes(
+        "uq_managed_certificates_agent_deployed_path",
+      )
+    ) {
+      throw certificatePathInUse(null);
+    }
+    throw error;
+  }
   return result.rows[0];
 }
 
@@ -519,6 +564,7 @@ async function createCertificateIssuanceJob(options = {}) {
 
 module.exports = {
   CERTOPS_JOB_INVALID,
+  CERTOPS_CERTIFICATE_PATH_IN_USE,
   ISSUANCE_KEY_MODE,
   ISSUANCE_SOURCE,
   ISSUANCE_STATUS,

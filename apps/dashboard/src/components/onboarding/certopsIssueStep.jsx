@@ -124,12 +124,9 @@ export default function IssueStep({ ctx }) {
       const created = res.job || res;
       await saveCertops(ctx, { issueJobId: created.id });
     } catch (e) {
+      // The server explains a taken path itself (409), so show it as is.
       setError(
-        e?.response?.data?.code === 'INTERNAL_ERROR'
-          ? 'The server could not create the order. If an earlier order failed on this path, retire its provisioning entry first.'
-          : e?.response?.data?.error ||
-              e.message ||
-              'Could not request the order.'
+        e?.response?.data?.error || e.message || 'Could not request the order.'
       );
     } finally {
       setBusy(false);

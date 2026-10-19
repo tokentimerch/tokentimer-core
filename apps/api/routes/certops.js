@@ -224,6 +224,7 @@ const {
   createControllerProvisionIntent,
 } = require("../services/certops/controllerProvisioning");
 const {
+  CERTOPS_CERTIFICATE_PATH_IN_USE,
   createCertificateIssuanceJob,
 } = require("../services/certops/issuance");
 const {
@@ -888,6 +889,13 @@ function handleCertOpsError(res, err) {
     return res.status(409).json({
       error: "Idempotency key was already used with a different CertOps job request",
       code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT,
+    });
+  }
+
+  if (err?.code === CERTOPS_CERTIFICATE_PATH_IN_USE) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_CERTIFICATE_PATH_IN_USE,
     });
   }
 

@@ -306,6 +306,44 @@ describe("Onboarding notifications and CertOps reality (API contract)", function
     }
   });
 
+  it("answers 409 with a clear code when a certificate path is already taken on the agent", async () => {
+    // The path check needs an agent. Register a minimal one the same way the
+    // setup guide's test above does, then issue twice for the same path.
+    const agentId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO certops_agents
+         (id, workspace_id, agent_id, agent_version, protocol_version, credential_prefix, credential_hash)
+       VALUES ($1, $2, $3, '0.18.0', '1.0.0', $4, $5)`,
+      [
+        agentId,
+        workspaceId,
+        `wire-${agentId}`,
+        `ttagent_${crypto.randomBytes(8).toString("hex")}`,
+        crypto.randomBytes(32).toString("hex"),
+      ],
+    );
+    const body = (key) => ({
+      operation: "issue",
+      assignedAgentId: agentId,
+      idempotencyKey: key,
+      payload: {
+        target: { type: "domain", reference: "taken.example.com" },
+        sans: ["taken.example.com"],
+        commandRef: "certbot",
+        caEndpoint: "https://acme-staging-v02.api.letsencrypt.org/directory",
+        dnsZone: "example.com",
+        dnsProvider: "cloudflare",
+        certPath: "/etc/ssl/certs/taken.pem",
+      },
+    });
+    const first = await request(BASE).post(ws("/certops/jobs")).set("Cookie", manager.cookie).send(body(`path-a-${crypto.randomUUID()}`));
+    expect(first.status, JSON.stringify(first.body)).to.equal(201);
+    const second = await request(BASE).post(ws("/certops/jobs")).set("Cookie", manager.cookie).send(body(`path-b-${crypto.randomUUID()}`));
+    expect(second.status, JSON.stringify(second.body)).to.equal(409);
+    expect(second.body.code).to.equal("CERTOPS_CERTIFICATE_PATH_IN_USE");
+    expect(second.body.error).to.match(/different path/);
+  });
+
   it("reports the wizard's issue job from the database, and separates observed from provisioning", async () => {
     const issue = await request(BASE)
       .post(ws("/certops/jobs"))

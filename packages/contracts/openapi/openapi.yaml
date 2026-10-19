@@ -6133,6 +6133,13 @@ paths:
                   value:
                     error: Idempotency key was already used with a different CertOps job request
                     code: CERTOPS_JOB_IDEMPOTENCY_CONFLICT
+                certificatePathInUse:
+                  value:
+                    error: >-
+                      Another certificate on this agent already uses this
+                      certificate path (status: provisioning). Choose a
+                      different path, or retire that certificate first.
+                    code: CERTOPS_CERTIFICATE_PATH_IN_USE
                 trustJobIdempotencyConflict:
                   value:
                     error: >-
