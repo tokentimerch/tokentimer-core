@@ -184,3 +184,47 @@ describe('goal availability', () => {
     expect(Object.keys(GOALS).length).toBeGreaterThan(0);
   });
 });
+
+describe('certops_first completion', () => {
+  const base = {
+    monitors: { items: [] },
+    references: { tokenIds: { existing: [] } },
+  };
+  const done = (progress, certops) =>
+    isStepSatisfied('certops_first', {
+      reality: { ...base, certops },
+      progress,
+    });
+
+  it('treats discovery goals as done once an observed certificate exists', () => {
+    const p = { certops: { objective: 'observe' } };
+    expect(done(p, { certificates: { total: 1, observed: 0 } })).toBe(false);
+    expect(done(p, { certificates: { total: 1, observed: 1 } })).toBe(true);
+  });
+
+  it('does not count a requested order as an issued certificate on Linux', () => {
+    const p = { certops: { objective: 'automate', infrastructure: 'linux' } };
+    // A provisioning row exists as soon as the order is requested.
+    const requested = {
+      certificates: { total: 1, observed: 0 },
+      issueJob: { status: 'pending', mode: 'real' },
+    };
+    expect(done(p, requested)).toBe(false);
+  });
+
+  it('requires a real, succeeded job on Linux automation', () => {
+    const p = { certops: { objective: 'automate' } };
+    const job = status => ({ certificates: { observed: 1 }, issueJob: status });
+    expect(done(p, job({ status: 'failed', mode: 'real' }))).toBe(false);
+    expect(done(p, job({ status: 'dry_run_complete', mode: 'dry_run' }))).toBe(
+      false
+    );
+    expect(done(p, job({ status: 'succeeded', mode: 'dry_run' }))).toBe(false);
+    expect(done(p, job({ status: 'succeeded', mode: 'real' }))).toBe(true);
+  });
+
+  it('falls back to inventory on Windows, where the wizard cannot verify issuance', () => {
+    const p = { certops: { objective: 'automate', infrastructure: 'windows' } };
+    expect(done(p, { certificates: { observed: 1 } })).toBe(true);
+  });
+});

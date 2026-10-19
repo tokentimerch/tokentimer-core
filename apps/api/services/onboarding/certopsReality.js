@@ -82,32 +82,59 @@ async function loadDistributionReality(pool, workspaceId) {
 async function loadJobStatus(pool, workspaceId, jobId) {
   if (typeof jobId !== "string" || !/^[0-9a-f-]{36}$/i.test(jobId)) return null;
   const { rows } = await pool.query(
-    `SELECT id, operation, status FROM certificate_jobs WHERE workspace_id = $1 AND id = $2`,
+    `SELECT j.id, j.operation, j.status, j.mode, j.error_code, j.error_message,
+            mc.status AS certificate_status
+       FROM certificate_jobs j
+       LEFT JOIN managed_certificates mc
+         ON j.subject_type = 'managed_certificate' AND mc.id::text = j.subject_id
+      WHERE j.workspace_id = $1 AND j.id = $2`,
     [workspaceId, jobId],
   );
-  return rows[0] ? { id: rows[0].id, operation: rows[0].operation, status: rows[0].status } : null;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    operation: row.operation,
+    status: row.status,
+    mode: row.mode,
+    errorCode: row.error_code || null,
+    // Shown in the wizard, so bounded; the full text stays in the job log.
+    errorMessage: row.error_message ? String(row.error_message).slice(0, 300) : null,
+    certificateStatus: row.certificate_status || null,
+  };
 }
 
-async function loadCertopsReality(pool, { workspaceId, role, enabled, since, dryRunJobId }) {
+async function loadCertopsReality(
+  pool,
+  { workspaceId, role, enabled, since, dryRunJobId, issueJobId },
+) {
   if (enabled !== true) return null;
   if (role !== "admin" && role !== "workspace_manager") return null;
   const agents = await listAgents({ workspaceId, client: pool });
+  // A row in "provisioning" only means an order was requested. It becomes an
+  // observed certificate once it holds real material.
   const certs = await pool.query(
     `SELECT COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE status = 'active')::int AS active
+            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+            COUNT(*) FILTER (
+              WHERE status IN ('discovered', 'active', 'renewing', 'expiring', 'expired')
+            )::int AS observed
        FROM managed_certificates
       WHERE workspace_id = $1 AND status NOT IN ('decommissioned')`,
     [workspaceId],
   );
   const distribution = await loadDistributionReality(pool, workspaceId);
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
+  const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
   return {
     agents: summarizeAgents(agents.items, { since }),
     distribution,
     dryRun,
+    issueJob,
     certificates: {
       total: certs.rows[0]?.total || 0,
       active: certs.rows[0]?.active || 0,
+      observed: certs.rows[0]?.observed || 0,
     },
   };
 }
