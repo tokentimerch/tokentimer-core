@@ -93,7 +93,7 @@
         "id",
         "kind",
         "fingerprintSha256",
-        "subject",
+        "commonName",
         "issuer",
         "notAfter",
         "daysUntilExpiry",
@@ -108,7 +108,7 @@
         "fingerprintSha256": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/fingerprintSha256" }]
         },
-        "subject": { "$ref": "#/definitions/nullableUntrustedText" },
+        "commonName": { "$ref": "#/definitions/nullableUntrustedText" },
         "issuer": { "$ref": "#/definitions/nullableUntrustedText" },
         "notAfter": { "$ref": "#/definitions/nullableTimestamp" },
         "daysUntilExpiry": {
@@ -218,20 +218,18 @@
             "renewal": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["state", "renewsFrom", "renewBeforeDays", "profileId", "workspacePaused", "pathState"],
+              "required": ["pathState", "pathReason", "profileId", "workspacePaused"],
               "properties": {
-                "state": { "$ref": "#/definitions/snakeCode" },
-                "renewsFrom": { "$ref": "#/definitions/nullableTimestamp" },
-                "renewBeforeDays": {
-                  "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }]
+                "pathState": {
+                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
+                },
+                "pathReason": {
+                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
                 },
                 "profileId": {
                   "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/uuid" }]
                 },
-                "workspacePaused": { "type": "boolean" },
-                "pathState": {
-                  "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/renewalPathState" }]
-                }
+                "workspacePaused": { "type": "boolean" }
               }
             },
             "observation": {
@@ -313,7 +311,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "includeRetired": { "type": "boolean", "default": false },
         "limit": { "$ref": "#/definitions/limit" },
         "cursor": { "$ref": "#/definitions/cursor" }
       }
@@ -357,7 +354,9 @@
               "agentVersion": { "type": "string", "maxLength": 32 },
               "protocolVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
               "compatibilityState": { "$ref": "#/definitions/snakeCode" },
-              "clockDriftState": { "$ref": "#/definitions/snakeCode" },
+              "clockDriftState": {
+                "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/snakeCode" }]
+              },
               "supportedOperations": {
                 "type": "array",
                 "maxItems": 32,
@@ -474,7 +473,7 @@
         "status": { "$ref": "#/definitions/jobStatus" },
         "operation": { "$ref": "#/definitions/jobOperation" },
         "subjectId": { "$ref": "#/definitions/uuid" },
-        "createdSince": { "$ref": "#/definitions/timestamp" },
+        "createdSince": { "type": "string", "enum": ["24h", "7d", "30d"] },
         "limit": { "$ref": "#/definitions/limit" },
         "cursor": { "$ref": "#/definitions/cursor" }
       }

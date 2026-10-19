@@ -138,6 +138,8 @@ async function listCertificateIdentities({
   unmanaged,
   identityId,
   q,
+  restrictedSearch = false,
+  expiresBefore = null,
   sort,
   direction,
   canReadTopology = false,
@@ -199,10 +201,30 @@ async function listCertificateIdentities({
         ? "(open_period_id IS NOT NULL OR (still_observed AND lifecycle_status IN ('revoked','decommissioned')))"
         : "open_period_id IS NOT NULL",
     );
+  if (expiresBefore instanceof Date && !Number.isNaN(expiresBefore.getTime())) {
+    params.push(expiresBefore.toISOString());
+    conditions.push(`(not_after IS NOT NULL AND not_after <= $${params.length}::timestamptz)`);
+  }
   if (search) {
     params.push(search.q.toLowerCase());
     const textParam = params.length;
-    const textMatch = `(
+    // Operator connections search only what the operator projection can show:
+    // names, issuer and subject alternative names. The full search below also
+    // reads certificate bodies, lifecycle reasons, key references and deployed
+    // paths, so a match there would reveal fields a connection must not see.
+    const restrictedTextMatch = `(
+      position($${textParam} in lower(COALESCE(common_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(managed_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
+      position($${textParam} in lower(COALESCE(issuer, ''))) > 0 OR
+      EXISTS (
+        SELECT 1 FROM certops_identity_detail_history history
+        WHERE kind = 'identity' AND history.workspace_id = $1
+          AND history.identity_id = candidates.id
+          AND position($${textParam} in lower(COALESCE(history.certificate_details->>'subjectAltNames', ''))) > 0
+      )
+    )`;
+    const fullTextMatch = `(
       position($${textParam} in lower(COALESCE(common_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(managed_name, ''))) > 0 OR
       position($${textParam} in lower(COALESCE(display_name, ''))) > 0 OR
@@ -244,6 +266,7 @@ async function listCertificateIdentities({
             WHERE position($${textParam} in lower(property.value)) > 0)
       )
     )`;
+    const textMatch = restrictedSearch === true ? restrictedTextMatch : fullTextMatch;
     if (search.fingerprintNeedle) {
       params.push(search.fingerprintNeedle);
       conditions.push(

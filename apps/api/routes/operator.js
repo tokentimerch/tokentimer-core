@@ -17,6 +17,7 @@ const { pool } = require("../db/database");
 const { logger } = require("../utils/logger");
 const { getApiLimiter } = require("../middleware/rateLimit");
 const { rejectKeyMaterial } = require("../middleware/reject-key-material");
+const { requireCertOpsEnabled } = require("../middleware/require-certops-enabled");
 const {
   requireOperatorInterfaceEnabled,
 } = require("../middleware/require-operator-interface");
@@ -30,6 +31,9 @@ const {
 } = require("../services/certops/workspaceKillSwitch");
 const connections = require("../services/operator/connections");
 const { projectWhoami } = require("../services/operator/projections");
+const reads = require("../services/operator/reads");
+const queries = require("../services/operator/queryParsers");
+const { CURSOR_INVALID, isUuid } = require("../services/operator/readProjections");
 
 const VALIDATION_CODES = new Set([
   connections.CONNECTION_EXPIRY_INVALID,
@@ -321,5 +325,154 @@ router.get(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// Read routes. Every one is GET, behind the rollout gate and a connection
+// guard that names its scope. The workspace is the connection's, never the
+// path's. A missing record and a record in another workspace both answer 404,
+// so a caller cannot tell the two apart.
+
+function operatorRead(scope, { minRole } = {}) {
+  return [
+    getApiLimiter(),
+    requireOperatorInterfaceEnabled,
+    requireOperatorConnection({ scope, minRole }),
+    // Same rollout switch the session routes honor: with CertOps off, none of
+    // this data is served to anyone.
+    requireCertOpsEnabled,
+  ];
+}
+
+function notFound(res) {
+  return res.status(404).json({ error: "Not found", code: "NOT_FOUND" });
+}
+
+function readError(res, err, message) {
+  if (err?.code === "OPERATOR_VALIDATION_ERROR" || err?.code === CURSOR_INVALID) {
+    return res.status(400).json({ error: err.message, code: "OPERATOR_VALIDATION_ERROR" });
+  }
+  logger.error(message, { error: err?.message, code: err?.code || null });
+  return res.status(500).json({ error: message, code: "INTERNAL_ERROR" });
+}
+
+function identityParam(req, res) {
+  const id = String(req.params.identityId || "");
+  if (!isUuid(id)) {
+    notFound(res);
+    return null;
+  }
+  return id;
+}
+
+router.get("/api/v1/operator/certificates", ...operatorRead("mcp:certs:read"), async (req, res) => {
+  try {
+    const parsed = queries.parseCertificates(req.query);
+    const body = await reads.listCertificates({
+      workspaceId: req.operator.workspaceId,
+      limit: 25,
+      offset: 0,
+      ...parsed,
+    });
+    return res.json(body);
+  } catch (err) {
+    return readError(res, err, "Failed to list certificates");
+  }
+});
+
+router.get("/api/v1/operator/certificates/:identityId", ...operatorRead("mcp:certs:read"), async (req, res) => {
+  try {
+    const identityId = identityParam(req, res);
+    if (!identityId) return null;
+    queries.parseQuery(req.query, {});
+    const body = await reads.getCertificate({ workspaceId: req.operator.workspaceId, identityId });
+    return body ? res.json(body) : notFound(res);
+  } catch (err) {
+    return readError(res, err, "Failed to read certificate");
+  }
+});
+
+router.get(
+  "/api/v1/operator/certificates/:identityId/observations",
+  ...operatorRead("mcp:certs:read"),
+  async (req, res) => {
+    try {
+      const identityId = identityParam(req, res);
+      if (!identityId) return null;
+      const parsed = queries.parsePaged(req.query);
+      const body = await reads.getObservations({
+        workspaceId: req.operator.workspaceId,
+        identityId,
+        limit: 25,
+        offset: 0,
+        ...parsed,
+      });
+      return body ? res.json(body) : notFound(res);
+    } catch (err) {
+      return readError(res, err, "Failed to read observations");
+    }
+  },
+);
+
+router.get(
+  "/api/v1/operator/certificates/:identityId/explain",
+  ...operatorRead("mcp:certs:read"),
+  async (req, res) => {
+    try {
+      const identityId = identityParam(req, res);
+      if (!identityId) return null;
+      queries.parseQuery(req.query, {});
+      const body = await reads.explainCertificate({ workspaceId: req.operator.workspaceId, identityId });
+      return body ? res.json(body) : notFound(res);
+    } catch (err) {
+      return readError(res, err, "Failed to explain certificate state");
+    }
+  },
+);
+
+router.get(
+  "/api/v1/operator/agents",
+  ...operatorRead("mcp:agents:read", { minRole: "workspace_manager" }),
+  async (req, res) => {
+    try {
+      const parsed = queries.parsePaged(req.query);
+      const body = await reads.listAgentHealth({
+        workspaceId: req.operator.workspaceId,
+        limit: 25,
+        offset: 0,
+        ...parsed,
+      });
+      return res.json(body);
+    } catch (err) {
+      return readError(res, err, "Failed to list agents");
+    }
+  },
+);
+
+router.get("/api/v1/operator/jobs", ...operatorRead("mcp:jobs:read"), async (req, res) => {
+  try {
+    const parsed = queries.parseJobs(req.query);
+    const body = await reads.listJobs({
+      workspaceId: req.operator.workspaceId,
+      limit: 25,
+      offset: 0,
+      ...parsed,
+    });
+    return res.json(body);
+  } catch (err) {
+    return readError(res, err, "Failed to list jobs");
+  }
+});
+
+router.get("/api/v1/operator/jobs/:jobId", ...operatorRead("mcp:jobs:read"), async (req, res) => {
+  try {
+    const jobId = String(req.params.jobId || "");
+    if (!isUuid(jobId)) return notFound(res);
+    queries.parseQuery(req.query, {});
+    const body = await reads.getJob({ workspaceId: req.operator.workspaceId, jobId });
+    return body ? res.json(body) : notFound(res);
+  } catch (err) {
+    return readError(res, err, "Failed to read job");
+  }
+});
 
 module.exports = router;
