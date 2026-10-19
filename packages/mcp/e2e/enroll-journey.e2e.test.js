@@ -100,8 +100,9 @@ describe("enroll then serve, as real processes against the real API", { concurre
     assert.equal(enrolled.code, 0, enrolled.stderr);
     assert.match(enrolled.stdout, /Connected\./);
     assert.ok(fs.existsSync(file));
-    const stored = fs.readFileSync(file, "utf8").trim();
+    const [stored, binding] = fs.readFileSync(file, "utf8").trim().split("\n");
     assert.match(stored, /^ttopc_[a-f0-9]{16}_[a-f0-9]{64}$/);
+    assert.equal(binding, `api=${apiUrl}`, "the file records which server issued the credential");
     for (const text of [enrolled.stdout, enrolled.stderr]) {
       assert.ok(!text.includes(plaintextGrant) && !text.includes(stored.slice(23)), "no secret on the terminal");
     }
@@ -125,6 +126,88 @@ describe("enroll then serve, as real processes against the real API", { concurre
       assert.equal(JSON.parse(denied.content[0].text).code, "MCP_SCOPE_DENIED");
     } finally {
       await client.close().catch(() => {});
+    }
+  });
+
+  it("will not hand the stored credential to a server that did not issue it (the confused-deputy attack)", async () => {
+    // The attack: a hostile project configuration starts the adapter with only
+    // TOKENTIMER_API_URL pointing at the attacker, hoping the adapter finds the
+    // victim's stored credential and sends it there.
+    const http = require("node:http");
+    const attackerRequests = [];
+    const attacker = http.createServer((req, res) => {
+      attackerRequests.push({ url: req.url, authorization: req.headers.authorization || null });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    await new Promise((resolve) => attacker.listen(0, "127.0.0.1", resolve));
+    const attackerUrl = `http://127.0.0.1:${attacker.address().port}`;
+
+    try {
+      const { plaintextGrant } = await newGrant({ name: "victim" });
+      const file = path.join(tmp, "victim", "credential");
+      const enrolled = await runEnrollProcess({ input: `${plaintextGrant}\n`, args: ["--api-url", apiUrl, "--credential-file", file] });
+      assert.equal(enrolled.code, 0, enrolled.stderr);
+      const secret = fs.readFileSync(file, "utf8").split("\n")[0];
+
+      // Explicit file, wrong server: refused before any request is made.
+      const hostile = await new Promise((resolve) => {
+        const child = spawn(process.execPath, [BIN], {
+          env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TOKENTIMER_API_URL: attackerUrl, TOKENTIMER_MCP_CREDENTIAL_FILE: file },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stderr = "";
+        let stdout = "";
+        child.stderr.on("data", (c) => (stderr += c));
+        child.stdout.on("data", (c) => (stdout += c));
+        child.on("close", (code) => resolve({ code, stderr, stdout }));
+        setTimeout(() => child.kill(), 15000).unref();
+      });
+      assert.equal(hostile.code, 2, hostile.stderr);
+      assert.match(hostile.stderr, /different TokenTimer server/);
+      assert.equal(hostile.stdout, "");
+      assert.ok(!hostile.stderr.includes(secret.slice(23)), "the credential must not be echoed");
+
+      // Default location, wrong server: the same refusal. APPDATA and XDG point
+      // the default path at the victim's file.
+      const base = path.join(tmp, "home");
+      fs.mkdirSync(base, { recursive: true });
+      const defaultFile = process.platform === "win32" ? path.join(base, "TokenTimer", "mcp", "credential") : path.join(base, "tokentimer", "mcp", "credential");
+      fs.mkdirSync(path.dirname(defaultFile), { recursive: true });
+      fs.copyFileSync(file, defaultFile);
+      if (process.platform !== "win32") fs.chmodSync(defaultFile, 0o600);
+      const viaDefault = await new Promise((resolve) => {
+        const child = spawn(process.execPath, [BIN], {
+          env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, APPDATA: base, XDG_CONFIG_HOME: base, TOKENTIMER_API_URL: attackerUrl },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stderr = "";
+        child.stderr.on("data", (c) => (stderr += c));
+        child.on("close", (code) => resolve({ code, stderr }));
+        setTimeout(() => child.kill(), 15000).unref();
+      });
+      assert.equal(viaDefault.code, 2, viaDefault.stderr);
+      assert.match(viaDefault.stderr, /different TokenTimer server/);
+
+      assert.deepEqual(attackerRequests, [], "the attacker's server must never receive a single request");
+
+      // And the same file still works against the server that issued it.
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [BIN],
+        stderr: "pipe",
+        env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, APPDATA: base, XDG_CONFIG_HOME: base, TOKENTIMER_API_URL: apiUrl },
+      });
+      const client = new Client({ name: "victim", version: "0.0.1" });
+      try {
+        await client.connect(transport);
+        const who = await client.callTool({ name: "tt_whoami", arguments: {} });
+        assert.notEqual(who.isError, true, who.content?.[0]?.text);
+      } finally {
+        await client.close().catch(() => {});
+      }
+    } finally {
+      await new Promise((resolve) => attacker.close(resolve));
     }
   });
 
