@@ -139,6 +139,10 @@ function loadConfig(
     origin,
     basePath,
     legacy,
+    // Offering write tools to the assistant is opt-in. It only controls what
+    // this adapter lists; the API refuses writes on its own unless the
+    // instance, the workspace and the connection all allow them.
+    enableWrites: String(env.TOKENTIMER_MCP_ENABLE_WRITES || "").trim().toLowerCase() === "true",
     requestTimeoutMs: parsePositiveInt(env.TOKENTIMER_MCP_TIMEOUT_MS, "TOKENTIMER_MCP_TIMEOUT_MS", 15000, {
       min: 1000,
       max: 120000,

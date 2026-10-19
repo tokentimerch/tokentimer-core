@@ -287,6 +287,7 @@ const SAFE_JOB_SELECT_FIELDS = `
   executor_kind,
   requested_by_user_id,
   requested_by_api_token_id,
+  requested_by_connection_id,
   idempotency_key,
   creation_request_hash,
   subject_type,
@@ -1700,6 +1701,7 @@ function jobFromRow(row) {
     executorKind: row.executor_kind ?? "agent",
     requestedByUserId: row.requested_by_user_id,
     requestedByApiTokenId: row.requested_by_api_token_id,
+    requestedByConnectionId: row.requested_by_connection_id ?? null,
     idempotencyKey: row.idempotency_key,
     creationRequestHash: row.creation_request_hash,
     subjectType: row.subject_type,
@@ -2183,6 +2185,15 @@ async function createCertificateJob(options) {
     });
   }
 
+  // Set only by the operator request path, and it must be a UUID.
+  let connectionIdForInsert = null;
+  if (options.requestedByConnectionId !== undefined && options.requestedByConnectionId !== null) {
+    if (!SUBJECT_ID_UUID_PATTERN.test(String(options.requestedByConnectionId))) {
+      throw serviceError("requestedByConnectionId must be a UUID", CERTOPS_JOB_INVALID);
+    }
+    connectionIdForInsert = String(options.requestedByConnectionId);
+  }
+
   try {
     const result = await db.query(
       `INSERT INTO certificate_jobs (
@@ -2210,12 +2221,13 @@ async function createCertificateJob(options) {
          completed_at,
         canceled_at,
         creation_request_hash,
-        enrollment_id
+        enrollment_id,
+        requested_by_connection_id
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
          $12::jsonb, $13::jsonb, $14, $15, $16, $17, $18, $19,
-         $20, $21, $22, $23, $24, $25
+         $20, $21, $22, $23, $24, $25, $26
        )
        ON CONFLICT (workspace_id, idempotency_key)
          WHERE idempotency_key IS NOT NULL
@@ -2247,6 +2259,7 @@ async function createCertificateJob(options) {
         cancelledAt,
         creationRequestHash,
         options.enrollmentId || null,
+        connectionIdForInsert,
       ],
     );
 

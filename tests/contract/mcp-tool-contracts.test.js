@@ -18,6 +18,7 @@ function load(relative) {
 const common = load("mcp-common.schema.json");
 const readTools = load("mcp-read-tools.schema.json");
 const writeDraft = load("mcp-write-envelope.draft.schema.json");
+const renewTools = load("mcp-renew-tools.schema.json");
 const catalog = load("mcp-tool-catalog.json");
 const fixtures = load("fixtures/read-tools.json");
 
@@ -27,6 +28,7 @@ function newAjv() {
   ajv.addSchema(common);
   ajv.addSchema(readTools);
   ajv.addSchema(writeDraft);
+  ajv.addSchema(renewTools);
   return ajv;
 }
 
@@ -66,10 +68,13 @@ describe("MCP tool contracts (ADR-0015)", () => {
     for (const id of Object.keys(writeDraft.definitions)) {
       assert.ok(ajv.getSchema(`${writeDraft.$id}#/definitions/${id}`), `draft definition ${id}`);
     }
+    for (const id of Object.keys(renewTools.definitions)) {
+      assert.ok(ajv.getSchema(`${renewTools.$id}#/definitions/${id}`), `renew definition ${id}`);
+    }
   });
 
   it("keeps every object closed so fields are disclosed only deliberately", () => {
-    for (const schema of [common, readTools, writeDraft]) {
+    for (const schema of [common, readTools, writeDraft, renewTools]) {
       walkObjectNodes(schema, (node) => {
         assert.strictEqual(
           node.additionalProperties,
@@ -82,7 +87,7 @@ describe("MCP tool contracts (ADR-0015)", () => {
 
   it("never names an authority-bearing or secret-bearing output field", () => {
     const forbidden = new Set(catalog.forbiddenOutputFields.map((name) => name.toLowerCase()));
-    for (const schema of [common, readTools, writeDraft]) {
+    for (const schema of [common, readTools, writeDraft, renewTools]) {
       for (const name of propertyNames(schema)) {
         assert.ok(!forbidden.has(name.toLowerCase()), `${schema.$id} exposes forbidden field "${name}"`);
       }
@@ -97,6 +102,9 @@ describe("MCP tool contracts (ADR-0015)", () => {
         .map(([, node]) => node),
       writeDraft.definitions.submission,
       writeDraft.definitions.withdrawal,
+      ...Object.entries(renewTools.definitions)
+        .filter(([name]) => name.endsWith("_input"))
+        .map(([, node]) => node),
     ];
     for (const node of inputNodes) {
       for (const name of propertyNames(node)) {
@@ -118,7 +126,7 @@ describe("MCP tool contracts (ADR-0015)", () => {
       names.add(tool.name);
       assert.ok(scopes.has(tool.scope), `${tool.name}: undeclared scope ${tool.scope}`);
       assert.strictEqual(tool.minRole, scopes.get(tool.scope).minRole, `${tool.name}: role must match its scope`);
-      assert.ok(["mvp", "outline", "draft"].includes(tool.contractStatus), `${tool.name}: unknown contractStatus`);
+      assert.ok(["mvp", "write", "outline", "draft"].includes(tool.contractStatus), `${tool.name}: unknown contractStatus`);
     }
   });
 
@@ -157,7 +165,7 @@ describe("MCP tool contracts (ADR-0015)", () => {
     const writeTools = catalog.tools.filter((tool) => tool.annotations.readOnlyHint === false);
     assert.ok(writeTools.length > 0);
     for (const tool of writeTools) {
-      assert.notStrictEqual(tool.contractStatus, "mvp", `${tool.name} is a write tool and cannot be final`);
+      assert.notStrictEqual(tool.contractStatus, "mvp", `${tool.name} is a write tool and cannot be in the read-only set`);
     }
     for (const tool of catalog.tools.filter((entry) => entry.contractStatus === "outline")) {
       assert.ok(!tool.input && !tool.output, `${tool.name}: outline tools carry no schema yet`);

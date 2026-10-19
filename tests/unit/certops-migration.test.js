@@ -133,7 +133,7 @@ describe("operational notifications migration", () => {
       {version:72,name:"certops_distribution_review"},
       {version:73,name:"certops_distribution_transfer"},
     ]) assert.throws(() => validateMigrationHistory([row]), /unexpected name|Unsupported Core migration history/);
-    assert.throws(() => validateMigrationHistory([{version:79,name:"future_migration"}]), /not supported|Unsupported Core migration history/);
+    assert.throws(() => validateMigrationHistory([{version:80,name:"future_migration"}]), /not supported|Unsupported Core migration history/);
     assert.doesNotThrow(() => validateMigrationHistory(migrations.map(({version,name}) => ({version,name}))));
   });
 });

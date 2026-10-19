@@ -233,6 +233,7 @@ const {
 const {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
+  CERTOPS_APPROVAL_REQUEST_STALE,
   CERTOPS_APPROVAL_REASON_INVALID,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   approveJob,
@@ -679,6 +680,13 @@ function handleCertOpsError(res, err) {
     return res.status(403).json({
       error: "The user who requested a CertOps job cannot approve it",
       code: CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
+    });
+  }
+
+  if (err?.code === CERTOPS_APPROVAL_REQUEST_STALE) {
+    return res.status(409).json({
+      error: err.message,
+      code: CERTOPS_APPROVAL_REQUEST_STALE,
     });
   }
 

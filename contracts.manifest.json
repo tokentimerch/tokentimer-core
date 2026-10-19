@@ -344,6 +344,13 @@
           "description": "Input and output contracts for the first read-only MCP tools (proposed with ADR-0015)."
         },
         {
+          "id": "mcp-renew-tools-schema",
+          "kind": "schema",
+          "path": "packages/contracts/mcp/mcp-renew-tools.schema.json",
+          "status": "existing",
+          "description": "Input and output contracts for requesting a certificate renewal through an operator connection."
+        },
+        {
           "id": "mcp-write-envelope-draft-schema",
           "kind": "schema",
           "path": "packages/contracts/mcp/mcp-write-envelope.draft.schema.json",

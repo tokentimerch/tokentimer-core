@@ -570,6 +570,87 @@ Workspace pause blocks new write requests, subject to section 11.
   TLS, Origin and DNS-rebinding protection, and protected-resource metadata.
   Permanent bearer credentials are for stdio and localhost self-hosting only.
 
+### 16. First write release, as built (renew only)
+
+The first write release is deliberately narrow: **requesting a renewal**, and
+nothing else. Building it settled several of the open proposals above, and it
+also showed that parts of the original plan rest on premises that do not hold.
+
+**What exists.** A connection holding `mcp:renew:request` can preview a
+renewal, submit the previewed plan, read and list its own requests, and withdraw
+one that still waits. A submission creates an ordinary CertOps renewal job that
+always starts at `pending_approval`, recorded against the person and the
+connection, so it reuses the existing approval ledger, per-CA capacity gate,
+lifecycle checks and dispatch guards unchanged. The existing rule that the
+requester cannot approve their own job applies, from the dashboard as well.
+
+**Decisions this settles.**
+
+- *Three gates, all enforced in the API.* The instance flag
+  `MCP_OPERATOR_WRITES_ENABLED`, a per-workspace setting (off by default,
+  admin only, session only, audited, never changeable by a connection) and the
+  scope. Offering the tools in the adapter is a further opt-in
+  (`TOKENTIMER_MCP_ENABLE_WRITES`) that only controls what is listed.
+- *A narrow scope.* `mcp:renew:request`, not the broad lifecycle scope, which
+  stays reserved. A later, riskier tool gets its own scope, so no existing grant
+  can silently cover it.
+- *Request identity (section 10), as decided.* `requestId` is unique within the
+  originating connection. Replay is checked first, before preview expiry, and
+  returns the original outcome in any state, including after withdrawal, without
+  re-executing. The same `requestId` with different content is
+  `OPERATOR_IDEMPOTENCY_CONFLICT`. Submissions of one `requestId` are
+  serialized on a lock keyed on it, because without it simultaneous retries both
+  passed the lookup and all but one failed on the unique constraint. The plan
+  hash is content-addressed: two previews of an unchanged certificate hash
+  identically, so "plan A with plan B's hash" is a valid replay, not a conflict.
+- *Withdrawal exception (section 11), as decided.* Withdrawal needs
+  authentication, scope and ownership but not the write switches or an unpaused
+  workspace. It races approval on the job row and exactly one wins; the loser is
+  told, and withdrawal never claims to have prevented anything.
+- *Revocation (section 8), on the HTTP path.* A write route re-reads the
+  connection's authority inside its own transaction with the row locked, so a
+  revocation that commits first is always honored and one in flight must wait
+  for it. Revoking also cancels the connection's unapproved, approved and
+  pending jobs in the same transaction; a job an agent already claimed is left to
+  existing reconciliation. Approval refuses a request whose connection has ended
+  or whose 24 hour approval window has passed.
+- *Unapproved requests must not starve everyone else.* They count against the
+  shared per-CA renewal capacity, so a connection that is never approved could
+  fill it and block people and the scheduler. Assistant requests that are still
+  waiting are therefore limited per connection and, more tightly, across the
+  workspace to half the shared cap (2 of 5 by default). This was found by the
+  tests, not planned.
+
+**What was not built, and why.**
+
+- *Discovery and verification requests (planned 5a).* They do not exist in Core
+  to be exposed. There is no route, service or job operation that triggers an
+  on-demand scan or verification of a registered object; agents discover on their
+  own schedule, and the only scan routes take integration credentials, which an
+  assistant must never handle. Exposing them would mean designing a new feature
+  across the API, the signed-job protocol and the agent. It needs its own ADR.
+- *Issue.* Still blocked on the open question in section 9: who may approve an
+  issuance that creates a standing automatic renewal.
+- *Decommission and mark revoked.* They need a new action-request table and an
+  approval flow for changes that are not jobs. The renew slice proved the
+  pattern; these are the next candidates.
+- *CA-backed revocation.* Blocked on issuer connectors and revocation jobs and on
+  the shared outbound policy, both still planned in the roadmap.
+- *Configuration change, and remote HTTP with OAuth.* Each is a separate design
+  with its own gate.
+
+**Known gaps in what was built.**
+
+- A connection that *expires* (rather than is revoked) stops authenticating and
+  its waiting requests can no longer be approved, but an already approved,
+  not-yet-claimed job from it can still be claimed by an agent. Revocation closes
+  that case; expiry does not yet. A sweeper or a claim-path check would close it.
+- The approval window (24 hours) is enforced at approval time and shown as
+  `expired`, but nothing proactively cancels the job when it lapses.
+- The dashboard approvals screen does not yet show that a request came from an
+  assistant, which connection made it, or the resolved effect. Approvers see an
+  ordinary renewal job.
+
 ## Open decisions and proposed defaults
 
 These are product-policy settings, not protocol requirements. The values are

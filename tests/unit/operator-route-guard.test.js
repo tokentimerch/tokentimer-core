@@ -418,14 +418,44 @@ describe("route inventory", () => {
     for (const route of inside) {
       assert.ok(route.handlers.includes("requireOperatorInterfaceEnabled"), `${route.path} lacks the rollout gate`);
       assert.ok(route.handlers.includes("operatorConnectionGuard"), `${route.path} lacks the connection guard`);
-      assert.equal(route.method, "GET", `${route.method} ${route.path}: the first release has no operator writes`);
+      // whoami is the one route that must answer when CertOps is off, because it
+      // is how an assistant learns that.
+      if (route.path === "/api/v1/operator/whoami") continue;
+      assert.ok(route.handlers.includes("requireCertOpsEnabled"), `${route.path} lacks the CertOps gate`);
     }
   });
 
-  it("allows exactly one unguarded write in the namespace: redeeming a grant, gated and rate limited", () => {
+  // The only writes an assistant can make. Anything added to this list is a new
+  // way for a model to change state, so it must be added here deliberately.
+  const ALLOWED_WRITES = [
+    "POST /api/v1/operator/enroll/redeem",
+    "POST /api/v1/operator/renewals/preview",
+    "POST /api/v1/operator/renewals/requests",
+    "POST /api/v1/operator/requests/:requestRecordId/cancel",
+  ].sort();
+
+  it("limits operator writes to a reviewed list, each rate limited and refusing key material", () => {
     const writes = routes.filter((r) => r.path.startsWith("/api/v1/operator/") && r.method !== "GET");
-    assert.deepEqual(writes.map((r) => `${r.method} ${r.path}`), [REDEEM]);
-    const [redeem] = writes;
+    assert.deepEqual(writes.map((r) => `${r.method} ${r.path}`).sort(), ALLOWED_WRITES);
+    for (const route of writes.filter((r) => !isRedeem(r))) {
+      assert.ok(route.handlers.includes("rejectKeyMaterial"), `${route.path} must refuse key material`);
+      assert.ok(route.handlers.includes("operatorConnectionGuard"), `${route.path} must take a connection credential`);
+      assert.ok(!route.handlers.includes("requireSessionUser"), `${route.path} is not a session route`);
+    }
+  });
+
+  it("keeps every operator write behind a single write scope", () => {
+    const source = fs.readFileSync(path.join(routesDir, "operator.js"), "utf8");
+    const writeScopes = new Set([...source.matchAll(/operatorWrite\("([^"]+)"\)/g)].map((m) => m[1]));
+    assert.deepEqual([...writeScopes], ["mcp:renew:request"], "writes use only the narrow renew scope");
+  });
+
+  it("allows exactly one unguarded write in the namespace: redeeming a grant, gated and rate limited", () => {
+    const unguarded = routes.filter(
+      (r) => r.path.startsWith("/api/v1/operator/") && r.method !== "GET" && !r.handlers.includes("operatorConnectionGuard"),
+    );
+    assert.deepEqual(unguarded.map((r) => `${r.method} ${r.path}`), [REDEEM]);
+    const [redeem] = unguarded;
     assert.ok(redeem.handlers.includes("requireOperatorInterfaceEnabled"), "redeem lacks the rollout gate");
     assert.ok(!redeem.handlers.includes("operatorConnectionGuard"), "redeem must not take a connection credential");
     assert.ok(!redeem.handlers.includes("requireSessionUser"), "redeem is not a session route");

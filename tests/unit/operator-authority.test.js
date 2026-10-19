@@ -45,19 +45,30 @@ describe("scope vocabulary", () => {
     assert.deepEqual([...common.definitions.scope.enum].sort(), [...connections.ALLOWED_SCOPES].sort());
   });
 
-  it("keeps every first-release read scope grantable and every later scope reserved", () => {
-    const firstRelease = catalog.tools
-      .filter((tool) => tool.contractStatus === "mvp")
-      .map((tool) => tool.scope);
-    for (const scope of firstRelease) {
-      assert.ok(!connections.RESERVED_SCOPES.has(scope), `${scope} must be grantable`);
+  it("makes a scope grantable exactly when an implemented tool uses it", () => {
+    // The rule that keeps a premature grant from becoming live authority: a
+    // scope opens only in the release that ships a route for it.
+    const implemented = new Set(
+      catalog.tools.filter((tool) => tool.routeStatus === "implemented").map((tool) => tool.scope),
+    );
+    for (const scope of implemented) {
+      assert.ok(!connections.RESERVED_SCOPES.has(scope), `${scope} has an implemented tool, so it must be grantable`);
     }
-    for (const tool of catalog.tools.filter((t) => t.contractStatus !== "mvp")) {
-      // A later tool that shares a first-release scope is safe: the operator
-      // route behind it does not exist yet, and the route is what enforces.
-      if (firstRelease.includes(tool.scope)) continue;
+    for (const tool of catalog.tools.filter((t) => t.routeStatus !== "implemented")) {
+      if (implemented.has(tool.scope)) continue;
       assert.ok(connections.RESERVED_SCOPES.has(tool.scope), `${tool.name} scope ${tool.scope} must stay reserved`);
     }
+  });
+
+  it("keeps the broad lifecycle scope, and every riskier one, closed while only renewals exist", () => {
+    for (const scope of ["mcp:lifecycle:request", "mcp:config:request", "mcp:ca-revoke", "mcp:ops:request"]) {
+      assert.ok(connections.RESERVED_SCOPES.has(scope), `${scope} must stay reserved`);
+      assert.throws(() => connections._test.normalizeScopes([scope]), (e) => e.code === connections.CONNECTION_SCOPE_INVALID);
+    }
+    assert.deepEqual(connections._test.normalizeScopes(["mcp:renew:request", "mcp:requests:read"]), [
+      "mcp:renew:request",
+      "mcp:requests:read",
+    ]);
   });
 
   it("gives every tool a scope whose minimum role is at least the tool's own", () => {
