@@ -16,6 +16,7 @@ import PrimaryButton from './PrimaryButton.jsx';
 import {
   buildIssueJob,
   issueIdempotencyKey,
+  RELOAD_SERVICES,
   STAGING_CA,
 } from './certopsConfig.js';
 import { certopsProgress, saveCertops } from './certopsSetupSteps.jsx';
@@ -90,6 +91,7 @@ export default function IssueStep({ ctx }) {
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   const attempt = saved.issueAttempt || 1;
   const caEndpoint = saved.caEndpoint || STAGING_CA;
+  const reloadLabel = RELOAD_SERVICES[saved.reloadService]?.label || '';
   const { refresh } = ctx;
 
   useEffect(() => {
@@ -111,12 +113,14 @@ export default function IssueStep({ ctx }) {
           dnsProvider: saved.dnsProvider,
           certPath: saved.certPath,
           caEndpoint,
+          reloadService: saved.reloadService || '',
           assignedAgentId: agent.id,
           idempotencyKey: issueIdempotencyKey({
             names,
             zone: saved.zone,
             certPath: saved.certPath,
             caEndpoint,
+            reloadService: saved.reloadService || '',
             attempt,
           }),
         })
@@ -213,8 +217,9 @@ export default function IssueStep({ ctx }) {
         ) : null}
         {view.noRetry ? (
           <Text fontSize='sm'>
-            The agent may have placed the order before the result was lost.
-            Review the job log before asking again.
+            {saved.reloadService
+              ? `The certificate may already be on disk, but the ${reloadLabel} configuration test failed, so it was not reloaded and nothing was rolled back. Fix the ${reloadLabel} configuration, then check the job log before asking again.`
+              : 'The agent may have placed the order before the result was lost. Review the job log before asking again.'}
           </Text>
         ) : null}
         {error ? (
@@ -227,6 +232,11 @@ export default function IssueStep({ ctx }) {
           CA: {caEndpoint}. Staging certificates are not trusted by browsers;
           that is intended for a first run. Asking again places a new order, and
           CAs rate limit repeated orders.
+        </Text>
+        <Text fontSize='sm' data-testid='reload-note'>
+          {saved.reloadService
+            ? `After writing the certificate, the agent tests the ${reloadLabel} configuration and reloads it only if the test passes.`
+            : 'The certificate is written to the path above. Nothing is reloaded; you can choose a web server to reload in the configuration step.'}
         </Text>
         {view.done ? (
           <Text fontSize='sm'>
