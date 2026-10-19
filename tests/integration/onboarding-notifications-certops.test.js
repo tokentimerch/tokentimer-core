@@ -344,6 +344,47 @@ describe("Onboarding notifications and CertOps reality (API contract)", function
     expect(second.body.error).to.match(/different path/);
   });
 
+  it("reports AD CS issuers and profiles by name and state, scoped to the workspace", async () => {
+    const issuerId = crypto.randomUUID();
+    const hash = crypto.randomBytes(32).toString("hex");
+    await client.query(
+      `INSERT INTO certificate_issuers (id, workspace_id, kind, name, current_version, last_preflight)
+       VALUES ($1, $2, 'adcs', 'Corp CA', 1, $3::jsonb)`,
+      [issuerId, workspaceId, JSON.stringify({ templateCheck: { verdict: "safe" }, caCheck: { verdict: "safe" } })],
+    );
+    await client.query(
+      `INSERT INTO certificate_issuer_versions (workspace_id, issuer_id, version, ca_config, template, ca_key_sha256, confirmed_at)
+       VALUES ($1, $2, 1, 'ca01.corp.example.com\\Corp Issuing CA', 'WebServer', $3, NOW())`,
+      [workspaceId, issuerId, hash],
+    );
+    // A second, unconfirmed issuer whose check was not safe.
+    const unsafeId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO certificate_issuers (id, workspace_id, kind, name, current_version, last_preflight)
+       VALUES ($1, $2, 'adcs', 'Unpinned CA', 1, $3::jsonb)`,
+      [unsafeId, workspaceId, JSON.stringify({ templateCheck: { verdict: "unsafe" }, caCheck: { verdict: "safe" } })],
+    );
+    await client.query(
+      `INSERT INTO certificate_issuer_versions (workspace_id, issuer_id, version, ca_config, template)
+       VALUES ($1, $2, 1, 'ca02\\Other CA', 'WebServer')`,
+      [workspaceId, unsafeId],
+    );
+    try {
+      const adcs = (await summary(manager)).certops.adcs;
+      const byName = Object.fromEntries(adcs.issuers.map((i) => [i.name, i]));
+      expect(byName["Corp CA"]).to.deep.include({ confirmed: true, safe: true });
+      expect(byName["Unpinned CA"]).to.deep.include({ confirmed: false, safe: false });
+      expect(adcs.profiles).to.equal(0);
+      // CA host, template and pinned certificate hash are not part of the summary.
+      const text = JSON.stringify(adcs);
+      expect(text).to.not.contain("ca01.corp.example.com");
+      expect(text).to.not.contain(hash);
+    } finally {
+      await client.query("DELETE FROM certificate_issuers WHERE id = ANY($1::uuid[])", [[issuerId, unsafeId]]);
+    }
+    expect((await summary(manager)).certops.adcs.issuers).to.deep.equal([]);
+  });
+
   it("reports the wizard's issue job from the database, and separates observed from provisioning", async () => {
     const issue = await request(BASE)
       .post(ws("/certops/jobs"))

@@ -21,6 +21,7 @@ export const STEP_DEFS = {
   certops_config: { title: 'Prepare the agent configuration', kind: 'runbook' },
   certops_execution: { title: 'Enable execution safely', kind: 'verify' },
   certops_first: { title: 'See your first certificate', kind: 'verify' },
+  certops_adcs: { title: 'Connect your Microsoft CA', kind: 'runbook' },
   certops_vault: { title: 'Distribute through Vault', kind: 'runbook' },
 };
 
@@ -104,7 +105,7 @@ export const GOALS = {
   certops_automate: {
     doneText: 'Your agent issued a staging certificate.',
     doneTextWindows:
-      'Your agent is connected. Windows issuance and IIS binding follow the Windows runbook.',
+      'Your agent requested a staging certificate and bound it to IIS. The Windows path is a candidate: it has not yet been verified on a real host.',
     label: 'Issue and renew certificates automatically',
     description:
       'Use an agent to request, install and renew certificates (ACME).',
@@ -122,6 +123,26 @@ export const GOALS = {
     requires: ['certops.core', 'alerts.contact_groups'],
     area: 'certops',
     certopsObjective: 'automate',
+  },
+  certops_adcs: {
+    doneText:
+      'Your agent is ready to enroll from your Microsoft CA. Enrollment itself is not verified by this guide.',
+    label: 'Issue certificates from my Microsoft CA (AD CS)',
+    description:
+      'A domain-joined Windows agent enrolls IIS certificates from your private CA.',
+    // The rule must exist before the agent registers, as for ACME profiles.
+    steps: [
+      'certops_objective',
+      'certops_config',
+      'certops_agent',
+      'certops_adcs',
+      'recipients',
+      'verify',
+    ],
+    requires: ['certops.core', 'certops.adcs'],
+    area: 'certops',
+    certopsObjective: 'adcs',
+    candidate: true,
   },
   certops_vault: {
     doneText:

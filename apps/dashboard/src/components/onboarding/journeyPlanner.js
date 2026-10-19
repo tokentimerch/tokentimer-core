@@ -3,6 +3,7 @@
 // the deployment allows (capabilities) and what really exists (reality).
 // Adding steps later therefore needs no data migration.
 
+import { commandProfileFor } from './certopsMatrix.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import { scopeCertops } from './certopsScope.js';
 
@@ -82,17 +83,26 @@ function certopsDone(stepId, { reality, progress, objective }) {
     case 'certops_agent': {
       const agents = certops?.agents;
       if ((agents?.live || 0) === 0) return false;
+      // AD CS enrolls only through an agent that declared the capability.
+      if (objective === 'adcs') {
+        return (agents.items || []).some(
+          a =>
+            a.livenessState === 'live' &&
+            (a.declaredCapabilities || []).includes('adcs-enroll-v1')
+        );
+      }
       // An agent registered for discovery declares no command profile, so it
       // can never claim an issuance order. Command profiles are only reported
       // at registration, which makes it a different agent setup, not a setting.
-      const needsProfile =
-        (objective === 'automate' || objective === 'vault') &&
-        (saved.infrastructure || 'linux') === 'linux';
-      if (!needsProfile) return true;
+      const profile = commandProfileFor(
+        objective,
+        saved.infrastructure || 'linux'
+      );
+      if (!profile) return true;
       return (agents.items || []).some(
         a =>
           a.livenessState === 'live' &&
-          (a.commandProfiles || []).includes('certbot')
+          (a.commandProfiles || []).includes(profile)
       );
     }
     case 'certops_config':
@@ -107,14 +117,10 @@ function certopsDone(stepId, { reality, progress, objective }) {
         certops?.dryRun?.status === 'dry_run_complete'
       );
     case 'certops_first': {
-      const infra = saved.infrastructure || 'linux';
       const goalObjective = objective || saved.objective;
-      // Linux automation only counts once the order really succeeded, because
-      // a requested order already creates an inventory row.
-      if (
-        (goalObjective === 'automate' || goalObjective === 'vault') &&
-        infra === 'linux'
-      ) {
+      // Automation only counts once the order really succeeded, because a
+      // requested order already creates an inventory row. Same on Windows.
+      if (goalObjective === 'automate' || goalObjective === 'vault') {
         return (
           certops?.issueJob?.status === 'succeeded' &&
           certops?.issueJob?.mode === 'real'
@@ -123,6 +129,15 @@ function certopsDone(stepId, { reality, progress, objective }) {
       return (
         (certops?.certificates?.observed ?? certops?.certificates?.total ?? 0) >
         0
+      );
+    }
+    case 'certops_adcs': {
+      // What the guide can see: a confirmed, safe issuer and a profile on it.
+      // Enrollment itself needs a real CA and is not verified here.
+      const adcs = certops?.adcs;
+      return (
+        (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
+        (adcs?.profiles || 0) > 0
       );
     }
     case 'certops_vault':

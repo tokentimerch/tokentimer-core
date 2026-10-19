@@ -104,6 +104,43 @@ async function loadJobStatus(pool, workspaceId, jobId) {
   };
 }
 
+/**
+ * AD CS issuers and profiles, by name and state only. An issuer counts as
+ * confirmed once its current version has a pinned CA certificate, and as safe
+ * once the last check found both the template and the CA safe.
+ */
+async function loadAdcsReality(pool, workspaceId) {
+  const issuers = await pool.query(
+    `SELECT i.id, i.name, i.last_preflight,
+            (v.confirmed_at IS NOT NULL AND v.ca_key_sha256 IS NOT NULL) AS confirmed
+       FROM certificate_issuers i
+       LEFT JOIN certificate_issuer_versions v
+         ON v.issuer_id = i.id AND v.version = i.current_version
+      WHERE i.workspace_id = $1 AND i.kind = 'adcs'
+      ORDER BY i.created_at DESC
+      LIMIT 20`,
+    [workspaceId],
+  );
+  const profiles = await pool.query(
+    `SELECT COUNT(*)::int AS n
+       FROM certificate_profiles p
+       JOIN certificate_issuers i ON i.id = p.issuer_id
+      WHERE p.workspace_id = $1 AND i.kind = 'adcs'`,
+    [workspaceId],
+  );
+  return {
+    issuers: issuers.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      confirmed: row.confirmed === true,
+      safe:
+        row.last_preflight?.templateCheck?.verdict === "safe" &&
+        row.last_preflight?.caCheck?.verdict === "safe",
+    })),
+    profiles: profiles.rows[0]?.n || 0,
+  };
+}
+
 async function loadCertopsReality(
   pool,
   { workspaceId, role, enabled, since, dryRunJobId, issueJobId },
@@ -126,7 +163,9 @@ async function loadCertopsReality(
   const distribution = await loadDistributionReality(pool, workspaceId);
   const dryRun = await loadJobStatus(pool, workspaceId, dryRunJobId);
   const issueJob = await loadJobStatus(pool, workspaceId, issueJobId);
+  const adcs = await loadAdcsReality(pool, workspaceId);
   return {
+    adcs,
     agents: summarizeAgents(agents.items, { since }),
     distribution,
     dryRun,
@@ -142,6 +181,7 @@ async function loadCertopsReality(
 module.exports = {
   summarizeAgents,
   loadCertopsReality,
+  loadAdcsReality,
   loadDistributionReality,
   loadJobStatus,
   EXECUTION_OPERATIONS,

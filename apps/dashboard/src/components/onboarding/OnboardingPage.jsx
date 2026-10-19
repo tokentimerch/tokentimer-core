@@ -30,6 +30,7 @@ import { ConfigStep, ObjectiveStep } from './certopsSetupSteps.jsx';
 import { AgentStep } from './certopsAgentStep.jsx';
 import { ExecutionStep } from './certopsExecutionStep.jsx';
 import { FirstCertificateStep, VaultStep } from './certopsFinalSteps.jsx';
+import AdcsStep from './certopsAdcsStep.jsx';
 import { resolveApiBaseUrl } from '../../utils/resolveApiBaseUrl.js';
 
 // Agents reach the API from outside the browser, so a relative API base
@@ -77,6 +78,11 @@ export function nextSteps(goalId) {
         'Issue your first certificate with the staging CA, then switch to the production CA.',
         'Set up renewal-failure alerts for the contact group.',
       ];
+    case 'certops_adcs':
+      return [
+        'Attach the profile to your certificate in Certificate Management and watch the first enrollment there.',
+        'Keep this as a candidate until it has been verified against your CA.',
+      ];
     case 'certops_vault':
       return [
         'Run a verified rollout once your agents declare the distribution capabilities.',
@@ -102,6 +108,7 @@ export const STEP_COMPONENTS = {
   certops_agent: AgentStep,
   certops_execution: ExecutionStep,
   certops_first: FirstCertificateStep,
+  certops_adcs: AdcsStep,
   certops_vault: VaultStep,
 };
 

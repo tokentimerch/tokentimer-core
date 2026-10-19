@@ -151,6 +151,23 @@ export function evaluateVerification({ goal, monitor, token, summary }) {
               'Discovery runs about hourly. The folders must contain a readable PEM certificate.'
             )
       );
+      if (goal === 'certops_adcs') {
+        const { adcs } = certops;
+        const ready =
+          (adcs?.issuers || []).some(i => i.confirmed && i.safe) &&
+          (adcs?.profiles || 0) > 0;
+        // The server sees the issuer and profile, never an enrollment.
+        checks.push(
+          check(
+            'adcs',
+            CHECK_STATUS.WARN,
+            ready
+              ? 'Issuer and profile exist, enrollment is not verified'
+              : 'The AD CS issuer or profile is missing',
+            'Attach the profile to a certificate and confirm the first enrollment in Certificate Management. This path is a candidate.'
+          )
+        );
+      }
       if (goal === 'certops_vault') {
         // Never report a candidate feature as working without evidence.
         checks.push(
