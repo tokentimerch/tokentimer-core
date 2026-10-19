@@ -25,6 +25,7 @@ import { INFRASTRUCTURES, infrastructuresFor } from './certopsMatrix.js';
 import {
   DNS_PROVIDERS,
   buildAutomateConfig,
+  STAGING_CA,
   buildObserveConfig,
   buildPreseedSteps,
   mergeInstallerFields,
@@ -114,6 +115,7 @@ export function ConfigStep({ ctx }) {
     zone: saved.zone || '',
     dnsProvider: saved.dnsProvider || 'cloudflare',
     certPath: saved.certPath || '/etc/ssl/tokentimer/example.pem',
+    caEndpoint: saved.caEndpoint || STAGING_CA,
     directories: saved.directories || '/etc/ssl/certs',
   });
   const [error, setError] = useState('');
@@ -146,6 +148,7 @@ export function ConfigStep({ ctx }) {
       zone: form.zone,
       dnsProvider: form.dnsProvider,
       certPath: form.certPath,
+      caEndpoint: form.caEndpoint,
     });
   }
   const preseed = result.ok
@@ -165,6 +168,7 @@ export function ConfigStep({ ctx }) {
         zone: form.zone,
         dnsProvider: form.dnsProvider,
         certPath: form.certPath,
+        caEndpoint: form.caEndpoint,
         directories: form.directories,
         configReviewed: true,
       });
@@ -252,6 +256,18 @@ export function ConfigStep({ ctx }) {
                 />
               </FormControl>
             ) : null}
+            <FormControl>
+              <FormLabel fontSize='sm'>ACME directory URL</FormLabel>
+              <Input
+                size='sm'
+                value={form.caEndpoint}
+                onChange={set('caEndpoint')}
+              />
+              <Text fontSize='xs' mt={1}>
+                Defaults to the Let&apos;s Encrypt staging CA. Use your own
+                private ACME CA address if you have one.
+              </Text>
+            </FormControl>
           </>
         )}
         {!result.ok

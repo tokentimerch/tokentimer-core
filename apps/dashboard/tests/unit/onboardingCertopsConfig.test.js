@@ -194,6 +194,19 @@ describe('automate config', () => {
     expect(config.execution.dryRun).toBe(true);
   });
 
+  it('turns execution on, because the dry-run stage needs it', () => {
+    const { config } = buildAutomateConfig(base);
+    expect(config.execution.enabled).toBe(true);
+  });
+
+  it('declares the names and command profile the control plane routes on', () => {
+    // Policy alone is not enough: the agent registers and passes a dry run but
+    // never claims an issue job unless it also declares these.
+    const { config } = buildAutomateConfig(base);
+    expect(config.declaredTargetSelectors).toEqual(['www.example.com']);
+    expect(config.declaredCommandProfileNames).toEqual(['certbot']);
+  });
+
   it('is default-deny: allowlists are exactly the request', () => {
     const { config } = buildAutomateConfig(base);
     expect(config.policy.allowedDnsZones).toEqual(['example.com']);
