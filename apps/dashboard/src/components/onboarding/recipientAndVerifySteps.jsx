@@ -29,6 +29,7 @@ import { evaluateVerification, CHECK_STATUS } from './verification.js';
 import {
   addRecipientToGroup,
   appendContactGroup,
+  assertRecipientPersisted,
   onboardingActions,
 } from '../../utils/onboardingActions.js';
 
@@ -143,6 +144,11 @@ export function RecipientsStep({ ctx }) {
             contact_groups: groups,
             default_contact_group_id: groupId,
           });
+          // The server trims over plan limits without an error, so read back.
+          assertRecipientPersisted(
+            await onboardingActions.getAlertSettings(ctx.workspaceId),
+            { groupId, contactId: contact.id }
+          );
           return { groupId };
         },
         record: (_refs, result) => ({ contactGroupId: result.groupId }),

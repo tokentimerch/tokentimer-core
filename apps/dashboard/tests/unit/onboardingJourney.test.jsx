@@ -78,6 +78,15 @@ vi.mock('../../src/utils/onboardingActions.js', async () => {
       getAlertSettings: async () => clone(server.state.alert),
       putAlertSettings: async (_w, body) => {
         server.state.calls.putAlertSettings += 1;
+        if (server.state.groupLimit !== undefined && body.contact_groups) {
+          body = {
+            ...body,
+            contact_groups: body.contact_groups.slice(
+              0,
+              server.state.groupLimit
+            ),
+          };
+        }
         Object.assign(server.state.alert, body);
         return clone(server.state.alert);
       },
@@ -307,5 +316,31 @@ describe('first-value onboarding journey', () => {
     expect(radio).toBeDisabled();
     expect(screen.getByText('Ask a workspace manager.')).toBeVisible();
     spy.mockRestore();
+  });
+  it('tells the user when the plan limit silently dropped the group', async () => {
+    server.state.groupLimit = 0;
+    server.state.session = {
+      exists: true,
+      revision: 2,
+      intent: { goal: 'monitor_https' },
+      progress: {},
+      operationRefs: { monitorUrl: 'https://example.com' },
+    };
+    server.state.monitors.push({
+      id: 'm1',
+      url: 'https://example.com',
+      token_id: 41,
+      ssl_valid_to: '2027-03-01T00:00:00Z',
+    });
+    mount();
+    await user.click(
+      await screen.findByRole('button', { name: 'Save recipient' })
+    );
+    expect(await screen.findByText(/no more contact groups/i)).toBeVisible();
+    // Not recorded as done, so the step stays open for a retry.
+    expect(server.state.session.operationRefs.contactGroupId).toBeUndefined();
+    expect(
+      screen.getByRole('button', { name: 'Save recipient' })
+    ).toBeVisible();
   });
 });

@@ -42,6 +42,12 @@ describe("Onboarding first-value journey (API contract)", function () {
       `INSERT INTO workspaces (id, name, plan, created_by) VALUES ($1, 'First value', 'oss', $2)`,
       [workspaceId, owner.user.id],
     );
+    // Real workspace creation always inserts a settings row; without it,
+    // alert routing falls back to another workspace's settings.
+    await client.query(
+      `INSERT INTO workspace_settings (workspace_id, email_alerts_enabled) VALUES ($1, TRUE)`,
+      [workspaceId],
+    );
     await client.query(
       `INSERT INTO workspace_memberships (user_id, workspace_id, role, invited_by)
        VALUES ($1, $2, 'admin', $1)`,

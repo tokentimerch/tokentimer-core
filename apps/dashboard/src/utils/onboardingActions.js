@@ -148,3 +148,43 @@ export function addRecipientToGroup(existingGroups, groupId, contactId) {
       : group
   );
 }
+
+export class GroupWriteNotPersistedError extends Error {
+  constructor(reason) {
+    super(
+      reason === 'member_limit'
+        ? 'Your plan allows no more recipients in this group. Pick another group or remove a recipient first.'
+        : reason === 'group_limit'
+          ? 'Your plan allows no more contact groups. Reuse an existing group instead.'
+          : 'The recipient could not be saved. Check your plan limits and try again.'
+    );
+    this.name = 'GroupWriteNotPersistedError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * The alert-settings write silently trims groups and members over the plan
+ * cap, so success must be proven by reading the settings back.
+ */
+export function assertRecipientPersisted(
+  settings,
+  { groupId, contactId, expectDefault = true }
+) {
+  const groups = Array.isArray(settings?.contact_groups)
+    ? settings.contact_groups
+    : [];
+  const group = groups.find(g => String(g.id) === String(groupId));
+  if (!group) throw new GroupWriteNotPersistedError('group_limit');
+  const members = (group.email_contact_ids || []).map(String);
+  if (!members.includes(String(contactId))) {
+    throw new GroupWriteNotPersistedError('member_limit');
+  }
+  if (
+    expectDefault &&
+    String(settings.default_contact_group_id || '') !== String(groupId)
+  ) {
+    throw new GroupWriteNotPersistedError('not_default');
+  }
+  return true;
+}
