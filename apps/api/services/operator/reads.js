@@ -381,5 +381,6 @@ module.exports = {
   listAgentHealth,
   listCertificates,
   listJobs,
+  loadIdentity,
   _test: { jobReasons, overallState, renewalReasons },
 };

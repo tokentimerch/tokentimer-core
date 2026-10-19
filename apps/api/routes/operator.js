@@ -33,10 +33,12 @@ const {
 } = require("../services/certops/workspaceKillSwitch");
 const connections = require("../services/operator/connections");
 const enrollments = require("../services/operator/enrollments");
+const renewRequests = require("../services/operator/renewRequests");
+const actionCodes = require("../services/operator/actionRequests").CODES;
 const { projectWhoami } = require("../services/operator/projections");
 const reads = require("../services/operator/reads");
 const queries = require("../services/operator/queryParsers");
-const { CURSOR_INVALID, isUuid } = require("../services/operator/readProjections");
+const { CURSOR_INVALID, completeness: completenessOf, isUuid } = require("../services/operator/readProjections");
 
 const VALIDATION_CODES = new Set([
   connections.CONNECTION_EXPIRY_INVALID,
@@ -308,6 +310,12 @@ router.get(
       const state = await getWorkspaceCertOpsPauseState({
         workspaceId: req.operator.workspaceId,
       });
+      const writesRow = await pool.query("SELECT operator_writes_enabled FROM workspaces WHERE id = $1", [
+        req.operator.workspaceId,
+      ]);
+      const mcpWritesEnabled =
+        String(process.env.MCP_OPERATOR_WRITES_ENABLED || "").trim().toLowerCase() === "true" &&
+        writesRow.rows[0]?.operator_writes_enabled === true;
       return res.json(
         projectWhoami({
           operator: req.operator,
@@ -316,6 +324,7 @@ router.get(
             enabled: state.certOpsEnabled,
             paused: state.certOpsPaused,
             approvalRequiredAlways: state.certOpsRequireApprovalAlways,
+            mcpWritesEnabled,
           },
         }),
       );
@@ -688,6 +697,261 @@ router.post(
       }
       logger.error("Operator enrollment redemption failed", { error: err?.message, code: err?.code || null });
       return res.status(500).json({ error: "Failed to redeem enrollment code", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Renew requests. A write route authenticates twice: the guard rejects early,
+// then the service re-reads authority with the connection row locked inside the
+// transaction, so a revocation that commits first is always honored. Bodies are
+// closed: an unknown field is refused, which is why no route can be handed a
+// force, skip-approval or acknowledge flag.
+
+const WRITE_STATUS = Object.freeze({
+  [actionCodes.WRITES_DISABLED]: 403,
+  [actionCodes.SCOPE_DENIED]: 403,
+  [actionCodes.UNAUTHORIZED]: 401,
+  [actionCodes.NOT_FOUND]: 404,
+  [actionCodes.NOT_MANAGED]: 409,
+  [actionCodes.RETIRED]: 409,
+  [actionCodes.NOT_POSSIBLE]: 409,
+  [actionCodes.PLAN_EXPIRED]: 410,
+  [actionCodes.PLAN_MISMATCH]: 409,
+  [actionCodes.INTENT_STALE]: 409,
+  [actionCodes.CONFLICT]: 409,
+  [actionCodes.PENDING_LIMIT]: 429,
+  [actionCodes.NOT_CANCELLABLE]: 409,
+  CERTOPS_WORKSPACE_PAUSED: 409,
+  CERTOPS_DISABLED: 404,
+  // Raised by the shared job-creation path when a certificate authority has
+  // too many renewals in flight. Waiting, or approving/clearing others, resolves it.
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: 409,
+  CERTOPS_CERTIFICATE_RETIRED: 409,
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE: 409,
+  CERTOPS_RENEWAL_PROFILE_INVALID: 409,
+});
+
+// Messages from the shared path can name internal detail, so these refusals
+// are re-worded here. The code is the stable part a client acts on.
+const REFUSAL_WORDING = Object.freeze({
+  CERTOPS_RENEWAL_PER_CA_CAP_EXCEEDED: "The certificate authority has too many renewals in progress right now. Try again later.",
+  CERTOPS_WORKSPACE_PAUSED: "Certificate operations are paused for this workspace.",
+  CERTOPS_CERTIFICATE_RETIRED: "The certificate is retired, so it cannot be renewed.",
+  CERTOPS_RENEWAL_PROFILE_INCOMPLETE: "The certificate's renewal profile is incomplete.",
+  CERTOPS_RENEWAL_PROFILE_INVALID: "The certificate's renewal profile is not valid.",
+});
+
+function writeError(res, err, message) {
+  const status = WRITE_STATUS[err?.code];
+  if (status) {
+    const body = { error: REFUSAL_WORDING[err.code] || err.message, code: err.code };
+    if (err.reason) body.reason = err.reason;
+    return res.status(status).json(body);
+  }
+  if (err?.code === "OPERATOR_VALIDATION_ERROR" || err?.code === CURSOR_INVALID) {
+    return res.status(400).json({ error: err.message, code: "OPERATOR_VALIDATION_ERROR" });
+  }
+  logger.error(message, { error: err?.message, code: err?.code || null });
+  return res.status(500).json({ error: message, code: "INTERNAL_ERROR" });
+}
+
+function exactBody(body, allowed) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw Object.assign(new Error("Request body must be a JSON object"), { code: "OPERATOR_VALIDATION_ERROR" });
+  }
+  for (const key of Object.keys(body)) {
+    if (!allowed.includes(key)) {
+      throw Object.assign(new Error(`Unknown field: ${key}`), { code: "OPERATOR_VALIDATION_ERROR" });
+    }
+  }
+  for (const key of allowed) {
+    if (typeof body[key] !== "string") {
+      throw Object.assign(new Error(`${key} is required`), { code: "OPERATOR_VALIDATION_ERROR" });
+    }
+  }
+  return body;
+}
+
+function operatorWrite(scope) {
+  return [
+    getApiLimiter(),
+    rejectKeyMaterial,
+    requireOperatorInterfaceEnabled,
+    requireOperatorConnection({ scope }),
+    requireCertOpsEnabled,
+  ];
+}
+
+function auditOperatorRequest({ client, req, action, request }) {
+  return writeAudit({
+    client,
+    actorUserId: req.operator.userId,
+    subjectUserId: req.operator.userId,
+    action,
+    targetType: "operator_action_request",
+    targetId: null,
+    workspaceId: req.operator.workspaceId,
+    // Who asked is the person, acting through a named connection. Arguments
+    // are not stored; the request, plan and job ids are enough to follow it.
+    metadata: {
+      via: "operator_connection",
+      connection_id: req.operator.connectionId,
+      request_record_id: request.requestRecordId,
+      request_id: request.requestId,
+      state: request.state,
+      job_id: request.jobId,
+      replayed: request.replayed === true,
+    },
+  });
+}
+
+router.post("/api/v1/operator/renewals/preview", ...operatorWrite("mcp:renew:request"), async (req, res) => {
+  try {
+    const body = exactBody(req.body, ["identityId"]);
+    const plan = await withTransaction((client) =>
+      renewRequests.createRenewPlan({ client, operator: req.operator, identityId: body.identityId }),
+    );
+    res.set("Cache-Control", "no-store");
+    return res.status(201).json(plan);
+  } catch (err) {
+    return writeError(res, err, "Failed to preview renewal");
+  }
+});
+
+router.post("/api/v1/operator/renewals/requests", ...operatorWrite("mcp:renew:request"), async (req, res) => {
+  try {
+    const body = exactBody(req.body, ["planId", "planHash", "requestId"]);
+    const request = await withTransaction(async (client) => {
+      const result = await renewRequests.submitRenewRequest({
+        client,
+        operator: req.operator,
+        planId: body.planId,
+        planHash: body.planHash,
+        requestId: body.requestId,
+      });
+      if (!result.replayed) {
+        await auditOperatorRequest({ client, req, action: "OPERATOR_RENEW_REQUESTED", request: result });
+      }
+      return result;
+    });
+    res.set("Cache-Control", "no-store");
+    return res.status(request.replayed ? 200 : 201).json(request);
+  } catch (err) {
+    return writeError(res, err, "Failed to submit renewal request");
+  }
+});
+
+router.get("/api/v1/operator/requests", ...operatorRead("mcp:requests:read"), async (req, res) => {
+  try {
+    const parsed = queries.parsePaged(req.query);
+    const limit = parsed.limit || 25;
+    const offset = parsed.offset || 0;
+    const result = await withTransaction((client) =>
+      renewRequests.listRequests({ client, operator: req.operator, limit, offset }),
+    );
+    // Same completeness contract as every other list, so "no requests" can be
+    // told from "first page only".
+    return res.json({
+      items: result.items,
+      completeness: completenessOf({ offset, returned: result.items.length, total: result.total }),
+    });
+  } catch (err) {
+    return writeError(res, err, "Failed to list requests");
+  }
+});
+
+router.get("/api/v1/operator/requests/:requestRecordId", ...operatorRead("mcp:requests:read"), async (req, res) => {
+  try {
+    queries.parseQuery(req.query, {});
+    const request = await withTransaction((client) =>
+      renewRequests.getRequest({ client, operator: req.operator, requestRecordId: req.params.requestRecordId }),
+    );
+    return res.json(request);
+  } catch (err) {
+    return writeError(res, err, "Failed to read request");
+  }
+});
+
+router.post("/api/v1/operator/requests/:requestRecordId/cancel", ...operatorWrite("mcp:renew:request"), async (req, res) => {
+  try {
+    exactBody(req.body ?? {}, []);
+    const request = await withTransaction(async (client) => {
+      const result = await renewRequests.cancelRequest({
+        client,
+        operator: req.operator,
+        requestRecordId: req.params.requestRecordId,
+      });
+      if (!result.replayed) {
+        await auditOperatorRequest({ client, req, action: "OPERATOR_REQUEST_WITHDRAWN", request: result });
+      }
+      return result;
+    });
+    return res.json(request);
+  } catch (err) {
+    return writeError(res, err, "Failed to withdraw request");
+  }
+});
+
+// The workspace's own switch for assistant write requests. Off by default,
+// admin only, session only: a connection can never turn it on for itself.
+router.get(
+  "/api/v1/workspaces/:id/operator/settings",
+  getApiLimiter(),
+  requireOperatorInterfaceEnabled,
+  requireSessionUser,
+  async (req, res) => {
+    try {
+      const row = await pool.query("SELECT operator_writes_enabled FROM workspaces WHERE id = $1", [req.workspace.id]);
+      return res.json({ writesEnabled: row.rows[0]?.operator_writes_enabled === true });
+    } catch (err) {
+      return handleError(res, err, "Failed to read operator settings");
+    }
+  },
+);
+
+router.put(
+  "/api/v1/workspaces/:id/operator/settings",
+  getApiLimiter(),
+  rejectKeyMaterial,
+  requireOperatorInterfaceEnabled,
+  requireSessionUser,
+  async (req, res) => {
+    try {
+      if (!hasAtLeastRole(req.authz?.workspaceRole, "admin")) {
+        return res.status(403).json({ error: "Forbidden: insufficient role", code: "INSUFFICIENT_ROLE" });
+      }
+      const body = req.body;
+      if (!body || typeof body !== "object" || Object.keys(body).join() !== "writesEnabled" || typeof body.writesEnabled !== "boolean") {
+        return res.status(400).json({ error: "Body must be exactly {writesEnabled: boolean}", code: "OPERATOR_VALIDATION_ERROR" });
+      }
+      const outcome = await withTransaction(async (client) => {
+        const before = await client.query(
+          "SELECT operator_writes_enabled FROM workspaces WHERE id = $1 FOR UPDATE",
+          [req.workspace.id],
+        );
+        const previous = before.rows[0]?.operator_writes_enabled === true;
+        if (previous !== body.writesEnabled) {
+          await client.query("UPDATE workspaces SET operator_writes_enabled = $2, updated_at = NOW() WHERE id = $1", [
+            req.workspace.id,
+            body.writesEnabled,
+          ]);
+          await writeAudit({
+            client,
+            actorUserId: req.user.id,
+            subjectUserId: req.user.id,
+            action: body.writesEnabled ? "OPERATOR_WRITES_ENABLED" : "OPERATOR_WRITES_DISABLED",
+            targetType: "workspace",
+            targetId: null,
+            workspaceId: req.workspace.id,
+            metadata: { previous, writes_enabled: body.writesEnabled },
+          });
+        }
+        return body.writesEnabled;
+      });
+      return res.json({ writesEnabled: outcome });
+    } catch (err) {
+      return handleError(res, err, "Failed to update operator settings");
     }
   },
 );

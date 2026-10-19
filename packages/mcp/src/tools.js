@@ -58,28 +58,46 @@ const DESCRIPTIONS = Object.freeze({
   tt_list_jobs: "List jobs by status, operation, certificate or recency.",
   tt_explain_certificate_state:
     "Explain why a certificate is in its current state, as stable reason codes with plain wording and the areas where evidence is missing.",
+  tt_preview_renew:
+    "Preview renewing one certificate. Changes nothing. Returns a plan to submit, its hash, when it expires and exactly what a renewal would do, including that it contacts the issuer and needs approval from someone else. Give the certificate id from a list.",
+  tt_request_renew:
+    "Submit a previewed renewal for approval. This does not renew anything: it creates a request that a different person must approve in TokenTimer before anything runs. Pass the plan id and hash from the preview and a new random UUID as requestId. Reuse that same requestId only to retry the same submission after a lost response; it will return the original outcome and never run twice.",
+  tt_get_action_request: "Show one of your requests: whether it is waiting for approval, approved, running, finished, rejected, withdrawn or expired.",
+  tt_list_my_requests: "List your own requests, newest first.",
+  tt_cancel_request:
+    "Withdraw one of your requests while it is still waiting for approval. This works even when new requests are switched off. If a person approved it first, it reports that instead of claiming to have stopped anything.",
 });
 
-function loadTools() {
+// Write tools are only offered when the person running the adapter asks for
+// them. This is a convenience for read-only setups, not a security control: the
+// API refuses writes unless the instance, the workspace and the connection all
+// allow them, whatever the adapter does.
+function loadTools({ includeWrites = false } = {}) {
   const dir = contractsDirectory();
   const catalog = readJson(dir, "mcp-tool-catalog.json");
   const documents = {
     "mcp-common.schema.json": readJson(dir, "mcp-common.schema.json"),
     "mcp-read-tools.schema.json": readJson(dir, "mcp-read-tools.schema.json"),
+    "mcp-renew-tools.schema.json": readJson(dir, "mcp-renew-tools.schema.json"),
   };
-  const readTools = documents["mcp-read-tools.schema.json"];
 
   const ajv = new Ajv({ allErrors: false, strict: false });
   addFormats(ajv);
 
+  const wanted = (tool) =>
+    tool.routeStatus === "implemented" &&
+    (tool.contractStatus === "mvp" || (includeWrites && tool.contractStatus === "write"));
+
   return catalog.tools
-    .filter((tool) => tool.contractStatus === "mvp" && tool.routeStatus === "implemented")
+    .filter(wanted)
     .map((tool) => {
-      const definition = (ref) => readTools.definitions[ref.split("/").pop()];
-      const inputSchema = bundle(definition(tool.input), documents, readTools);
-      const outputSchema = bundle(definition(tool.output), documents, readTools);
+      // A reference names its schema file, so each tool is read from its own.
+      const documentFor = (ref) => documents[ref.split("#")[0]];
+      const definition = (ref) => documentFor(ref).definitions[ref.split("/").pop()];
+      const inputSchema = tool.input ? bundle(definition(tool.input), documents, documentFor(tool.input)) : { type: "object", additionalProperties: false, properties: {} };
+      const outputSchema = bundle(definition(tool.output), documents, documentFor(tool.output));
       const [method, template] = tool.route.split(" ");
-      if (method !== "GET") throw new Error(`${tool.name}: only GET routes are supported`);
+      if (method !== "GET" && method !== "POST") throw new Error(`${tool.name}: unsupported method ${method}`);
       return {
         name: tool.name,
         title: tool.title,
@@ -87,6 +105,7 @@ function loadTools() {
         scope: tool.scope,
         annotations: { ...tool.annotations },
         route: template,
+        method,
         inputSchema,
         outputSchema,
         validateInput: ajv.compile(inputSchema),

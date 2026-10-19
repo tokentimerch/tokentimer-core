@@ -50,9 +50,9 @@ function projectWhoami({ operator, workspace, certops }) {
       enabled: certops.enabled === true,
       paused: certops.paused === true,
       approvalRequiredAlways: certops.approvalRequiredAlways === true,
-      // No write tool exists in this release; the flag is reported so a client
-      // can tell "writes are off" from "writes are unknown".
-      mcpWritesEnabled: false,
+      // True only when the instance flag and this workspace's setting are both
+      // on. The scope is a third gate and is reported separately in the scopes.
+      mcpWritesEnabled: certops.mcpWritesEnabled === true,
     },
   };
 }

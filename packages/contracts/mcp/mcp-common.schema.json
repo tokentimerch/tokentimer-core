@@ -23,7 +23,11 @@
     },
     "workspaceRole": {
       "type": "string",
-      "enum": ["viewer", "workspace_manager", "admin"]
+      "enum": [
+        "viewer",
+        "workspace_manager",
+        "admin"
+      ]
     },
     "scope": {
       "type": "string",
@@ -41,21 +45,41 @@
         "mcp:ops:request",
         "mcp:lifecycle:request",
         "mcp:config:request",
-        "mcp:ca-revoke"
+        "mcp:ca-revoke",
+        "mcp:renew:request"
       ]
     },
     "untrustedText": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["value", "untrusted", "truncated"],
+      "required": [
+        "value",
+        "untrusted",
+        "truncated"
+      ],
       "properties": {
-        "value": { "type": "string", "maxLength": 512 },
-        "untrusted": { "type": "boolean", "const": true },
-        "truncated": { "type": "boolean" }
+        "value": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "untrusted": {
+          "type": "boolean",
+          "const": true
+        },
+        "truncated": {
+          "type": "boolean"
+        }
       }
     },
     "nullableUntrustedText": {
-      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/untrustedText" }]
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/untrustedText"
+        }
+      ]
     },
     "limit": {
       "type": "integer",
@@ -72,22 +96,55 @@
     "completeness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["returned", "truncated", "nextCursor", "totalKnown", "total"],
+      "required": [
+        "returned",
+        "truncated",
+        "nextCursor",
+        "totalKnown",
+        "total"
+      ],
       "properties": {
-        "returned": { "type": "integer", "minimum": 0, "maximum": 50 },
-        "truncated": { "type": "boolean" },
-        "nextCursor": {
-          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/cursor" }]
+        "returned": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
         },
-        "totalKnown": { "type": "boolean" },
+        "truncated": {
+          "type": "boolean"
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/cursor"
+            }
+          ]
+        },
+        "totalKnown": {
+          "type": "boolean"
+        },
         "total": {
-          "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
         }
       }
     },
     "lifecycleStatus": {
       "type": "string",
-      "enum": ["active", "revoked", "decommissioned"]
+      "enum": [
+        "active",
+        "revoked",
+        "decommissioned"
+      ]
     },
     "displayStatus": {
       "type": "string",
@@ -104,7 +161,11 @@
     },
     "presenceState": {
       "type": "string",
-      "enum": ["confirmed_present", "confirmed_absent", "unknown"]
+      "enum": [
+        "confirmed_present",
+        "confirmed_absent",
+        "unknown"
+      ]
     },
     "capabilityString": {
       "type": "string",
@@ -112,7 +173,12 @@
     },
     "renewalPathState": {
       "type": "string",
-      "enum": ["healthy", "degraded", "unavailable", "unknown"]
+      "enum": [
+        "healthy",
+        "degraded",
+        "unavailable",
+        "unknown"
+      ]
     },
     "jobStatus": {
       "type": "string",
@@ -152,7 +218,12 @@
     "toolError": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message", "retryable", "correlationId"],
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "correlationId"
+      ],
       "properties": {
         "code": {
           "type": "string",
@@ -165,12 +236,30 @@
             "MCP_RATE_LIMITED",
             "MCP_CERTOPS_DISABLED",
             "MCP_RESPONSE_TOO_LARGE",
-            "MCP_UPSTREAM_ERROR"
+            "MCP_UPSTREAM_ERROR",
+            "MCP_WRITES_DISABLED",
+            "MCP_PLAN_EXPIRED",
+            "MCP_INTENT_STALE",
+            "MCP_IDEMPOTENCY_CONFLICT",
+            "MCP_CONFLICT"
           ]
         },
-        "message": { "type": "string", "maxLength": 500 },
-        "retryable": { "type": "boolean" },
-        "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+        "message": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,63}$"
+        }
       }
     }
   }

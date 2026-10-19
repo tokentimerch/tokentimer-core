@@ -47,6 +47,9 @@ const SCOPE_MIN_ROLE = Object.freeze({
   "mcp:audit:read": "viewer",
   "mcp:requests:read": "viewer",
   "mcp:ops:request": "workspace_manager",
+  // Renew requests only. Deliberately not the broad lifecycle scope: later,
+  // riskier tools get their own scope, so no existing grant silently covers them.
+  "mcp:renew:request": "workspace_manager",
   "mcp:lifecycle:request": "workspace_manager",
   "mcp:config:request": "admin",
   "mcp:ca-revoke": "admin",
@@ -69,7 +72,6 @@ const RESERVED_SCOPES = Object.freeze(
     "mcp:lifecycle:request",
     "mcp:config:request",
     "mcp:ca-revoke",
-    "mcp:requests:read",
   ]),
 );
 
@@ -332,6 +334,25 @@ async function listConnections({ client, workspaceId, userId = null }) {
   return result.rows.map((row) => connectionFromRow(row));
 }
 
+// Work a revoked connection asked for must not start (ADR-0015 section 9).
+// Only jobs nothing has picked up are touched: an unapproved, approved or
+// pending job is cancelled, and a job an agent already claimed is left to the
+// existing cancellation and reconciliation paths. The status guard is also the
+// race guard: if a claim wins, this update simply finds nothing to cancel.
+async function cancelUndispatchedJobs(db, { workspaceId, connectionId }) {
+  const result = await db.query(
+    `UPDATE certificate_jobs
+        SET status = 'cancelled', canceled_at = NOW(), updated_at = NOW(),
+            error_code = 'connection_revoked'
+      WHERE workspace_id = $1
+        AND requested_by_connection_id = $2
+        AND status IN ('pending_approval', 'approved', 'pending')
+      RETURNING id`,
+    [workspaceId, connectionId],
+  );
+  return result.rowCount || 0;
+}
+
 // Revocation is idempotent. The row lock taken here is the same lock that
 // authentication takes before authorizing a request, so once this commits no
 // later request can authenticate (ADR-0015 section 8).
@@ -345,7 +366,8 @@ async function revokeConnection({ client, workspaceId, connectionId, revokedBy =
     [workspaceId, connectionId, revokedBy],
   );
   if (result.rows[0]) {
-    return { connection: connectionFromRow(result.rows[0]), revokedNow: true };
+    const cancelledJobs = await cancelUndispatchedJobs(db, { workspaceId, connectionId });
+    return { connection: connectionFromRow(result.rows[0]), revokedNow: true, cancelledJobs };
   }
   return {
     connection: await getConnection({ client: db, workspaceId, connectionId }),
@@ -421,6 +443,32 @@ async function authenticateCredential({ client, rawCredential, now = new Date() 
   return { valid: true, connection, authority };
 }
 
+// Authority for a connection that is already authenticated, re-read inside the
+// caller's transaction with the row locked. A write route calls this so that
+// once a revocation commits, no later authorization can commit (ADR-0015
+// section 8): the revoke has to wait for this transaction, and anything that
+// starts after it sees the connection as revoked.
+async function lockConnectionAuthority({ client, connectionId, now = new Date() }) {
+  if (!client || typeof client.query !== "function") {
+    throw serviceError("A transaction client is required", CONNECTION_INVALID);
+  }
+  const found = await client.query(
+    `SELECT ${SAFE_SELECT_FIELDS} FROM operator_connections WHERE id = $1 LIMIT 1 FOR SHARE`,
+    [connectionId],
+  );
+  const row = found.rows[0];
+  if (!row) return invalid();
+  const connection = connectionFromRow(row, now);
+  if (connection.status !== "active") return invalid();
+  const currentRole = await resolveCurrentWorkspaceRole(client, {
+    userId: row.user_id,
+    workspaceId: row.workspace_id,
+  });
+  const authority = computeAuthority({ connection, currentRole });
+  if (!authority.effectiveRole) return invalid();
+  return { valid: true, connection, authority };
+}
+
 // Usage timestamps are advisory, written at most every few minutes, and a
 // failure here must never fail a request.
 async function recordUse({ client, connectionId }) {
@@ -461,6 +509,7 @@ module.exports = {
   createConnection,
   getConnection,
   listConnections,
+  lockConnectionAuthority,
   recordUse,
   resolveCurrentWorkspaceRole,
   revokeConnection,

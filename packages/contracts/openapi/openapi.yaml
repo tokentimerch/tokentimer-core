@@ -9091,6 +9091,264 @@ paths:
                 code: OPERATOR_ENROLLMENT_RATE_LIMITED
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/operator/renewals/preview:
+    post:
+      tags: [Operator]
+      summary: Preview renewing one certificate
+      operationId: previewOperatorRenewal
+      description: >-
+        Needs the mcp:renew:request scope, and the instance flag MCP_OPERATOR_WRITES_ENABLED and the workspace setting must both be on. Changes nothing except storing an expiring plan record. Runs the same validation a real renewal would, so it refuses what could not be renewed. The body is closed: only identityId. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_preview_renew_output.
+      security:
+        - operatorConnectionAuth: []
+      responses:
+        "201":
+          description: A plan, valid for ten minutes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorReadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Refused for a stable reason: the plan does not match or the certificate changed
+            since the preview, the request id was used for something different, the certificate
+            is retired or unmanaged, the certificate authority is at capacity, or the workspace
+            is paused. The code says which; the message is fixed wording.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: The preview expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many assistant requests are already waiting for approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/operator/renewals/requests:
+    post:
+      tags: [Operator]
+      summary: Submit a previewed renewal for approval by someone else
+      operationId: submitOperatorRenewalRequest
+      description: >-
+        Needs the mcp:renew:request scope and both write switches. Creates an ordinary renewal job that always starts waiting for approval, recorded against the person and the connection. It can never be approved by that same person. The body is exactly planId, planHash and requestId; there is no field for force, skip-approval or acknowledgement. An identical retry returns the original outcome (200, replayed true) even after the preview expired and even after the request finished; the same requestId with different content is a 409. The connection's row is locked during the check, so a revocation that commits first is always honored. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_request_renew_output.
+      security:
+        - operatorConnectionAuth: []
+      responses:
+        "201":
+          description: Request created and waiting for approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorReadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Refused for a stable reason: the plan does not match or the certificate changed
+            since the preview, the request id was used for something different, the certificate
+            is retired or unmanaged, the certificate authority is at capacity, or the workspace
+            is paused. The code says which; the message is fixed wording.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: The preview expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many assistant requests are already waiting for approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/operator/requests:
+    get:
+      tags: [Operator]
+      summary: List my requests
+      operationId: listOperatorRequests
+      description: >-
+        Needs mcp:requests:read. A connection sees only its own requests. Lists carry the same completeness object as every other list. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_list_my_requests_output.
+      security:
+        - operatorConnectionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/operatorLimitParam"
+        - $ref: "#/components/parameters/operatorCursorParam"
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorReadResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/operator/requests/{requestRecordId}:
+    get:
+      tags: [Operator]
+      summary: Show one of my requests
+      operationId: getOperatorRequest
+      description: >-
+        Needs mcp:requests:read. Another connection's request and a missing one answer the same 404. State is read from the job, so it is never a second copy that could drift. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_get_action_request_output.
+      security:
+        - operatorConnectionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/operatorRequestRecordIdParam"
+      responses:
+        "200":
+          description: The request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorReadResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/operator/requests/{requestRecordId}/cancel:
+    post:
+      tags: [Operator]
+      summary: Withdraw my request while it waits for approval
+      operationId: cancelOperatorRequest
+      description: >-
+        Needs the mcp:renew:request scope but, deliberately, not the write switches or an unpaused workspace: taking a request back must not depend on new work being allowed. Authentication, scope and ownership still apply. Withdrawal and approval race on the job and exactly one wins; if approval won, this is a 409 that does not claim anything was prevented. Response shape: packages/contracts/mcp/mcp-renew-tools.schema.json definition tt_cancel_request_output.
+      security:
+        - operatorConnectionAuth: []
+      parameters:
+        - $ref: "#/components/parameters/operatorRequestRecordIdParam"
+      responses:
+        "200":
+          description: The request, now withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorReadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The connection lacks the scope, or assistant writes are not enabled for this workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The request is no longer waiting for approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/workspaces/{id}/operator/settings:
+    get:
+      tags: [Operator]
+      summary: Read the workspace's assistant write setting
+      operationId: getOperatorSettings
+      description: >-
+        Session only. Reports whether assistant write requests are switched on for this workspace. Writes also need the instance flag MCP_OPERATOR_WRITES_ENABLED and a connection with the mcp:renew:request scope.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      responses:
+        "200":
+          description: The setting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Operator]
+      summary: Switch assistant write requests on or off for the workspace
+      operationId: updateOperatorSettings
+      description: >-
+        Session only, workspace admin only. Off by default. A connection can never change it. The body is exactly writesEnabled. Each change is audited.
+      parameters:
+        - $ref: "#/components/parameters/workspaceIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OperatorSettings"
+      responses:
+        "200":
+          description: The setting after the change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/v1/workspaces/{id}/operator/connections:
     get:
       tags: [Operator]
@@ -9316,6 +9574,13 @@ components:
     operatorEnrollmentIdParam:
       in: path
       name: enrollmentId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    operatorRequestRecordIdParam:
+      in: path
+      name: requestRecordId
       required: true
       schema:
         type: string
@@ -9686,6 +9951,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OperatorConnection"
+    OperatorSettings:
+      type: object
+      additionalProperties: false
+      required: [writesEnabled]
+      properties:
+        writesEnabled:
+          type: boolean
+          description: Whether assistant write requests are switched on for this workspace. Off by default.
     OperatorEnrollment:
       type: object
       required: [id, name, userId, scopes, roleCeiling, connectionLifetimeDays, status, expiresAt, createdAt]

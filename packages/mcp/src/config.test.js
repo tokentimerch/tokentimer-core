@@ -105,7 +105,15 @@ describe("adapter configuration", () => {
       assert.ok(!rendered.includes(CREDENTIAL), "credential leaked");
       assert.ok(!rendered.includes("0123456789abcdef"), "credential id leaked");
     }
-    assert.deepEqual(Object.keys(config).sort(), ["basePath", "legacy", "maxResponseBytes", "origin", "requestTimeoutMs"]);
+    assert.deepEqual(Object.keys(config).sort(), ["basePath", "enableWrites", "legacy", "maxResponseBytes", "origin", "requestTimeoutMs"]);
+  });
+
+  it("offers no write tools unless asked, and only exactly 'true' asks", () => {
+    assert.equal(load(base()).enableWrites, false);
+    for (const value of ["", "false", "1", "yes", "TRUE ", "truee"]) {
+      assert.equal(load(base({ TOKENTIMER_MCP_ENABLE_WRITES: value })).enableWrites, value.trim().toLowerCase() === "true", JSON.stringify(value));
+    }
+    assert.equal(load(base({ TOKENTIMER_MCP_ENABLE_WRITES: "true" })).enableWrites, true);
   });
 
   it("validates the optional settings", () => {
