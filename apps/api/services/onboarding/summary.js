@@ -38,14 +38,18 @@ function summarizeContactGroups(settings, contacts) {
       .filter((c) => c.details && typeof c.details.email === "string" && c.details.email)
       .map((c) => String(c.id)),
   );
-  const groupsWithEmail = groups.filter(
-    (g) =>
-      Array.isArray(g.email_contact_ids) &&
-      g.email_contact_ids.some((id) => emailById.has(String(id))),
-  );
+  const hasEmailRecipient = (g) =>
+    Array.isArray(g.email_contact_ids) &&
+    g.email_contact_ids.some((id) => emailById.has(String(id)));
+  const groupsWithEmail = groups.filter(hasEmailRecipient);
+  const defaultId = settings?.default_contact_group_id || null;
+  const defaultGroup = defaultId
+    ? groups.find((g) => String(g.id) === String(defaultId))
+    : null;
   return {
     count: groups.length,
-    defaultId: settings?.default_contact_group_id || null,
+    defaultId,
+    defaultHasEmailRecipient: Boolean(defaultGroup && hasEmailRecipient(defaultGroup)),
     withEmailRecipient: groupsWithEmail.length,
     emailAlertsEnabled: settings ? settings.email_alerts_enabled !== false : null,
   };

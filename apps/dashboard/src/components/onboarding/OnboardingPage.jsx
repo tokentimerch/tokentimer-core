@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
-import { Box, Text, VStack } from '@chakra-ui/react';
+import { Badge, Box, Flex, HStack, Text, VStack } from '@chakra-ui/react';
 import DashboardShell from '../DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../SEO.jsx';
 import {
   DashboardActionButton,
   DashboardErrorAlert,
+  DashboardPanel,
   DashboardState,
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { useWorkspace } from '../../utils/WorkspaceContext.jsx';
 import { onboardingAPI } from '../../utils/onboardingApi.js';
 import { SessionController } from './sessionController.js';
+import { reconcilePending } from './reconcile.js';
 import { docUrl } from './docLinks.js';
 import StepFrame from './StepFrame.jsx';
+import { PLANNER_VERSION, planJourney } from './journeyPlanner.js';
+import { AssetStep, GoalStep, MonitorStep } from './steps.jsx';
+import { RecipientsStep, VerifyStep } from './recipientAndVerifySteps.jsx';
 
 const FLOW = 'mega';
 
@@ -35,6 +40,10 @@ export function useOnboardingState({ api = onboardingAPI } = {}) {
       api,
       workspaceId,
       flow: FLOW,
+      onChange: session =>
+        setState(prev =>
+          prev.status === 'ready' ? { ...prev, session } : prev
+        ),
     });
     controllerRef.current = controller;
     // Capabilities and summary are advisory; a failure there must not block
@@ -58,15 +67,143 @@ export function useOnboardingState({ api = onboardingAPI } = {}) {
     });
   }, [api, workspaceId]);
 
+  const refresh = useCallback(async () => {
+    if (!workspaceId) return null;
+    const summary = await api.getSummary(workspaceId, FLOW);
+    setState(prev => (prev.status === 'ready' ? { ...prev, summary } : prev));
+    return summary;
+  }, [api, workspaceId]);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  return { ...state, controller: controllerRef.current, reload: load };
+  // Close operations that succeeded on the server but were never recorded.
+  const reconciledRevision = useRef(null);
+  useEffect(() => {
+    if (state.status !== 'ready' || !controllerRef.current) return;
+    const key = `${state.session.revision}:${state.session.progress?.pending?.id}`;
+    if (reconciledRevision.current === key) return;
+    reconciledRevision.current = key;
+    const patch = reconcilePending({
+      session: state.session,
+      summary: state.summary,
+    });
+    if (!patch) return;
+    controllerRef.current
+      .update(() => patch)
+      .then(refresh)
+      .catch(() => {});
+  }, [state, refresh]);
+
+  return {
+    ...state,
+    workspaceId,
+    controller: controllerRef.current,
+    reload: load,
+    refresh,
+  };
+}
+
+const STATUS_BADGE = {
+  done: { label: 'Done', colorScheme: 'green' },
+  current: { label: 'Now', colorScheme: 'blue' },
+  skipped: { label: 'Skipped', colorScheme: 'gray' },
+  upcoming: { label: 'Next', colorScheme: 'gray' },
+};
+
+function JourneyRail({ steps }) {
+  const { muted } = useDashboardTheme();
+  return (
+    <VStack
+      as='ol'
+      align='stretch'
+      spacing={2}
+      aria-label='Setup steps'
+      listStyleType='none'
+      m={0}
+      p={0}
+    >
+      {steps.map(step => {
+        const badge = STATUS_BADGE[step.status] || STATUS_BADGE.upcoming;
+        return (
+          <HStack
+            as='li'
+            key={step.id}
+            justify='space-between'
+            aria-current={step.status === 'current' ? 'step' : undefined}
+          >
+            <Text
+              fontSize='sm'
+              fontWeight={step.status === 'current' ? 'bold' : 'normal'}
+              color={step.status === 'upcoming' ? muted : 'inherit'}
+            >
+              {step.title}
+            </Text>
+            <Badge colorScheme={badge.colorScheme}>{badge.label}</Badge>
+          </HStack>
+        );
+      })}
+    </VStack>
+  );
+}
+
+function DoneCard({ ctx }) {
+  const { muted } = useDashboardTheme();
+  const smtp = ctx.summary?.alerts?.smtpConfigured;
+  const restart = async () => {
+    await ctx.controller.update(session => ({
+      intent: { ...session.intent, goal: '' },
+      progress: { skipped: [], verified: false },
+      status: 'in_progress',
+    }));
+    await ctx.refresh();
+  };
+  return (
+    <StepFrame
+      kind='info'
+      title='You are set up'
+      description='Your first asset is tracked and alerts have somewhere to go.'
+      docs={ctx.docs('alerts.thresholds', 'Alert thresholds')}
+      actions={
+        <>
+          <DashboardActionButton variant='outline' onClick={restart}>
+            Track something else
+          </DashboardActionButton>
+          <DashboardActionButton
+            as={RouterLink}
+            to='/dashboard'
+            colorScheme='blue'
+          >
+            Go to dashboard
+          </DashboardActionButton>
+        </>
+      }
+    >
+      <VStack align='stretch' spacing={2}>
+        <Text fontSize='sm' color={muted}>
+          Suggested next steps, all optional:
+        </Text>
+        {smtp !== true ? (
+          <Text fontSize='sm'>
+            Email delivery is not confirmed. Ask an administrator to check SMTP
+            so alerts can be emailed.
+          </Text>
+        ) : null}
+        <Text fontSize='sm'>
+          Import many assets at once from a file or an integration.
+        </Text>
+        <Text fontSize='sm'>
+          Adjust alert thresholds and the delivery window in workspace
+          preferences.
+        </Text>
+      </VStack>
+    </StepFrame>
+  );
 }
 
 export default function OnboardingPage({ session, onLogout, onAccountClick }) {
-  const { pageBg, text, muted } = useDashboardTheme();
+  const { pageBg, text } = useDashboardTheme();
   const shellProps = useDashboardShellProps({
     session,
     onLogout,
@@ -76,19 +213,58 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
   const onboarding = useOnboardingState();
 
   const docsBaseUrl = onboarding.capabilities?.docsBaseUrl;
-  const docs = useMemo(
-    () =>
-      [
-        { key: 'quickstart.firstAsset', label: 'First asset guide' },
-        { key: 'alerts.contactGroups', label: 'Contact groups' },
-      ]
-        .map(link => ({
-          label: link.label,
-          url: docUrl(link.key, docsBaseUrl),
-        }))
-        .filter(link => link.url),
+  const docs = useCallback(
+    (key, label) => {
+      const url = docUrl(key, docsBaseUrl);
+      return url ? [{ label, url }] : [];
+    },
     [docsBaseUrl]
   );
+
+  const plan = useMemo(
+    () =>
+      onboarding.status === 'ready'
+        ? planJourney({
+            intent: onboarding.session.intent,
+            progress: onboarding.session.progress,
+            operationRefs: onboarding.session.operationRefs,
+            capabilities: onboarding.capabilities,
+            reality: onboarding.summary,
+          })
+        : null,
+    [onboarding]
+  );
+
+  const ctx = useMemo(
+    () =>
+      onboarding.status === 'ready'
+        ? {
+            workspaceId: onboarding.workspaceId,
+            controller: onboarding.controller,
+            session: onboarding.session,
+            summary: onboarding.summary,
+            capabilities: onboarding.capabilities,
+            plannerVersion: PLANNER_VERSION,
+            docs,
+            refresh: onboarding.refresh,
+            fetchSummary: onboarding.refresh,
+            userEmail: session?.email || '',
+            userName: session?.name || session?.displayName || '',
+          }
+        : null,
+    [onboarding, docs, session]
+  );
+
+  const STEP_COMPONENTS = {
+    goal: GoalStep,
+    monitor: MonitorStep,
+    asset: AssetStep,
+    recipients: RecipientsStep,
+    verify: VerifyStep,
+  };
+  const Current = plan?.currentStepId
+    ? STEP_COMPONENTS[plan.currentStepId]
+    : null;
 
   return (
     <>
@@ -113,23 +289,32 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                 </Box>
               </VStack>
             ) : (
-              <StepFrame
-                kind='info'
-                title='Welcome to guided setup'
-                description='Your progress is saved to your account, so you can leave and continue later on any device.'
-                docs={docs}
-                actions={
-                  <DashboardActionButton as={RouterLink} to='/dashboard'>
-                    Go to dashboard
-                  </DashboardActionButton>
-                }
+              <Flex
+                direction={{ base: 'column', lg: 'row' }}
+                gap={4}
+                align='flex-start'
               >
-                <Text fontSize='sm' color={muted}>
-                  {onboarding.summary
-                    ? `This workspace has ${onboarding.summary.assets.total} asset(s) and ${onboarding.summary.monitors.total} endpoint monitor(s).`
-                    : 'The workspace summary is not available right now.'}
-                </Text>
-              </StepFrame>
+                <DashboardPanel
+                  w={{ base: 'full', lg: '320px' }}
+                  flexShrink={0}
+                >
+                  <Text fontWeight='bold' fontSize='sm' mb={3}>
+                    Your setup
+                  </Text>
+                  <JourneyRail steps={plan.steps} />
+                  <Text fontSize='xs' mt={4} opacity={0.8}>
+                    Progress is saved to your account. Leave any time and
+                    continue on any device.
+                  </Text>
+                </DashboardPanel>
+                <Box flex='1' minW={0} w='full'>
+                  {plan.complete ? (
+                    <DoneCard ctx={ctx} />
+                  ) : Current ? (
+                    <Current ctx={ctx} />
+                  ) : null}
+                </Box>
+              </Flex>
             )}
           </Box>
         </DashboardShell>
