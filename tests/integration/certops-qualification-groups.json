@@ -12,6 +12,10 @@
       },
       {
         "file": "certops-adcs-enrollments.test.js",
+        "name": "WebHosting fixture opens exactly one trigger-created period and its real enrollment job is claimable"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
         "name": "stops uncertain retrieval at the frozen deadline without a cleanup job"
       },
       {
