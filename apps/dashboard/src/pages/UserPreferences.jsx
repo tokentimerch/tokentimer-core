@@ -33,6 +33,7 @@ import {
 import SEO from '../components/SEO.jsx';
 import { useDashboardTheme } from '../hooks/useDashboardTheme';
 import { workspaceAPI } from '../utils/apiClient';
+import { resetTourCompleted } from '../utils/tourStorage.js';
 
 function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
   const shellBg = useColorModeValue('#e2e8f0', '#0f172a');
@@ -241,7 +242,7 @@ export default function UserPreferences({
 
   const handleRestartTour = () => {
     try {
-      localStorage.removeItem('tt_tour_dashboard_v1');
+      resetTourCompleted('dashboard');
     } catch (_) {
       /* ignore */
     }

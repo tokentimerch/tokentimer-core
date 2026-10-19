@@ -23,6 +23,7 @@ tests/integration/token-renewal-audit.test.js
 
 # Workspaces and contacts
 tests/integration/contacts-crud.test.js
+tests/integration/onboarding-sessions.test.js
 tests/integration/contact-groups-settings.test.js
 tests/integration/workspaces-lifecycle.integration.test.js
 tests/integration/workspace-transfer-tokens.test.js

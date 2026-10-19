@@ -29,6 +29,7 @@ function WelcomeModal({
   displayName,
   emailSent = true,
   onStartTour,
+  onStartSetup,
   introductionVideoUrl,
 }) {
   const primaryActionRef = useRef(null);
@@ -43,6 +44,7 @@ function WelcomeModal({
     tokens: modalTokens,
   } = useDashboardModalProps();
   const showTourAction = Boolean(onStartTour);
+  const showSetupAction = Boolean(onStartSetup);
   const showIntroVideoAction = Boolean(introductionVideoUrl) && !showTourAction;
 
   return (
@@ -201,11 +203,20 @@ function WelcomeModal({
             )}
             <Button
               ref={primaryActionRef}
-              onClick={onClose}
+              onClick={showSetupAction ? onStartSetup : onClose}
               {...primaryButtonProps}
             >
-              {emailSent ? 'Go to Dashboard' : 'Get Started'}
+              {showSetupAction
+                ? 'Set up my environment'
+                : emailSent
+                  ? 'Go to Dashboard'
+                  : 'Get Started'}
             </Button>
+            {showSetupAction && (
+              <Button onClick={onClose} {...outlineButtonProps}>
+                {emailSent ? 'Go to Dashboard' : 'Skip for now'}
+              </Button>
+            )}
           </HStack>
         </ModalFooter>
       </DashboardModalFrame>
