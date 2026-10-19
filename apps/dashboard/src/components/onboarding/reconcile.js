@@ -45,7 +45,9 @@ export function reconcilePending({ session, summary }) {
   }
 
   if (pending.kind === 'contact_group') {
-    if (!summary.alerts?.contactGroups?.defaultHasEmailRecipient) return null;
+    const groups = summary.alerts?.contactGroups;
+    if (!(groups?.defaultHasRecipient ?? groups?.defaultHasEmailRecipient))
+      return null;
     return {
       progress: clear(),
       operation_refs: {

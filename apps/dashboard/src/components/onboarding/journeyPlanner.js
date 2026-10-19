@@ -167,7 +167,12 @@ export function isStepSatisfied(
       return imported > 0 && (reality.assets?.total || 0) >= imported;
     }
     case 'recipients':
-      return reality.alerts?.contactGroups?.defaultHasEmailRecipient === true;
+      // An email recipient or a verified webhook both count; falls back for
+      // older summaries that only reported email.
+      return (
+        (reality.alerts?.contactGroups?.defaultHasRecipient ??
+          reality.alerts?.contactGroups?.defaultHasEmailRecipient) === true
+      );
     case 'notifications':
       return progress?.notificationsReviewed === true;
     case 'smtp':
