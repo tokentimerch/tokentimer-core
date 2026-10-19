@@ -55,6 +55,7 @@ Architecture decisions are accepted but amendable before GA through ADRs.
 | [0011](0011-certops-machine-initiated-audit-events.md) | CertOps machine-initiated lifecycle events are audited | Accepted |
 | [0012](0012-certops-windows-execution-surface-and-trust-anchors.md) | Windows execution surface, trust-anchor operations, signed-dispatch envelope, and CNG-vs-PFX custody | Accepted, amended 2026-08-03 |
 | [0014](0014-certops-adcs-issuer-and-async-enrollment.md) | Microsoft AD CS issuer and asynchronous enrollment lifecycle | Accepted |
+| [0015](0015-mcp-operator-interface.md) | MCP operator interface | Proposed |
 
 ### Alerting
 
@@ -118,6 +119,13 @@ anything is installed. A real-host proof of concept answered the
 Windows-specific questions it lists before it was accepted; its release gate
 still holds back any production release until every case passes on real
 hosts.
+
+ADR-0015 proposes the MCP operator interface. It adds a separate operator
+connection principal (not an agent, not an executor token) whose limits are
+enforced in the REST API, a small read-only first release, and an
+approval-controlled write path that keeps the non-requester rule and makes
+standing renewal authority explicit. It is `Proposed`: the tool contracts under
+`packages/contracts/mcp/` ship with it, and nothing else is implemented.
 
 Changing a published contract or an accepted invariant is a new or updated ADR,
 not a silent code edit.

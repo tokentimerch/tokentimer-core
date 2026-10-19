@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json",
+  "title": "MCP operator interface: common definitions",
+  "description": "Shared building blocks for the MCP tool contracts proposed in ADR-0015. These are the shapes the REST API returns to an operator connection and the MCP adapter relays; they are not an MCP protocol schema.",
+  "$comment": "Disclosure rule: every object here is closed (additionalProperties: false) so a field can only appear after it is added deliberately. Text that originates from certificates, assets, agents or operators is wrapped in untrustedText so a client can treat it as data and never as instructions.",
+  "definitions": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "fingerprintSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "snakeCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$"
+    },
+    "workspaceRole": {
+      "type": "string",
+      "enum": ["viewer", "workspace_manager", "admin"]
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "mcp:identity:read",
+        "mcp:certs:read",
+        "mcp:agents:read",
+        "mcp:jobs:read",
+        "mcp:assets:read",
+        "mcp:renewals:read",
+        "mcp:evidence:read",
+        "mcp:logs:read",
+        "mcp:audit:read",
+        "mcp:requests:read",
+        "mcp:ops:request",
+        "mcp:lifecycle:request",
+        "mcp:config:request",
+        "mcp:ca-revoke"
+      ]
+    },
+    "untrustedText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "untrusted", "truncated"],
+      "properties": {
+        "value": { "type": "string", "maxLength": 512 },
+        "untrusted": { "type": "boolean", "const": true },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "nullableUntrustedText": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/untrustedText" }]
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "default": 25
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9_=.-]+$"
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["returned", "truncated", "nextCursor", "totalKnown", "total"],
+      "properties": {
+        "returned": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "truncated": { "type": "boolean" },
+        "nextCursor": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/cursor" }]
+        },
+        "totalKnown": { "type": "boolean" },
+        "total": {
+          "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+        }
+      }
+    },
+    "lifecycleStatus": {
+      "type": "string",
+      "enum": ["provisioning", "active", "revoked", "decommissioned"]
+    },
+    "renewalPathState": {
+      "type": "string",
+      "enum": ["healthy", "degraded", "unavailable", "unknown"]
+    },
+    "jobStatus": {
+      "type": "string",
+      "enum": [
+        "pending_approval",
+        "approved",
+        "rejected",
+        "pending",
+        "claimed",
+        "running",
+        "succeeded",
+        "failed",
+        "blocked",
+        "cancelled",
+        "dry_run_complete",
+        "orphaned_unknown_effect",
+        "awaiting_issuer"
+      ]
+    },
+    "jobOperation": {
+      "type": "string",
+      "enum": [
+        "issue",
+        "renew",
+        "deploy",
+        "deploy-from-store",
+        "reload",
+        "revoke",
+        "noop",
+        "protocol_smoke",
+        "distribute-trust",
+        "revoke-trust",
+        "continue-enrollment",
+        "adcs-preflight"
+      ]
+    },
+    "toolError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable", "correlationId"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "MCP_UNAUTHENTICATED",
+            "MCP_SCOPE_DENIED",
+            "MCP_INSUFFICIENT_ROLE",
+            "MCP_NOT_FOUND",
+            "MCP_VALIDATION_ERROR",
+            "MCP_RATE_LIMITED",
+            "MCP_CERTOPS_DISABLED",
+            "MCP_RESPONSE_TOO_LARGE",
+            "MCP_UPSTREAM_ERROR"
+          ]
+        },
+        "message": { "type": "string", "maxLength": 500 },
+        "retryable": { "type": "boolean" },
+        "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    }
+  }
+}
