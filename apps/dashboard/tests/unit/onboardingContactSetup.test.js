@@ -6,8 +6,10 @@ import {
   splitName,
 } from '../../src/components/onboarding/contactSetup.js';
 import {
+  GroupWriteNotPersistedError,
   addRecipientToGroup,
   appendContactGroup,
+  assertRecipientPersisted,
 } from '../../src/utils/onboardingActions.js';
 
 const ana = { id: 'c1', details: { email: 'Ana@Example.com' } };
@@ -117,5 +119,58 @@ describe('group writes preserve existing data', () => {
     expect(
       addRecipientToGroup(existing, 'g1', 'c1')[0].email_contact_ids
     ).toEqual(['c1']);
+  });
+});
+
+describe('assertRecipientPersisted', () => {
+  const settings = {
+    contact_groups: [{ id: 'g1', email_contact_ids: ['c1'] }],
+    default_contact_group_id: 'g1',
+  };
+
+  it('accepts a write that really persisted', () => {
+    expect(
+      assertRecipientPersisted(settings, { groupId: 'g1', contactId: 'c1' })
+    ).toBe(true);
+  });
+
+  it('detects a group dropped by the plan group limit', () => {
+    expect(() =>
+      assertRecipientPersisted(
+        { contact_groups: [], default_contact_group_id: null },
+        { groupId: 'g1', contactId: 'c1' }
+      )
+    ).toThrow(GroupWriteNotPersistedError);
+    try {
+      assertRecipientPersisted(
+        { contact_groups: [] },
+        { groupId: 'g1', contactId: 'c1' }
+      );
+    } catch (e) {
+      expect(e.reason).toBe('group_limit');
+      expect(e.message).toMatch(/no more contact groups/);
+    }
+  });
+
+  it('detects a member trimmed by the member limit', () => {
+    try {
+      assertRecipientPersisted(
+        { contact_groups: [{ id: 'g1', email_contact_ids: ['other'] }] },
+        { groupId: 'g1', contactId: 'c1', expectDefault: false }
+      );
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect(e.reason).toBe('member_limit');
+      expect(e.message).toMatch(/no more recipients/);
+    }
+  });
+
+  it('detects a default that did not stick', () => {
+    expect(() =>
+      assertRecipientPersisted(
+        { ...settings, default_contact_group_id: 'g9' },
+        { groupId: 'g1', contactId: 'c1' }
+      )
+    ).toThrow(/could not be saved/);
   });
 });
