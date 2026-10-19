@@ -8,6 +8,42 @@ $ErrorActionPreference = 'Stop'
 # Run the bounded bootstrap in an owned process. Stop-Job can itself block on
 # stalled remoting/servicing; the parent must retain an enforceable deadline.
 function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Role,[int]$Seconds,[int]$GraceSeconds=30){
+ # A worker can leave a background job holding the output pipe open after exit.
+ # Keep its entire process tree owned, including when this launcher is stopped.
+ $ownedJob=$null
+ if($env:OS -eq 'Windows_NT'){
+  if(-not ('CertOpsCaOwnedJob' -as [type])){Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public sealed class CertOpsCaOwnedJob : IDisposable {
+ [StructLayout(LayoutKind.Sequential)] struct Limits {
+  public long processTime,jobTime; public uint flags; public UIntPtr min,max;
+  public uint processes; public UIntPtr affinity; public uint priority,scheduling;
+ }
+ [StructLayout(LayoutKind.Sequential)] struct Counters {public ulong a,b,c,d,e,f;}
+ [StructLayout(LayoutKind.Sequential)] struct Extended {
+  public Limits basic; public Counters io; public UIntPtr processMemory,jobMemory,peakProcess,peakJob;
+ }
+ [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attrs,string name);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref Extended limits,int size);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
+ [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+ IntPtr handle;
+ public CertOpsCaOwnedJob() {
+  handle=CreateJobObject(IntPtr.Zero,null);
+  if(handle==IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+  var limits=new Extended(); limits.basic.flags=0x2000;
+  if(!SetInformationJobObject(handle,9,ref limits,Marshal.SizeOf(typeof(Extended)))) {
+   int error=Marshal.GetLastWin32Error(); Dispose(); throw new Win32Exception(error);
+  }
+ }
+ public void Add(IntPtr process) {if(!AssignProcessToJobObject(handle,process)) throw new Win32Exception(Marshal.GetLastWin32Error());}
+ public void Dispose() {if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}
+}
+'@}
+  $ownedJob=[CertOpsCaOwnedJob]::new()
+ }
  $start=[Diagnostics.ProcessStartInfo]::new()
  $start.FileName=Join-Path $PSHOME $(if($env:OS -eq 'Windows_NT'){'powershell.exe'}else{'pwsh'})
  $command='$ErrorActionPreference="Stop"; $phase="input"; try {$reader=[IO.StreamReader]::new([Console]::OpenStandardInput(),[Text.Encoding]::UTF8,$true); $raw=$reader.ReadToEnd(); $phase="json"; $p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw))|ConvertFrom-Json; $raw=$null; $phase="worker"; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker; exit 0} catch {$kind=$_.Exception.GetType().Name; if($kind -cnotmatch "^[A-Za-z][A-Za-z0-9]{0,79}$"){$kind="Exception"}; [Console]::Out.WriteLine("CERTOPS_CA_PROCESS_ERROR="+$phase+":"+$kind+":"+$_.Exception.HResult); exit 1}'
@@ -19,6 +55,8 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
  $process=[Diagnostics.Process]::new();$process.StartInfo=$start;$started=$false
  try{
   $null=$process.Start();$started=$true
+  # Assign before writing stdin: the worker cannot start CA work or children yet.
+  if($ownedJob){$ownedJob.Add($process.Handle)}
   $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
   # The temporary forest password goes through a pipe, never command arguments.
   # ASCII framing survives OEM writers; the worker detects a UTF-8/UTF-16 BOM
@@ -28,9 +66,12 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
   $json=$null
   $process.StandardInput.Close()
   if(-not $process.WaitForExit(($Seconds+$GraceSeconds)*1000)){
-   $process.Kill();$null=$process.WaitForExit(5000)
+   if($ownedJob){$ownedJob.Dispose();$ownedJob=$null}else{$process.Kill($true)}
+   $null=$process.WaitForExit(5000)
    throw [TimeoutException]::new('Owned CA bootstrap process deadline exceeded')
   }
+  if($ownedJob){$ownedJob.Dispose();$ownedJob=$null}
+  if(-not $stdout.Wait(5000)){throw [TimeoutException]::new('Owned CA bootstrap output deadline exceeded')}
   $output=$stdout.GetAwaiter().GetResult()
   # Only fixed bootstrap receipts may cross the child-process boundary.
   foreach($line in ($output -split '\r?\n')){
@@ -43,6 +84,7 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
    throw ('Owned CA bootstrap process failed: '+$kind+' (exit '+$process.ExitCode+')')
   }
  }finally{
+  if($ownedJob){$ownedJob.Dispose()}
   if($started -and -not $process.HasExited){$process.Kill()}
   $process.Dispose()
  }

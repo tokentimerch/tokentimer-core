@@ -128,6 +128,19 @@ Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
 '@
 $receipt=@(Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 10 -GraceSeconds 0)
 if($receipt.Count -ne 1 -or $receipt[0] -cne 'CERTOPS_STAGE=enterprise-ca-service-running'){throw 'Worker receipt was lost or private output escaped'}
+if($env:OS -eq 'Windows_NT'){
+ Set-Content -LiteralPath $env:CA_CHILD -Value @'
+param($DomainPassword,$HierarchyRole,$StageTimeoutSeconds,[switch]$BootstrapWorker)
+$descendant=Start-Process powershell.exe -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 8' -NoNewWindow -PassThru
+$descendant.Id|Set-Content ($env:CA_CHILD+'.pid')
+Write-Output 'CERTOPS_STAGE=enterprise-ca-service-running'
+'@
+ $clock.Restart()
+ $receipt=@(Invoke-CaBootstrapProcess -Script $env:CA_CHILD -Password 'private-fixture-password' -Role root -Seconds 3 -GraceSeconds 0)
+ $ownedPid=[int](Get-Content ($env:CA_CHILD+'.pid'))
+ if($clock.Elapsed.TotalSeconds -gt 6 -or (Get-Process -Id $ownedPid -ErrorAction SilentlyContinue)){throw 'Descendant retained the output pipe or survived owned cleanup'}
+ if($receipt.Count -ne 1 -or $receipt[0] -cne 'CERTOPS_STAGE=enterprise-ca-service-running'){throw 'Descendant cleanup changed the success receipt'}
+}
 Write-Output 'PROCESS_DEADLINE_PASSED'
 `);
  const env={...process.env,CA_PRODUCTION:path.resolve(__dirname,'../infra/certops-adcs/domain-ca.ps1'),CA_CHILD:child};delete env.PSModulePath;
