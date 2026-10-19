@@ -88,6 +88,7 @@ export default function IssueStep({ ctx }) {
   });
   const names = (saved.names || '').split(/[\s,]+/).filter(Boolean);
   const attempt = saved.issueAttempt || 1;
+  const caEndpoint = saved.caEndpoint || STAGING_CA;
   const { refresh } = ctx;
 
   useEffect(() => {
@@ -108,11 +109,13 @@ export default function IssueStep({ ctx }) {
           zone: saved.zone,
           dnsProvider: saved.dnsProvider,
           certPath: saved.certPath,
+          caEndpoint,
           assignedAgentId: agent.id,
           idempotencyKey: issueIdempotencyKey({
             names,
             zone: saved.zone,
             certPath: saved.certPath,
+            caEndpoint,
             attempt,
           }),
         })
@@ -121,7 +124,11 @@ export default function IssueStep({ ctx }) {
       await saveCertops(ctx, { issueJobId: created.id });
     } catch (e) {
       setError(
-        e?.response?.data?.error || e.message || 'Could not request the order.'
+        e?.response?.data?.code === 'INTERNAL_ERROR'
+          ? 'The server could not create the order. If an earlier order failed on this path, retire its provisioning entry first.'
+          : e?.response?.data?.error ||
+              e.message ||
+              'Could not request the order.'
       );
     } finally {
       setBusy(false);
@@ -176,6 +183,20 @@ export default function IssueStep({ ctx }) {
             </AlertDescription>
           </Alert>
         ) : null}
+        {!job ? (
+          <Text fontSize='sm'>
+            Before you request: in the agent configuration set{' '}
+            <code>execution.dryRun</code> to <code>false</code> and restart the
+            agent. While it is true the agent refuses real orders, and the
+            control plane cannot see that setting.
+          </Text>
+        ) : null}
+        {job?.errorCode === 'AGENT_RESULT_BLOCKED' ? (
+          <Text fontSize='sm'>
+            The agent refused the order. Set <code>execution.dryRun</code> to{' '}
+            <code>false</code>, restart it, then request again.
+          </Text>
+        ) : null}
         {job?.errorMessage ? (
           <Alert status='error' borderRadius='md'>
             <AlertIcon />
@@ -184,6 +205,14 @@ export default function IssueStep({ ctx }) {
               {job.errorMessage}
             </AlertDescription>
           </Alert>
+        ) : null}
+        {view.failed ? (
+          <Text fontSize='sm'>
+            A failed order leaves an entry in <code>provisioning</code> that
+            still holds <code>{saved.certPath}</code>, so asking again with the
+            same path is rejected. Retire that entry in Certificate Management,
+            or go back and choose a different file name, then request again.
+          </Text>
         ) : null}
         {view.noRetry ? (
           <Text fontSize='sm'>
@@ -198,7 +227,7 @@ export default function IssueStep({ ctx }) {
           </Alert>
         ) : null}
         <Text fontSize='xs' color={muted}>
-          CA: {STAGING_CA}. Staging certificates are not trusted by browsers;
+          CA: {caEndpoint}. Staging certificates are not trusted by browsers;
           that is intended for a first run. Asking again places a new order, and
           CAs rate limit repeated orders.
         </Text>

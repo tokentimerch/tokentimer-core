@@ -208,6 +208,11 @@ export function buildAutomateConfig({
           ],
         };
   const config = {
+    // The control plane routes jobs by what the agent declares, not by what
+    // the policy allows. Without these two the agent registers and passes a
+    // dry run but never claims an issuance job.
+    declaredTargetSelectors: list,
+    ...(certbot ? { declaredCommandProfileNames: ['certbot'] } : {}),
     execution: {
       enabled: true,
       dryRun,
