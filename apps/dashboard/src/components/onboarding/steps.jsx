@@ -58,6 +58,7 @@ export function GoalStep({ ctx }) {
         };
       });
       await ctx.refresh();
+      ctx.onDone?.();
     } catch (e) {
       setError(e.message || 'Could not save your choice.');
     } finally {
