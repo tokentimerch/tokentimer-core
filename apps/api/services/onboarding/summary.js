@@ -90,8 +90,16 @@ async function buildSummary(
   const tokenIds = intIds(refs.tokenIds);
   const monitorIds = uuidIds(refs.monitorIds);
 
-  const [tokenCount, monitors, settings, contacts, tokenRefs, monitorRefs] =
-    await Promise.all([
+  const [
+    tokenCount,
+    monitors,
+    settings,
+    contacts,
+    tokenRefs,
+    monitorRefs,
+    autoSync,
+    syncLinked,
+  ] = await Promise.all([
       pool.query("SELECT COUNT(*)::int AS n FROM tokens WHERE workspace_id = $1", [
         workspaceId,
       ]),
@@ -126,11 +134,49 @@ async function buildSummary(
             [workspaceId, monitorIds],
           )
         : { rows: [] },
+      // Names and outcomes only. Credentials and scan parameters can hold
+      // secrets and are never selected.
+      pool.query(
+        `SELECT id, provider, connection_key, enabled, frequency,
+                last_sync_at, last_sync_status, last_sync_items_count,
+                consecutive_failures, active_run_id
+           FROM auto_sync_configs
+          WHERE workspace_id = $1
+          ORDER BY created_at DESC
+          LIMIT 20`,
+        [workspaceId],
+      ),
+      pool.query(
+        `SELECT COUNT(DISTINCT l.token_id)::int AS n
+           FROM auto_sync_token_links l
+           JOIN auto_sync_configs c ON c.id = l.config_id
+          WHERE c.workspace_id = $1`,
+        [workspaceId],
+      ),
     ]);
 
+  const syncRows = autoSync.rows;
   return {
     generatedAt: new Date().toISOString(),
-    assets: { total: tokenCount.rows[0].n },
+    assets: {
+      total: tokenCount.rows[0].n,
+      syncManaged: syncLinked.rows[0]?.n || 0,
+    },
+    autoSync: {
+      total: syncRows.length,
+      items: syncRows.map((c) => ({
+        id: c.id,
+        provider: c.provider,
+        name: c.connection_key,
+        enabled: c.enabled === true,
+        frequency: c.frequency,
+        lastSyncAt: c.last_sync_at,
+        lastStatus: c.last_sync_status || null,
+        lastItems: c.last_sync_items_count ?? null,
+        failures: c.consecutive_failures || 0,
+        running: Boolean(c.active_run_id),
+      })),
+    },
     monitors: {
       total: monitors.rows.length,
       items: monitors.rows.map((m) => ({
