@@ -143,4 +143,4 @@ function createApiClient(config, { fetchImpl = globalThis.fetch } = {}) {
   return Object.freeze({ get });
 }
 
-module.exports = { OPERATOR_PREFIX, ToolError, buildUrl, createApiClient, pathIsConfined };
+module.exports = { OPERATOR_PREFIX, ToolError, buildUrl, createApiClient, pathIsConfined, readCapped };
