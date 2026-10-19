@@ -403,6 +403,9 @@ export function buildVaultConfigs({
   const group = { workspaceId, prefix, sans: names, keyAlgorithm: 'ec' };
   const issuer = {
     agentId: issuerAgentId || 'REPLACE_WITH_ISSUER_WIRE_ID',
+    // Job routing reads these, not the policy (same as first issuance).
+    declaredTargetSelectors: names,
+    declaredCommandProfileNames: ['certbot'],
     execution: {
       enabled: true,
       dryRun: true,
@@ -451,6 +454,7 @@ export function buildVaultConfigs({
   const bindingId = consumerBindingId || 'REPLACE_WITH_BINDING_ID';
   const consumer = {
     agentId: consumerAgentId || 'REPLACE_WITH_CONSUMER_WIRE_ID',
+    declaredTargetSelectors: [bindingId],
     execution: {
       enabled: true,
       dryRun: true,

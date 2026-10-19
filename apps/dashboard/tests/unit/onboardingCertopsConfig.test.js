@@ -359,6 +359,19 @@ describe('vault distribution', () => {
     dnsProvider: 'cloudflare',
   };
 
+  it('declares what the control plane routes distribution jobs on', () => {
+    // Policy alone does not route jobs; both agents also need declarations.
+    const out = buildVaultConfigs({
+      ...base,
+      consumerBindingId: '33333333-3333-4333-8333-333333333333',
+    });
+    expect(out.issuer.declaredTargetSelectors).toEqual(base.names);
+    expect(out.issuer.declaredCommandProfileNames).toEqual(['certbot']);
+    expect(out.consumer.declaredTargetSelectors).toEqual([
+      '33333333-3333-4333-8333-333333333333',
+    ]);
+  });
+
   it('generates issuer and consumer configs with no Vault token', () => {
     const out = buildVaultConfigs(base);
     expect(out.ok).toBe(true);
