@@ -279,6 +279,18 @@ describe('jobs', () => {
     expect(JSON.stringify(job)).not.toMatch(/keyPath|privateKey/);
   });
 
+  it('refuses to build a Windows issue job it cannot verify', () => {
+    expect(() =>
+      buildIssueJob({
+        os: 'windows',
+        names: ['www.example.com'],
+        zone: 'example.com',
+        dnsProvider: 'cloudflare',
+        idempotencyKey: 'wizard-2',
+      })
+    ).toThrow(/Windows issuance/);
+  });
+
   it('builds a harmless dry-run noop pinned to the agent', () => {
     expect(
       buildDryRunJob({ assignedAgentId: 'a', idempotencyKey: 'k' })

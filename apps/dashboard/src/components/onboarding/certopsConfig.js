@@ -255,6 +255,11 @@ export function buildIssueJob({
   assignedAgentId,
   idempotencyKey,
 }) {
+  // The server needs a Windows command profile and an IIS binding that the
+  // wizard cannot verify, so Windows issuance stays a documented runbook.
+  if (os === 'windows') {
+    throw new Error('Windows issuance is not built by the wizard.');
+  }
   const list = (names || []).map(n => String(n).trim()).filter(Boolean);
   const payload = {
     target: { type: 'domain', reference: list[0] },
@@ -268,10 +273,6 @@ export function buildIssueJob({
   if (verifyHost) {
     payload.verifyHost = verifyHost;
     payload.verifyPort = 443;
-  }
-  if (os === 'windows') {
-    delete payload.certPath;
-    delete payload.commandRef;
   }
   return {
     operation: 'issue',
