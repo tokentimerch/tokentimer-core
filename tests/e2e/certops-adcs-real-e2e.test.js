@@ -48,6 +48,9 @@ function boundedFailureMetadata(error, report, phase, depth=0) {
     result.command={executable:executables.has(detail.executable)?detail.executable:"other",exitStatus:Number.isInteger(detail.exitStatus)?detail.exitStatus:null};
     const codes=new Set(["NamedParameterNotFound","ParameterBindingException","ParameterArgumentValidationError","PathNotFound","ItemNotFoundException","CommandNotFoundException","PermissionDenied","UnauthorizedAccessException","NativeCommandError","InvalidOperationException","InvokeMethodOnNull","NoMatchingEventsFound"]);
     if(codes.has(detail.powerShellCode))result.command.powerShellCode=detail.powerShellCode;
+    const officerSteps=new Set(["not-found","foreign-identity","ambiguous","not-pending","serial","revoke","decision","remoting"]);
+    if(officerSteps.has(detail.officerStep))result.command.officerStep=detail.officerStep;
+    if(Number.isInteger(detail.officerExit))result.command.officerExit=detail.officerExit;
   }
   if(depth===0 && Array.isArray(error?.errors))result.causes=error.errors.slice(0,4).map(child=>boundedFailureMetadata(child,null,undefined,1));
   return result;
@@ -57,7 +60,11 @@ function command(file, args) {
   if(result.error || result.status!==0){
     const error=Object.assign(new Error("Native qualification command failed"),{code:"CERTOPS_NATIVE_COMMAND_FAILED"});
     const fqid=typeof result.stderr==="string" ? result.stderr.match(/FullyQualifiedErrorId\s*:\s*([^,\r\n]+)/) : null;
-    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim()};
+    // Only fixed officer-step names and a numeric exit code are read from stdout; no free text.
+    const output=typeof result.stdout==="string" ? result.stdout : "";
+    const officerStep=output.match(/^CERTOPS_OFFICER_FAILURE=(not-found|foreign-identity|ambiguous|not-pending|serial|revoke|decision|remoting)\r?$/m)?.[1];
+    const officerExit=output.match(/^CERTOPS_OFFICER_EXIT=(-?\d{1,11})\r?$/m)?.[1];
+    error.qualificationCommand={executable:path.basename(file).toLowerCase(),exitStatus:result.status,powerShellCode:fqid?.[1].trim(),officerStep,officerExit:officerExit===undefined?undefined:Number(officerExit)};
     throw error;
   }
   return result.stdout.trim();

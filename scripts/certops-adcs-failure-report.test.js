@@ -28,6 +28,27 @@ test("untrusted error fields and arbitrary FQID strings never enter reports",()=
   const supplied={constructor:{name:"SECRET"},code:"SECRET",message:"SECRET",stack:"SECRET",qualificationCommand:{executable:"SECRET",exitStatus:"SECRET",powerShellCode:"SECRET"}};
   assert.deepEqual(plain(api.boundedFailureMetadata(supplied,{})),{errorClass:"Error",command:{executable:"other",exitStatus:null}});
 });
+test("officer action failure keeps only a fixed step name and numeric certutil exit code",()=>{
+  const stdout="CERTOPS_OFFICER_EXIT=-2147024891\nCERTOPS_OFFICER_FAILURE=revoke\nSECRET_TOKEN tt-ca.lab.certops.test\\TTQualificationRoot";
+  const api=producer({status:1,stdout,stderr:"private argument SECRET"});
+  let failure;try{api.command("C:/Windows/System32/powershell.exe",["-File","officer-action.ps1"]);}catch(error){failure=error;}
+  const bounded=plain(api.boundedFailureMetadata(failure,{scenarios:[]}));
+  assert.deepEqual(bounded.command,{executable:"powershell.exe",exitStatus:1,officerStep:"revoke",officerExit:-2147024891});
+  assert.doesNotMatch(JSON.stringify(bounded),/SECRET|TTQualificationRoot|tt-ca/);
+});
+test("untrusted officer output never becomes free text in the report",()=>{
+  for(const stdout of ["CERTOPS_OFFICER_FAILURE=revoke SECRET","CERTOPS_OFFICER_FAILURE=SECRET_STEP","CERTOPS_OFFICER_EXIT=SECRET","CERTOPS_OFFICER_EXIT=99999999999999999999","prefix CERTOPS_OFFICER_FAILURE=revoke"]){
+    const api=producer({status:1,stdout,stderr:""});
+    let failure;try{api.command("powershell.exe",["-File","x"]);}catch(error){failure=error;}
+    const bounded=plain(api.boundedFailureMetadata(failure,{scenarios:[]}));
+    assert.equal(bounded.command.officerStep,undefined,stdout);
+    assert.equal(bounded.command.officerExit,undefined,stdout);
+    assert.doesNotMatch(JSON.stringify(bounded),/SECRET/);
+  }
+  const supplied={constructor:{name:"Error"},qualificationCommand:{executable:"powershell.exe",exitStatus:1,officerStep:"SECRET",officerExit:"SECRET"}};
+  const bounded=plain(producer({status:0,stdout:""}).boundedFailureMetadata(supplied,{}));
+  assert.deepEqual(bounded.command,{executable:"powershell.exe",exitStatus:1});
+});
 test("helper assertion location keeps only the repository file name and line",()=>{
   const api=producer({status:0,stdout:"ok"});
   const stack="AssertionError: SECRET\n at verifyDecision (C:/private/SECRET/tests/e2e/helpers/certops-adcs-browser-job-approval.js:118:12)\n at C:/private/SECRET/tests/e2e/certops-adcs-real-e2e.test.js:303:41";
