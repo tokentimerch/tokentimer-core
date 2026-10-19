@@ -282,6 +282,7 @@ async function consumerMatrix({ client, workspaceId, groupId, groupIds }) {
   const ids = groupIds ? groupIds.map(normalizeDistributionId) : [normalizeDistributionId(groupId)];
   return (await client.query(`SELECT b.id AS binding_id,b.group_id,b.assigned_agent_id,b.required,b.verification_policy,
     b.state AS binding_state,b.deployment_profile_ref,b.freshness_seconds,
+    b.profile_revision,b.authorization_revision,b.wave,
     COALESCE(NULLIF(a.name,''),NULLIF(a.hostname,''),'Unnamed agent') AS agent_name,
     desired.provider_version AS desired_version,observed.provider_version AS observed_version,
     (s.observed_at IS NOT NULL AND s.observed_at<=clock_timestamp()-b.freshness_seconds*interval '1 second') AS stale,
