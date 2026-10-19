@@ -4813,6 +4813,11 @@ const migrations = [
     name: "operator_connections",
     sql: fs.readFileSync(require("path").join(__dirname, "077-operator-connections.sql"), "utf8"),
   },
+  {
+    version: 78,
+    name: "operator_enrollment_grants",
+    sql: fs.readFileSync(require("path").join(__dirname, "078-operator-enrollment-grants.sql"), "utf8"),
+  },
 ];
 
 

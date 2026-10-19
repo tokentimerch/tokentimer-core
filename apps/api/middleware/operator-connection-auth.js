@@ -13,6 +13,7 @@
 //                             req.isWorkerCall or a session.
 
 const { CONNECTION_CREDENTIAL, authenticateCredential, recordUse } = require("../services/operator/connections");
+const { GRANT_CREDENTIAL } = require("../services/operator/enrollments");
 const { hasAtLeastRole } = require("../services/rbac");
 
 const OPERATOR_UNAUTHORIZED = "OPERATOR_CONNECTION_UNAUTHORIZED";
@@ -42,6 +43,21 @@ function bearerFromRequest(req) {
 // one still cannot reach a route that is not meant for it.
 function looksLikeOperatorCredential(raw) {
   return typeof raw === "string" && raw.startsWith(CONNECTION_CREDENTIAL.prefix);
+}
+
+// The enrollment grant is a different credential family with its own prefix.
+// It is accepted at one route, the redemption endpoint, and nowhere else.
+const ENROLLMENT_REDEEM_PATH = "/api/v1/operator/enroll/redeem";
+
+function looksLikeEnrollmentGrant(raw) {
+  return typeof raw === "string" && raw.startsWith(GRANT_CREDENTIAL.prefix);
+}
+
+function isRedeemRequest(req) {
+  return (
+    String(req.method || "").toUpperCase() === "POST" &&
+    requestPath(req) === ENROLLMENT_REDEEM_PATH
+  );
 }
 
 function hasCookieHeader(req) {
@@ -86,6 +102,14 @@ function isOperatorRoute(req) {
 // Mounted before any other authentication. Fail closed.
 function guardOperatorCredentials(req, res, next) {
   const bearer = bearerFromRequest(req);
+  if (bearer.present && looksLikeEnrollmentGrant(bearer.raw)) {
+    // A grant is spent at exactly one route and nowhere else.
+    if (isRedeemRequest(req)) return next();
+    return res.status(403).json({
+      error: "Operator enrollment codes are not accepted on this route",
+      code: OPERATOR_ROUTE_FORBIDDEN,
+    });
+  }
   if (!bearer.present || !looksLikeOperatorCredential(bearer.raw)) return next();
   if (!isOperatorRoute(req)) {
     return res.status(403).json({
@@ -166,6 +190,8 @@ module.exports = {
   guardOperatorCredentials,
   hasSessionIdentity,
   isOperatorRoute,
+  isRedeemRequest,
+  looksLikeEnrollmentGrant,
   looksLikeOperatorCredential,
   requireOperatorConnection,
 };

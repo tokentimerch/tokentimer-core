@@ -140,6 +140,86 @@ describe("guardOperatorCredentials", () => {
   });
 });
 
+describe("guardOperatorCredentials and enrollment grants", () => {
+  const GRANT = `ttopg_${ID}_${"c".repeat(64)}`;
+  const REDEEM = "/api/v1/operator/enroll/redeem";
+  const grantReq = (overrides = {}) => req({ url: REDEEM, authorization: `Bearer ${GRANT}`, method: "POST", ...overrides });
+
+  it("lets a grant through at exactly POST on the redeem route", async () => {
+    const out = await run(auth.guardOperatorCredentials, grantReq());
+    assert.equal(out.nextCalled, true);
+    assert.equal(out.res.statusCode, null);
+  });
+
+  it("refuses a grant on every other method, even at the redeem route", async () => {
+    for (const method of ["GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", undefined]) {
+      const out = await run(auth.guardOperatorCredentials, grantReq({ method }));
+      assert.equal(out.nextCalled, false, String(method));
+      assert.equal(out.res.statusCode, 403, String(method));
+      assert.equal(out.res.body.code, auth.OPERATOR_ROUTE_FORBIDDEN);
+    }
+  });
+
+  it("refuses a grant on every other path, including near misses and traversal", async () => {
+    for (const url of [
+      "/api/v1/operator/whoami",
+      "/api/v1/operator/enroll",
+      "/api/v1/operator/enroll/redeem/",
+      "/api/v1/operator/enroll/redeem/extra",
+      "/api/v1/operator/enroll/Redeem",
+      "/api/v1/operator/enroll/redeem?x=/api/v1/operator/whoami",
+      "/api/v1/operator/enroll/../whoami",
+      "/api/v1/operator/enroll/%72edeem",
+      "/api/v1/workspaces/abc/operator/enrollments",
+      "/api/v1/workspaces/abc/certops/jobs",
+      "/auth/login",
+      "//api/v1/operator/enroll/redeem",
+    ]) {
+      const out = await run(auth.guardOperatorCredentials, grantReq({ url }));
+      const expectedThrough = url.split("?")[0] === REDEEM;
+      assert.equal(out.nextCalled, expectedThrough, url);
+      if (!expectedThrough) assert.equal(out.res.statusCode, 403, url);
+    }
+  });
+
+  it("treats a malformed grant like a grant: it still cannot travel", async () => {
+    for (const bearer of ["ttopg_", "ttopg_short", `ttopg_${ID}_`, "ttopg_" + "z".repeat(90)]) {
+      const out = await run(auth.guardOperatorCredentials, req({ url: "/api/v1/operator/whoami", authorization: `Bearer ${bearer}` }));
+      assert.equal(out.nextCalled, false, bearer);
+      assert.equal(out.res.statusCode, 403, bearer);
+    }
+  });
+
+  it("is not fooled by the grant prefix in other casings of the header", async () => {
+    const out = await run(
+      auth.guardOperatorCredentials,
+      req({ url: "/api/v1/operator/whoami", authorization: `bEaReR ${GRANT}`, method: "POST" }),
+    );
+    assert.equal(out.nextCalled, false);
+    assert.equal(out.res.statusCode, 403);
+  });
+
+  it("exposes the family checks as exact prefix tests", () => {
+    assert.equal(auth.looksLikeEnrollmentGrant(GRANT), true);
+    assert.equal(auth.looksLikeEnrollmentGrant(OPERATOR), false);
+    assert.equal(auth.looksLikeEnrollmentGrant(EXECUTOR), false);
+    assert.equal(auth.looksLikeOperatorCredential(GRANT), false, "a grant is not a connection credential");
+    assert.equal(auth.looksLikeEnrollmentGrant(null), false);
+  });
+
+  it("never lets a grant authenticate a connection route", async () => {
+    const guard = auth.requireOperatorConnection({
+      scope: "mcp:identity:read",
+      authenticateCredential: async () => {
+        throw new Error("a grant must never reach authentication");
+      },
+    });
+    const out = await run(guard, req({ authorization: `Bearer ${GRANT}` }));
+    assert.equal(out.res.statusCode, 401);
+    assert.equal(out.nextCalled, false);
+  });
+});
+
 describe("requireOperatorConnection", () => {
   const validResult = (overrides = {}) => ({
     valid: true,
@@ -326,8 +406,14 @@ describe("route inventory", () => {
     }
   });
 
+  // Redeeming an enrollment grant is the one route in the namespace that takes
+  // no connection credential: it takes the grant, once. It is named here so
+  // that any other unguarded route, or any other write, still fails.
+  const REDEEM = "POST /api/v1/operator/enroll/redeem";
+  const isRedeem = (route) => `${route.method} ${route.path}` === REDEEM;
+
   it("gates every operator-namespace route behind the rollout flag and the connection guard", () => {
-    const inside = routes.filter((r) => r.path.startsWith("/api/v1/operator/"));
+    const inside = routes.filter((r) => r.path.startsWith("/api/v1/operator/") && !isRedeem(r));
     assert.ok(inside.length > 0);
     for (const route of inside) {
       assert.ok(route.handlers.includes("requireOperatorInterfaceEnabled"), `${route.path} lacks the rollout gate`);
@@ -336,9 +422,31 @@ describe("route inventory", () => {
     }
   });
 
+  it("allows exactly one unguarded write in the namespace: redeeming a grant, gated and rate limited", () => {
+    const writes = routes.filter((r) => r.path.startsWith("/api/v1/operator/") && r.method !== "GET");
+    assert.deepEqual(writes.map((r) => `${r.method} ${r.path}`), [REDEEM]);
+    const [redeem] = writes;
+    assert.ok(redeem.handlers.includes("requireOperatorInterfaceEnabled"), "redeem lacks the rollout gate");
+    assert.ok(!redeem.handlers.includes("operatorConnectionGuard"), "redeem must not take a connection credential");
+    assert.ok(!redeem.handlers.includes("requireSessionUser"), "redeem is not a session route");
+    // The limiter is an anonymous function, so check it by identity: the
+    // very instance the middleware module hands out must be on the route.
+    const { getOperatorEnrollmentLimiter } = require(path.resolve(__dirname, "../../apps/api/middleware/rateLimit.js"));
+    const operatorRouter = require(path.join(routesDir, "operator.js"));
+    const layer = operatorRouter.stack.find(
+      (l) => l.route && l.route.path === "/api/v1/operator/enroll/redeem" && l.route.methods.post,
+    );
+    assert.ok(layer, "redeem route layer not found");
+    assert.ok(
+      layer.route.stack.some((entry) => entry.handle === getOperatorEnrollmentLimiter()),
+      "redeem must carry the enrollment rate limiter",
+    );
+    assert.equal(layer.route.stack[0].handle, getOperatorEnrollmentLimiter(), "the limiter must run before anything else");
+  });
+
   it("makes every connection-management route session-only and flag-gated", () => {
-    const management = routes.filter((r) => r.path.includes("/operator/connections"));
-    assert.ok(management.length >= 4);
+    const management = routes.filter((r) => /\/operator\/(connections|enrollments)/.test(r.path));
+    assert.ok(management.length >= 7, `only ${management.length} management routes found`);
     for (const route of management) {
       assert.ok(route.path.startsWith("/api/v1/workspaces/:id/"), route.path);
       assert.ok(route.handlers.includes("requireSessionUser"), `${route.path} must require a session user`);
@@ -385,6 +493,29 @@ describe("route inventory", () => {
       bodies.add(response.body.code);
     }
     assert.deepEqual([...bodies], [auth.OPERATOR_ROUTE_FORBIDDEN]);
+  });
+
+  it("refuses an enrollment grant on every real route except redeeming it", async () => {
+    const GRANT = `ttopg_${ID}_${"c".repeat(64)}`;
+    const app = express();
+    app.use("/api", auth.guardOperatorCredentials);
+    app.use("/auth", auth.guardOperatorCredentials);
+    for (const file of routeFiles) app.use(require(path.join(routesDir, file)));
+
+    const others = routes.filter((r) => !isRedeem(r));
+    assert.ok(others.length > 150);
+    const codes = new Set();
+    for (const route of others) {
+      if (!route.path.startsWith("/api") && !route.path.startsWith("/auth")) continue;
+      const concrete = route.path.replace(/:[A-Za-z0-9_]+\??/g, "x");
+      const response = await request(app)
+        [route.method.toLowerCase()](concrete)
+        .set("Authorization", `Bearer ${GRANT}`)
+        .send({});
+      assert.equal(response.status, 403, `${route.method} ${route.path} -> ${response.status}`);
+      codes.add(response.body.code);
+    }
+    assert.deepEqual([...codes], [auth.OPERATOR_ROUTE_FORBIDDEN]);
   });
 
   it("mounts the early guard before any other authentication in the app entrypoint", () => {
