@@ -12,6 +12,7 @@ import { DashboardActionButton } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import { createJob } from '../certops/certopsJobsApi.js';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import {
   buildIssueJob,
   issueIdempotencyKey,
@@ -149,14 +150,13 @@ export default function IssueStep({ ctx }) {
       ]}
       actions={
         !job ? (
-          <DashboardActionButton
-            colorScheme='blue'
+          <PrimaryButton
             onClick={request}
             isLoading={busy}
             isDisabled={!gate.ok || !agent}
           >
             Request a staging certificate
-          </DashboardActionButton>
+          </PrimaryButton>
         ) : view.failed ? (
           <DashboardActionButton variant='outline' onClick={askAgain}>
             Request again

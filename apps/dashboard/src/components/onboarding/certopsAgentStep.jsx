@@ -6,6 +6,7 @@ import {
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { INFRASTRUCTURES, capabilityGap } from './certopsMatrix.js';
 import {
@@ -134,15 +135,14 @@ export function AgentStep({ ctx }) {
         description='Observe mode only reads cert-manager resources. It never changes the cluster.'
         docs={ctx.docs('certops.controller', 'Controller install')}
         actions={
-          <DashboardActionButton
-            colorScheme='blue'
+          <PrimaryButton
             isDisabled={!values}
             onClick={() =>
               saveCertops(ctx, { clusterId, configReviewed: true })
             }
           >
             I installed it
-          </DashboardActionButton>
+          </PrimaryButton>
         }
       >
         <VStack align='stretch' spacing={3}>
@@ -209,14 +209,13 @@ export function AgentStep({ ctx }) {
         ),
       ]}
       actions={
-        <DashboardActionButton
-          colorScheme='blue'
+        <PrimaryButton
           onClick={issueToken}
           isLoading={busy}
           isDisabled={Boolean(token)}
         >
           {token ? 'Token created' : 'Create a one-time token'}
-        </DashboardActionButton>
+        </PrimaryButton>
       }
     >
       <VStack align='stretch' spacing={3}>

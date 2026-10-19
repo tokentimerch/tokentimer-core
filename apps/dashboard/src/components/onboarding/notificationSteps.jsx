@@ -22,6 +22,7 @@ import {
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 import {
@@ -123,14 +124,9 @@ export function NotificationsStep({ ctx }) {
           >
             Keep the defaults
           </DashboardActionButton>
-          <DashboardActionButton
-            colorScheme='blue'
-            onClick={save}
-            isLoading={busy}
-            isDisabled={invalid}
-          >
+          <PrimaryButton onClick={save} isLoading={busy} isDisabled={invalid}>
             Save
-          </DashboardActionButton>
+          </PrimaryButton>
         </>
       }
     >
@@ -382,13 +378,9 @@ export function SmtpStep({ ctx }) {
           >
             Send test email
           </DashboardActionButton>
-          <DashboardActionButton
-            colorScheme='blue'
-            onClick={save}
-            isLoading={busy}
-          >
+          <PrimaryButton onClick={save} isLoading={busy}>
             Save
-          </DashboardActionButton>
+          </PrimaryButton>
         </>
       }
     >

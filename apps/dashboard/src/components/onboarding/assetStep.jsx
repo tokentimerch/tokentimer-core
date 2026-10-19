@@ -21,12 +21,10 @@ import {
   Textarea,
   VStack,
 } from '@chakra-ui/react';
-import {
-  DashboardActionButton,
-  DashboardErrorAlert,
-} from '../DashboardPrimitives';
+import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { runIdempotent } from './operations.js';
 import {
   FIELD_LABELS,
@@ -215,13 +213,9 @@ export function AssetStep({ ctx }) {
         ...ctx.docs('tokens.fields', 'Asset fields'),
       ]}
       actions={
-        <DashboardActionButton
-          colorScheme='blue'
-          onClick={submit}
-          isLoading={busy}
-        >
+        <PrimaryButton onClick={submit} isLoading={busy}>
           Create asset
-        </DashboardActionButton>
+        </PrimaryButton>
       }
     >
       <VStack align='stretch' spacing={4}>

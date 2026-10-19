@@ -75,7 +75,7 @@ export default function SetupNudge({
   const dismiss = async () => {
     setOpen(false);
     try {
-      const current = session.current;
+      const { current } = session;
       await api.putSession(workspaceId, FLOW, {
         status: 'dismissed',
         expectedRevision: current?.revision ?? 0,

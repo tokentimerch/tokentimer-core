@@ -13,12 +13,10 @@ import {
   Input,
   VStack,
 } from '@chakra-ui/react';
-import {
-  DashboardActionButton,
-  DashboardErrorAlert,
-} from '../DashboardPrimitives';
+import { DashboardErrorAlert } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import { availableGoals } from './journeyPlanner.js';
 import { GOAL_AREAS } from './modules.js';
 import { normalizeMonitorUrl, runIdempotent } from './operations.js';
@@ -72,14 +70,9 @@ export function GoalStep({ ctx }) {
       description='Pick one. You can come back for the others, and nothing is created until you confirm a step.'
       docs={ctx.docs('quickstart.firstAsset', 'First asset guide')}
       actions={
-        <DashboardActionButton
-          colorScheme='blue'
-          onClick={save}
-          isLoading={saving}
-          isDisabled={!choice}
-        >
+        <PrimaryButton onClick={save} isLoading={saving} isDisabled={!choice}>
           Continue
-        </DashboardActionButton>
+        </PrimaryButton>
       }
     >
       <VStack align='stretch' spacing={4}>
@@ -187,14 +180,13 @@ export function MonitorStep({ ctx }) {
         ...ctx.docs('monitoring.network', 'Network requirements'),
       ]}
       actions={
-        <DashboardActionButton
-          colorScheme='blue'
+        <PrimaryButton
           onClick={submit}
           isLoading={busy}
           isDisabled={!url.trim()}
         >
           Add website
-        </DashboardActionButton>
+        </PrimaryButton>
       }
     >
       <VStack align='stretch' spacing={3}>

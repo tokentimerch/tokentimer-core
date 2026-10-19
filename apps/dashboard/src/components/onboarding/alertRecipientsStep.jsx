@@ -6,6 +6,7 @@ import {
 } from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
+import PrimaryButton from './PrimaryButton.jsx';
 import GroupEditor from './alertGroupEditor.jsx';
 import { describeGroup } from './alertGroups.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
@@ -161,12 +162,9 @@ export function RecipientsStep({ ctx }) {
           <DashboardActionButton variant='ghost' onClick={skip}>
             Skip for now
           </DashboardActionButton>
-          <DashboardActionButton
-            colorScheme='blue'
-            onClick={() => setEditing('new')}
-          >
+          <PrimaryButton onClick={() => setEditing('new')}>
             Create another group
-          </DashboardActionButton>
+          </PrimaryButton>
         </>
       }
     >
