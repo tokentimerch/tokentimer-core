@@ -202,10 +202,11 @@ describe('first-value onboarding journey', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Add website' }));
 
-    // The recipient step defaults to the signed-in user's own email.
-    const email = await screen.findByLabelText(/Email/);
+    // The group editor defaults to the signed-in user's own email, and a
+    // typed address counts without pressing Add person first.
+    const email = await screen.findByLabelText(/^Email$/);
     expect(email).toHaveValue('ana@example.com');
-    await user.click(screen.getByRole('button', { name: 'Save recipient' }));
+    await user.click(screen.getByRole('button', { name: 'Create group' }));
 
     expect(await screen.findByText('Alerts have a recipient')).toBeVisible();
     expect(screen.getByText(/Will notify through: email/)).toBeVisible();
@@ -334,13 +335,13 @@ describe('first-value onboarding journey', () => {
     });
     mount();
     await user.click(
-      await screen.findByRole('button', { name: 'Save recipient' })
+      await screen.findByRole('button', { name: 'Create group' })
     );
     expect(await screen.findByText(/no more contact groups/i)).toBeVisible();
     // Not recorded as done, so the step stays open for a retry.
     expect(server.state.session.operationRefs.contactGroupId).toBeUndefined();
     expect(
-      screen.getByRole('button', { name: 'Save recipient' })
+      screen.getByRole('button', { name: 'Create group' })
     ).toBeVisible();
   });
 });
