@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Role,[int]$Seconds,[int]$GraceSeconds=30){
  $start=[Diagnostics.ProcessStartInfo]::new()
  $start.FileName=Join-Path $PSHOME $(if($env:OS -eq 'Windows_NT'){'powershell.exe'}else{'pwsh'})
- $command='$p=[Console]::In.ReadToEnd()|ConvertFrom-Json; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker'
+ $command='$ErrorActionPreference="Stop"; try {$p=[Console]::In.ReadToEnd()|ConvertFrom-Json; & $p.Script -DomainPassword $p.Password -HierarchyRole $p.Role -StageTimeoutSeconds $p.Seconds -BootstrapWorker; exit 0} catch {$kind=$_.Exception.GetType().Name; if($kind -notin @("CommandNotFoundException","ParameterBindingException","ParameterBindingValidationException","RuntimeException","UnauthorizedAccessException","MethodInvocationException","ParseException")){$kind="Exception"}; [Console]::Out.WriteLine("CERTOPS_CA_PROCESS_ERROR="+$kind); exit 1}'
  $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
  $start.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '+$encoded
  $start.UseShellExecute=$false;$start.CreateNoWindow=$true
@@ -32,7 +32,12 @@ function Invoke-CaBootstrapProcess([string]$Script,[string]$Password,[string]$Ro
   foreach($line in ($output -split '\r?\n')){
    if($line -cmatch '^CERTOPS_STAGE=enterprise-(ca-service-running|subordinate-request-created)$' -or $line -cmatch '^CERTOPS_SUBORDINATE_REQUEST=[A-Za-z0-9+/=]+$'){Write-Output $line}
   }
-  if($process.ExitCode -ne 0){throw 'Owned CA bootstrap process failed'}
+  if($process.ExitCode -ne 0){
+   $kind='Unknown'
+   $match=[regex]::Match($output,'(?m)^CERTOPS_CA_PROCESS_ERROR=(CommandNotFoundException|ParameterBindingException|ParameterBindingValidationException|RuntimeException|UnauthorizedAccessException|MethodInvocationException|ParseException|Exception)\r?$')
+   if($match.Success){$kind=$match.Groups[1].Value}
+   throw ('Owned CA bootstrap process failed: '+$kind+' (exit '+$process.ExitCode+')')
+  }
  }finally{
   if($started -and -not $process.HasExited){$process.Kill()}
   $process.Dispose()
