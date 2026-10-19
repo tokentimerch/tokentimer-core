@@ -35,7 +35,7 @@ describe('token-linked inventory API resolution', () => {
     expect(get).toHaveBeenCalledOnce();
   });
 
-  it('resolves equivalent fingerprints across source records and leaves unlinked tokens empty', async () => {
+  it('requires explicit selection for equivalent fingerprints and leaves unlinked tokens empty', async () => {
     const a = {
       id: 'import',
       tokenId: 1,
@@ -49,7 +49,8 @@ describe('token-linked inventory API resolution', () => {
       updatedAt: '2026-02-01',
     };
     get.mockResolvedValue({ data: { items: [a, b] } });
-    expect(await getManagedCertificateForToken('ws', 1)).toEqual(b);
+    expect(await getManagedCertificateForToken('ws', 1)).toBeNull();
+    expect(await getManagedCertificatesForToken('ws', 1)).toEqual([a, b]);
     expect(await getManagedCertificateForToken('ws', 2)).toBeNull();
   });
 });

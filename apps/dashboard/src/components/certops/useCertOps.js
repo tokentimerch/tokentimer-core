@@ -456,13 +456,20 @@ export function useWorkspaceCertOps() {
  * Loads CertOps enrichment (managed certificate + deployment history) for an
  * existing cert token row, keyed by tokens.id via managed_certificates.token_id.
  *
- * Several sources can reference one token. Automatic selection is safe only
- * when they identify the same fingerprint. Otherwise callers must show the
- * ambiguous-link notice or provide an explicit selected source ID.
+ * Several registrations can reference one token. Multiple registrations always
+ * require an explicit choice, including registrations sharing a fingerprint.
  */
 export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
   const { workspaceId } = useWorkspace();
   const enabled = useCertOpsEnabled();
+  const [selection, setSelection] = useState(null);
+  const selectedId =
+    preferredCertificateId ||
+    (selection?.tokenId === tokenId && selection?.workspaceId === workspaceId
+      ? selection.id
+      : null);
+  const scope = JSON.stringify([workspaceId, tokenId, selectedId]);
+  const [loadedScope, setLoadedScope] = useState('');
   const [certificate, setCertificate] = useState(null);
   const [certificates, setCertificates] = useState([]);
   const [ambiguousLink, setAmbiguousLink] = useState(false);
@@ -504,18 +511,17 @@ export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
         );
         if (cancelled) return;
         const resolution = resolveTokenCertificate(linked);
-        const managed = preferredCertificateId
-          ? linked.find(
-              cert => String(cert.id) === String(preferredCertificateId)
-            )
+        const managed = selectedId
+          ? linked.find(cert => String(cert.id) === String(selectedId))
           : resolution.certificate;
+        setLoadedScope(scope);
         setCertificates(Array.isArray(linked) ? linked : []);
-        setAmbiguousLink(!preferredCertificateId && resolution.ambiguousLink);
+        setAmbiguousLink(!selectedId && resolution.ambiguousLink);
         setCertificate(managed || null);
         if (!managed?.id) {
           setInstances([]);
           setInstancesAvailable(true);
-          if (preferredCertificateId) {
+          if (selectedId) {
             setError(
               'The selected source certificate is no longer linked to this token.'
             );
@@ -568,15 +574,17 @@ export function useCertOpsForToken(tokenId, preferredCertificateId = null) {
       cancelled = true;
       controller.abort();
     };
-  }, [workspaceId, tokenId, preferredCertificateId, enabled]);
+  }, [workspaceId, tokenId, selectedId, enabled, scope]);
 
   return {
     enabled,
-    certificate,
-    certificates,
+    certificate: loadedScope === scope ? certificate : null,
+    certificates: loadedScope === scope ? certificates : [],
+    workspaceId,
+    selectCertificate: id => setSelection({ workspaceId, tokenId, id }),
     certificateCount: resolveTokenCertificate(certificates).certificateCount,
-    ambiguousLink,
-    instances,
+    ambiguousLink: loadedScope === scope && ambiguousLink,
+    instances: loadedScope === scope ? instances : [],
     instancesAvailable,
     instancesError,
     loading,

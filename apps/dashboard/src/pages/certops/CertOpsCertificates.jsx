@@ -37,7 +37,8 @@ import {
   Unlink,
 } from 'lucide-react';
 import { AssetSearchInput } from '../../components/AssetFilters.jsx';
-import CopyableId from '../../components/CopyableId.jsx';
+import DeploymentBadge from '../../components/certops/DeploymentBadge.jsx';
+import useDistributionSummaries from '../../components/certops/useDistributionSummaries.js';
 import RenewalBadge from '../../components/certops/RenewalBadge.jsx';
 import RenewalScheduleFacts from '../../components/certops/RenewalScheduleFacts.jsx';
 import RenewalPathBadge from '../../components/certops/RenewalPathBadge.jsx';
@@ -107,6 +108,7 @@ const CERTIFICATE_TABLE_COLUMNS = [
   { key: 'status', label: 'Status' },
   { key: 'expiry', label: 'Expiry' },
   { key: 'renewal', label: 'Renewal', sortable: false },
+  { key: 'deployment', label: 'Deployment', sortable: false },
   { key: 'keyLocality', label: 'Key locality' },
   { key: 'source', label: 'Source' },
 ];
@@ -373,6 +375,11 @@ export default function CertOpsCertificates() {
       return false;
     return true;
   });
+  const deployments = useDistributionSummaries(
+    enabled ? workspaceId : null,
+    visibleCertificates
+  );
+  const [focusDeployments, setFocusDeployments] = useState(false);
   const searchIconColor = useColorModeValue(
     'var(--chakra-colors-gray-500)',
     'rgba(148, 163, 184, 0.86)'
@@ -382,7 +389,17 @@ export default function CertOpsCertificates() {
   const [retireTarget, setRetireTarget] = useState(null);
   const [setupTarget, setSetupTarget] = useState(null);
   const [detachTarget, setDetachTarget] = useState(null);
-  const [detailsTarget, setDetailsTarget] = useState(null);
+  const [detailsSelection, setDetailsSelection] = useState(null);
+  const detailsTarget =
+    detailsSelection?.workspaceId === workspaceId
+      ? detailsSelection.certificate
+      : null;
+  const setDetailsTarget = useCallback(
+    certificate => {
+      setDetailsSelection(certificate ? { workspaceId, certificate } : null);
+    },
+    [workspaceId]
+  );
   // Keep the deep-link id while the details modal is open so the list row
   // can stay highlighted even after the query param is stripped.
   const [focusedCertificateId, setFocusedCertificateId] = useState(
@@ -396,7 +413,7 @@ export default function CertOpsCertificates() {
     setFocusedCertificateId('');
     setCsrCertificateId(csrIdInUrl);
     setCsrModalOpen(true);
-  }, [csrIdInUrl]);
+  }, [csrIdInUrl, setDetailsTarget]);
 
   useEffect(() => {
     if (!certificateIdInUrl || !workspaceId) return undefined;
@@ -486,6 +503,7 @@ export default function CertOpsCertificates() {
           setDetailsTarget({
             ...identity,
             managedCertificateId: certificateIdInUrl,
+            selectedManagedCertificateId: certificateIdInUrl,
             tokenId: identity.tokenId ?? cert.tokenId ?? null,
           });
           stripCertificateId();
@@ -513,6 +531,7 @@ export default function CertOpsCertificates() {
     };
   }, [
     certificateIdInUrl,
+    setDetailsTarget,
     workspaceId,
     location.pathname,
     location.search,
@@ -653,7 +672,10 @@ export default function CertOpsCertificates() {
             ) : null}
             <DashboardActionButton
               variant='outline'
-              onClick={refresh}
+              onClick={() => {
+                refresh();
+                deployments.refresh();
+              }}
               isLoading={loading}
             >
               Refresh
@@ -897,6 +919,7 @@ export default function CertOpsCertificates() {
                         if (event.target.closest('a')) return;
                         if (event.target.closest('input')) return;
                         setFocusedCertificateId('');
+                        setFocusDeployments(false);
                         setDetailsTarget(certificate);
                       }}
                     >
@@ -914,10 +937,6 @@ export default function CertOpsCertificates() {
                           fontWeight='medium'
                         />
                         <HStack spacing={2}>
-                          <CopyableId
-                            id={certificate.id}
-                            display={`${String(certificate.id).slice(0, 12)}...`}
-                          />
                           {extraSans > 0 ? (
                             <CertOpsBadge
                               variant='subtle'
@@ -1007,6 +1026,25 @@ export default function CertOpsCertificates() {
                             canManage={canManage}
                           />
                         </VStack>
+                      </Td>
+                      <Td
+                        px={{ base: 3.5, lg: 4 }}
+                        py={{ base: 2.5, lg: '0.55rem' }}
+                        bg={{ base: mobileMetaBg, lg: 'transparent' }}
+                        borderBottomWidth={{ base: 0, lg: '1px' }}
+                      >
+                        <MobileFieldLabel color={muted}>
+                          Deployment
+                        </MobileFieldLabel>
+                        <DeploymentBadge
+                          summary={deployments.getSummary(certificate)}
+                          loading={deployments.loading}
+                          error={deployments.error}
+                          onClick={() => {
+                            setFocusDeployments(true);
+                            setDetailsTarget(certificate);
+                          }}
+                        />
                       </Td>
                       <Td
                         px={{ base: 3.5, lg: 4 }}
@@ -1213,6 +1251,8 @@ export default function CertOpsCertificates() {
       />
 
       <CertificateIdentityDetailModal
+        key={`${workspaceId}/${detailsTarget?.identityId || detailsTarget?.id || ''}`}
+        focusDeployments={focusDeployments}
         isOpen={Boolean(detailsTarget)}
         onClose={() => {
           setDetailsTarget(null);
