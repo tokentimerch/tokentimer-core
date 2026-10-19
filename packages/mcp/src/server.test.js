@@ -93,7 +93,7 @@ describe("tool handlers", () => {
 
   it("withholds a response whose valid-looking text contains a secret, entirely", async () => {
     const body = JSON.parse(JSON.stringify(fixtures.tt_get_certificate.output.valid[0]));
-    body.certificate.lifecycle.reason.value = "see -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----";
+    body.certificate.summary.issuer = { value: "see -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----", untrusted: true, truncated: false };
     const { handler } = handlerFor("tt_get_certificate", [{ body }]);
     const result = await handler({ identityId: "550e8400-e29b-41d4-a716-446655440002" });
     assert.equal(result.isError, true);
@@ -105,7 +105,7 @@ describe("tool handlers", () => {
 
   it("withholds a response that carries one of TokenTimer's own credentials", async () => {
     const body = JSON.parse(JSON.stringify(fixtures.tt_get_certificate.output.valid[0]));
-    body.certificate.lifecycle.reason.value = `rotated from ttagent_${"0123456789abcdef"}_${"b".repeat(64)}`;
+    body.certificate.summary.issuer = { value: `rotated from ttagent_${"0123456789abcdef"}_${"b".repeat(64)}`, untrusted: true, truncated: false };
     const { handler } = handlerFor("tt_get_certificate", [{ body }]);
     const result = await handler({ identityId: "550e8400-e29b-41d4-a716-446655440002" });
     assert.equal(result.isError, true);

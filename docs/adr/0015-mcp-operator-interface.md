@@ -289,6 +289,13 @@ whole-object hash.
   committed earlier is in flight. This is implemented by locking the connection
   row inside each authorization transaction and is tested on PostgreSQL. It does
   not promise that no previously authorized network activity occurs afterwards.
+  Read routes authenticate outside any transaction and do not take the lock,
+  which is acceptable because a read has no effect to order. Any route that
+  creates a request, approves, or authorizes execution must authenticate the
+  connection inside its own transaction with the lock held. A write route that
+  reuses the read-route guard would silently lose this guarantee, so the
+  write-stage tests must include a concurrent revoke-versus-authorize case on
+  the HTTP path, not only at the service layer.
 - Revoking a connection invalidates its unapproved requests and blocks dispatch
   of approved but undispatched jobs. Running jobs follow existing cancellation
   and reconciliation. The revoke screen says that revocation does not reverse
