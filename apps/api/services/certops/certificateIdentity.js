@@ -139,6 +139,8 @@ async function listCertificateIdentities({
   includeObservedRetired = false,
   unmanaged,
   identityId,
+  // Opt-in: let an id lookup also resolve a provisional (fingerprint-less) certificate.
+  includeProvisional = false,
   q,
   restrictedSearch = false,
   expiresBefore = null,
@@ -160,7 +162,11 @@ async function listCertificateIdentities({
     if (!UUID_PATTERN.test(String(identityId)))
       fail("CERTOPS_CERTIFICATE_NOT_FOUND", "Certificate not found");
     params.push(identityId);
-    conditions.push(`kind = 'identity' AND id = $${params.length}`);
+    conditions.push(
+      includeProvisional
+        ? `id = $${params.length}`
+        : `kind = 'identity' AND id = $${params.length}`,
+    );
   }
   if (normalizedStatus) {
     params.push(normalizedStatus);
