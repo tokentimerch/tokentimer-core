@@ -37,6 +37,14 @@ on:
         type: choice
         options: ['en-US', 'de-DE', 'fr-FR']
         default: 'en-US'
+      debug_mode:
+        description: Diagnostic run (NOT release evidence). Adds redacted failure messages and stack frames to the report and keeps the lab until it expires if the run fails
+        type: boolean
+        default: false
+      continue_on_failure:
+        description: Run every independent journey to completion and report all failures; the run still fails
+        type: boolean
+        default: true
 permissions:
   contents: read
   id-token: write
@@ -55,6 +63,8 @@ jobs:
       WINDOWS_LANGUAGE: ${{ inputs.language }}
       FAULT_PROFILE: ${{ inputs.fault_profile }}
       QUALIFICATION_SCOPE: ${{ inputs.qualification_scope }}
+      DEBUG_MODE: ${{ inputs.debug_mode && '1' || '0' }}
+      CONTINUE_ON_FAILURE: ${{ inputs.continue_on_failure && '1' || '0' }}
       CERTOPS_WINDOWS_LANGUAGE_ASSETS: ${{ secrets.CERTOPS_WINDOWS_LANGUAGE_ASSETS }}
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -77,7 +87,7 @@ jobs:
           $responseLoss = if($env:FAULT_PROFILE -eq 'response-loss'){'1'}else{'0'}
           $journalPhase = if($env:FAULT_PROFILE -in @('submitting','issued','installing')){$env:FAULT_PROFILE}else{'none'}
           if($env:FAULT_PROFILE -notin @('none','submitting','issued','installing','response-loss')){throw 'Unknown fault profile'}
-          ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase -QualificationScope $env:QUALIFICATION_SCOPE
+          ./infra/certops-adcs/provision-lab.ps1 -ResourceGroup $env:LAB_GROUP -Hours ([int]$env:LAB_HOURS) -WindowsVersion $env:WINDOWS_VERSION -Language $env:WINDOWS_LANGUAGE -Location $env:LAB_LOCATION -VmSize $env:LAB_VM_SIZE -ResponseLossExperiment $responseLoss -JournalPhaseExperiment $journalPhase -QualificationScope $env:QUALIFICATION_SCOPE -DebugMode $env:DEBUG_MODE -ContinueOnFailure $env:CONTINUE_ON_FAILURE
       - name: Assert mandatory native scenarios and candidate source evidence
         if: inputs.qualification_scope == 'comprehensive'
         run: node scripts/certops-qualification-report.js qualification-results/enterprise-adcs-real.json
@@ -95,7 +105,11 @@ jobs:
       - name: Destroy owned temporary resources
         if: always()
         shell: pwsh
-        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP
+        env:
+          # Only a failed diagnostic run keeps its lab; the script verifies the expiry tag so the hourly janitor
+          # still removes it. Every other run is torn down.
+          HOLD_FOR_DIAGNOSIS: ${{ inputs.debug_mode && failure() && '1' || '0' }}
+        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP -HoldForDiagnosis $env:HOLD_FOR_DIAGNOSIS
       - name: Preserve infrastructure scope receipts only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -32,6 +32,7 @@ function verifyReport(report, expectedScenarios, { expectedSha = process.env.GIT
   if (expectedSuiteLevel ? report.evidenceLevel !== expectedSuiteLevel : !["real-host", "e2e"].includes(report.evidenceLevel)) errors.push("Unsupported qualification evidence level");
   if (!Array.isArray(expectedScenarios) || !expectedScenarios.length) errors.push("Suite has no committed mandatory scenario specification");
   if (report.schemaVersion !== 1 || !report.suite || report.status !== "passed" || report.strict !== true || !report.finishedAt) errors.push("Report is not a completed strict qualification");
+  if (report.debugDetail !== undefined || report.guardedFailures !== undefined || report.failureBudgetExhausted !== undefined) errors.push("Diagnostic reports are not release evidence");
   if (!Array.isArray(report.scenarios) || !report.scenarios.length) errors.push("No scenarios executed");
   const ids = new Set();
   for (const scenario of Array.isArray(report.scenarios) ? report.scenarios : []) {
