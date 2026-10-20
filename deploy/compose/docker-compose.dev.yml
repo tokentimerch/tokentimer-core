@@ -65,6 +65,8 @@ services:
       # Agent output console. Retention must match worker-certops; 0 stores no lines.
       - CERTOPS_AGENT_LOG_RETENTION_DAYS=${CERTOPS_AGENT_LOG_RETENTION_DAYS:-}
       - CERTOPS_AGENT_LOG_DAILY_BYTES=${CERTOPS_AGENT_LOG_DAILY_BYTES:-}
+      - MCP_OPERATOR_INTERFACE_ENABLED=${MCP_OPERATOR_INTERFACE_ENABLED:-false}
+      - MCP_OPERATOR_WRITES_ENABLED=${MCP_OPERATOR_WRITES_ENABLED:-false}
       - SESSION_SECRET=dev_session_secret_change_in_production
       - ADMIN_EMAIL=admin@localhost.local
       - ADMIN_PASSWORD=AdminPassword123!
