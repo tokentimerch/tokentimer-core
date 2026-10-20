@@ -429,9 +429,10 @@ function New-OcspOwnershipReceipt([string]$RunId,[string]$Token,[string]$Expecte
  if($bytes.Length -lt 1 -or $bytes.Length -gt 65536) { throw 'OCSP ownership receipt exceeds bound' }
  $directoryPin=[TTQualificationOcspReceipt]::PinDirectory($directory,$directoryIdentity)
  try {
- $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ # A write-only handle lacks WRITE_DAC, so FileStream.SetAccessControl fails on
+ # Windows PowerShell 5.1. Create the file with its private ACL instead.
+ $stream=[IO.FileStream]::new($receipt,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]'Write,ChangePermissions',[IO.FileShare]::None,4096,[IO.FileOptions]::None,(New-OcspPrivateAcl $false))
  try {
-  $stream.SetAccessControl((New-OcspPrivateAcl $false))
   $stream.Write($bytes,0,$bytes.Length)
   $stream.Flush($true)
  } finally { $stream.Dispose() }
@@ -1148,11 +1149,11 @@ function Write-OwnedOcspPublicTool($Owner,[string]$Name,[byte[]]$Bytes,[string]$
  Invoke-OwnedOcspPinnedOperation $Owner {
   param($PinnedOwner)
   $path=Join-Path $PinnedOwner.directory $Name
-  # CreateNew refuses every existing object. Applying the ACL to the retained
-  # new stream avoids a path-based security-descriptor replacement race.
-  $stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+  # CreateNew refuses every existing object. Creating the file with its private
+  # ACL avoids a path-based security-descriptor replacement race (and the
+  # missing WRITE_DAC right on a plain FileStream handle).
+  $stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]'Read,Write,ChangePermissions',[IO.FileShare]::Read,4096,[IO.FileOptions]::None,(New-OcspPrivateAcl $false))
   try {
-   $stream.SetAccessControl((New-OcspPrivateAcl $false))
    $stream.Write($Bytes,0,$Bytes.Length)
    $stream.Flush($true)
    if($stream.Length -ne $Bytes.Length) { throw 'Candidate OCSP tool write length mismatch' }
