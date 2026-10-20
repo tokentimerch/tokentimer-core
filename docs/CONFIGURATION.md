@@ -487,7 +487,7 @@ audited (`CERTOPS_WORKSPACE_APPROVAL_POLICY_ENABLED` /
 
 ### CertOps maintenance sweeps (worker)
 
-The `certops` worker target runs eleven independent sweeps. Each has an enable
+The `certops` worker target runs twelve independent sweeps. Each has an enable
 flag (default enabled) and a per-sweep timeout (default `120000` ms,
 `DEFAULT_SWEEP_TIMEOUT_MS`). Disabling a sweep is an operational escape hatch,
 not a normal configuration.
@@ -517,6 +517,7 @@ schedule is the CronJob's own `schedule` field. Set
 | Trust-anchor reconciliation | `CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_ENABLED` | `CERTOPS_SWEEP_TRUST_ANCHOR_RECONCILIATION_TIMEOUT_MS` | Reschedules or marks stale a `certops_trust_anchor_installations` row still pending past its `next_reconcile_at` (ADR-0012 decision 20b/20f/20h) |
 | Agent log close/abandon | `CERTOPS_SWEEP_AGENT_LOG_ABANDON_ENABLED` | `CERTOPS_SWEEP_AGENT_LOG_ABANDON_TIMEOUT_MS` | Closes console streams whose claim ended without a final batch (cancel, requeue, reaped lease), then marks them abandoned once their 5-minute grace window passes, so the panel stops polling |
 | Agent log retention | `CERTOPS_SWEEP_AGENT_LOG_PURGE_ENABLED` | `CERTOPS_SWEEP_AGENT_LOG_PURGE_TIMEOUT_MS` | Deletes console lines older than `CERTOPS_AGENT_LOG_RETENTION_DAYS`, closed stream rows 30 days after that, and old daily quota rows |
+| Assistant requests | `CERTOPS_SWEEP_OPERATOR_REQUESTS_ENABLED` | `CERTOPS_SWEEP_OPERATOR_REQUESTS_TIMEOUT_MS` | Ends renewal requests from an assistant connection that can no longer be approved: the approval window closed, the connection expired or was revoked, or the requester lost the required role. Finds nothing until assistant requests exist |
 
 **The outbox drain is not optional if you rely on renewal-failure alerts.** A
 terminal renewal failure records its *intent* to alert in `certops_outbox` inside
@@ -536,6 +537,19 @@ interaction.
 **Deployment defaults differ from the app-level default above.** The Helm chart (`config.certopsEnabled`, see `deploy/helm/values.yaml`) and the Docker Compose files (`CERTOPS_ENABLED:-true` in `deploy/compose/docker-compose.yml` / `docker-compose.dev.yml`) both set `CERTOPS_ENABLED=true` unless explicitly overridden, so CertOps is **enabled by default** for Helm and Compose deployments. Set `config.certopsEnabled: false` (Helm) or `CERTOPS_ENABLED=false` (Compose `.env`) to opt out.
 
 TokenTimer stores only public certificate material (fingerprints, serials, issuers, subjects, SANs, validity, chains) and external key references. Requests containing private key material are rejected with HTTP 422. Agent registration-replay credentials are stored only as an encrypted envelope (see `docs/certops/agent.md`).
+
+### Assistant (MCP) operator interface {#mcp-operator-interface}
+
+Lets an AI assistant read CertOps state and request certificate renewals through the `@tokentimer/mcp` adapter. Everything is off by default and enforced in the API, not in the adapter. See [ADR-0015](adr/0015-mcp-operator-interface.md).
+
+| Variable | Helm value | Description | Default |
+| -------- | ---------- | ----------- | ------- |
+| `MCP_OPERATOR_INTERFACE_ENABLED` | `config.mcpOperatorInterfaceEnabled` | Enables the `/api/v1/operator` namespace, connection management and setup codes. Read tools only. | `false` |
+| `MCP_OPERATOR_WRITES_ENABLED` | `config.mcpOperatorWritesEnabled` | Allows assistant renewal requests. Has no effect unless the interface flag is also on (Helm renders it only then). | `false` |
+
+Renewal requests also need a workspace admin to switch them on for that workspace (`PUT /api/v1/workspaces/:id/operator/settings`, session only), and the connection must hold the `mcp:renew:request` scope. A request never runs on its own: it creates a renewal job that waits for approval from a workspace manager or admin other than the person whose connection made it, and it is cancelled if that approval does not arrive within 24 hours. Turning the workspace setting off cancels requests that are still waiting.
+
+Revoking a connection cancels its unapproved, approved and pending jobs. A job an agent already holds is not interrupted.
 
 ## Metrics and observability
 

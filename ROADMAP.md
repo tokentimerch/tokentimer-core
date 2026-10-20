@@ -1,7 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-20 at `main` 7b2e50bf, after the 0.18.0 release, for the
-MCP operator interface work. Other
+Last reviewed: 2026-10-20 at `main` 7b2e50bf, with 0.18.0 in release
+preparation, for the MCP operator interface work. Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
