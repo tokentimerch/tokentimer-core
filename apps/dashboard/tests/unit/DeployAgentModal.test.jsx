@@ -379,6 +379,34 @@ describe('DeployAgentModal', () => {
     expect(screen.getByText(/install-agent\.sh/)).toBeInTheDocument();
   });
 
+  it('offers the install guide as a real link for the selected OS', () => {
+    useCertOpsCanManageMock.mockReturnValue(true);
+
+    renderModal();
+
+    const panel = screen.getByRole('note', { name: 'Learn more' });
+    const linux = within(panel).getByRole('link', {
+      name: 'Install guide (Linux)',
+    });
+    expect(linux).toHaveAttribute(
+      'href',
+      'https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install#install'
+    );
+    expect(linux).toHaveAttribute('target', '_blank');
+    expect(linux.getAttribute('rel')).toMatch(/noopener/);
+    expect(linux.getAttribute('rel')).toMatch(/noreferrer/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Windows' }));
+
+    const windows = within(
+      screen.getByRole('note', { name: 'Learn more' })
+    ).getByRole('link', { name: 'Install guide (Windows)' });
+    expect(windows).toHaveAttribute(
+      'href',
+      'https://tokentimer.ch/docs/self-hosted/runbooks/certops-agent-install-windows#windows-install'
+    );
+  });
+
   it('disables new-token creation while paused but keeps the flow otherwise visible', () => {
     useCertOpsCanManageMock.mockReturnValue(true);
 

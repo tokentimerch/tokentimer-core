@@ -37,6 +37,7 @@ import { onboardingAPI } from '../utils/onboardingApi.js';
 import { showError } from '../utils/toast.js';
 import { useWorkspace } from '../utils/WorkspaceContext.jsx';
 import { resetTourCompleted } from '../utils/tourStorage.js';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 function ThemePreviewStrip({ isDarkMode, border, bodySecondary, text }) {
   const shellBg = useColorModeValue('#e2e8f0', '#0f172a');
@@ -444,7 +445,7 @@ export default function UserPreferences({
                 >
                   <DashboardActionButton
                     as='a'
-                    href='https://tokentimer.ch/docs/self-hosted'
+                    href={SELF_HOSTED_DOCS_BASE}
                     target='_blank'
                     rel='noopener noreferrer'
                     leftIcon={<Icon as={FiBookOpen} aria-hidden />}

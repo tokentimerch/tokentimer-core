@@ -94,6 +94,31 @@ describe('StepFrame', () => {
     expect(screen.getAllByText('Learn more')).toHaveLength(1);
     expect(screen.getAllByRole('link')).toHaveLength(2);
   });
+
+  it('puts the docs links inside a quiet info panel', () => {
+    renderFrame({
+      kind: 'info',
+      docs: [
+        { label: 'One', url: 'https://tokentimer.ch/docs/1' },
+        { label: 'Two', url: 'https://tokentimer.ch/docs/2' },
+      ],
+    });
+    const panel = screen.getByRole('note', { name: 'Learn more' });
+    expect(panel).toHaveAttribute('data-status', 'info');
+    expect(panel).toHaveTextContent('Learn more');
+    // A note is not announced like an alert on every step render.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    for (const link of screen.getAllByRole('link')) {
+      expect(panel).toContainElement(link);
+    }
+  });
+
+  it('renders no info panel when there are no docs', () => {
+    renderFrame({ kind: 'info', docs: [] });
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    renderFrame({ kind: 'info', docs: [{ label: 'Missing', url: null }] });
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+  });
 });
 
 describe('docUrl', () => {

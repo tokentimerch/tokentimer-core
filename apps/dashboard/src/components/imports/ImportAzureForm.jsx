@@ -8,11 +8,11 @@ import {
   Button,
   Badge,
   Checkbox,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { azureAPI, integrationAPI } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -84,6 +84,7 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
     onScanSuccess,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     autoSyncManageMode = false,
     initialVaultUrl = '',
@@ -307,16 +308,18 @@ const ImportAzureForm = React.forwardRef(function ImportAzureForm(
             tokens and Entra app client credentials are stored encrypted if
             auto-sync is enabled.
           </Text>
-          <Text fontSize='sm' mt={1}>
-            <ChakraLink
-              href={IMPORT_DOCS.azureKeyVault}
-              color='blue.500'
-              textDecoration='underline'
-              isExternal
-            >
-              Learn more about importing from Azure Key Vault →
-            </ChakraLink>
-          </Text>
+          {hideDocs ? null : (
+            <LearnMorePanel
+              variant='compact'
+              mt={2}
+              links={[
+                {
+                  label: 'Importing from Azure Key Vault',
+                  url: IMPORT_DOCS.azureKeyVault,
+                },
+              ]}
+            />
+          )}
         </Box>
       ) : null}
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>

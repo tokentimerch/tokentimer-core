@@ -5,14 +5,13 @@ import {
   Badge,
   Box,
   HStack,
-  Icon,
-  Link,
-  Text,
   VStack,
 } from '@chakra-ui/react';
-import { FiBookOpen, FiExternalLink } from 'react-icons/fi';
 import { DashboardPanel, DashboardPanelHeader } from '../DashboardPrimitives';
-import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
+import LearnMorePanel, { DocsLink, INFO_NOTE_PROPS } from '../LearnMorePanel';
+
+// Re-exported so existing imports keep working.
+export { DocsLink, INFO_NOTE_PROPS };
 
 export const STEP_KINDS = ['ui', 'runbook', 'handoff', 'verify', 'info'];
 
@@ -32,40 +31,6 @@ const KIND_BADGE = {
 };
 
 /**
- * A documentation link as a small bordered chip, in the same family as the
- * guide cards on Alert Preferences: it looks clickable, shows that it leaves
- * the app, and has a hover and focus state.
- */
-export function DocsLink({ href, children }) {
-  const { dashboard } = useDashboardThemeColors();
-  const color = dashboard.accent.interactiveForeground;
-  return (
-    <Link
-      href={href}
-      isExternal
-      display='inline-flex'
-      alignItems='center'
-      gap={1.5}
-      px={2.5}
-      py={1}
-      fontSize='xs'
-      fontWeight='semibold'
-      color={color}
-      bg={dashboard.accent.interactiveSurface}
-      borderWidth='1px'
-      borderColor={dashboard.border.subtle}
-      borderRadius='md'
-      transition='border-color 0.15s, background-color 0.15s'
-      _hover={{ textDecoration: 'none', borderColor: color }}
-      _focusVisible={{ boxShadow: 'outline', textDecoration: 'none' }}
-    >
-      {children}
-      <Icon as={FiExternalLink} boxSize={3} aria-hidden='true' />
-    </Link>
-  );
-}
-
-/**
  * One wizard step. The kind decides how the step is framed; the body is the
  * reused form, runbook text or status the caller passes as children. Docs
  * links come from the edition-aware resolver so a missing page is hidden
@@ -80,10 +45,8 @@ export default function StepFrame({
   actions,
   children,
 }) {
-  const { muted } = useDashboardThemeColors();
   assertStepKind(kind);
   const badge = KIND_BADGE[kind];
-  const links = docs.filter(link => link && link.url);
 
   return (
     <DashboardPanel as='section' aria-label={title}>
@@ -111,22 +74,12 @@ export default function StepFrame({
           </Alert>
         ))}
         <Box>{children}</Box>
-        {links.length > 0 ? (
-          <HStack spacing={2} flexWrap='wrap' pt={2} align='center'>
-            <HStack spacing={1.5} color={muted}>
-              <Icon as={FiBookOpen} boxSize={3.5} aria-hidden='true' />
-              <Text fontSize='xs' fontWeight='semibold'>
-                Learn more
-              </Text>
-            </HStack>
-            {links.map(link => (
-              <DocsLink key={link.url} href={link.url}>
-                {link.label}
-              </DocsLink>
-            ))}
+        <LearnMorePanel links={docs} />
+        {actions ? (
+          <HStack justify='flex-end' flexWrap='wrap'>
+            {actions}
           </HStack>
         ) : null}
-        {actions ? <HStack justify='flex-end'>{actions}</HStack> : null}
       </VStack>
     </DashboardPanel>
   );

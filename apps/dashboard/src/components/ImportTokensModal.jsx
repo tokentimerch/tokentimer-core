@@ -38,6 +38,7 @@ import {
 } from '@chakra-ui/react';
 import { logger } from '../utils/logger';
 import { IMPORT_DOCS } from '../utils/docsUrls';
+import LearnMorePanel from './LearnMorePanel';
 import apiClient, {
   tokenAPI,
   workspaceAPI,
@@ -806,6 +807,8 @@ export default function ImportTokensModal({
   onImported,
   openRequest,
   onOpenRequestHandled,
+  // The onboarding step already shows its own Learn more panel.
+  hideDocs = false,
 }) {
   const { workspaceId } = useWorkspace();
   const {
@@ -3032,16 +3035,18 @@ export default function ImportTokensModal({
                       Upload a file in .csv, .xlsx, .json, .yaml or .yml format.
                       Required fields per row: name, category, type, expiresAt.
                     </Text>
-                    <Text fontSize='sm' mt={1}>
-                      <ChakraLink
-                        href={IMPORT_DOCS.file}
-                        color='blue.500'
-                        textDecoration='underline'
-                        isExternal
-                      >
-                        Learn more about importing from files →
-                      </ChakraLink>
-                    </Text>
+                    {hideDocs ? null : (
+                      <LearnMorePanel
+                        variant='compact'
+                        mt={2}
+                        links={[
+                          {
+                            label: 'Importing from files',
+                            url: IMPORT_DOCS.file,
+                          },
+                        ]}
+                      />
+                    )}
                   </Box>
                   <Input
                     ref={fileInputRef}
@@ -3109,6 +3114,7 @@ export default function ImportTokensModal({
 
               {source === 'vault' && !autoSyncManageMode ? (
                 <ImportVaultForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={vaultFormRef}
                   workspaceId={workspaceId}
@@ -3138,6 +3144,7 @@ export default function ImportTokensModal({
 
               {source === 'gitlab' ? (
                 <ImportGitLabForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gitlabFormRef}
                   workspaceId={workspaceId}
@@ -3183,6 +3190,7 @@ export default function ImportTokensModal({
 
               {source === 'github' ? (
                 <ImportGitHubForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={githubFormRef}
                   workspaceId={workspaceId}
@@ -3228,6 +3236,7 @@ export default function ImportTokensModal({
 
               {source === 'aws' && !autoSyncManageMode ? (
                 <ImportAWSForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={awsFormRef}
                   initialAutoSyncScanParams={awsAutoSyncScanParams}
@@ -3258,6 +3267,7 @@ export default function ImportTokensModal({
 
               {source === 'azure' ? (
                 <ImportAzureForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={azureFormRef}
                   workspaceId={workspaceId}
@@ -3289,6 +3299,7 @@ export default function ImportTokensModal({
 
               {source === 'gcp' && !autoSyncManageMode ? (
                 <ImportGCPForm
+                  hideDocs={hideDocs}
                   errorContent={!autoSyncManageMode ? renderErrorAlert() : null}
                   ref={gcpFormRef}
                   workspaceId={workspaceId}
@@ -3328,16 +3339,18 @@ export default function ImportTokensModal({
                         enabled. Application.Read.All is the recommended Graph
                         application permission.
                       </Text>
-                      <Text fontSize='sm' mt={1}>
-                        <ChakraLink
-                          href={IMPORT_DOCS.entraId}
-                          color='blue.500'
-                          textDecoration='underline'
-                          isExternal
-                        >
-                          Learn more about importing from Azure AD →
-                        </ChakraLink>
-                      </Text>
+                      {hideDocs ? null : (
+                        <LearnMorePanel
+                          variant='compact'
+                          mt={2}
+                          links={[
+                            {
+                              label: 'Importing from Azure AD',
+                              url: IMPORT_DOCS.entraId,
+                            },
+                          ]}
+                        />
+                      )}
                     </Box>
                   ) : null}
                   <AzureInventoryAuthFields

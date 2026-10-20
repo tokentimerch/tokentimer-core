@@ -33,7 +33,7 @@ import {
   dispatchIssuerPreflight,
   listIssuers,
 } from './certopsEnrollmentsApi';
-import AdcsDocsLink from './AdcsDocsLink.jsx';
+import LearnMorePanel from '../LearnMorePanel.jsx';
 import { ADCS_DOCS } from '../../utils/docsUrls.js';
 import { showError, showSuccess } from '../../utils/toast.js';
 
@@ -386,7 +386,7 @@ export default function AdcsIssuerWizard({
                   <Input
                     {...modal.fieldProps}
                     aria-label='CA config'
-                    placeholder='ca01.corp.example.com\\Corp Issuing CA'
+                    placeholder='ca01.corp.example.com\Corp Issuing CA'
                     value={caConfig}
                     onChange={event => setCaConfig(event.target.value)}
                   />
@@ -395,9 +395,6 @@ export default function AdcsIssuerWizard({
                     Certification Authority console. Use the same string as this
                     agent's enrollment rule.
                   </FormHelperText>
-                  <AdcsDocsLink href={ADCS_DOCS.caConfig}>
-                    Where the CA name comes from
-                  </AdcsDocsLink>
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel {...modal.labelProps}>Template</FormLabel>
@@ -415,13 +412,24 @@ export default function AdcsIssuerWizard({
                     name must be in the agent's enrollment rule or the check
                     never contacts the CA.
                   </FormHelperText>
-                  <AdcsDocsLink href={ADCS_DOCS.template}>
-                    Where the template name comes from
-                  </AdcsDocsLink>
-                  <AdcsDocsLink href={ADCS_DOCS.enrollmentRules}>
-                    How the agent allows this CA
-                  </AdcsDocsLink>
                 </FormControl>
+                <LearnMorePanel
+                  variant='compact'
+                  links={[
+                    {
+                      label: 'Where the CA name comes from',
+                      url: ADCS_DOCS.caConfig,
+                    },
+                    {
+                      label: 'Where the template name comes from',
+                      url: ADCS_DOCS.template,
+                    },
+                    {
+                      label: 'How the agent allows this CA',
+                      url: ADCS_DOCS.enrollmentRules,
+                    },
+                  ]}
+                />
               </Stack>
             ) : null}
             {step === 2 ? (

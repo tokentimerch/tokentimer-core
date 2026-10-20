@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -129,13 +136,19 @@ beforeEach(() => {
 describe('CertOpsAdcs', () => {
   it('shows the exact installed enrollment and its status together after Show finished', async () => {
     isAdminMock.mockReturnValue(true);
-    const id='a24bf631-19c7-4257-918f-e84e22d79b41';
-    listEnrollmentsMock.mockResolvedValue({items:[{id,state:'installed',requestId:42}]});
+    const id = 'a24bf631-19c7-4257-918f-e84e22d79b41';
+    listEnrollmentsMock.mockResolvedValue({
+      items: [{ id, state: 'installed', requestId: 42 }],
+    });
     renderPage();
-    const checkbox=await screen.findByRole('checkbox',{name:/^Show finished/});
-    expect(screen.queryByText(id.slice(0,8),{exact:true})).not.toBeInTheDocument();
+    const checkbox = await screen.findByRole('checkbox', {
+      name: /^Show finished/,
+    });
+    expect(
+      screen.queryByText(id.slice(0, 8), { exact: true })
+    ).not.toBeInTheDocument();
     fireEvent.click(checkbox.closest('label'));
-    const marker=await screen.findByText(id.slice(0,8),{exact:true});
+    const marker = await screen.findByText(id.slice(0, 8), { exact: true });
     expect(marker.parentElement).toHaveTextContent('Installed');
     expect(checkbox).toBeChecked();
   });
@@ -226,7 +239,9 @@ describe('CertOpsAdcs', () => {
     expect(await screen.findByText('Awaiting CA approval')).toBeInTheDocument();
     expect(screen.getByText(/RequestId\s+42/)).toBeInTheDocument();
     expect(
-      screen.getByText(/^CA ca01\.corp\.example\.com\\Corp Issuing CA 01 · RequestId\s+42/),
+      screen.getByText(
+        /^CA ca01\.corp\.example\.com\\Corp Issuing CA 01 · RequestId\s+42/
+      )
     ).toBeInTheDocument();
     expect(screen.getAllByText(/key prefix abababababab/)).toHaveLength(2);
     expect(screen.getByText(/stays on issuer version 1/)).toBeInTheDocument();
@@ -241,19 +256,27 @@ describe('CertOpsAdcs', () => {
     ).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Abandon/ })).toHaveLength(1);
     // Not started and install-failed rows are visible by default.
-    expect(screen.getByText(/14-day limit has not started/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/14-day limit has not started/)
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Cancel enrollment/ })
     ).toBeInTheDocument();
-    expect(screen.getByText(/helper binary is not installed/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/helper binary is not installed/)
+    ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole('checkbox', {
         name: /Show not started or install failed \(1\)/,
       })
     );
-    expect(screen.queryByText(/14-day limit has not started/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/14-day limit has not started/)
+    ).not.toBeInTheDocument();
     expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('checkbox', { name: /Show finished \(1\)/ }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /Show finished \(1\)/ })
+    );
     expect(screen.getByText('Cancelled')).toBeInTheDocument();
     expect(screen.queryByText(/MIIB/)).not.toBeInTheDocument();
   });
@@ -295,10 +318,22 @@ describe('CertOpsAdcs', () => {
     expect(createIssuerMock).not.toHaveBeenCalled();
     expect(discardIssuerMock).not.toHaveBeenCalled();
     expect(screen.getByLabelText('CA config')).toBeInTheDocument();
-    expect(screen.getByText(/Template name, not the display name/)).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: 'Where the template name comes from' })
+      screen.getByText(/Template name, not the display name/)
+    ).toBeInTheDocument();
+    const panel = screen.getByRole('note', { name: 'Learn more' });
+    expect(
+      within(panel).getByRole('link', { name: 'Where the CA name comes from' })
+    ).toHaveAttribute('href', expect.stringContaining('#ca-config'));
+    expect(
+      within(panel).getByRole('link', {
+        name: 'Where the template name comes from',
+      })
     ).toHaveAttribute('href', expect.stringContaining('#certificate-template'));
+    expect(
+      within(panel).getByRole('link', { name: 'How the agent allows this CA' })
+    ).toHaveAttribute('href', expect.stringContaining('#enrollment-rules'));
+    expect(screen.getAllByRole('note', { name: 'Learn more' })).toHaveLength(1);
   });
 
   it('discards the draft when the wizard closes before confirm', async () => {
@@ -329,7 +364,9 @@ describe('CertOpsAdcs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
     await waitFor(() => expect(createIssuerMock).toHaveBeenCalled());
     const closeButtons = screen.getAllByRole('button', { name: 'Close' });
-    fireEvent.click(closeButtons.find((button) => button.textContent === 'Close'));
+    fireEvent.click(
+      closeButtons.find(button => button.textContent === 'Close')
+    );
     await waitFor(() =>
       expect(discardIssuerMock).toHaveBeenCalledWith('ws-1', 'issuer-draft')
     );
@@ -357,12 +394,16 @@ describe('CertOpsAdcs', () => {
 
     renderPage();
     await screen.findByRole('button', { name: /Run check for Issuing CA/ });
-    expect(screen.queryByLabelText('CA config for Issuing CA')).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('CA config for Issuing CA')
+    ).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Agent for Issuing CA'), {
       target: { value: 'agent-1' },
     });
     fireEvent.submit(
-      screen.getByRole('button', { name: /Run check for Issuing CA/ }).closest('form')
+      screen
+        .getByRole('button', { name: /Run check for Issuing CA/ })
+        .closest('form')
     );
 
     await waitFor(() => expect(dispatchIssuerPreflightMock).toHaveBeenCalled());
@@ -396,12 +437,20 @@ describe('CertOpsAdcs', () => {
 
     renderPage();
 
-    expect(await screen.findByText(/A different pair is a new issuer/)).toBeInTheDocument();
-    expect(screen.queryByLabelText('Agent for Issuing CA')).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/A different pair is a new issuer/)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Agent for Issuing CA')
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     expect(screen.getByLabelText('Agent for Issuing CA')).toBeInTheDocument();
-    expect(screen.queryByLabelText('CA config for Issuing CA')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Use this certificate/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('CA config for Issuing CA')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Use this certificate/ })
+    ).not.toBeInTheDocument();
   });
 
   it('points at New AD CS profile after the CA certificate is pinned', async () => {
@@ -462,7 +511,9 @@ describe('CertOpsAdcs', () => {
     );
     expect(await screen.findByText(/New AD CS profile/)).toBeInTheDocument();
     expect(
-      screen.getByText(/attaches the profile to a certificate already in inventory/)
+      screen.getByText(
+        /attaches the profile to a certificate already in inventory/
+      )
     ).toBeInTheDocument();
   });
 
@@ -493,7 +544,9 @@ describe('CertOpsAdcs', () => {
       });
     });
     expect(await screen.findByText('CA 100')).toBeInTheDocument();
-    expect(screen.queryByText(/Showing \d+ of \d+ issuers/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Showing \d+ of \d+ issuers/)
+    ).not.toBeInTheDocument();
   });
 
   it('finishes Check again when the new preflight repeats the same safe verdict', async () => {
@@ -539,12 +592,20 @@ describe('CertOpsAdcs', () => {
       pagination: { total: 1 },
     });
     fireEvent.submit(
-      screen.getByRole('button', { name: /Run check for Issuing CA/ }).closest('form')
+      screen
+        .getByRole('button', { name: /Run check for Issuing CA/ })
+        .closest('form')
     );
     expect(
-      await screen.findByRole('button', { name: /Use this certificate/ }, { timeout: 6000 })
+      await screen.findByRole(
+        'button',
+        { name: /Use this certificate/ },
+        { timeout: 6000 }
+      )
     ).toBeInTheDocument();
-    expect(screen.queryByText(/has not reported a preflight verdict yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/has not reported a preflight verdict yet/)
+    ).not.toBeInTheDocument();
   }, 12000);
 
   it('confirms the later CA pair when an older preflight finishes first', async () => {
@@ -602,10 +663,16 @@ describe('CertOpsAdcs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run check' }));
     await waitFor(() => expect(dispatchIssuerPreflightMock).toHaveBeenCalled());
     await new Promise(resolve => setTimeout(resolve, 3200));
-    expect(screen.queryByRole('button', { name: /Use this certificate/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Use this certificate/ })
+    ).not.toBeInTheDocument();
     phase = 'new';
     fireEvent.click(
-      await screen.findByRole('button', { name: /Use this certificate/ }, { timeout: 6000 })
+      await screen.findByRole(
+        'button',
+        { name: /Use this certificate/ },
+        { timeout: 6000 }
+      )
     );
     expect(confirmIssuerKeyMock).toHaveBeenCalledWith(
       'ws-1',
@@ -625,7 +692,11 @@ describe('CertOpsAdcs', () => {
     createIssuerMock.mockResolvedValue({ issuer: { id: 'issuer-late' } });
     dispatchIssuerPreflightMock.mockResolvedValue({ job: { id: 'job-late' } });
     const filler = Array.from({ length: 100 }, (_, index) =>
-      issuer({ id: `other-${index}`, name: `Other ${index}`, currentVersion: 1 })
+      issuer({
+        id: `other-${index}`,
+        name: `Other ${index}`,
+        currentVersion: 1,
+      })
     );
     const late = issuer({
       id: 'issuer-late',
@@ -677,7 +748,11 @@ describe('CertOpsAdcs', () => {
       { timeout: 6000 }
     );
     expect(
-      await screen.findByRole('button', { name: /Use this certificate/ }, { timeout: 6000 })
+      await screen.findByRole(
+        'button',
+        { name: /Use this certificate/ },
+        { timeout: 6000 }
+      )
     ).toBeInTheDocument();
   }, 15000);
 });

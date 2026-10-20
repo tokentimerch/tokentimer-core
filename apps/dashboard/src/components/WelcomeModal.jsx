@@ -21,6 +21,7 @@ import {
 } from './DashboardModalFrame.jsx';
 import { FaRocket, FaCheckCircle } from 'react-icons/fa';
 import { FiPlay } from 'react-icons/fi';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 function WelcomeModal({
   isOpen,
@@ -179,7 +180,7 @@ function WelcomeModal({
                 )}
                 <Text fontSize='xs' color={modalTokens.muted}>
                   <Link
-                    href='https://tokentimer.ch/docs/self-hosted'
+                    href={SELF_HOSTED_DOCS_BASE}
                     isExternal
                     color={modalTokens.focusBorder}
                     textDecoration='underline'

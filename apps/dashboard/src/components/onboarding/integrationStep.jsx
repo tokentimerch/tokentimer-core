@@ -375,6 +375,7 @@ export function IntegrationStep({ ctx }) {
       </VStack>
 
       <ImportTokensModal
+        hideDocs
         isOpen={host.open}
         onClose={host.close}
         onImported={() => {}}

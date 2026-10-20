@@ -122,6 +122,7 @@ export function FileImportStep({ ctx }) {
         <ImportOutcome outcome={host.outcome} />
       </VStack>
       <ImportTokensModal
+        hideDocs
         isOpen={host.open}
         onClose={host.close}
         onImported={() => {}}

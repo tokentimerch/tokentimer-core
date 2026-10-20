@@ -12,12 +12,12 @@ import {
   InputRightElement,
   IconButton,
   useColorModeValue,
-  Link as ChakraLink,
 } from '@chakra-ui/react';
 import { FiEye, FiEyeOff } from 'react-icons/fi';
 import { awsAPI, integrationAPI, formatDate } from '../../utils/apiClient';
 import { logger } from '../../utils/logger';
 import { IMPORT_DOCS } from '../../utils/docsUrls';
+import LearnMorePanel from '../LearnMorePanel';
 import IntegrationImportTable from '../IntegrationImportTable';
 import BulkIntegrationAssignment from '../BulkIntegrationAssignment';
 import {
@@ -147,6 +147,7 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
     onScanSuccess,
     borderColor,
     helpTextColor,
+    hideDocs = false,
     autoSyncTokenPlaceholder,
     updateQuotaFromResponse,
     refreshIntegrationQuota,
@@ -417,16 +418,13 @@ const ImportAWSForm = React.forwardRef(function ImportAWSForm(
           Credentials are used for scanning and stored encrypted if auto-sync is
           enabled.
         </Text>
-        <Text fontSize='sm' mt={1}>
-          <ChakraLink
-            href={IMPORT_DOCS.aws}
-            color='blue.500'
-            textDecoration='underline'
-            isExternal
-          >
-            Learn more about importing from AWS →
-          </ChakraLink>
-        </Text>
+        {hideDocs ? null : (
+          <LearnMorePanel
+            variant='compact'
+            mt={2}
+            links={[{ label: 'Importing from AWS', url: IMPORT_DOCS.aws }]}
+          />
+        )}
       </Box>
       <HStack spacing={3} align='flex-end' flexWrap='wrap'>
         <Box minW='220px'>

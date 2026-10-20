@@ -19,6 +19,7 @@ import {
 } from '../hooks/useColors.js';
 import { useDashboardThemeColors } from '../hooks/useDashboardTheme.js';
 import { DASHBOARD_PAGE_GUTTER_X } from '../styles/dashboardLayout';
+import { SELF_HOSTED_DOCS_BASE } from '../utils/docsUrls';
 
 /**
  * Footer component with comprehensive navigation and branding
@@ -115,7 +116,7 @@ const Footer = () => {
       {
         label: 'Docs',
         icon: FiBookOpen,
-        href: 'https://tokentimer.ch/docs/self-hosted',
+        href: SELF_HOSTED_DOCS_BASE,
         isExternal: true,
         ariaLabel: 'Documentation (opens online)',
       },
@@ -279,7 +280,7 @@ const Footer = () => {
             }}
           >
             <Link
-              href='https://tokentimer.ch/docs/self-hosted'
+              href={SELF_HOSTED_DOCS_BASE}
               isExternal
               cursor='pointer'
               color={footerLinkColor}

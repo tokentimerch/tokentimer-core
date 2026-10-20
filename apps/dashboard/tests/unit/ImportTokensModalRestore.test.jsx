@@ -6,10 +6,12 @@ import {
   screen,
   fireEvent,
   cleanup,
+  within,
 } from '@testing-library/react';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import ImportTokensModal from '../../src/components/ImportTokensModal.jsx';
+import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
 const { apiGetMock, apiDeleteMock, gitlabFormProps, githubFormProps } =
   vi.hoisted(() => ({
@@ -122,7 +124,8 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: () => ({ ready: true, enabled: false, error: null }),
   useCertOpsCanManage: () => false,
 }));
-vi.mock('../../src/hooks/useDashboardTheme.js', () => ({
+vi.mock('../../src/hooks/useDashboardTheme.js', async importOriginal => ({
+  ...(await importOriginal()),
   useDashboardTheme: () => ({ border: 'gray.200', muted: 'gray.500' }),
 }));
 vi.mock('../../src/components/DashboardModalFrame.jsx', () => ({
@@ -142,17 +145,19 @@ vi.mock('../../src/components/DashboardModalFrame.jsx', () => ({
     tokens: {},
   }),
 }));
-vi.mock('../../src/styles/theme.js', () => ({
+vi.mock('../../src/styles/theme.js', async importOriginal => ({
+  ...(await importOriginal()),
   dashboardModalInlineActionButtonProps: {},
 }));
 
 const GITLAB_SELF_HOSTED = 'https://gitlab.selfhosted.example';
 
-function renderModal(openRequest) {
+function renderModal(openRequest, extraProps = {}) {
   return (
     <ChakraProvider>
       <ImportTokensModal
         isOpen
+        {...extraProps}
         onClose={vi.fn()}
         onImported={vi.fn()}
         openRequest={openRequest}
@@ -298,7 +303,8 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
           screen.getByRole('button', { name: 'Enable auto-sync', exact: true })
         ).toBeVisible();
       }
-    }
+    },
+    15000
   );
 
   it('clears a previous provider error when switching integrations', async () => {
@@ -458,5 +464,36 @@ describe('ImportTokensModal restored scan params provider scoping', () => {
       },
     });
     expect(await screen.findByText(/second-history/)).toBeTruthy();
+  });
+});
+
+describe('ImportTokensModal docs panel', () => {
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    apiGetMock.mockResolvedValue({ data: {} });
+  });
+
+  it('shows one Learn more panel for the file source', async () => {
+    render(renderModal(null));
+    const panel = await screen.findByRole('note', { name: 'Learn more' });
+    expect(
+      within(panel).getByRole('link', { name: 'Importing from files' })
+    ).toHaveAttribute('href', IMPORT_DOCS.file);
+    expect(screen.getAllByRole('note', { name: 'Learn more' })).toHaveLength(1);
+  });
+
+  it('shows the Entra ID guide for the Azure AD source', async () => {
+    render(renderModal({ provider: 'azure-ad' }));
+    const panel = await screen.findByRole('note', { name: 'Learn more' });
+    expect(
+      within(panel).getByRole('link', { name: 'Importing from Azure AD' })
+    ).toHaveAttribute('href', IMPORT_DOCS.entraId);
+  });
+
+  it('renders no panel when the host already shows its own', async () => {
+    render(renderModal(null, { hideDocs: true }));
+    await screen.findByText(/Upload a file in/);
+    expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
   });
 });

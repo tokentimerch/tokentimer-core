@@ -1,6 +1,12 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
@@ -8,6 +14,8 @@ import ImportVaultForm from '../../src/components/imports/ImportVaultForm.jsx';
 import ImportAWSForm from '../../src/components/imports/ImportAWSForm.jsx';
 import ImportGCPForm from '../../src/components/imports/ImportGCPForm.jsx';
 import ImportAzureForm from '../../src/components/imports/ImportAzureForm.jsx';
+import ImportGitHubForm from '../../src/components/imports/ImportGitHubForm.jsx';
+import { IMPORT_DOCS } from '../../src/utils/docsUrls.js';
 
 const {
   vaultScanMock,
@@ -520,7 +528,9 @@ describe('Dashboard import forms', () => {
     expect(failedBadge.textContent).toBe('Failed');
     const errorText = screen.getByText(/not enabled/);
     expect(errorText.tagName).toBe('P');
-    expect(errorText.textContent).not.toMatch(/^Compute Engine SSL certificates:/);
+    expect(errorText.textContent).not.toMatch(
+      /^Compute Engine SSL certificates:/
+    );
     expect(
       screen.queryByText(/Request failed with status code/)
     ).not.toBeInTheDocument();
@@ -566,10 +576,9 @@ describe('Dashboard import forms', () => {
     fireEvent.click(
       screen.getByRole('radio', { name: 'Entra app (client credentials)' })
     );
-    fireEvent.change(
-      screen.getByPlaceholderText('Tenant ID or domain'),
-      { target: { value: 'tenant-id' } }
-    );
+    fireEvent.change(screen.getByPlaceholderText('Tenant ID or domain'), {
+      target: { value: 'tenant-id' },
+    });
     fireEvent.change(screen.getByPlaceholderText('Client ID'), {
       target: { value: 'client-id' },
     });
@@ -613,9 +622,13 @@ describe('Dashboard import forms', () => {
       />
     );
 
-    expect(screen.queryByRole('button', { name: 'Scan' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Scan' })
+    ).not.toBeInTheDocument();
     expect(ref.current.getCredentials().credentials).toEqual({});
-    fireEvent.click(screen.getByRole('button', { name: 'Replace credentials' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Replace credentials' })
+    );
     fireEvent.click(
       screen.getByRole('radio', { name: 'Entra app (client credentials)' })
     );
@@ -623,10 +636,9 @@ describe('Dashboard import forms', () => {
       screen.getByPlaceholderText('https://my-vault.vault.azure.net'),
       { target: { value: 'https://my-vault.vault.azure.net' } }
     );
-    fireEvent.change(
-      screen.getByPlaceholderText('Tenant ID or domain'),
-      { target: { value: 'tenant-id' } }
-    );
+    fireEvent.change(screen.getByPlaceholderText('Tenant ID or domain'), {
+      target: { value: 'tenant-id' },
+    });
     fireEvent.change(screen.getByPlaceholderText('Client ID'), {
       target: { value: 'client-id' },
     });
@@ -672,7 +684,9 @@ describe('Dashboard import forms', () => {
     expect(vaultUrl).toBeDisabled();
     expect(vaultUrl).toHaveValue('https://old-vault.vault.azure.net');
     expect(ref.current.validateReplacement()).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Replace credentials' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Replace credentials' })
+    );
     expect(vaultUrl).not.toBeDisabled();
     expect(ref.current.validateReplacement()).toBe('Access token is required');
     fireEvent.change(vaultUrl, {
@@ -682,5 +696,104 @@ describe('Dashboard import forms', () => {
     expect(vaultUrl).toBeDisabled();
     expect(vaultUrl).toHaveValue('https://old-vault.vault.azure.net');
     expect(ref.current.getCredentials().credentials).toEqual({});
+  });
+});
+
+describe('Import form docs panel', () => {
+  it('ImportAWSForm shows a compact Learn more panel under the description', () => {
+    renderWithProviders(
+      <ImportAWSForm
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+    const panel = screen.getByRole('note', { name: 'Learn more' });
+    expect(
+      within(panel).getByRole('link', { name: 'Importing from AWS' })
+    ).toHaveAttribute('href', IMPORT_DOCS.aws);
+  });
+
+  it('ImportAWSForm renders no panel when the host shows its own', () => {
+    renderWithProviders(
+      <ImportAWSForm
+        hideDocs
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
+  });
+
+  it('ImportGitHubForm shows the panel, and hides it in manage mode', () => {
+    const { unmount } = renderWithProviders(
+      <ImportGitHubForm
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+    expect(
+      within(screen.getByRole('note', { name: 'Learn more' })).getByRole(
+        'link',
+        { name: 'Importing from GitHub' }
+      )
+    ).toHaveAttribute('href', IMPORT_DOCS.github);
+    unmount();
+
+    renderWithProviders(
+      <ImportGitHubForm
+        autoSyncManageMode
+        workspaceId='ws-1'
+        onImportComplete={vi.fn()}
+        onError={vi.fn()}
+        onScanSuccess={vi.fn()}
+        borderColor='gray.200'
+        helpTextColor='gray.500'
+        autoSyncTokenPlaceholder='token'
+        updateQuotaFromResponse={() => true}
+        refreshIntegrationQuota={vi.fn()}
+        isQuotaExceededError={() => false}
+        formatQuotaError={e => e?.message}
+        extractQuotaFromError={() => false}
+        contactGroups={[]}
+        onSelectionChange={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole('note', { name: 'Learn more' })).toBeNull();
   });
 });
