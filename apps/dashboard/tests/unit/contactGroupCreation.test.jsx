@@ -21,7 +21,7 @@ import ContactGroupCheckboxGroup from '../../src/components/ContactGroupCheckbox
 import EndpointSslMonitorModal from '../../src/components/EndpointSslMonitorModal.jsx';
 import { ContactGroupCreationProvider } from '../../src/utils/ContactGroupCreationContext.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
-import apiClient, { workspaceAPI } from '../../src/utils/apiClient';
+import apiClient, { alertAPI, workspaceAPI } from '../../src/utils/apiClient';
 import { showError } from '../../src/utils/toast.js';
 
 vi.mock('../../src/components/SEO.jsx', () => ({ default: () => null }));
@@ -39,7 +39,7 @@ vi.mock('../../src/utils/apiClient', () => ({
     getAlertSettings: vi.fn(),
     updateAlertSettings: vi.fn(),
   },
-  alertAPI: {},
+  alertAPI: { testWebhook: vi.fn() },
   showSuccessMessage: vi.fn(),
   default: { get: vi.fn(), post: vi.fn() },
 }));
@@ -130,6 +130,7 @@ beforeEach(() => {
     dispatchEvent: vi.fn(),
   }));
   vi.clearAllMocks();
+  alertAPI.testWebhook.mockReset().mockResolvedValue({});
   settings = {
     contact_groups: [{ id: 'ops', name: 'Operations' }],
     default_contact_group_id: 'ops',
@@ -605,5 +606,245 @@ describe('onboarding shared group editor', () => {
       weekly_digest_email: true,
     });
     expect(settings.default_contact_group_id).toBe('ops');
+  });
+});
+
+describe('webhook creation inside the shared group modal', () => {
+  it('creates and selects a webhook from workspace preferences without resetting the edited group', async () => {
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AlertPreferences />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    const edit = await screen.findByRole('button', {
+      name: 'Edit group',
+      exact: true,
+    });
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    const groupDialog = await screen.findByRole('dialog', {
+      name: /Edit contact group/,
+    });
+    fireEvent.change(
+      within(groupDialog).getByPlaceholderText(
+        'Group name (e.g., On-call, Security, Legal)'
+      ),
+      { target: { value: 'Operations draft' } }
+    );
+    fireEvent.click(
+      within(groupDialog).getByRole('checkbox', { name: 'Email', exact: true })
+    );
+    fireEvent.click(
+      within(groupDialog).getByRole('button', {
+        name: 'Add webhook',
+        exact: true,
+      })
+    );
+    const hookDialog = await screen.findByRole('dialog', {
+      name: /^Add webhook/,
+    });
+    fireEvent.change(
+      within(hookDialog).getByPlaceholderText(
+        'Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
+      ),
+      { target: { value: 'Preferences hook' } }
+    );
+    fireEvent.change(within(hookDialog).getByPlaceholderText('https://...'), {
+      target: { value: 'https://hooks.example.invalid/preferences' },
+    });
+    fireEvent.click(
+      within(hookDialog).getByRole('button', { name: 'Test', exact: true })
+    );
+    await waitFor(() =>
+      expect(
+        within(hookDialog).getByRole('button', { name: 'Save webhook' })
+      ).toBeEnabled()
+    );
+    fireEvent.click(
+      within(hookDialog).getByRole('button', { name: 'Save webhook' })
+    );
+    expect(
+      await screen.findByRole('checkbox', { name: 'Preferences hook' })
+    ).toBeChecked();
+    expect(screen.getByDisplayValue('Operations draft')).toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: 'Email', exact: true })
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Save group' }));
+    await waitFor(() =>
+      expect(settings.contact_groups[0]).toMatchObject({
+        name: 'Operations draft',
+        email_contact_ids: ['person'],
+        webhook_names: ['Preferences hook'],
+      })
+    );
+  });
+
+  async function openWebhook() {
+    setup();
+    await openEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Add webhook' }));
+    const dialog = await screen.findByRole('dialog', { name: /^Add webhook/ });
+    fireEvent.change(
+      within(dialog).getByPlaceholderText(
+        'Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
+      ),
+      { target: { value: 'Ops channel' } }
+    );
+    fireEvent.change(within(dialog).getByPlaceholderText('https://...'), {
+      target: { value: 'https://hooks.example.invalid/ops' },
+    });
+    return dialog;
+  }
+  async function testWebhook(dialog) {
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Test', exact: true })
+    );
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Save webhook' })
+      ).toBeEnabled()
+    );
+  }
+  it('tests, saves and selects a webhook while preserving group and parent drafts', async () => {
+    const dialog = await openWebhook();
+    expect(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    ).toBeDisabled();
+    await testWebhook(dialog);
+    expect(alertAPI.testWebhook).toHaveBeenCalledWith(
+      'https://hooks.example.invalid/ops',
+      'generic',
+      expect.any(Object)
+    );
+    settings.webhook_urls = [
+      {
+        name: 'Added elsewhere',
+        url: 'https://hooks.example.invalid/other',
+        verified: true,
+        verifiedUrl: 'https://hooks.example.invalid/other',
+      },
+    ];
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    );
+    const checkbox = await screen.findByRole('checkbox', {
+      name: 'Ops channel',
+    });
+    expect(checkbox).toBeChecked();
+    expect(settings.webhook_urls.map(hook => hook.name)).toEqual([
+      'Added elsewhere',
+      'Ops channel',
+    ]);
+    expect(screen.getByDisplayValue('Security')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save group' }));
+    await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+    expect(
+      settings.contact_groups.find(group => group.name === 'Security')
+        .webhook_names
+    ).toEqual(['Ops channel']);
+    expect(
+      screen.getByDisplayValue('Do not lose this asset')
+    ).toBeInTheDocument();
+  });
+  it('keeps failed test feedback and cancellation from changing group selection', async () => {
+    alertAPI.testWebhook.mockRejectedValue(
+      new Error('Receiver unavailable; check the URL.')
+    );
+    const dialog = await openWebhook();
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Test', exact: true })
+    );
+    expect(
+      await within(dialog).findByText('Receiver unavailable; check the URL.')
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    ).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /^Add webhook/ })
+      ).not.toBeInTheDocument()
+    );
+    expect(screen.getByDisplayValue('Security')).toBeInTheDocument();
+    expect(workspaceAPI.updateAlertSettings).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  });
+  it('requires a new test after the webhook parameters change', async () => {
+    const dialog = await openWebhook();
+    await testWebhook(dialog);
+    fireEvent.change(within(dialog).getByPlaceholderText('https://...'), {
+      target: { value: 'https://hooks.example.invalid/changed' },
+    });
+    expect(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    ).toBeDisabled();
+  });
+  it('keeps the draft and original group selection when persistence drops the webhook', async () => {
+    const dialog = await openWebhook();
+    await testWebhook(dialog);
+    workspaceAPI.updateAlertSettings.mockResolvedValue({});
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    );
+    expect(
+      await within(dialog).findByText(/webhook was not saved as requested/i)
+    ).toBeVisible();
+    expect(within(dialog).getByDisplayValue('Ops channel')).toBeInTheDocument();
+    expect(changed).not.toHaveBeenCalled();
+  });
+  it('retries after a lost confirmation without duplicating the saved webhook', async () => {
+    const dialog = await openWebhook();
+    await testWebhook(dialog);
+    let writes = 0;
+    workspaceAPI.updateAlertSettings.mockImplementation(
+      async (_workspace, patch) => {
+        settings = { ...settings, ...patch };
+        writes += 1;
+        if (writes === 1) throw new Error('Connection lost after save');
+      }
+    );
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    );
+    expect(
+      await within(dialog).findByText('Connection lost after save')
+    ).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Save webhook' })
+    );
+    expect(
+      await screen.findByRole('checkbox', { name: 'Ops channel' })
+    ).toBeChecked();
+    expect(settings.webhook_urls).toHaveLength(1);
+    expect(writes).toBe(1);
+  });
+  it('locks testing fields and cancellation while the receiver request is in flight', async () => {
+    let finish;
+    alertAPI.testWebhook.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve;
+        })
+    );
+    const dialog = await openWebhook();
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Test', exact: true })
+    );
+    expect(within(dialog).getByPlaceholderText('https://...')).toBeDisabled();
+    expect(
+      within(dialog).getByRole('button', { name: 'Cancel' })
+    ).toBeDisabled();
+    finish({});
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: 'Save webhook' })
+      ).toBeEnabled()
+    );
   });
 });
