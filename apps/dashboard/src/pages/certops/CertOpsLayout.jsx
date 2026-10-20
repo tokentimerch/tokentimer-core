@@ -1,11 +1,14 @@
-import { useCallback, useState } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useMatch } from 'react-router';
 import { Box, HStack } from '@chakra-ui/react';
 import DashboardShell from '../../components/DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../../components/SEO.jsx';
 import WorkspaceKillSwitchPanel from '../../components/certops/WorkspaceKillSwitchPanel.jsx';
-import { useCertOpsAvailability } from '../../components/certops/useCertOps.js';
+import CertopsSetupBanner from '../../components/onboarding/CertopsSetupBanner.jsx';
+import {
+  useCertOpsAvailability,
+  useCertOpsWorkspaceKillSwitch,
+} from '../../components/certops/useCertOps.js';
 import {
   DashboardActionButton,
   DashboardState,
@@ -116,21 +119,12 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
     error: availabilityError,
     retry: retryAvailability,
   } = useCertOpsAvailability();
-  const [killSwitch, setKillSwitch] = useState({
-    certOpsPaused: undefined,
-    loading: true,
-    error: '',
-  });
-
-  const handlePausedChange = useCallback(next => {
-    setKillSwitch(current =>
-      current.certOpsPaused === next.certOpsPaused &&
-      current.loading === next.loading &&
-      current.error === next.error
-        ? current
-        : next
-    );
-  }, []);
+  // One controller for the whole section, so pausing from the Settings tab is
+  // seen by every other tab at once.
+  const killSwitch = useCertOpsWorkspaceKillSwitch();
+  // The Settings tab shows the same state itself, so repeating it above would
+  // stack two identical warnings.
+  const onSettingsTab = Boolean(useMatch('/certops/settings'));
 
   const shellProps = useDashboardShellProps({
     session,
@@ -175,7 +169,16 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
               />
             ) : enabled ? (
               <>
-                <WorkspaceKillSwitchPanel onPausedChange={handlePausedChange} />
+                {onSettingsTab ? null : (
+                  <WorkspaceKillSwitchPanel
+                    controller={killSwitch}
+                    mode='alertOnly'
+                  />
+                )}
+                <CertopsSetupBanner
+                  enabled={enabled}
+                  paused={Boolean(killSwitch.certOpsPaused)}
+                />
                 <CertOpsSubNav />
                 <Outlet
                   context={{
@@ -184,6 +187,7 @@ export default function CertOpsLayout({ session, onLogout, onAccountClick }) {
                       !killSwitch.loading &&
                       !killSwitch.error &&
                       killSwitch.certOpsPaused !== undefined,
+                    killSwitch,
                   }}
                 />
               </>

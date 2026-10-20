@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import {
   Badge,
   Box,
@@ -13,7 +14,10 @@ import {
   Input,
   VStack,
 } from '@chakra-ui/react';
-import { DashboardErrorAlert } from '../DashboardPrimitives';
+import {
+  DashboardActionButton,
+  DashboardErrorAlert,
+} from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
@@ -25,6 +29,15 @@ import { onboardingActions } from '../../utils/onboardingActions.js';
 export function GoalStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const goals = availableGoals(ctx.capabilities);
+  // A link such as /onboarding?area=certops opens straight on one area.
+  const [params, setParams] = useSearchParams();
+  const requestedArea = params.get('area');
+  const areaFilter = GOAL_AREAS.some(a => a.id === requestedArea)
+    ? requestedArea
+    : '';
+  const areas = areaFilter
+    ? GOAL_AREAS.filter(a => a.id === areaFilter)
+    : GOAL_AREAS;
   const current = ctx.session.intent?.goal || '';
   const [choice, setChoice] = useState(current);
   const [error, setError] = useState('');
@@ -79,7 +92,7 @@ export function GoalStep({ ctx }) {
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
         <RadioGroup value={choice} onChange={setChoice}>
           <VStack align='stretch' spacing={4}>
-            {GOAL_AREAS.map(area => {
+            {areas.map(area => {
               const inArea = goals.filter(g => g.area === area.id);
               if (inArea.length === 0) return null;
               return (
@@ -114,6 +127,17 @@ export function GoalStep({ ctx }) {
             })}
           </VStack>
         </RadioGroup>
+        {areaFilter ? (
+          <Box>
+            <DashboardActionButton
+              variant='ghost'
+              size='sm'
+              onClick={() => setParams({}, { replace: true })}
+            >
+              Show all goals
+            </DashboardActionButton>
+          </Box>
+        ) : null}
       </VStack>
     </StepFrame>
   );

@@ -4,6 +4,7 @@ import { HStack, Stack, Switch, Text } from '@chakra-ui/react';
 import { useOutletContext } from 'react-router';
 import ApiTokenList from '../../components/certops/ApiTokenList.jsx';
 import ApiTokenModal from '../../components/certops/ApiTokenModal.jsx';
+import WorkspaceKillSwitchPanel from '../../components/certops/WorkspaceKillSwitchPanel.jsx';
 import {
   useCertOpsCanManage,
   useCertOpsIsWorkspaceAdmin,
@@ -91,12 +92,20 @@ function JobApprovalPolicyPanel() {
  * machine credentials live here.
  */
 export default function CertOpsSettings() {
-  const { certOpsPaused } = useOutletContext() || {};
+  const { certOpsPaused, killSwitch } = useOutletContext() || {};
   const canManage = useCertOpsCanManage();
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
     <Stack spacing={3} align='stretch'>
+      <DashboardPanel>
+        <DashboardPanelHeader
+          title='Certificate operations'
+          description='Pause new provisioning and command delivery for this workspace during an incident. Already-leased jobs keep running, and a pause shows on every tab.'
+        />
+        <WorkspaceKillSwitchPanel controller={killSwitch} flush />
+      </DashboardPanel>
+
       <JobApprovalPolicyPanel />
 
       <DashboardPanel>

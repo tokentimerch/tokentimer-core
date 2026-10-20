@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  inviteKind,
   markChecked,
+  markModalShown,
   shouldNudge,
   wasChecked,
+  wasModalShown,
 } from '../../src/components/onboarding/nudgeRules.js';
 
 const empty = { assets: { total: 0 }, monitors: { total: 0 } };
@@ -61,13 +64,56 @@ describe('shouldNudge', () => {
     ).toBe(false);
   });
 
-  it('does not nag someone who already chose a goal', () => {
+  it('does not open the modal for someone who already chose a goal', () => {
     expect(
       shouldNudge({
         session: { ...fresh, intent: { goal: 'alerting' } },
         summary: empty,
       })
     ).toBe(false);
+  });
+});
+
+describe('inviteKind', () => {
+  it('opens the modal once, then leaves a banner', () => {
+    expect(inviteKind({ session: fresh, summary: empty })).toBe('modal');
+    expect(
+      inviteKind({ session: fresh, summary: empty, modalShown: true })
+    ).toBe('banner');
+  });
+
+  it('keeps a banner for someone who started the guide and left', () => {
+    const started = { ...fresh, intent: { goal: 'alerting' } };
+    expect(inviteKind({ session: started, summary: empty })).toBe('banner');
+  });
+
+  it('shows nothing after "Not now", a finished guide, a viewer or real content', () => {
+    for (const status of ['dismissed', 'completed']) {
+      expect(
+        inviteKind({
+          session: { ...fresh, status },
+          summary: empty,
+          modalShown: true,
+        })
+      ).toBeNull();
+    }
+    expect(
+      inviteKind({ session: fresh, summary: empty, isViewer: true })
+    ).toBeNull();
+    expect(
+      inviteKind({
+        session: fresh,
+        summary: { assets: { total: 1 }, monitors: { total: 0 } },
+        modalShown: true,
+      })
+    ).toBeNull();
+  });
+
+  it('never reads an unknown count as empty, even for the banner', () => {
+    expect(
+      inviteKind({ session: fresh, summary: {}, modalShown: true })
+    ).toBeNull();
+    expect(inviteKind({ session: null, summary: empty })).toBeNull();
   });
 });
 
@@ -86,6 +132,14 @@ describe('check memory', () => {
     markChecked('a', s);
     expect(wasChecked('a', s)).toBe(true);
     expect(wasChecked('b', s)).toBe(false);
+  });
+
+  it('keeps "nothing to show" and "modal offered" apart', () => {
+    const s = memory();
+    markModalShown('a', s);
+    expect(wasModalShown('a', s)).toBe(true);
+    expect(wasChecked('a', s)).toBe(false);
+    expect(wasModalShown('b', s)).toBe(false);
   });
 
   it('survives storage that throws', () => {

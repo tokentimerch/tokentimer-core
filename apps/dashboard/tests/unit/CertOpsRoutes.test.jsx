@@ -204,28 +204,56 @@ describe('CertOpsRoutes tabs', () => {
 });
 
 describe('CertOpsRoutes kill-switch banner', () => {
-  it.each(Object.keys(TAB_PANELS))('stays quiet on %s while active', path => {
+  const OTHER_TABS = Object.keys(TAB_PANELS).filter(
+    path => path !== '/certops/settings'
+  );
+  const RUNNING = 'Certificate operations are running for this workspace.';
+  const PAUSED = 'Certificate operations are paused for this workspace';
+
+  it.each(OTHER_TABS)('stays silent on %s while operations run', path => {
     renderAt(path);
 
+    expect(screen.queryByText(RUNNING)).not.toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Pause certificate operations' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the running line and the Pause action on the Settings tab', () => {
+    renderAt('/certops/settings');
+
+    expect(screen.getByText(RUNNING)).toBeInTheDocument();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Pause certificate operations' })
     ).toBeInTheDocument();
   });
 
-  it.each(Object.keys(TAB_PANELS))('warns on %s while paused', path => {
+  it.each(OTHER_TABS)('warns on %s while paused', path => {
     useCertOpsWorkspaceKillSwitchMock.mockReturnValue(
       killSwitchState({ certOpsPaused: true, certOpsActive: false })
     );
 
     renderAt(path);
 
-    expect(
-      screen.getByText('Certificate operations are paused for this workspace')
-    ).toBeInTheDocument();
+    expect(screen.getByText(PAUSED)).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Resume certificate operations' })
     ).toBeInTheDocument();
+  });
+
+  it('warns exactly once on the Settings tab while paused', () => {
+    useCertOpsWorkspaceKillSwitchMock.mockReturnValue(
+      killSwitchState({ certOpsPaused: true, certOpsActive: false })
+    );
+
+    renderAt('/certops/settings');
+
+    expect(screen.getAllByText(PAUSED)).toHaveLength(1);
+    expect(
+      screen.getAllByRole('button', { name: 'Resume certificate operations' })
+    ).toHaveLength(1);
   });
 
   it('hands the paused state to the tabs so they can disable refused controls', () => {

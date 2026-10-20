@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Button,
+  HStack,
   Icon,
   Modal,
   ModalBody,
@@ -9,7 +10,6 @@ import {
   ModalOverlay,
   Text,
   VStack,
-  HStack,
 } from '@chakra-ui/react';
 import { FaRocket } from 'react-icons/fa';
 import {
@@ -19,14 +19,23 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { onboardingAPI } from '../../utils/onboardingApi.js';
-import { markChecked, shouldNudge, wasChecked } from './nudgeRules.js';
+import SetupBanner from './SetupBanner.jsx';
+import {
+  inviteKind,
+  markChecked,
+  markModalShown,
+  wasChecked,
+  wasModalShown,
+} from './nudgeRules.js';
 
 const FLOW = 'mega';
 
 /**
  * Invites the owner of an empty workspace to the setup guide. Mounted once on
- * the dashboard; it renders nothing unless the rules say the workspace is
- * truly empty and the person has not been asked before.
+ * the dashboard. It opens a modal the first time, and from then on leaves a
+ * slim banner for as long as the workspace is empty, so closing the modal by
+ * accident never removes the way back. Only "Not now" and "Hide" stop it for
+ * good; closing the modal with the X, Esc or a click outside does not.
  */
 export default function SetupNudge({
   workspaceId,
@@ -35,7 +44,9 @@ export default function SetupNudge({
   onStart,
   api = onboardingAPI,
 }) {
-  const [open, setOpen] = useState(false);
+  // null | 'modal' | 'banner'
+  const [mode, setMode] = useState(null);
+  const [goalChosen, setGoalChosen] = useState(false);
   const session = useRef(null);
   const primaryRef = useRef(null);
   const {
@@ -60,9 +71,19 @@ export default function SetupNudge({
           api.getSummary(workspaceId, FLOW),
         ]);
         if (cancelled) return;
-        markChecked(workspaceId);
         session.current = s;
-        if (shouldNudge({ session: s, summary, isViewer })) setOpen(true);
+        const kind = inviteKind({
+          session: s,
+          summary,
+          isViewer,
+          modalShown: wasModalShown(workspaceId),
+        });
+        setGoalChosen(Boolean(s?.intent?.goal));
+        if (kind === 'modal') markModalShown(workspaceId);
+        // Only an empty answer is final for this browser session; a banner is
+        // checked again on each visit so it disappears once there is content.
+        if (!kind) markChecked(workspaceId);
+        setMode(kind);
       } catch (_) {
         // Advisory only: a failed check must never get in the way.
       }
@@ -72,8 +93,9 @@ export default function SetupNudge({
     };
   }, [workspaceId, isViewer, suppress, api]);
 
+  // "Not now" and "Hide": stop for good.
   const dismiss = async () => {
-    setOpen(false);
+    setMode(null);
     try {
       const { current } = session;
       await api.putSession(workspaceId, FLOW, {
@@ -85,17 +107,32 @@ export default function SetupNudge({
     }
   };
 
+  // X, Esc, click outside: close for now, keep the way back.
+  const later = () => setMode('banner');
+
   const start = () => {
-    setOpen(false);
+    setMode(null);
     onStart?.();
   };
 
-  if (!open || suppress) return null;
+  if (!mode || suppress) return null;
+
+  if (mode === 'banner') {
+    return (
+      <SetupBanner
+        title='Your workspace is empty.'
+        message='Nothing is being watched, so no alerts can fire.'
+        actionLabel={goalChosen ? 'Continue setup' : 'Set up my environment'}
+        onAction={start}
+        onHide={dismiss}
+      />
+    );
+  }
 
   return (
     <Modal
       isOpen
-      onClose={dismiss}
+      onClose={later}
       isCentered
       size='md'
       closeOnOverlayClick
@@ -131,7 +168,8 @@ export default function SetupNudge({
               monitor a site or add assets, then choose who gets alerted.
             </Text>
             <Text fontSize='xs' color={modalTokens.muted}>
-              You can reopen it any time from Preferences.
+              Closing this keeps a reminder on the dashboard. Not now hides it
+              for good, and you can reopen the guide any time from Preferences.
             </Text>
           </VStack>
         </ModalBody>

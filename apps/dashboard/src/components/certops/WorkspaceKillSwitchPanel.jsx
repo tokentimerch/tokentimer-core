@@ -162,17 +162,52 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
  * workspace admins can change it (certops.kill_switch.manage); other roles
  * see the current state read-only.
  *
- * Rendered as a compact banner above every CertOps tab. While operations are
- * active it stays a single quiet line: a banner that shouts on the happy path
- * stops being read, and the one state that matters is the paused one.
+ * The layout owns one controller and hands it to every view, so pausing from
+ * the Settings tab is seen by the others at once. Modes:
+ * - `alertOnly` (layout, above the other tabs): nothing while operations are
+ *   running. Only the paused warning and load errors appear, because a paused
+ *   workspace must stay visible on every tab and a banner that speaks on the
+ *   happy path stops being read.
+ * - `default` (Settings tab): the paused warning, or the status line with the
+ *   Pause control while running. `flush` drops the outer margin for use
+ *   inside a panel.
+ * Without a `controller` the panel loads the setting itself.
  * The always-require-approval policy lives on the Settings tab, not here.
- * `onPausedChange` lets the layout share the resolved state with the tabs
- * instead of every tab refetching the same setting.
+ * `onPausedChange` lets a caller follow the resolved state.
  */
-export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
+export default function WorkspaceKillSwitchPanel({
+  controller,
+  mode = 'default',
+  flush = false,
+  onPausedChange,
+}) {
+  if (controller) {
+    return (
+      <KillSwitchView
+        controller={controller}
+        mode={mode}
+        flush={flush}
+        onPausedChange={onPausedChange}
+      />
+    );
+  }
+  return (
+    <OwnStateKillSwitch
+      mode={mode}
+      flush={flush}
+      onPausedChange={onPausedChange}
+    />
+  );
+}
+
+function OwnStateKillSwitch(props) {
+  const controller = useCertOpsWorkspaceKillSwitch();
+  return <KillSwitchView controller={controller} {...props} />;
+}
+
+function KillSwitchView({ controller, mode, flush, onPausedChange }) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
-  const { certOpsPaused, loading, error, saving, setPaused } =
-    useCertOpsWorkspaceKillSwitch();
+  const { certOpsPaused, loading, error, saving, setPaused } = controller;
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const { muted, dashboard } = useDashboardThemeColors();
@@ -228,16 +263,19 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
 
   if (error) {
     return (
-      <Box mb={3}>
+      <Box mb={flush ? 0 : 3}>
         <DashboardErrorAlert>{error}</DashboardErrorAlert>
         {confirmModal}
       </Box>
     );
   }
 
+  // Quiet while running: the status line lives on the Settings tab.
+  if (mode === 'alertOnly' && !certOpsPaused) return null;
+
   if (certOpsPaused) {
     return (
-      <Box mb={3}>
+      <Box mb={flush ? 0 : 3}>
         <Alert
           status='warning'
           borderRadius='md'
@@ -278,7 +316,7 @@ export default function WorkspaceKillSwitchPanel({ onPausedChange }) {
   }
 
   return (
-    <Box mb={3}>
+    <Box mb={flush ? 0 : 3}>
       <Box
         px={3}
         py={1.5}

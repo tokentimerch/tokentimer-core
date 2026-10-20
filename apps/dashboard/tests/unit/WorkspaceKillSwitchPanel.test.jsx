@@ -146,3 +146,93 @@ describe('WorkspaceKillSwitchPanel', () => {
     expect(screen.getByText('Internal error')).toBeInTheDocument();
   });
 });
+
+describe('WorkspaceKillSwitchPanel with a shared controller', () => {
+  beforeEach(() => {
+    useCertOpsIsWorkspaceAdminMock.mockReset();
+    useCertOpsWorkspaceKillSwitchMock.mockReset();
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
+  });
+
+  it('does not load the setting itself when given a controller', () => {
+    renderWithProviders(
+      <WorkspaceKillSwitchPanel controller={killSwitchState()} />
+    );
+    expect(useCertOpsWorkspaceKillSwitchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows nothing above the tabs while operations are running', () => {
+    const { container } = renderWithProviders(
+      <WorkspaceKillSwitchPanel
+        controller={killSwitchState()}
+        mode='alertOnly'
+      />
+    );
+    expect(container.textContent).toBe('');
+  });
+
+  it('still shows the paused warning and its Resume action above the tabs', () => {
+    renderWithProviders(
+      <WorkspaceKillSwitchPanel
+        controller={killSwitchState({ certOpsPaused: true })}
+        mode='alertOnly'
+      />
+    );
+    expect(
+      screen.getByText('Certificate operations are paused for this workspace')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Resume certificate operations' })
+    ).toBeInTheDocument();
+  });
+
+  it('still shows a load error above the tabs', () => {
+    renderWithProviders(
+      <WorkspaceKillSwitchPanel
+        controller={killSwitchState({ error: 'Could not load it' })}
+        mode='alertOnly'
+      />
+    );
+    expect(screen.getByText('Could not load it')).toBeInTheDocument();
+  });
+
+  it('shows the running line with the Pause action in the default view', () => {
+    renderWithProviders(
+      <WorkspaceKillSwitchPanel controller={killSwitchState()} />
+    );
+    expect(
+      screen.getByText('Certificate operations are running for this workspace.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Pause certificate operations' })
+    ).toBeInTheDocument();
+  });
+
+  it('shows one paused warning with Resume in the default view', () => {
+    renderWithProviders(
+      <WorkspaceKillSwitchPanel
+        controller={killSwitchState({ certOpsPaused: true })}
+      />
+    );
+    expect(
+      screen.getByText('Certificate operations are paused for this workspace')
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('button', { name: 'Resume certificate operations' })
+    ).toHaveLength(1);
+  });
+
+  it('pauses through the shared controller so other tabs see it', async () => {
+    const controller = killSwitchState({
+      setPaused: vi.fn().mockResolvedValue({ certOpsPaused: true }),
+    });
+    renderWithProviders(<WorkspaceKillSwitchPanel controller={controller} />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Pause certificate operations' })
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(controller.setPaused).toHaveBeenCalledTimes(1));
+    expect(controller.setPaused.mock.calls[0][0]).toBe(true);
+  });
+});

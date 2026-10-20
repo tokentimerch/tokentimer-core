@@ -81,6 +81,7 @@ vi.mock('../../src/utils/toast.js', () => ({
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsAvailability: useCertOpsAvailabilityMock,
+  useCertOpsCanManage: () => false,
   useCertOpsEnabled: () => true,
   useCertOpsIsWorkspaceAdmin: useCertOpsIsWorkspaceAdminMock,
   useCertOpsWorkspaceKillSwitch: () => ({
