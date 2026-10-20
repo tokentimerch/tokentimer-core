@@ -120,13 +120,14 @@ export function RecipientsStep({ ctx }) {
         docs={docs}
       >
         <GroupEditor
+          autoOpen
           ctx={ctx}
           settings={settings}
           contacts={contacts}
           group={group}
           makeDefault={!defaultReaches || defaultId === String(group?.id)}
           onSaved={afterSave}
-          onCancel={groups.length > 0 ? () => setEditing(null) : undefined}
+          onCancel={() => setEditing(null)}
         />
       </StepFrame>
     );
