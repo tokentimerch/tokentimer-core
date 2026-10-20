@@ -3059,6 +3059,18 @@ function DashboardWrapper({
           }}
         >
           <DashboardView
+            setupNudge={
+              <SetupNudge
+                workspaceId={nudgeWorkspaceId}
+                isViewer={isViewer}
+                suppress={
+                  showWelcomeModal ||
+                  _showProductTour ||
+                  location.pathname !== '/dashboard'
+                }
+                onStart={() => navigateToOnboarding('/onboarding')}
+              />
+            }
             _session={session}
             tokens={tokens}
             tokensLoading={tokensLoading}
@@ -3102,17 +3114,6 @@ function DashboardWrapper({
           />
         </div>
       </main>
-
-      <SetupNudge
-        workspaceId={nudgeWorkspaceId}
-        isViewer={isViewer}
-        suppress={
-          showWelcomeModal ||
-          _showProductTour ||
-          location.pathname !== '/dashboard'
-        }
-        onStart={() => navigateToOnboarding('/onboarding')}
-      />
 
       <WelcomeModal
         isOpen={showWelcomeModal && location.pathname === '/dashboard'}
@@ -3327,6 +3328,7 @@ function DashboardView({
   onLogout,
   selectedToken,
   handleCloseTokenModal,
+  setupNudge = null,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -5060,6 +5062,7 @@ function DashboardView({
         pageTitle='Asset Inventory'
       >
         <Box px={{ base: 4, lg: 4, '2xl': 5 }} py={{ base: 5, lg: 3 }}>
+          {setupNudge}
           {/* Token creation actions (hidden for viewers) */}
           {!isViewer && (
             <>
