@@ -1294,6 +1294,38 @@ describe("continue-enrollment recovery executor", () => {
     });
   });
 
+  it("re-proposing the journal's own RequestId resumes retrieval; a different id is rejected", async () => {
+    const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6";
+    await withState(enrollmentId, async (stateDir) => {
+      const seed = await seedEnrollment(stateDir, enrollmentId, "submitting");
+      await writeEnrollmentJournal(stateDir, enrollmentId, { ...seed.journalBase,
+        state: "pending", requestId: 42 });
+      const retrieved = [];
+      const { executeWindowsIisContinueEnrollmentJob } = executorsFor(stateDir);
+      const executionContext = contextFor(seed, {
+        adcsExecFileImpl: async (file, args) => {
+          retrieved.push(Number(args[args.indexOf("-config") + 2]));
+          fs.writeFileSync(args.at(-1), "unit CMC response fixture");
+          return { stdout: "", stderr: "" };
+        },
+        adcsDecodeCmcImpl: async () => ({ ok: true, result: { disposition: "unknown" } }),
+      });
+      seed.job.enrollment.reconcileRequestId = 43;
+      let result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      assert.equal(result.status, "rejected");
+      assert.equal(result.rejectionReason, "invalid_reconcile_state");
+      assert.deepEqual(retrieved, []);
+      seed.job.enrollment.reconcileRequestId = 42;
+      result = await executeWindowsIisContinueEnrollmentJob({ job: seed.job,
+        jobId: seed.journalBase.jobId, client: {}, log: {}, executionContext });
+      assert.notEqual(result.status, "rejected");
+      assert.deepEqual(retrieved, [42]);
+      assert.equal(result.enrollmentResult.state, "pending_issuance");
+      assert.equal(result.enrollmentResult.requestId, 42);
+    });
+  });
+
   for (const terminalState of ["expired", "cancelled", "abandoned"]) {
     it(`signed ${terminalState} continuation frees its pending key and replays without CA contact`, async () => {
       const enrollmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
