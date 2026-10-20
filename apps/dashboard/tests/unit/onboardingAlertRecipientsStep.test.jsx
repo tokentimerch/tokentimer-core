@@ -22,6 +22,12 @@ vi.mock('../../src/utils/onboardingActions.js', () => ({
   onboardingActions: actions,
 }));
 
+// The editor is the shared Alert Preferences dialog (needs a router and the
+// full page). The journey test covers it for real; here it is a marker.
+vi.mock('../../src/components/onboarding/alertGroupEditor.jsx', () => ({
+  default: () => <div data-testid='group-editor' />,
+}));
+
 import { RecipientsStep } from '../../src/components/onboarding/alertRecipientsStep.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
@@ -191,7 +197,6 @@ describe('RecipientsStep layout', () => {
     expect(
       screen.getByText(/Creating a group does not send alerts to it/)
     ).toBeVisible();
-    expect(screen.getByLabelText(/^Email$/)).toHaveValue('ana@example.com');
   });
 
   it('still lets the person skip', async () => {

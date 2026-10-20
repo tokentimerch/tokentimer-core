@@ -14,6 +14,34 @@ vi.mock('../../src/utils/onboardingActions.js', () => ({
   onboardingActions: actions,
 }));
 
+// The shared picker is a dropdown; a plain checkbox list keeps these tests on
+// the step's own hint logic.
+vi.mock('../../src/components/ContactGroupCheckboxGroup.jsx', () => ({
+  default: ({ contactGroups, value, onChange }) => (
+    <div>
+      {contactGroups.map(g => {
+        const id = String(g.id);
+        return (
+          <label key={id}>
+            <input
+              type='checkbox'
+              checked={value.includes(id)}
+              onChange={() =>
+                onChange(
+                  value.includes(id)
+                    ? value.filter(x => x !== id)
+                    : [...value, id]
+                )
+              }
+            />
+            {g.name}
+          </label>
+        );
+      })}
+    </div>
+  ),
+}));
+
 import { AssetStep } from '../../src/components/onboarding/assetStep.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 

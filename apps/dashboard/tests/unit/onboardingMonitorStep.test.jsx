@@ -7,11 +7,29 @@ const { actions } = vi.hoisted(() => ({
     listMonitors: vi.fn(),
     createMonitor: vi.fn(),
     discoverHostnames: vi.fn(),
+    getAlertSettings: vi.fn(),
   },
 }));
 
 vi.mock('../../src/utils/onboardingActions.js', () => ({
   onboardingActions: actions,
+}));
+
+// The shared picker is a dropdown; a plain button keeps this on the step's wiring.
+vi.mock('../../src/components/ContactGroupCheckboxGroup.jsx', () => ({
+  default: ({ contactGroups, onChange }) => (
+    <div>
+      {contactGroups.map(g => (
+        <button
+          key={g.id}
+          type='button'
+          onClick={() => onChange([String(g.id)])}
+        >
+          {g.name}
+        </button>
+      ))}
+    </div>
+  ),
 }));
 
 import { MonitorStep } from '../../src/components/onboarding/monitorStep.jsx';
@@ -60,6 +78,9 @@ beforeEach(() => {
     token_id: 100,
   }));
   actions.discoverHostnames.mockReset();
+  actions.getAlertSettings
+    .mockReset()
+    .mockResolvedValue({ contact_groups: [] });
 });
 
 describe('MonitorStep website list', () => {
@@ -116,6 +137,20 @@ describe('MonitorStep website list', () => {
     });
   });
 
+  it('sends the contact group picked for the batch to every website', async () => {
+    actions.getAlertSettings.mockResolvedValue({
+      contact_groups: [{ id: 'g1', name: 'Ops team' }],
+    });
+    mount(makeCtx());
+    fireEvent.click(await screen.findByRole('button', { name: 'Ops team' }));
+    stage('a.example.com');
+    stage('b.example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Monitor 2 websites' }));
+    await waitFor(() => expect(actions.createMonitor).toHaveBeenCalledTimes(2));
+    for (const [, body] of actions.createMonitor.mock.calls) {
+      expect(body.contactGroupIds).toEqual(['g1']);
+    }
+  });
   it('turns down alerts off and hides the failure count', async () => {
     mount(makeCtx());
     expect(screen.getByLabelText('After failed checks in a row')).toBeTruthy();

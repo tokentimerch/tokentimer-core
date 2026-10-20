@@ -33,6 +33,7 @@ import {
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
+import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import { runIdempotent } from './operations.js';
 import {
   ALERT_AFTER_MAX,
@@ -137,8 +138,7 @@ function CheckSettings({ settings, errors, onChange, disabled }) {
         ) : null}
       </HStack>
       <Text fontSize='xs' color={muted} mt={2}>
-        Applies to every website in the list. You choose who gets alerted in the
-        next step.
+        Applies to every website in the list.
       </Text>
       <Accordion allowToggle mt={2} reduceMotion>
         <AccordionItem border='0'>
@@ -568,6 +568,21 @@ export function MonitorStep({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [attempt, setAttempt] = useState(0);
+  // Same shared picker as the asset step; empty means the workspace default.
+  const [groups, setGroups] = useState([]);
+  const [contactGroupIds, setContactGroupIds] = useState([]);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve()
+      .then(() => onboardingActions.getAlertSettings(ctx.workspaceId))
+      .then(alerts => {
+        if (live) setGroups(alerts?.contact_groups || []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ctx.workspaceId]);
 
   const monitored = (ctx.summary?.monitors?.items || [])
     .map(m => m?.url)
@@ -678,7 +693,7 @@ export function MonitorStep({ ctx }) {
           create: async identity => {
             const made = await onboardingActions.createMonitor(
               ctx.workspaceId,
-              { url: identity.url, ...check.value }
+              { url: identity.url, contactGroupIds, ...check.value }
             );
             known.push(made);
             madeNow += 1;
@@ -859,6 +874,16 @@ export function MonitorStep({ ctx }) {
           disabled={busy}
           onChange={patch => setSettings(s => ({ ...s, ...patch }))}
         />
+
+        <FormControl>
+          <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
+          <ContactGroupCheckboxGroup
+            contactGroups={groups}
+            value={contactGroupIds}
+            onChange={setContactGroupIds}
+            isDisabled={busy}
+          />
+        </FormControl>
 
         <DiscoveryPanel
           workspaceId={ctx.workspaceId}
