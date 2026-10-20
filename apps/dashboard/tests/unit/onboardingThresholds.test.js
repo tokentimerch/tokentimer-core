@@ -23,10 +23,12 @@ describe('parseThresholds', () => {
     expect(problems.join(' ')).toMatch(/900/);
   });
 
-  it('requires at least one value and caps the count', () => {
+  it('requires at least one value and has no count cap the server lacks', () => {
     expect(parseThresholds('  ').problems[0]).toMatch(/at least one/);
     const many = Array.from({ length: 13 }, (_, i) => i + 1).join(',');
-    expect(parseThresholds(many).problems.join(' ')).toMatch(/at most 12/);
+    const r = parseThresholds(many);
+    expect(r.problems).toEqual([]);
+    expect(r.values).toHaveLength(13);
   });
 });
 
