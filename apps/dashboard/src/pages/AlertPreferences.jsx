@@ -989,6 +989,9 @@ export default function AlertPreferences({
   const [editingWebhookIndex, setEditingWebhookIndex] = useState(-1);
   const [webhookDraft, setWebhookDraft] = useState(createEmptyWebhookDraft);
   const [testingWebhookDraft, setTestingWebhookDraft] = useState(false);
+  const [savingWebhookEditor, setSavingWebhookEditor] = useState(false);
+  const [webhookEditorError, setWebhookEditorError] = useState('');
+  const addWebhookTriggerRef = useRef(null);
   const [webhookSaveAttempted, setWebhookSaveAttempted] = useState(false);
 
   function resetNewContactForm() {
@@ -1704,7 +1707,11 @@ export default function AlertPreferences({
   }, [workspaceId]);
 
   function closeGroupEditor() {
-    if (savingGroup || (groupCreationOnly && isAddContactOpen)) return;
+    if (
+      savingGroup ||
+      (groupCreationOnly && (isAddContactOpen || isWebhookEditorOpen))
+    )
+      return;
     if (groupCreationOnly) onGroupCreationCancel?.();
     groupThresholdsTouchedRef.current = false;
     setGroupThresholdError('');
@@ -2061,6 +2068,7 @@ export default function AlertPreferences({
   }
 
   function resetWebhookEditor() {
+    setWebhookEditorError('');
     setEditingWebhookIndex(-1);
     setWebhookDraft(createEmptyWebhookDraft());
     setWebhookSaveAttempted(false);
@@ -2068,12 +2076,14 @@ export default function AlertPreferences({
   }
 
   function handleCloseWebhookEditor() {
+    if (testingWebhookDraft || savingWebhookEditor) return;
     resetWebhookEditor();
     onWebhookEditorClose();
   }
 
   function openAddWebhookEditor() {
-    if (isViewer || webhookUrls.length >= 5) return;
+    if (isViewer || !roleKnown || webhookUrls.length >= 5 || savingGroup)
+      return;
     resetWebhookEditor();
     onWebhookEditorOpen();
   }
@@ -2099,7 +2109,7 @@ export default function AlertPreferences({
   }
 
   function updateWebhookDraft(field, value) {
-    if (isViewer) return;
+    if (isViewer || testingWebhookDraft || savingWebhookEditor) return;
     setWebhookDraft(prev => ({
       ...prev,
       [field]: value,
@@ -2133,7 +2143,9 @@ export default function AlertPreferences({
   }
 
   async function handleTestWebhookDraft() {
-    if (isViewer) return;
+    if (isViewer || !roleKnown || testingWebhookDraft || savingWebhookEditor)
+      return;
+    setWebhookEditorError('');
     const draft = buildWebhookFromDraft();
     if (!draft.url) {
       showError('Please enter a webhook URL first');
@@ -2163,13 +2175,17 @@ export default function AlertPreferences({
         verifiedUrl: null,
         _verifiedSnapshot: null,
       }));
-      showError(e?.message || 'Webhook test failed');
+      const message = e?.message || 'Webhook test failed';
+      setWebhookEditorError(message);
+      showError(message);
     } finally {
       setTestingWebhookDraft(false);
     }
   }
 
   async function handleSaveWebhookEditor() {
+    if (isViewer || !roleKnown || testingWebhookDraft || savingWebhookEditor)
+      return;
     setWebhookSaveAttempted(true);
     if (!canSaveWebhookDraft()) return;
     const built = buildWebhookFromDraft(
@@ -2181,10 +2197,69 @@ export default function AlertPreferences({
             index === editingWebhookIndex ? built : webhook
           )
         : [...webhookUrls, built];
+    setSavingWebhookEditor(true);
+    setWebhookEditorError('');
     try {
-      await persistWebhooksList(nextList);
-      handleCloseWebhookEditor();
-    } catch (_) {}
+      if (groupCreationOnly) {
+        const fresh = await workspaceAPI.getAlertSettings(workspaceId);
+        const existing = Array.isArray(fresh.webhook_urls)
+          ? fresh.webhook_urls
+          : [];
+        const duplicate = existing.find(
+          webhook =>
+            String(webhook.name).toLowerCase() === built.name.toLowerCase()
+        );
+        const matchesDraft = webhook =>
+          isWebhookReadyToPersist(webhook) &&
+          areWebhookParametersEqual(
+            getWebhookParameterSnapshot(webhook),
+            getWebhookParameterSnapshot(built)
+          );
+        if (duplicate && !matchesDraft(duplicate))
+          throw new Error(
+            'A webhook with this name already exists. Choose another name.'
+          );
+        if (!duplicate && existing.length >= 5)
+          throw new Error('This workspace has reached its webhook limit.');
+        if (!duplicate)
+          await workspaceAPI.updateAlertSettings(workspaceId, {
+            webhook_urls: [...existing, webhookPayloadForSave(built)],
+          });
+        const confirmed = await workspaceAPI.getAlertSettings(workspaceId);
+        const saved = (confirmed.webhook_urls || []).find(
+          webhook =>
+            webhook.name === built.name &&
+            isWebhookReadyToPersist(webhook) &&
+            areWebhookParametersEqual(
+              getWebhookParameterSnapshot(webhook),
+              getWebhookParameterSnapshot(built)
+            )
+        );
+        if (!saved)
+          throw new Error(
+            'The webhook was not saved as requested. Check your workspace limit and try again.'
+          );
+        setWebhookUrls(
+          confirmed.webhook_urls.map(webhook =>
+            withWebhookPersistedState(webhook, true)
+          )
+        );
+        setGroupWebhookNames(previous => [
+          ...new Set([...previous, saved.name]),
+        ]);
+        showSuccess('Webhook saved and selected for this group');
+      } else await persistWebhooksList(nextList);
+      resetWebhookEditor();
+      onWebhookEditorClose();
+    } catch (e) {
+      setWebhookEditorError(
+        e?.response?.data?.error ||
+          e?.message ||
+          'Failed to save webhook. Your draft is still here; try again.'
+      );
+    } finally {
+      setSavingWebhookEditor(false);
+    }
   }
 
   function removeUnsavedWebhook(index) {
@@ -3787,6 +3862,24 @@ export default function AlertPreferences({
                 Webhook channels (unlimited)
               </GroupEditorSectionLabel>
               <Box data-tour='preferences-contact-groups-webhooks'>
+                {groupCreationOnly && (
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    mb={3}
+                    ref={addWebhookTriggerRef}
+                    onClick={openAddWebhookEditor}
+                    isDisabled={
+                      loading ||
+                      !roleKnown ||
+                      isViewer ||
+                      savingGroup ||
+                      webhookUrls.length >= 5
+                    }
+                  >
+                    Add webhook
+                  </Button>
+                )}
                 <SettingsNestedSurface>
                   <VStack
                     align='stretch'
@@ -3976,6 +4069,9 @@ export default function AlertPreferences({
       <Modal
         isOpen={isWebhookEditorOpen}
         onClose={handleCloseWebhookEditor}
+        closeOnEsc={!testingWebhookDraft && !savingWebhookEditor}
+        closeOnOverlayClick={!testingWebhookDraft && !savingWebhookEditor}
+        finalFocusRef={groupCreationOnly ? addWebhookTriggerRef : undefined}
         isCentered
         scrollBehavior='inside'
       >
@@ -3993,10 +4089,28 @@ export default function AlertPreferences({
               Configure the webhook name, type, and URL, then test and save it.
             </DashboardModalDescription>
           </ModalHeader>
-          <ModalCloseButton {...closeButtonProps} />
+          <ModalCloseButton
+            {...closeButtonProps}
+            isDisabled={testingWebhookDraft || savingWebhookEditor}
+          />
           <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
-              {renderWebhookEditorFields(webhookDraft, updateWebhookDraft)}
+              {webhookEditorError && (
+                <Alert status='error'>
+                  <AlertIcon />
+                  <AlertDescription>{webhookEditorError}</AlertDescription>
+                </Alert>
+              )}
+              <Box
+                as='fieldset'
+                disabled={testingWebhookDraft || savingWebhookEditor}
+                border={0}
+                p={0}
+                m={0}
+                minW={0}
+              >
+                {renderWebhookEditorFields(webhookDraft, updateWebhookDraft)}
+              </Box>
               {webhookSaveAttempted && !webhookDraft.name?.trim() ? (
                 <Text fontSize='sm' color='red.500'>
                   Webhook name is required.
@@ -4031,6 +4145,7 @@ export default function AlertPreferences({
               <Button
                 variant='outline'
                 onClick={handleCloseWebhookEditor}
+                isDisabled={testingWebhookDraft || savingWebhookEditor}
                 minW={{ base: '100%', sm: 'auto' }}
                 {...outlineButtonProps}
               >
@@ -4040,7 +4155,12 @@ export default function AlertPreferences({
                 variant='outline'
                 onClick={handleTestWebhookDraft}
                 isLoading={testingWebhookDraft}
-                isDisabled={!webhookDraft.url?.trim() || isViewer}
+                isDisabled={
+                  !webhookDraft.url?.trim() ||
+                  isViewer ||
+                  !roleKnown ||
+                  savingWebhookEditor
+                }
                 minW={{ base: '100%', sm: 'auto' }}
                 {...outlineButtonProps}
               >
@@ -4048,8 +4168,14 @@ export default function AlertPreferences({
               </Button>
               <Button
                 onClick={handleSaveWebhookEditor}
-                isLoading={savingToggles}
-                isDisabled={isViewer || !workspaceId || !canSaveWebhookDraft()}
+                isLoading={savingWebhookEditor}
+                isDisabled={
+                  isViewer ||
+                  !roleKnown ||
+                  testingWebhookDraft ||
+                  !workspaceId ||
+                  !canSaveWebhookDraft()
+                }
                 minW={{ base: '100%', sm: 'auto' }}
                 {...primaryButtonProps}
               >
