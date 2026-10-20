@@ -618,9 +618,8 @@ export async function getManagedCertificatesForToken(
 }
 
 /**
- * Resolve the primary managed_certificate row linked to an existing tokens.id.
- * Multiple sources with the same fingerprint have a deterministic representative.
- * Cross-fingerprint or unidentified ambiguity has no automatic selection.
+ * Resolve a single managed certificate linked to an existing token.
+ * Multiple registrations always require an explicit selection.
  */
 export async function getManagedCertificateForToken(
   workspaceId,

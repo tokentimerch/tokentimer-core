@@ -592,6 +592,18 @@ async function listCertificateIdentities({
   };
 }
 
+// Jobs that can install material for a retired identity. A continuation counts
+// unless its enrollment only frees the key (cancelled, expired or abandoned).
+const INSTALL_CAPABLE_JOB_SQL = `(
+  cj.operation IN ('renew', 'deploy', 'reload', 'deploy-from-store')
+  OR (cj.operation = 'continue-enrollment' AND EXISTS (
+    SELECT 1 FROM certificate_enrollments continuation
+     WHERE continuation.workspace_id = cj.workspace_id
+       AND continuation.id = cj.enrollment_id
+       AND continuation.state NOT IN ('cancelled', 'expired', 'abandoned')
+  ))
+)`;
+
 async function retireCertificateIdentity({
   workspaceId,
   identityId,
@@ -752,7 +764,7 @@ async function retireCertificateIdentity({
            AND (cj.certificate_identity_id = $2
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('claimed', 'running')
-           AND cj.operation IN ('renew', 'deploy', 'reload')
+           AND ${INSTALL_CAPABLE_JOB_SQL}
 
          LIMIT 1`,
         [workspaceId, identityId],
@@ -816,7 +828,7 @@ async function retireCertificateIdentity({
            AND (cj.certificate_identity_id = $2
              OR (cj.certificate_identity_id IS NULL AND a.identity_id = $2))
            AND cj.status IN ('pending_approval', 'approved', 'pending')
-           AND cj.operation IN ('renew', 'deploy', 'reload')
+           AND cj.operation IN ('renew', 'deploy', 'reload', 'deploy-from-store')
 
         ), locked AS MATERIALIZED (
           SELECT pending.id FROM certificate_jobs pending
@@ -836,7 +848,7 @@ async function retireCertificateIdentity({
           SELECT cj.id FROM certificate_jobs cj
           WHERE cj.workspace_id = $1
             AND cj.subject_type = 'managed_certificate'
-            AND cj.operation IN ('renew', 'deploy', 'reload')
+            AND ${INSTALL_CAPABLE_JOB_SQL}
             AND cj.mode IS DISTINCT FROM 'dry_run'
             AND cj.status IN ('claimed', 'running')
             AND (cj.certificate_identity_id = $2 OR

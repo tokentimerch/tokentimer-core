@@ -9,6 +9,7 @@ function DashboardCertificateDetailModal(props) {
     <CertificateDetailsModal
       {...props}
       certOps={certOps}
+      focusDeployments={Boolean(props.token?.__focusDeployments)}
       showObservedLocations={false}
       compactTableSections
       propertyValueRows

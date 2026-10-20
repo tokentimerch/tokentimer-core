@@ -234,20 +234,17 @@ beforeEach(() => {
 });
 
 describe('CertOpsRenewals page', () => {
-  it('retains distribution status beside profiles and AD CS issuer management', async () => {
+  it('keeps Renewals focused on profiles and issuers without fetching distribution', async () => {
     renderPage();
     expect(
-      await screen.findByText('Certificate distribution')
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText('No distribution groups configured.')
-    ).toBeInTheDocument();
+      screen.queryByText('Certificate distribution')
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Renewal profiles/ })
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /AD CS issuers/ }));
     expect(screen.getAllByText('AD CS issuers').length).toBeGreaterThan(1);
-    expect(distributionApiGetMock).toHaveBeenCalledWith(
+    expect(distributionApiGetMock).not.toHaveBeenCalledWith(
       '/api/v1/workspaces/ws-1/certops/distribution-groups'
     );
   });

@@ -936,7 +936,9 @@ async function recoverOrphanedEnrollment({ client, workspaceId, enrollmentId, or
     if (!row.deploy_target || row.deploy_target.type !== "windows-iis" || !row.agent_id) {
       throw serviceError("enrollment is missing its frozen installation target or agent", "CERTOPS_SNAPSHOT_INVALID");
     }
-    if (row.state === "installing" && await identityRetired(tx, workspaceId, row.certificate_id)) {
+    // Recovery always starts a continuation that can retrieve and install, so
+    // every state is refused for a retired identity. Abandonment stays available.
+    if (await identityRetired(tx, workspaceId, row.certificate_id)) {
       throw serviceError("Certificate lifecycle blocks this operation", "CERTOPS_CERTIFICATE_RETIRED");
     }
     const attempt=Number(row.attempt || 0)+1;

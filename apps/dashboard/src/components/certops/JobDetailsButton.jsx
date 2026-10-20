@@ -379,6 +379,7 @@ function useJobSubjectDisplay(job, { canOpenTrustAnchors = false } = {}) {
  * Scannable execution context shown when a job row is expanded.
  */
 export function JobExecutionSummary({ job, agentsById }) {
+  const { workspaceId } = useWorkspace();
   const { muted, text } = useDashboardTheme();
   const canOpenTrustAnchors = useCertOpsIsWorkspaceAdmin();
   const canOpenAgents = useCertOpsCanManage();
@@ -393,13 +394,15 @@ export function JobExecutionSummary({ job, agentsById }) {
   const agentName = agentDisplayName(agent);
   // Prefer the fleet row UUID so Agents can match data-agent-id after load.
   // Viewers can list jobs but not GET /certops/agents; hide the dead link.
-  const agentHref = canOpenAgents ? jobAgentHref(agent?.id || agentId) : null;
+  const agentHref = canOpenAgents
+    ? jobAgentHref(agent?.id || agentId, workspaceId)
+    : null;
   const attemptLabel = attemptLabelFor(job);
   const subjectLabel = subjectTypeLabel(job.subjectType) || 'Subject';
   const subjectHref =
     subjectDisplay.missing || subjectDisplay.accessDenied
       ? null
-      : jobSubjectHref(job.subjectType, job.subjectId);
+      : jobSubjectHref(job.subjectType, job.subjectId, workspaceId);
 
   const hasAny =
     agentId || job.subjectId || job.source || attemptLabel || job.createdAt;
