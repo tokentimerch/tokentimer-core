@@ -297,7 +297,7 @@ async function tryReconcileUncertainSubmission({
 // promote it. Pending, denied, malformed and foreign-key leaves stay uncertain.
 async function retrieveProposedEnrollmentCandidate({ issuer, requestId, csrSpkiSha256,
   reconcileSearchFrom, assertIssuanceOutcome }) {
-  if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0xffffffff ||
+  if (!Number.isInteger(requestId) || requestId < 1 || requestId > 0x7fffffff ||
       typeof csrSpkiSha256 !== "string" || !/^[a-f0-9]{64}$/.test(csrSpkiSha256)) {
     return { status: "error", error: "Invalid proposed RequestId or enrollment SPKI" };
   }

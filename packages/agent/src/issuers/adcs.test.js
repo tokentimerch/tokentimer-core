@@ -449,6 +449,19 @@ describe("createAdcsIssuer", () => {
     assert.deepEqual(seen.slice(0, 5), ["-q", "-retrieve", "-config", CA_CONFIG, "5"]);
   });
 
+  it("retrieve refuses a RequestId outside the signed 32-bit range without running certreq", async () => {
+    let runs = 0;
+    const issuer = makeIssuer({
+      execFileImpl: async () => { runs += 1; return { stdout: "", stderr: "" }; },
+    });
+    for (const id of [0, -1, 1.5, "5", 2147483648, 4294967295]) {
+      const outcome = await issuer.retrieve(id);
+      assert.equal(outcome.outcome, "refused", String(id));
+      assert.equal(outcome.rejectionReason, "invalid_request_id");
+      assert.match(outcome.detail, /1 to 2147483647/);
+    }
+    assert.equal(runs, 0);
+  });
   it("retrieve refuses a mismatched pend token", async () => {
     const issuer = makeIssuer({
       execFileImpl: async (_bin, argv) => {

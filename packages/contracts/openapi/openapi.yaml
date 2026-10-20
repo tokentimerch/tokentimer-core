@@ -5595,7 +5595,7 @@ paths:
       summary: Propose a RequestId for an uncertain enrollment
       operationId: reconcileCertOpsEnrollment
       description: >-
-        Accepts a Windows RequestId from 1 through 4294967295 while the
+        Accepts a Windows RequestId from 1 through 2147483647 while the
         enrollment is submission_uncertain, then schedules a reconciliation
         continuation.
       parameters:
@@ -5613,7 +5613,7 @@ paths:
               additionalProperties: false
               required: [requestId]
               properties:
-                requestId: { type: integer, minimum: 1, maximum: 4294967295 }
+                requestId: { type: integer, minimum: 1, maximum: 2147483647 }
       responses:
         "204": { description: RequestId recorded and reconciliation scheduled }
         "400": { $ref: "#/components/responses/BadRequest" }

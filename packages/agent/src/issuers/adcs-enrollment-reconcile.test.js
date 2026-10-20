@@ -54,11 +54,13 @@ describe("signed operator enrollment reconciliation", () => {
       assert.equal(result.requestId, undefined);
     }
   });
-  it("rejects invalid unsigned-size ids before any CA call", async () => {
-    for (const requestId of [0, -1, 1.5, 4294967296, "77"]) {
+  it("rejects ids outside the signed 32-bit range before any CA call", async () => {
+    let calls = 0;
+    for (const requestId of [0, -1, 1.5, 2147483648, 4294967295, "77"]) {
       const result = await retrieveProposedEnrollmentCandidate({ requestId, csrSpkiSha256,
-        assertIssuanceOutcome, issuer: { retrieve: async () => { assert.fail("no invalid CA call"); } } });
+        assertIssuanceOutcome, issuer: { retrieve: async () => { calls += 1; return { outcome: "pending", requestId: 77 }; } } });
       assert.equal(result.status, "error");
+      assert.equal(calls, 0, String(requestId));
     }
   });
 });

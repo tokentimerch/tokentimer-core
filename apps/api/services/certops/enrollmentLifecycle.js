@@ -176,7 +176,7 @@ function assertDirectTransition(from, to) {
   );
 }
 
-const REQUEST_ID_MAX = 4294967295;
+const REQUEST_ID_MAX = 2147483647;
 
 function parseRequestId(value) {
   if (typeof value === "bigint") {

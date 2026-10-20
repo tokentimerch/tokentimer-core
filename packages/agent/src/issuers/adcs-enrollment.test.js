@@ -115,11 +115,11 @@ describe("decodeEnrollmentSnapshot", () => {
   });
 
   it("bounds proposed RequestIds and rejects mixed cleanup/reconcile directives", () => {
-    for (const reconcileRequestId of [1, 4294967295, 0, -1, 4294967296, 1.5, "77", null]) {
+    for (const reconcileRequestId of [1, 2147483647, 0, -1, 2147483648, 4294967295, 1.5, "77", null]) {
       const decoded = decodeEnrollmentSnapshot({ enrollment: {
         enrollmentId, attempt: 2, snapshotB64, snapshotSha256, reconcileRequestId,
       } });
-      assert.equal(decoded.ok, [1, 4294967295].includes(reconcileRequestId));
+      assert.equal(decoded.ok, [1, 2147483647].includes(reconcileRequestId));
     }
     assert.equal(decodeEnrollmentSnapshot({ enrollment: { enrollmentId, attempt: 2,
       snapshotB64, snapshotSha256, reconcileRequestId: 77, terminalState: "abandoned" } }).ok, false);

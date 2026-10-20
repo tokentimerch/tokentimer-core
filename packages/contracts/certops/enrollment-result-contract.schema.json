@@ -42,8 +42,8 @@
     "requestId": {
       "type": ["integer", "null"],
       "minimum": 1,
-      "maximum": 4294967295,
-      "description": "CA RequestId, a 32-bit unsigned integer read from the signed CMC pend token. Known from pending_issuance onwards."
+      "maximum": 2147483647,
+      "description": "CA RequestId, a signed 32-bit integer (1 to 2147483647, the range certreq -retrieve accepts) read from the signed CMC pend token. Known from pending_issuance onwards."
     },
     "errorCode": {
       "type": ["string", "null"],

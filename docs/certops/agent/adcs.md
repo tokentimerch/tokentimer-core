@@ -270,8 +270,9 @@ A lost or ambiguous submit response has no proven acceptance time and does not s
 ## Signed response validation
 
 The CMC helper verifies the CA signature and pinned public key before trusting
-response facts. Pending RequestIds must be nonzero unsigned 32-bit values;
-the maximum value remains supported. Status fields require a nonempty list of
+response facts. The helper decodes nonzero unsigned 32-bit Pending RequestIds, and the agent
+then accepts only 1 through 2147483647, the signed range certreq -retrieve
+accepts. Status fields require a nonempty list of
 valid body identifiers, valid UTF-8 description text, exactly one optional
 choice, and a valid GeneralizedTime pending timestamp. Malformed fields and
 trailing data fail closed. The field layout follows the existing

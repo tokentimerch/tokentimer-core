@@ -186,7 +186,7 @@ Terminal cleanup needs neither a cached CA certificate nor a CA helper
 binary because it performs no CA operation.
 
 For `submission_uncertain`, an operator-proposed RequestId travels as signed
-`enrollment.reconcileRequestId`, an integer from 1 through 4294967295 derived
+`enrollment.reconcileRequestId`, an integer from 1 through 2147483647 derived
 from the durable enrollment row. It is allowed only on `continue-enrollment`
 and cannot coexist with `terminalState`. The agent retrieves exactly that
 candidate and verifies the returned leaf's SPKI against the durable CSR before
