@@ -36,6 +36,7 @@ import {
   validateAsset,
 } from './assetModel.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
+import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 
 function dayKey(value) {
   return Math.floor(new Date(value).getTime() / 86400000);
@@ -97,16 +98,6 @@ export function AssetStep({ ctx }) {
     const next = categoryOf(value);
     set({ category: value, type: next?.types[0]?.value || '', fields: {} });
   };
-  const toggleGroup = id =>
-    setAsset(a => {
-      const has = a.contactGroupIds.includes(id);
-      return {
-        ...a,
-        contactGroupIds: has
-          ? a.contactGroupIds.filter(x => x !== id)
-          : [...a.contactGroupIds, id],
-      };
-    });
 
   const submit = async () => {
     const check = validateAsset(asset);
@@ -310,27 +301,15 @@ export function AssetStep({ ctx }) {
           <FormErrorMessage>{errors.expiresAt}</FormErrorMessage>
         </FormControl>
 
-        {groups.length > 0 ? (
-          <FormControl>
-            <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
-            <VStack align='start' spacing={1}>
-              {groups.map(g => (
-                <Checkbox
-                  key={g.id}
-                  size='sm'
-                  isChecked={asset.contactGroupIds.includes(String(g.id))}
-                  onChange={() => toggleGroup(String(g.id))}
-                >
-                  {g.name}
-                </Checkbox>
-              ))}
-            </VStack>
-          </FormControl>
-        ) : (
-          <Text fontSize='xs' color={muted}>
-            No contact group yet. You choose who gets alerted in the next step.
-          </Text>
-        )}
+        <FormControl>
+          <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
+          <ContactGroupCheckboxGroup
+            contactGroups={groups}
+            value={asset.contactGroupIds}
+            onChange={contactGroupIds => set({ contactGroupIds })}
+            isDisabled={busy}
+          />
+        </FormControl>
 
         <Accordion allowToggle>
           <AccordionItem border='none'>

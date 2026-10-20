@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
 import { FiList } from 'react-icons/fi';
 import { useSearchParams } from 'react-router';
 import {
@@ -148,6 +149,20 @@ export function MonitorStep({ ctx }) {
   const [url, setUrl] = useState(ctx.session.operationRefs?.monitorUrl || '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [contactGroupIds, setContactGroupIds] = useState([]);
+  useEffect(() => {
+    let live = true;
+    onboardingActions
+      .getAlertSettings(ctx.workspaceId)
+      .then(settings => {
+        if (live) setGroups(settings.contact_groups || []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [ctx.workspaceId]);
   const normalized = normalizeMonitorUrl(url);
 
   const submit = async () => {
@@ -175,6 +190,7 @@ export function MonitorStep({ ctx }) {
         create: identity =>
           onboardingActions.createMonitor(ctx.workspaceId, {
             url: identity.url,
+            contactGroupIds,
           }),
         record: (refs, created) => ({
           monitorUrl: normalized,
@@ -229,6 +245,15 @@ export function MonitorStep({ ctx }) {
           <FormHelperText fontSize='xs'>
             The address must be reachable from where TokenTimer runs.
           </FormHelperText>
+        </FormControl>
+        <FormControl>
+          <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
+          <ContactGroupCheckboxGroup
+            contactGroups={groups}
+            value={contactGroupIds}
+            onChange={setContactGroupIds}
+            isDisabled={busy}
+          />
         </FormControl>
       </VStack>
     </StepFrame>
