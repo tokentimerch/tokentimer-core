@@ -7,13 +7,12 @@
  * bounded failure and returns. The gate still ends the suite as failed, so this never turns a failing
  * run into release evidence. Outside that mode the original function is called unchanged. */
 const Module = require("node:module");
-const path = require("node:path");
 
 const HELPER = /[\\/]tests[\\/]e2e[\\/]helpers[\\/]certops-adcs-[a-z0-9-]+\.js$/;
 const JOURNEY = /^qualify[A-Za-z0-9]*$/;
 
 function wrapExports(exported, file, getGate) {
-  const label = path.basename(file, ".js");
+  const label = String(file).split(/[\\/]/).pop().replace(/\.js$/, "");
   for (const name of Object.keys(exported)) {
     const original = exported[name];
     if (!JOURNEY.test(name) || typeof original !== "function") continue;
