@@ -113,6 +113,7 @@ import {
   TOUR_MOCK_WORKSPACE_CONTACTS,
 } from '../constants/tourMockData.js';
 import { isValidEmail } from '../utils/emailAddress.js';
+import { assertGroupPersisted } from '../components/onboarding/alertGroups.js';
 
 function normalizeContactPhoneE164(raw) {
   const phoneNorm = String(raw || '').trim();
@@ -867,6 +868,14 @@ function getSavedWebhookForDisplay(webhook) {
 }
 
 export default function AlertPreferences({
+  groupCreationOnly = false,
+  initialGroup = null,
+  suggestDefaultGroup = false,
+  onGroupSaved,
+  onGroupCreated,
+  onGroupCreationCancel,
+  onGroupCreationClosed,
+  groupFinalFocusRef,
   session,
   showProductTour,
   onLogout,
@@ -878,6 +887,14 @@ export default function AlertPreferences({
   const { workspaceId } = useWorkspace();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingGroup, setSavingGroup] = useState(false);
+  const [groupSaveError, setGroupSaveError] = useState('');
+  const [makeGroupDefault, setMakeGroupDefault] = useState(suggestDefaultGroup);
+  const externalGroupOpenedRef = useRef(false);
+  const creationGroupIdRef = useRef(null);
+  const [groupLoadError, setGroupLoadError] = useState(false);
+  const [groupRoleError, setGroupRoleError] = useState(false);
+  const [groupLoadRetry, setGroupLoadRetry] = useState(0);
 
   const [whatsappAvailable, setWhatsappAvailable] = useState(false);
   const [thresholdsCsv, setThresholdsCsv] = useState(
@@ -984,11 +1001,18 @@ export default function AlertPreferences({
   }
 
   function handleCloseAddContact() {
+    if (addingContact) return;
     resetNewContactForm();
+    setAddContactError('');
     onAddContactClose();
   }
 
+  const [addingContact, setAddingContact] = useState(false);
+  const [addContactError, setAddContactError] = useState('');
+  const addContactTriggerRef = useRef(null);
+
   async function handleAddContactSubmit() {
+    if (addingContact || !roleKnown || isViewer) return;
     setContactPhoneError('');
     if (!workspaceId) {
       showError('Please select a workspace first');
@@ -1011,24 +1035,50 @@ export default function AlertPreferences({
       showError('First and last name are required');
       return;
     }
+    setAddingContact(true);
+    setAddContactError('');
     try {
-      await apiClient.post(`/api/v1/workspaces/${workspaceId}/contacts`, {
-        first_name: newContactFirstName.trim(),
-        last_name: newContactLastName.trim(),
-        phone_e164: phoneE164,
-        details: newContactDetails,
-      });
-      try {
-        const refreshed = await apiClient.get(
-          `/api/v1/workspaces/${workspaceId}/contacts`
-        );
-        setContacts(refreshed?.data?.items || []);
-      } catch (_) {}
+      const response = await apiClient.post(
+        `/api/v1/workspaces/${workspaceId}/contacts`,
+        {
+          first_name: newContactFirstName.trim(),
+          last_name: newContactLastName.trim(),
+          phone_e164: phoneE164,
+          details: newContactDetails,
+        }
+      );
+      if (groupCreationOnly) {
+        const contact = response.data;
+        if (!contact?.id)
+          throw new Error(
+            'The created contact was not returned. Reopen the editor to refresh contacts.'
+          );
+        setContacts(previous => [
+          ...previous.filter(item => String(item.id) !== String(contact.id)),
+          contact,
+        ]);
+        if (isValidEmail(String(contact.details?.email || ''))) {
+          setGroupEmailContactIds(previous => [
+            ...new Set([...previous, contact.id]),
+          ]);
+        }
+      } else
+        try {
+          const refreshed = await apiClient.get(
+            `/api/v1/workspaces/${workspaceId}/contacts`
+          );
+          setContacts(refreshed?.data?.items || []);
+        } catch (_) {}
       resetNewContactForm();
       onAddContactClose();
       showSuccess('Contact added');
     } catch (e) {
-      showError(e?.response?.data?.error || 'Failed to add contact');
+      const message =
+        e?.response?.data?.error || e.message || 'Failed to add contact';
+      setAddContactError(message);
+      showError(message);
+    } finally {
+      setAddingContact(false);
     }
   }
 
@@ -1294,6 +1344,7 @@ export default function AlertPreferences({
 
       try {
         setLoading(true);
+        setGroupLoadError(false);
         if (!workspaceId) {
           // No workspace selected yet; wait for shell workspace selector
           return;
@@ -1318,6 +1369,7 @@ export default function AlertPreferences({
           setContacts(contactsRes?.data?.items || []);
         } catch (_) {
           setContacts([]);
+          if (groupCreationOnly) setGroupLoadError(true);
         }
         setEmailEnabled(data.email_alerts_enabled !== false);
         setWebhookUrls(
@@ -1346,7 +1398,7 @@ export default function AlertPreferences({
           );
 
           // If no groups exist yet, create a default group with owner's contact
-          if (groups.length === 0) {
+          if (groups.length === 0 && !groupCreationOnly) {
             const adminEmail = (session?.email || '').trim().toLowerCase();
             // Find the owner's contact in workspace_contacts by matching email
             const ownerContact = (contactsRes?.data?.items || []).find(
@@ -1392,6 +1444,7 @@ export default function AlertPreferences({
         }
       } catch (e) {
         if (!mounted) return;
+        setGroupLoadError(true);
         if (e?.response?.status !== 403) {
           showError('Failed to load alert preferences');
         }
@@ -1403,36 +1456,54 @@ export default function AlertPreferences({
     return () => {
       mounted = false;
     };
-  }, [session?.email, location.search, workspaceId, showProductTour]);
+  }, [
+    session?.email,
+    location.search,
+    workspaceId,
+    showProductTour,
+    groupCreationOnly,
+    groupLoadRetry,
+  ]);
 
   // Removed owner auto-contact creation in frontend; handled by backend
 
-  // Load accessible workspaces and determine role for the selected workspace
+  // Load the selected workspace directly for embedded creation: paginated
+  // workspace lists need not contain the currently selected workspace.
   useEffect(() => {
     let cancelled = false;
+    setRoleKnown(false);
+    setGroupRoleError(false);
     (async () => {
       try {
-        const ws = await workspaceAPI.list(50, 0);
+        let current;
+        if (groupCreationOnly) {
+          current = await workspaceAPI.get(workspaceId);
+        } else {
+          const ws = await workspaceAPI.list(50, 0);
+          const items = Array.isArray(ws?.items) ? ws.items : [];
+          current = items.find(w => w.id === workspaceId);
+        }
         if (cancelled) return;
-        const items = Array.isArray(ws?.items) ? ws.items : [];
-        const current = items.find(w => w.id === workspaceId);
         const role = String(current?.role || '').toLowerCase();
         setWorkspaceRole(role);
-        const viewer = role === 'viewer';
-        setIsViewer(viewer);
-        // If viewer is on a non-personal workspace, redirect to personal workspace
-        // Do not auto-redirect viewers; show disabled UI instead
+        setIsViewer(
+          groupCreationOnly
+            ? !['admin', 'workspace_manager'].includes(role)
+            : role === 'viewer'
+        );
       } catch (_) {
-        setIsViewer(false);
+        if (cancelled) return;
+        setIsViewer(groupCreationOnly);
         setWorkspaceRole('');
+        setGroupRoleError(groupCreationOnly);
       } finally {
-        setRoleKnown(true);
+        if (!cancelled) setRoleKnown(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [workspaceId, groupCreationOnly, groupLoadRetry]);
 
   // Removed ticking timestamp as we don't render a live countdown for the Test button
 
@@ -1442,7 +1513,7 @@ export default function AlertPreferences({
       didMountRef.current = true;
       return;
     }
-    if (loading) return;
+    if (loading || groupCreationOnly) return;
     // Skip auto-save when workspace changes (we're just loading new data, not user editing)
     if (previousWorkspaceId.current !== workspaceId) {
       previousWorkspaceId.current = workspaceId;
@@ -1579,7 +1650,7 @@ export default function AlertPreferences({
 
   // Ensure editor is populated on initial load for the selected/default group
   useEffect(() => {
-    if (loading) return;
+    if (loading || groupCreationOnly) return;
     if (!selectedGroupId) return;
     const g = (contactGroups || []).find(
       x => String(x.id) === String(selectedGroupId)
@@ -1589,7 +1660,14 @@ export default function AlertPreferences({
     if (editingGroupId !== selectedGroupId) {
       startEditGroup(g);
     }
-  }, [loading, selectedGroupId, contactGroups, editingGroupId, startEditGroup]);
+  }, [
+    loading,
+    selectedGroupId,
+    contactGroups,
+    editingGroupId,
+    startEditGroup,
+    groupCreationOnly,
+  ]);
 
   useEffect(() => {
     if (!isGroupEditorOpen || loading) return;
@@ -1626,14 +1704,28 @@ export default function AlertPreferences({
   }, [workspaceId]);
 
   function closeGroupEditor() {
+    if (savingGroup || (groupCreationOnly && isAddContactOpen)) return;
+    if (groupCreationOnly) onGroupCreationCancel?.();
     groupThresholdsTouchedRef.current = false;
     setGroupThresholdError('');
     onGroupEditorClose();
   }
 
+  useEffect(() => {
+    if (!groupCreationOnly || loading || externalGroupOpenedRef.current) return;
+    externalGroupOpenedRef.current = true;
+    setSelectedGroupId('');
+    resetGroupEditor();
+    if (initialGroup) startEditGroup(initialGroup);
+    onGroupEditorOpen();
+    // Initialize the existing editor once; subsequent renders must retain its draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupCreationOnly, loading]);
+
   function resetGroupEditor() {
     groupThresholdsTouchedRef.current = false;
     setEditingGroupId('');
+    creationGroupIdRef.current = null;
     setGroupName('');
     setGroupEmailsText('');
     setGroupWebhookNames([]);
@@ -1703,8 +1795,17 @@ export default function AlertPreferences({
   ]);
 
   async function saveGroup() {
-    if (loading) return; // guard against saving while workspace data is refreshing
+    if (
+      loading ||
+      groupLoadError ||
+      savingGroup ||
+      !roleKnown ||
+      isViewer ||
+      !workspaceId
+    )
+      return; // wait for workspace permissions
     setGroupSaveAttempted(true);
+    setGroupSaveError('');
     const name = (groupName || '').trim();
     if (!name) return;
     // Ensure selected group belongs to the currently loaded list
@@ -1743,49 +1844,37 @@ export default function AlertPreferences({
       thresholdsCsv
     );
 
-    let next = [...contactGroups];
     const wasCreate = !editingGroupId;
-    let targetId = editingGroupId;
-    // Compute normalized fields to persist (backend expects email_contact_ids[] and whatsapp_contact_ids[])
-    const _byId = new Map((contacts || []).map(c => [c.id, c]));
-
-    if (editingGroupId) {
-      next = next.map(g => {
-        if (g.id !== editingGroupId) return g;
-
-        const updated = {
-          ...g,
-          name,
-          email_contact_ids: hasEmails ? trimmedEmailIds : [],
-          whatsapp_contact_ids: hasContacts ? trimmedWaIds : [],
-          webhook_names: (groupWebhookNames || []).filter(Boolean),
-          weekly_digest_email: groupWeeklyDigestEmail,
-          weekly_digest_whatsapp: groupWeeklyDigestWhatsapp,
-          weekly_digest_webhooks: groupWeeklyDigestWebhooks,
-        };
-
-        if (thresholdOverride) {
-          updated.thresholds = thresholdOverride;
-        } else {
-          delete updated.thresholds;
-        }
-
-        return updated;
-      });
-    } else {
-      // Workspace-level cap on number of groups
-      if (next.length >= groupCap) return;
+    setSavingGroup(true);
+    try {
+      // Preserve groups added elsewhere while this modal was open.
+      const current = await workspaceAPI.getAlertSettings(workspaceId);
+      const existing = Array.isArray(current?.contact_groups)
+        ? current.contact_groups
+        : [];
       if (
-        typeof crypto === 'undefined' ||
-        typeof crypto.getRandomValues !== 'function'
+        wasCreate &&
+        !existing.some(g => g.id === creationGroupIdRef.current) &&
+        existing.length >= groupCap
       ) {
-        throw new Error('Secure random is unavailable');
+        showError('This workspace has reached its contact group limit');
+        return;
       }
-      const idBytes = new Uint8Array(8);
-      crypto.getRandomValues(idBytes);
-      const id = `${Date.now()}_${Array.from(idBytes, b => b.toString(16).padStart(2, '0')).join('')}`;
-      // Compute thresholds override for new group: only persist if different from workspace defaults
-      const newGroup = {
+      if (
+        !wasCreate &&
+        !existing.some(g => String(g.id) === String(editingGroupId))
+      ) {
+        showError(
+          'This contact group no longer exists. Close and reopen the editor.'
+        );
+        return;
+      }
+      const id =
+        editingGroupId || creationGroupIdRef.current || crypto.randomUUID();
+      if (wasCreate) creationGroupIdRef.current = id;
+      const original = existing.find(g => String(g.id) === String(id));
+      const group = {
+        ...original,
         id,
         name,
         email_contact_ids: hasEmails ? trimmedEmailIds : [],
@@ -1795,54 +1884,47 @@ export default function AlertPreferences({
         weekly_digest_whatsapp: groupWeeklyDigestWhatsapp,
         weekly_digest_webhooks: groupWeeklyDigestWebhooks,
       };
-      if (thresholdOverride) {
-        newGroup.thresholds = thresholdOverride;
-      }
-      next = [...next, newGroup];
-      targetId = id;
-      if (!defaultContactGroupId) setDefaultContactGroupId(id);
-    }
-    setContactGroups(next);
-    // Keep editor focused on the saved group and re-populate fields from canonical state
-    try {
-      const saved = next.find(
-        g => String(g.id) === String(targetId || editingGroupId)
-      );
-      if (saved) {
-        setSelectedGroupId(saved.id);
-        setEditingGroupId(saved.id);
-        setGroupName(saved.name || '');
-        const savedEmailIds = Array.isArray(saved.email_contact_ids)
-          ? saved.email_contact_ids
-          : [];
-        setGroupEmailsText(emailListFromIds(savedEmailIds).join(', '));
-        setGroupEmailContactIds(savedEmailIds);
-        setGroupWhatsappContactIds(
-          Array.isArray(saved.whatsapp_contact_ids)
-            ? saved.whatsapp_contact_ids
-            : []
-        );
-        setGroupWebhookNames(
-          Array.isArray(saved.webhook_names) ? saved.webhook_names : []
-        );
-        setGroupThresholdsCsv(
-          groupThresholdsCsvForEditor(saved.thresholds, thresholdsCsv)
-        );
-        setGroupThresholdError('');
-      }
-    } catch (_) {}
-    setGroupSaveAttempted(false);
-    // Persist via settings
-    try {
-      if (!workspaceId) return;
+      if (thresholdOverride) group.thresholds = thresholdOverride;
+      else delete group.thresholds;
+      const next =
+        wasCreate && !original
+          ? [...existing, group]
+          : existing.map(g => (String(g.id) === String(id) ? group : g));
       await workspaceAPI.updateAlertSettings(workspaceId, {
         contact_groups: next,
-        default_contact_group_id: defaultContactGroupId || next[0]?.id || null,
+        default_contact_group_id: makeGroupDefault
+          ? id
+          : current.default_contact_group_id || next[0]?.id || null,
       });
+      const confirmed = await workspaceAPI.getAlertSettings(workspaceId);
+      assertGroupPersisted(confirmed, group, {
+        expectDefault: makeGroupDefault,
+      });
+      const confirmedGroups = Array.isArray(confirmed?.contact_groups)
+        ? confirmed.contact_groups
+        : [];
+      const saved = confirmedGroups.find(g => String(g.id) === String(id));
+      if (!saved)
+        throw new Error('Contact group was not returned after saving');
+      setContactGroups(confirmedGroups);
+      setDefaultContactGroupId(
+        String(confirmed.default_contact_group_id || '')
+      );
+      setSelectedGroupId(saved.id);
+      setGroupSaveAttempted(false);
+      await onGroupSaved?.(saved);
       showSuccess(wasCreate ? 'Contact group created' : 'Contact group saved');
-      closeGroupEditor();
+      onGroupEditorClose();
+      if (wasCreate) onGroupCreated?.(saved);
     } catch (e) {
-      showError('Failed to save contact groups');
+      const message =
+        e?.response?.data?.error ||
+        e.message ||
+        'Failed to save contact groups. Your changes are still here; try again.';
+      setGroupSaveError(message);
+      showError(message);
+    } finally {
+      setSavingGroup(false);
     }
   }
 
@@ -2617,7 +2699,7 @@ export default function AlertPreferences({
     thresholdsCsv
   );
 
-  return (
+  const pageContent = (
     <>
       <SEO
         title='Alert Preferences'
@@ -3426,8 +3508,19 @@ export default function AlertPreferences({
           </SettingsSection>
         </SettingsPageShell>
       </DashboardPageLayout>
+    </>
+  );
+
+  return (
+    <>
+      {!groupCreationOnly && pageContent}
 
       <Modal
+        finalFocusRef={groupFinalFocusRef}
+        onCloseComplete={groupCreationOnly ? onGroupCreationClosed : undefined}
+        initialFocusRef={groupNameInputRef}
+        closeOnEsc={!savingGroup}
+        closeOnOverlayClick={!savingGroup}
         isOpen={isGroupEditorOpen}
         onClose={closeGroupEditor}
         isCentered
@@ -3448,9 +3541,31 @@ export default function AlertPreferences({
               overrides for this group.
             </DashboardModalDescription>
           </ModalHeader>
-          <ModalCloseButton {...closeButtonProps} />
+          <ModalCloseButton {...closeButtonProps} isDisabled={savingGroup} />
           <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={3}>
+              {groupSaveError ? (
+                <Alert status='error'>
+                  <AlertIcon />
+                  <AlertDescription>{groupSaveError}</AlertDescription>
+                </Alert>
+              ) : null}
+              {(groupLoadError || groupRoleError) && (
+                <Alert status='error'>
+                  <AlertIcon />
+                  <Text>
+                    {groupRoleError
+                      ? 'Unable to check workspace permissions.'
+                      : 'Unable to load workspace contacts and settings.'}
+                  </Text>
+                  <Button
+                    onClick={() => setGroupLoadRetry(value => value + 1)}
+                    isLoading={loading || !roleKnown}
+                  >
+                    Retry
+                  </Button>
+                </Alert>
+              )}
               <Text fontSize='xs' color={bodySecondary}>
                 Groups used: {(contactGroups || []).length}/
                 {groupCap === Infinity ? 'unlimited' : groupCap}
@@ -3489,10 +3604,25 @@ export default function AlertPreferences({
                     ` (Limit: ${memberCap} people total)`}{' '}
                   Webhooks are unlimited.
                 </Text>
+                {groupCreationOnly && (
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    mb={3}
+                    ref={addContactTriggerRef}
+                    onClick={onAddContactOpen}
+                    isDisabled={
+                      loading || !roleKnown || isViewer || savingGroup
+                    }
+                  >
+                    Add contact
+                  </Button>
+                )}
                 {contacts.length === 0 ? (
                   <Text fontSize='sm' color={bodySecondary}>
-                    No contacts defined. Add contacts in the Contacts section
-                    above.
+                    {groupCreationOnly
+                      ? 'No contacts defined. Add a contact here to include them in this group.'
+                      : 'No contacts defined. Add contacts in the Contacts section above.'}
                   </Text>
                 ) : (
                   <Box
@@ -3783,6 +3913,14 @@ export default function AlertPreferences({
                 Changes are not saved until you click {'"'}Save group
                 {'"'}.
               </Text>
+              {groupCreationOnly && suggestDefaultGroup && (
+                <Checkbox
+                  isChecked={makeGroupDefault}
+                  onChange={e => setMakeGroupDefault(e.target.checked)}
+                >
+                  Use as the default group for new assets
+                </Checkbox>
+              )}
             </VStack>
           </ModalBody>
           <ModalFooter {...footerProps}>
@@ -3804,6 +3942,7 @@ export default function AlertPreferences({
               <Button
                 variant='outline'
                 onClick={resetGroupEditor}
+                isDisabled={savingGroup}
                 minW={{ base: '100%', sm: 'auto' }}
                 {...outlineButtonProps}
               >
@@ -3811,9 +3950,13 @@ export default function AlertPreferences({
               </Button>
               <Button
                 onClick={saveGroup}
+                isLoading={savingGroup}
                 minW={{ base: '100%', sm: 'auto' }}
                 isDisabled={
                   loading ||
+                  groupLoadError ||
+                  isViewer ||
+                  !roleKnown ||
                   !groupName.trim() ||
                   isEmptyGroupInvalid ||
                   isOverMemberLimit ||
@@ -3920,6 +4063,9 @@ export default function AlertPreferences({
       <Modal
         isOpen={isAddContactOpen}
         onClose={handleCloseAddContact}
+        closeOnEsc={!addingContact}
+        closeOnOverlayClick={!addingContact}
+        finalFocusRef={groupCreationOnly ? addContactTriggerRef : undefined}
         isCentered
         scrollBehavior='inside'
       >
@@ -3937,9 +4083,15 @@ export default function AlertPreferences({
               Add someone who can receive workspace alert notifications.
             </DashboardModalDescription>
           </ModalHeader>
-          <ModalCloseButton {...closeButtonProps} />
+          <ModalCloseButton {...closeButtonProps} isDisabled={addingContact} />
           <ModalBody {...bodyProps}>
             <VStack align='stretch' spacing={4}>
+              {addContactError && (
+                <Alert status='error'>
+                  <AlertIcon />
+                  <AlertDescription>{addContactError}</AlertDescription>
+                </Alert>
+              )}
               <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
                 <FormControl>
                   <FormLabel>First name</FormLabel>
@@ -4075,6 +4227,7 @@ export default function AlertPreferences({
               <Button
                 variant='outline'
                 onClick={handleCloseAddContact}
+                isDisabled={addingContact}
                 minW={{ base: '100%', sm: 'auto' }}
                 {...outlineButtonProps}
               >
@@ -4090,7 +4243,8 @@ export default function AlertPreferences({
                 <Box as='span' display='block' w={{ base: '100%', sm: 'auto' }}>
                   <Button
                     onClick={handleAddContactSubmit}
-                    disabled={isNewContactInvalid || isViewer}
+                    disabled={isNewContactInvalid || isViewer || !roleKnown}
+                    isLoading={addingContact}
                     w={{ base: '100%', sm: 'auto' }}
                     {...primaryButtonProps}
                   >

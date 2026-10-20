@@ -167,7 +167,8 @@ const OnboardingRoutes = lazy(
 const Audit = lazy(() => import('./pages/Audit'));
 const Workspaces = lazy(() => import('./pages/Workspaces.jsx'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings.jsx'));
-import { WorkspaceProvider, useWorkspace } from './utils/WorkspaceContext.jsx';
+import { useWorkspace } from './utils/WorkspaceContext.jsx';
+import { ContactGroupWorkspaceProvider } from './utils/ContactGroupCreationContext.jsx';
 import {
   pickAccessibleWorkspace,
   readLastWorkspaceId,
@@ -2458,7 +2459,7 @@ function App() {
                       />
                     </div>
                   ) : (
-                    <WorkspaceProvider accountId={session?.id}>
+                    <ContactGroupWorkspaceProvider accountId={session?.id}>
                       <Suspense
                         fallback={
                           <Flex align='center' justify='center' minH='60vh'>
@@ -2829,7 +2830,7 @@ function App() {
                           <Route path='*' element={<NotFound />} />
                         </Routes>
                       </Suspense>
-                    </WorkspaceProvider>
+                    </ContactGroupWorkspaceProvider>
                   )}
                 </Box>
                 <Footer />

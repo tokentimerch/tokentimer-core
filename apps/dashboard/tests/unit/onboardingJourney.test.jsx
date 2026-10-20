@@ -105,6 +105,43 @@ vi.mock('../../src/utils/onboardingActions.js', async () => {
   };
 });
 
+vi.mock('../../src/utils/apiClient', () => {
+  const clone = v => JSON.parse(JSON.stringify(v));
+  const actions = {
+    getAlertSettings: async () => clone(server.state.alert),
+    putAlertSettings: async (_w, body) => {
+      server.state.calls.putAlertSettings += 1;
+      if (server.state.groupLimit !== undefined && body.contact_groups)
+        body = {
+          ...body,
+          contact_groups: body.contact_groups.slice(0, server.state.groupLimit),
+        };
+      Object.assign(server.state.alert, body);
+    },
+    listContacts: async () => clone(server.state.contacts),
+    createContact: async (_w, body) => {
+      server.state.calls.createContact += 1;
+      const contact = { id: 'c' + (server.state.contacts.length + 1), ...body };
+      server.state.contacts.push(contact);
+      return clone(contact);
+    },
+  };
+  return {
+    workspaceAPI: {
+      get: async () => ({ role: 'workspace_manager' }),
+      getAlertSettings: (...args) => actions.getAlertSettings(...args),
+      updateAlertSettings: (...args) => actions.putAlertSettings(...args),
+    },
+    alertAPI: {},
+    default: {
+      get: async () => ({ data: { items: await actions.listContacts() } }),
+      post: async (_url, body) => ({
+        data: await actions.createContact('ws-1', body),
+      }),
+    },
+  };
+});
+
 import OnboardingPage from '../../src/components/onboarding/OnboardingPage.jsx';
 
 // Minimal stand-ins for user-event, built on fireEvent.
@@ -116,6 +153,37 @@ const user = {
     fireEvent.change(el, { target: { value } });
   },
 };
+
+async function openGroup() {
+  await user.click(
+    await screen.findByRole('button', { name: 'Create a new group' })
+  );
+  await user.type(
+    await screen.findByPlaceholderText(
+      'Group name (e.g., On-call, Security, Legal)'
+    ),
+    'Alert recipients'
+  );
+}
+async function addRecipient() {
+  await user.click(
+    await screen.findByRole('button', { name: 'Add contact', exact: true })
+  );
+  await user.type(screen.getByPlaceholderText('First name'), 'Ana');
+  await user.type(screen.getByPlaceholderText('Last name'), 'Lopez');
+  await user.type(
+    screen.getByPlaceholderText('name@example.com'),
+    'ana@example.com'
+  );
+  const buttons = screen.getAllByRole('button', {
+    name: 'Add contact',
+    exact: true,
+  });
+  await user.click(buttons[buttons.length - 1]);
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: /^Add contact/ })).toBeNull()
+  );
+}
 
 function freshServer() {
   const state = {
@@ -185,6 +253,15 @@ function mount() {
 
 describe('first-value onboarding journey', () => {
   beforeEach(() => {
+    window.matchMedia = vi.fn(query => ({
+      matches: false,
+      media: query,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
     freshServer();
   });
 
@@ -202,11 +279,9 @@ describe('first-value onboarding journey', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Add website' }));
 
-    // The group editor defaults to the signed-in user's own email, and a
-    // typed address counts without pressing Add person first.
-    const email = await screen.findByLabelText(/^Email$/);
-    expect(email).toHaveValue('ana@example.com');
-    await user.click(screen.getByRole('button', { name: 'Create group' }));
+    await openGroup();
+    await addRecipient();
+    await user.click(screen.getByRole('button', { name: 'Save group' }));
 
     expect(await screen.findByText('Alerts have a recipient')).toBeVisible();
     expect(screen.getByText(/Will notify through: email/)).toBeVisible();
@@ -215,7 +290,10 @@ describe('first-value onboarding journey', () => {
     expect(await screen.findByText('You are set up')).toBeVisible();
     expect(server.state.session.status).toBe('completed');
     expect(server.state.calls.createMonitor).toBe(1);
-    expect(server.state.alert.default_contact_group_id).toMatch(/^onboarding-/);
+    expect(server.state.alert.default_contact_group_id).toBeTruthy();
+    expect(server.state.session.operationRefs.contactGroupId).toBe(
+      server.state.alert.default_contact_group_id
+    );
   });
 
   it('resumes on another device without creating anything twice', async () => {
@@ -229,12 +307,14 @@ describe('first-value onboarding journey', () => {
       'example.com'
     );
     await user.click(screen.getByRole('button', { name: 'Add website' }));
-    await screen.findByLabelText(/Email/);
+    await screen.findByRole('button', { name: 'Create a new group' });
     first.unmount();
 
     // New device: same server state, fresh page. It lands on the next step.
     mount();
-    expect(await screen.findByLabelText(/Email/)).toBeVisible();
+    expect(
+      await screen.findByRole('button', { name: 'Create a new group' })
+    ).toBeVisible();
     expect(screen.queryByPlaceholderText('https://example.com')).toBeNull();
     expect(server.state.calls.createMonitor).toBe(1);
   });
@@ -263,7 +343,9 @@ describe('first-value onboarding journey', () => {
     };
     mount();
     // It must not ask for the URL again nor create a second monitor.
-    expect(await screen.findByLabelText(/Email/)).toBeVisible();
+    expect(
+      await screen.findByRole('button', { name: 'Create a new group' })
+    ).toBeVisible();
     expect(screen.queryByPlaceholderText('https://example.com')).toBeNull();
     expect(server.state.calls.createMonitor).toBe(0);
     // The result is now recorded and the pending marker cleared.
@@ -334,14 +416,14 @@ describe('first-value onboarding journey', () => {
       ssl_valid_to: '2027-03-01T00:00:00Z',
     });
     mount();
-    await user.click(
-      await screen.findByRole('button', { name: 'Create group' })
-    );
-    expect(await screen.findByText(/no more contact groups/i)).toBeVisible();
+    await openGroup();
+    await addRecipient();
+    await user.click(screen.getByRole('button', { name: 'Save group' }));
+    expect(
+      (await screen.findAllByText(/no more contact groups/i))[0]
+    ).toBeVisible();
     // Not recorded as done, so the step stays open for a retry.
     expect(server.state.session.operationRefs.contactGroupId).toBeUndefined();
-    expect(
-      screen.getByRole('button', { name: 'Create group' })
-    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save group' })).toBeVisible();
   });
 });
