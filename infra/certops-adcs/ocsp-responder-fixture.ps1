@@ -710,8 +710,11 @@ function New-OwnedOcspSigningTemplate($Owner) {
   $oidSearch.ClientTimeout=[TimeSpan]::FromSeconds(10)
   $created=$oidSearch.FindAll()
   try {
+   # DirectoryEntry.Guid is the raw-byte string, which differs from the
+   # objectGUID struct form returned by the searcher; compare the same encoding.
+   $createdGuid=[Guid]::new([byte[]]$oidObject.Properties['objectguid'][0])
    if($created.Count -ne 1 -or
-      ([Guid]::new([byte[]]$created[0].Properties['objectguid'][0])) -ne [Guid]$oidObject.Guid) {
+      ([Guid]::new([byte[]]$created[0].Properties['objectguid'][0])) -ne $createdGuid) {
     throw 'New template OID identity is not unique'
    }
   } finally { $created.Dispose() }
