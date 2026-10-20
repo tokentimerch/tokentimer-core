@@ -13,9 +13,11 @@ Common terminal states and what to look for:
   no prior backup after a post-deploy failure, unresolved local side-effect
   journal on restart, or lease reaper expiry after renewal in the
   side-effect-risk window). Inspect the host paths and the job's
-  `reconciliation_reason`, reconcile manually, then clear the operator
-  reconciliation flag before re-dispatching work for the same
-  certificate/target. This is not a policy rejection.
+  `reconciliation_reason`, and reconcile the actual host state before
+  requesting replacement work for the same certificate/target. There is no
+  general dashboard action to clear this flag. Preserve the job evidence and
+  obtain support for the affected recovery path rather than editing database
+  flags or deleting local journals. This is not a policy rejection.
 - **`dry_run_complete`**: expected terminal for `mode:"dry_run"` jobs. If a
   real job somehow reports it, the control plane rejects the result
   (`CERTOPS_AGENT_RESULT_STATUS_INVALID`).
@@ -214,7 +216,7 @@ matrix may work but are not covered by CI or release sign-off.
 | Node.js | `>= 22.0.0, < 25.0.0` | Even-numbered Active LTS lines only (22, 24); odd/Current releases are not release-tested. |
 | Certbot | `2.x` (tested against the latest `2.x` release at release time) | `--manual` + `--csr` mode only; snap and pip installs both exercised in CI. |
 | acme.sh | Latest tagged release at release time (pinned commit recorded in CI config) | Uses the shipped `dns_certops` dnsapi hook; requires acme.sh's own `dnsapi` loading support (stable across acme.sh releases). |
-| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems (e.g. Alpine/OpenRC) are not supported by `install-agent.sh` (confirmed: it fails at the `/etc/systemd/system` unit-install step, since that directory does not exist without systemd), though the agent binary itself runs fine on musl libc, and a manually-run, self-supervised process is a documented fallback for systemd-less hosts (see the self-hosted install runbook's systemd-less note). Real end-to-end verified on **Ubuntu 22.04, 24.04, and 26.04 LTS** and **AlmaLinux 9** (fresh WSL2 installs, full agent install -> issue -> auto-renew cycle against a real DNS-01 provider, `certbot` on Ubuntu and `acme.sh` on AlmaLinux). `install-agent.sh` itself has no CI dry-run (unlike `install-agent.ps1`'s Windows dry-run above), so a real host run is the only verification path for the Linux installer today. Other systemd-based Debian/Ubuntu LTS and RHEL/Rocky 9+ releases are expected to work (same systemd unit/`ReadWritePaths` model, and AlmaLinux 9's pass confirms the RHEL/Rocky family generally, not just Ubuntu) but are not independently verified. Ubuntu 22.04 is being phased out as a GitHub-hosted CI runner (deprecation announced 2026-09-17, unsupported from 2027-04-17). |
+| Operating system | Linux with systemd (Debian/Ubuntu LTS, RHEL/Rocky 9+) | The installer and hardened unit (`ProtectSystem=strict`) assume systemd; other init systems (e.g. Alpine/OpenRC) are not supported by `install-agent.sh` (confirmed: it fails at the `/etc/systemd/system` unit-install step, since that directory does not exist without systemd), though the agent binary itself runs fine on musl libc, and a manually-run, self-supervised process is a documented fallback for systemd-less hosts (see the self-hosted install runbook's systemd-less note). Real end-to-end verified on **Ubuntu 22.04, 24.04, and 26.04 LTS** and **AlmaLinux 9** (fresh WSL2 installs, full agent install -> issue -> auto-renew cycle against a real DNS-01 provider, `certbot` on Ubuntu and `acme.sh` on AlmaLinux). `install-agent.sh --dry-run` previews installer changes without applying them. The Linux installer has no dedicated CI dry-run job; the package smoke test covers its dependency-free tar-copy runtime, while service installation and host policy still require real-host verification. Other systemd-based Debian/Ubuntu LTS and RHEL/Rocky 9+ releases are expected to work (same systemd unit/`ReadWritePaths` model, and AlmaLinux 9's pass confirms the RHEL/Rocky family generally, not just Ubuntu) but are not independently verified. Ubuntu 22.04 is being phased out as a GitHub-hosted CI runner (deprecation announced 2026-09-17, unsupported from 2027-04-17). |
 | Operating system (Windows) | Windows Server, build >= 14393 (2016) or later | `install-agent.ps1` fails closed below build 14393, the first widely-deployed release with both WDAC and CNG non-exportable key custody generally available (see the [Windows build-number floor](windows-runtime.md)). Real end-to-end verified on **Windows Server 2025** (build 26100), **Windows Server 2022** (build 20348), and **Windows Server 2019**: full agent install, CNG-native issue with real IIS binding, unattended auto-renew, and the CNG/IIS/retention/discovery module-level real-host checks all produced identical results on all three, with no code path found to differ between them. Other Windows Server releases from build 14393 onward are expected to work the same way but are not independently verified; Windows 10/11 desktop SKUs are not verified as agent hosts at all. |
 | DNS provider APIs | See `src/dns/providers/*.js`; each provider module documents the API version/date it was implemented against | Re-verified when a provider's upstream API has a breaking change. |
 | PostgreSQL (control plane) | `15+` | Several CertOps migrations use `ON DELETE SET NULL (column_list)` on composite foreign keys, native since PostgreSQL 15; `gen_random_uuid()` alone would only require 13+. The bundled local-dev compose (`deploy/compose/docker-compose.postgres.yml`) runs `postgres:17-alpine`. |
@@ -222,6 +224,17 @@ matrix may work but are not covered by CI or release sign-off.
 <a id="wire-contract-compatibility-upgrade-ordering"></a>
 
 ### Wire-contract compatibility (upgrade ordering)
+
+For this release, use Core **0.18.0** with agent **0.18.0**. Upgrade the
+control plane first, confirm registration/heartbeats, then upgrade agents and
+verify a signed dry run. Check the fleet's compatibility result as well:
+deployment-configured protocol and version bounds can reject an otherwise
+matching package.
+
+The table below explains historical contract transitions; its descriptions
+are not numeric minimum-version guarantees for mixed-version deployments.
+For an older deployment, use its target release notes and a matching package
+pair rather than inferring compatibility from an additive field.
 
 This stack changes the agent<->control-plane wire contract several times.
 Each change is additive and capability-gated, but the *order* you upgrade
