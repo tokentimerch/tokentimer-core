@@ -135,6 +135,18 @@ binding have been verified on that host. Review
 [Windows runtime and retention](certops/agent/windows-runtime.md) before
 changing stores, bindings, or retained keys.
 
+## Read certificate details
+
+**Certificate identity** describes one exact public certificate: serial, public-key
+algorithm, signature, names and SHA-256 fingerprint. Renewal normally produces a
+new identity even when the DNS names stay the same. Use **Management source** to
+choose the source whose **Renewal and key custody** settings you need to inspect.
+That selection controls the management and deployment context, not the immutable
+certificate facts. An observed copy proves a sighting; it does not prove that a
+service uses it. Publication of a candidate is separate from verified deployment
+on a destination. Follow the relevant job and compare the served certificate's
+fingerprint to verify what the service actually uses.
+
 ## Investigate a job, retry, or recover
 
 1. Open **Certificate Management → Jobs** and select the job. Record its ID,
