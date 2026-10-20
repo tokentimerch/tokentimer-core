@@ -250,7 +250,14 @@ describe('CertOpsRoutes kill-switch banner', () => {
 
     renderAt('/certops/settings');
 
-    expect(screen.getAllByText(PAUSED)).toHaveLength(1);
+    // One sentence, one Paused badge and one Resume button: the row replaces
+    // the page-wide warning on this tab instead of stacking beside it.
+    expect(
+      screen.getAllByText(
+        /Certificate operations are paused for this workspace/
+      )
+    ).toHaveLength(1);
+    expect(screen.getAllByText('Paused')).toHaveLength(1);
     expect(
       screen.getAllByRole('button', { name: 'Resume certificate operations' })
     ).toHaveLength(1);

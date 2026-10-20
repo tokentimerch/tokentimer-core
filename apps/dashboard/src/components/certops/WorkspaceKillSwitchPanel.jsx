@@ -23,7 +23,12 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
-import { DashboardErrorAlert } from '../DashboardPrimitives.jsx';
+import {
+  DashboardActionButton,
+  DashboardErrorAlert,
+} from '../DashboardPrimitives.jsx';
+import { SettingsActionRow } from '../SettingsPageShell.jsx';
+import { FiPause, FiPlay } from 'react-icons/fi';
 import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 import { showSuccess } from '../../utils/toast.js';
 import {
@@ -168,9 +173,10 @@ function KillSwitchConfirmModal({ isOpen, onClose, pausing, onConfirm }) {
  *   running. Only the paused warning and load errors appear, because a paused
  *   workspace must stay visible on every tab and a banner that speaks on the
  *   happy path stops being read.
- * - `default` (Settings tab): the paused warning, or the status line with the
- *   Pause control while running. `flush` drops the outer margin for use
- *   inside a panel.
+ * - `row` (Settings tab): one setting row in the same layout as Preferences
+ *   and Account, with a status badge and the Pause or Resume button.
+ * - `default`: the paused warning, or the status line with the Pause control
+ *   while running. `flush` drops the outer margin for use inside a panel.
  * Without a `controller` the panel loads the setting itself.
  * The always-require-approval policy lives on the Settings tab, not here.
  * `onPausedChange` lets a caller follow the resolved state.
@@ -179,6 +185,7 @@ export default function WorkspaceKillSwitchPanel({
   controller,
   mode = 'default',
   flush = false,
+  showDivider = false,
   onPausedChange,
 }) {
   if (controller) {
@@ -187,6 +194,7 @@ export default function WorkspaceKillSwitchPanel({
         controller={controller}
         mode={mode}
         flush={flush}
+        showDivider={showDivider}
         onPausedChange={onPausedChange}
       />
     );
@@ -195,6 +203,7 @@ export default function WorkspaceKillSwitchPanel({
     <OwnStateKillSwitch
       mode={mode}
       flush={flush}
+      showDivider={showDivider}
       onPausedChange={onPausedChange}
     />
   );
@@ -205,7 +214,13 @@ function OwnStateKillSwitch(props) {
   return <KillSwitchView controller={controller} {...props} />;
 }
 
-function KillSwitchView({ controller, mode, flush, onPausedChange }) {
+function KillSwitchView({
+  controller,
+  mode,
+  flush,
+  showDivider,
+  onPausedChange,
+}) {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const { certOpsPaused, loading, error, saving, setPaused } = controller;
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -260,6 +275,61 @@ function KillSwitchView({ controller, mode, flush, onPausedChange }) {
       onConfirm={handleConfirm}
     />
   );
+
+  if (mode === 'row') {
+    return (
+      <>
+        <SettingsActionRow
+          label='Certificate operations'
+          status={
+            resolved ? (
+              <CertOpsBadge colorScheme={certOpsPaused ? 'red' : 'green'}>
+                {certOpsPaused ? 'Paused' : 'Active'}
+              </CertOpsBadge>
+            ) : null
+          }
+          description={
+            error
+              ? error
+              : !resolved
+                ? 'Checking the certificate operations kill switch...'
+                : certOpsPaused
+                  ? 'Certificate operations are paused for this workspace.'
+                  : 'Certificate operations are running for this workspace.'
+          }
+          note={
+            certOpsPaused && resolved
+              ? 'New provisioning intent and command delivery to agents are refused. Already-leased jobs keep running, and agents can still report observations and evidence.'
+              : resolved && isAdmin
+                ? 'Pausing stops new provisioning and command delivery during an incident. Already-leased jobs keep running.'
+                : null
+          }
+          showDivider={showDivider}
+        >
+          {loading ? <Spinner size='sm' /> : null}
+          {resolved && isAdmin ? (
+            <DashboardActionButton
+              colorScheme={certOpsPaused ? 'blue' : undefined}
+              variant={certOpsPaused ? 'solid' : 'outline'}
+              leftIcon={certOpsPaused ? <FiPlay /> : <FiPause />}
+              onClick={() => setConfirmOpen(true)}
+              isLoading={saving}
+              w={{ base: 'full', sm: 'auto' }}
+            >
+              {certOpsPaused
+                ? 'Resume certificate operations'
+                : 'Pause certificate operations'}
+            </DashboardActionButton>
+          ) : resolved ? (
+            <Text fontSize='xs' color={muted}>
+              Only workspace admins can pause or resume certificate operations.
+            </Text>
+          ) : null}
+        </SettingsActionRow>
+        {confirmModal}
+      </>
+    );
+  }
 
   if (error) {
     return (

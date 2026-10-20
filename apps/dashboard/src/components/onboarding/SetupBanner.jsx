@@ -81,7 +81,13 @@ export default function SetupBanner({
           </Box>{' '}
           {message}
         </AlertDescription>
-        <HStack spacing={2} flexShrink={0} ml={{ base: 0, md: 2 }}>
+        <HStack
+          spacing={2}
+          flexShrink={0}
+          flexWrap='wrap'
+          maxW='full'
+          ml={{ base: 0, md: 2 }}
+        >
           {/* Same theme button as "Create New Token", not the wizard's darker one. */}
           <DashboardActionButton
             colorScheme='blue'
