@@ -83,7 +83,7 @@ async function main() {
     for (let i = 0; i < 60; i++) {
       const r = spawnSync(
         "docker",
-        ["exec", name, "pg_isready", "-U", "distribution_qualification"],
+        ["exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "distribution_qualification"],
         { encoding: "utf8", windowsHide: true, timeout: 10000 },
       );
       if (r.status === 0) {
@@ -197,4 +197,4 @@ if (require.main === module)
     console.error(e.message);
     process.exitCode = 1;
   });
-module.exports = { tests };
+module.exports = { tests, main };
