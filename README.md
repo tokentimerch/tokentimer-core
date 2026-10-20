@@ -147,7 +147,6 @@ TokenTimer stores expiration metadata, ownership, and status information without
 | | |
 |---|---|
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup guide |
-| [Operator walkthroughs](docs/OPERATOR_WALKTHROUGHS.md) | Start with the setup wizard; verify monitoring, issuance, renewal, AD CS/IIS, and job recovery |
 | [First asset and alert check](https://tokentimer.ch/docs/self-hosted/quickstart) | Verify the installation with a tracked asset and an alert |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local development, worker runner, and cron scheduling |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Environment variables and Vault AppRole inventory authentication |

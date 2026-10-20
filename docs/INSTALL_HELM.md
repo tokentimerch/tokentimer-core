@@ -164,10 +164,6 @@ Recommended next steps: invite team members (Workspace Settings, Members), add y
 
 Continue with [First asset and alert check](FIRST_ASSET.md). Optional network policy, monitoring, and scaling are covered in [Kubernetes operations](KUBERNETES_OPERATIONS.md).
 
-Open **Set up TokenTimer** (`/onboarding`) to use the guided first-use flow.
-[Operator walkthroughs](OPERATOR_WALKTHROUGHS.md) covers monitoring, agent
-installation, staging issuance, AD CS/IIS, and failed-job investigation.
-
 When using `config.existingSecret`, run a server-side Helm dry-run against the
 target namespace before installation or upgrade. The chart validates both
 CertOps keys on a readable existing Secret as 64 hexadecimal characters.

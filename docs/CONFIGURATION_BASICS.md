@@ -2,11 +2,6 @@
 
 Start with a working [Compose](INSTALL_COMPOSE.md) or [Helm](INSTALL_HELM.md) deployment. You need **system administrator** access to System Settings; workspace Admin and Workspace Manager roles do not grant it.
 
-Use **Set up TokenTimer** (`/onboarding`) for first-use SMTP, recipients,
-monitoring, and supported certificate setup. The
-[operator walkthroughs](OPERATOR_WALKTHROUGHS.md) explain how to verify each
-outcome and continue into renewals and troubleshooting.
-
 ## Where to change a setting
 
 Compose reads deployment values from `.env`; Helm renders them from chart values and Kubernetes Secrets. The System Settings UI stores selected settings in the database.

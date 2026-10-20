@@ -2,11 +2,6 @@
 
 Use this guide after installation for upgrades, compatibility, logs, failed jobs, and retirement. Preserve the state directory: it contains the agent credential, pinned signing key, custody state, and recovery journals.
 
-For the dashboard sequence from job status to the next action, follow
-[Investigate a job, retry, or recover](../../OPERATOR_WALKTHROUGHS.md#investigate-a-job-retry-or-recover).
-The same walkthrough covers first-use installation and issuance through the
-setup wizard.
-
 <a id="9-troubleshooting"></a>
 
 ## Troubleshooting
