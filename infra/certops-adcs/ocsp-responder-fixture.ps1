@@ -1501,18 +1501,17 @@ function Remove-OwnedOcspConfiguration($Owner,[byte[]]$OriginalCaDer,[byte[]]$Si
      $properties.GetLowerBound(1) -ne 0) {
    throw 'Bounded native revocation properties required immediately before removal'
   }
-  $names=@{};$actualCrl=$null;$revocationError=$null
+  $names=@{};$revocationError=$null
   for($index=0;$index -lt $properties.GetLength(0);$index++) {
    $name=$properties[$index,0]
    if($name -isnot [string] -or $name.Length -lt 1 -or $name.Length -gt 128 -or $names.ContainsKey($name)) {
     throw 'Ambiguous native revocation properties before removal'
    }
    $names[$name]=$true
-   if($name -ceq 'BaseCrl') { $actualCrl=[byte[]]$properties[$index,1] }
    if($name -ceq 'RevocationErrorCode') { $revocationError=$properties[$index,1] }
   }
   if($null -eq $revocationError -or [int]$revocationError -ne 0 -or
-     (Get-OcspPublicDigest $actualCrl) -cne (Get-OcspPublicDigest $CurrentSignedCrlDer)) {
+     (Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne (Get-OcspPublicDigest $CurrentSignedCrlDer)) {
    throw 'Native signed revocation state changed before removal'
   }
   # The preceding independent native observation pins every configured value.
@@ -1639,12 +1638,13 @@ function Set-OwnedOcspConfiguration($Owner,[byte[]]$VerifiedSignedCrlDer) {
   $entry.SigningCertificate=[byte[]]$signer
   $entry.HashAlgorithm='SHA256'
   $entry.ProviderCLSID='{4956d17f-88fd-4198-b287-1e6e65883b19}'
-  # Explicit actual signed CRL bytes avoid an unrelated network dependency or
-  # a responder using a stale publication cache. The caller independently
-  # verifies this exact DER against the original issuing key before this call.
+  # The Online Responder discards a BaseCrl value written without a source URL
+  # and then logs ERROR_OBJECT_NOT_FOUND (0x800710D8). Point it at the CA's own
+  # CertEnroll file, and pin the verified CRL to that file's exact bytes first.
+  if((Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne $crlDigest) { throw 'Published CRL changed before responder configuration' }
   $properties=[Array]::CreateInstance([object],1,2)
-  $properties[0,0]='BaseCrl'
-  $properties[0,1]=[byte[]]$VerifiedSignedCrlDer
+  $properties[0,0]='BaseCrlUrls'
+  $properties[0,1]=[string[]]@(Get-OcspCrlSourceUrl)
   $entry.ProviderProperties=$properties
   [void]$admin.SetConfiguration('tt-ca.lab.certops.test',$false)
  } finally {
@@ -1657,6 +1657,13 @@ function Set-OwnedOcspConfiguration($Owner,[byte[]]$VerifiedSignedCrlDer) {
  $observation=Get-OwnedOcspConfigurationObservation $identifier $caBytes $signer $VerifiedSignedCrlDer
  [void](Write-OwnedOcspPhase $Owner 'configured' $observation)
  return $observation
+}
+
+function Get-OcspCrlSourceUrl { return 'file://tt-ca.lab.certops.test/CertEnroll/TTQualificationRoot.crl' }
+
+function Read-OcspPublishedCrl {
+ $directory=Join-Path $env:SystemRoot 'System32\CertSrv\CertEnroll'
+ return [TTQualificationOcspReceipt]::ReadPublic((Join-Path $directory 'TTQualificationRoot.crl'))
 }
 
 function Get-OwnedOcspConfigurationObservation(
@@ -1698,18 +1705,19 @@ function Get-OwnedOcspConfigurationObservation(
      $properties.GetLowerBound(1) -ne 0) {
    throw 'Bounded native revocation provider properties required'
   }
-  $names=@{};$baseCrl=$null;$revocationError=$null
+  $names=@{};$baseCrlUrls=$null;$revocationError=$null
   for($index=0;$index -lt $properties.GetLength(0);$index++) {
    $name=$properties[$index,0]
    if($name -isnot [string] -or $name.Length -lt 1 -or $name.Length -gt 128 -or $names.ContainsKey($name)) {
     throw 'Ambiguous native revocation provider properties'
    }
    $names[$name]=$true
-   if($name -ceq 'BaseCrl') { $baseCrl=[byte[]]$properties[$index,1] }
+   if($name -ceq 'BaseCrlUrls') { $baseCrlUrls=@($properties[$index,1]) }
    if($name -ceq 'RevocationErrorCode') { $revocationError=$properties[$index,1] }
   }
   if($null -eq $revocationError -or [int]$revocationError -ne 0 -or
-     (Get-OcspPublicDigest $baseCrl) -cne $crlDigest) {
+     $null -eq $baseCrlUrls -or $baseCrlUrls.Count -ne 1 -or $baseCrlUrls[0] -cne (Get-OcspCrlSourceUrl) -or
+     (Get-OcspPublicDigest (Read-OcspPublishedCrl)) -cne $crlDigest) {
    throw 'Actual signed native revocation provider is not ready'
   }
   return @{
