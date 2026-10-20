@@ -598,6 +598,10 @@ export default function CertOpsCertificates() {
       refresh();
       setRetiredCountTick(tick => tick + 1);
     } catch (err) {
+      // The modal explains a still-serving certificate and offers to remove
+      // the endpoint checker; a second toast would only repeat it.
+      if (err?.response?.data?.code === 'CERTOPS_CERTIFICATE_STILL_SERVING')
+        throw err;
       showError(
         'Retire failed',
         err?.response?.data?.error ||
@@ -1221,6 +1225,7 @@ export default function CertOpsCertificates() {
         onClose={() => setRetireTarget(null)}
         token={null}
         certificate={retireTarget}
+        workspaceId={workspaceId}
         onRetire={handleRetire}
       />
 
