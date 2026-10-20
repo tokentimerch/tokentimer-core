@@ -1,10 +1,14 @@
 import CertOpsBadge from '../../components/certops/CertOpsBadge.jsx';
 import { useState } from 'react';
-import { HStack, Stack, Switch, Text } from '@chakra-ui/react';
+import { Stack, Switch } from '@chakra-ui/react';
 import { useOutletContext } from 'react-router';
 import ApiTokenList from '../../components/certops/ApiTokenList.jsx';
 import ApiTokenModal from '../../components/certops/ApiTokenModal.jsx';
 import WorkspaceKillSwitchPanel from '../../components/certops/WorkspaceKillSwitchPanel.jsx';
+import {
+  SettingsActionList,
+  SettingsActionRow,
+} from '../../components/SettingsPageShell.jsx';
 import {
   useCertOpsCanManage,
   useCertOpsIsWorkspaceAdmin,
@@ -16,9 +20,8 @@ import {
   DashboardPanelHeader,
 } from '../../components/DashboardPrimitives';
 import { showError, showSuccess } from '../../utils/toast.js';
-import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 
-function JobApprovalPolicyPanel() {
+function JobApprovalPolicyRow() {
   const isAdmin = useCertOpsIsWorkspaceAdmin();
   const {
     certOpsRequireApprovalAlways,
@@ -27,7 +30,6 @@ function JobApprovalPolicyPanel() {
     saving,
     setRequireApprovalAlways,
   } = useCertOpsWorkspaceKillSwitch();
-  const { muted } = useDashboardThemeColors();
 
   const handleToggle = async event => {
     const next = event.target.checked;
@@ -50,39 +52,34 @@ function JobApprovalPolicyPanel() {
     !loading && !error && certOpsRequireApprovalAlways !== undefined;
 
   return (
-    <DashboardPanel>
-      <DashboardPanelHeader
-        title='Job approval'
-        description='Applies to every new job in this workspace: dashboard-created jobs, machine API token calls, bulk renew, scheduled renewal, and trust-anchor distribute or revoke. The per-job approval checkbox cannot override it.'
-      />
-      <HStack spacing={3} align='center'>
-        <Text fontSize='sm' color={muted} flex='1'>
-          Require approval before every new job can run, regardless of the
-          per-job setting.
-        </Text>
-        {isAdmin && resolved ? (
-          <Switch
-            size='sm'
-            isChecked={certOpsRequireApprovalAlways === true}
-            isDisabled={saving}
-            onChange={handleToggle}
-            aria-label='Require approval for every new job'
-          />
-        ) : (
+    <SettingsActionRow
+      label='Job approval'
+      status={
+        !isAdmin || !resolved ? (
           <CertOpsBadge
             colorScheme={certOpsRequireApprovalAlways ? 'purple' : 'gray'}
-            flexShrink={0}
           >
             {certOpsRequireApprovalAlways ? 'Always required' : 'Not required'}
           </CertOpsBadge>
-        )}
-      </HStack>
-      {!isAdmin ? (
-        <Text fontSize='xs' color={muted} mt={2}>
-          Only workspace admins can enable or disable job approval.
-        </Text>
+        ) : null
+      }
+      description='Require approval before every new job can run, regardless of the per-job setting.'
+      note={
+        isAdmin
+          ? 'Applies to dashboard-created jobs, machine API token calls, bulk renew, scheduled renewal, and trust-anchor distribute or revoke. The per-job approval checkbox cannot override it.'
+          : 'Only workspace admins can enable or disable job approval.'
+      }
+    >
+      {isAdmin && resolved ? (
+        <Switch
+          size='md'
+          isChecked={certOpsRequireApprovalAlways === true}
+          isDisabled={saving}
+          onChange={handleToggle}
+          aria-label='Require approval for every new job'
+        />
       ) : null}
-    </DashboardPanel>
+    </SettingsActionRow>
   );
 }
 
@@ -100,13 +97,18 @@ export default function CertOpsSettings() {
     <Stack spacing={3} align='stretch'>
       <DashboardPanel>
         <DashboardPanelHeader
-          title='Certificate operations'
-          description='Pause new provisioning and command delivery for this workspace during an incident. Already-leased jobs keep running, and a pause shows on every tab.'
+          title='Workspace controls'
+          description='Incident and approval controls for certificate operations in this workspace. A pause shows on every tab.'
         />
-        <WorkspaceKillSwitchPanel controller={killSwitch} flush />
+        <SettingsActionList>
+          <WorkspaceKillSwitchPanel
+            controller={killSwitch}
+            mode='row'
+            showDivider
+          />
+          <JobApprovalPolicyRow />
+        </SettingsActionList>
       </DashboardPanel>
-
-      <JobApprovalPolicyPanel />
 
       <DashboardPanel>
         <DashboardPanelHeader

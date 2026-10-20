@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router';
 import { ChakraProvider } from '@chakra-ui/react';
 
 import WorkspaceKillSwitchPanel from '../../src/components/certops/WorkspaceKillSwitchPanel.jsx';
+import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 
 const { useCertOpsIsWorkspaceAdminMock, useCertOpsWorkspaceKillSwitchMock } =
   vi.hoisted(() => ({
@@ -19,7 +20,9 @@ vi.mock('../../src/components/certops/useCertOps.js', () => ({
 function renderWithProviders(ui) {
   return render(
     <ChakraProvider>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <DashboardThemeProvider>
+        <MemoryRouter>{ui}</MemoryRouter>
+      </DashboardThemeProvider>
     </ChakraProvider>
   );
 }
@@ -234,5 +237,90 @@ describe('WorkspaceKillSwitchPanel with a shared controller', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(controller.setPaused).toHaveBeenCalledTimes(1));
     expect(controller.setPaused.mock.calls[0][0]).toBe(true);
+  });
+});
+
+describe('WorkspaceKillSwitchPanel row mode', () => {
+  beforeEach(() => {
+    useCertOpsIsWorkspaceAdminMock.mockReset();
+    useCertOpsWorkspaceKillSwitchMock.mockReset();
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(true);
+  });
+
+  const row = (overrides, props = {}) =>
+    renderWithProviders(
+      <WorkspaceKillSwitchPanel
+        controller={killSwitchState(overrides)}
+        mode='row'
+        {...props}
+      />
+    );
+
+  it('shows a label, an Active badge, the status and a Pause button', () => {
+    row();
+    expect(screen.getByText('Certificate operations')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(
+      screen.getByText('Certificate operations are running for this workspace.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Pause certificate operations' })
+    ).toBeInTheDocument();
+  });
+
+  it('shows a Paused badge, what the pause means and a Resume button', () => {
+    row({ certOpsPaused: true });
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(
+      screen.getByText('Certificate operations are paused for this workspace.')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Already-leased jobs keep running, and agents can still/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('button', { name: 'Resume certificate operations' })
+    ).toHaveLength(1);
+  });
+
+  it('pauses through the confirm dialog with the shared controller', async () => {
+    const setPaused = vi.fn().mockResolvedValue({});
+    row({ setPaused });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Pause certificate operations' })
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(setPaused).toHaveBeenCalledTimes(1));
+    expect(setPaused.mock.calls[0][0]).toBe(true);
+  });
+
+  it('gives a non-admin the status and the reason there is no button', () => {
+    useCertOpsIsWorkspaceAdminMock.mockReturnValue(false);
+    row();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Pause certificate operations' })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Only workspace admins can pause or resume certificate operations.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('shows the load error in the row and no control', () => {
+    row({ error: 'Could not load it', certOpsPaused: undefined });
+    expect(screen.getByText('Could not load it')).toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /certificate operations/ })
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows a checking state while the setting loads', () => {
+    row({ loading: true, certOpsPaused: undefined });
+    expect(
+      screen.getByText('Checking the certificate operations kill switch...')
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
   });
 });
