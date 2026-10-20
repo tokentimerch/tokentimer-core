@@ -1,7 +1,7 @@
 # TokenTimer Core -- Roadmap
 
-Last reviewed: 2026-10-20 at `main` 7b2e50bf, with 0.18.0 in release
-preparation, for the MCP operator interface work. Other
+Last reviewed: 2026-10-20 at `main` 7b2e50bf for the MCP operator interface
+work. Other
 certificate testing expansion remains follow-up work under [#354](https://github.com/tokentimerch/tokentimer-core/issues/354).
 
 This page is the repository milestone index: what Core takes next, what must
@@ -74,10 +74,11 @@ called stable while it is open.
   workflows from an MCP client such as an AI assistant. A separate operator
   connection is limited by scopes and the user's live workspace role, and
   those limits are enforced in the REST API, not in the MCP adapter.
-  The read-only toolset, one-time enrollment, and renewal requests are on the
-  branch for review and off by default; writes need an instance flag and a
-  workspace setting. A renewal request always waits for approval from someone
-  other than the requester. Still open: a dashboard approvals screen that
+  The read-only toolset, one-time enrollment, and renewal requests are
+  implemented and off by default; they ship in a release after 0.18.0.
+  Writes need an instance flag and a workspace setting. A renewal request
+  always waits for approval from someone other than the requester. Still
+  open: a dashboard approvals screen that
   shows assistant-originated requests, issue, decommission and mark-revoked
   requests, and on-demand discovery. CA-backed revocation waits on
   [#246](https://github.com/tokentimerch/tokentimer-core/issues/246)
