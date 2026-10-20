@@ -29,7 +29,7 @@ async function qualifyIssuedCancellation({gate,fixture,api,agentRowId,renewalFix
   const row=async()=>(await fixture.pool.query("SELECT state,request_id,next_poll_at,snapshot_bytes,snapshot_sha256,current_job_id,NOW() AS database_now FROM certificate_enrollments WHERE workspace_id=$1 AND id=$2",[fixture.workspaceId,id])).rows[0];
   const pending=await until(async()=>{const value=await row();return value.state==="pending_issuance"&&value.request_id&&value.next_poll_at?value:null;});
   const snapshot=JSON.parse(Buffer.from(pending.snapshot_bytes).toString("utf8"));assert.equal(snapshot.pollInterval,900);
-  const original=readEnrollmentJournal(configDir,id);assert.equal(original.kind,"valid");assert.equal(original.journal.state,"pending_issuance");assert.equal(original.journal.containerName,container);
+  const original=readEnrollmentJournal(configDir,id);assert.equal(original.kind,"valid");assert.equal(original.journal.state,"pending");assert.equal(original.journal.containerName,container);
   assert.equal(ps(`$key=[Security.Cryptography.CngKey]::Open('${container}',[Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider,[Security.Cryptography.CngKeyOpenOptions]::MachineKey);try{if($key.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None){throw 'Owned pending key is exportable'};'nonexportable'}finally{$key.Dispose()}`),"nonexportable");
   const before=observe(pending.request_id);assert.equal(before.disposition,9);let approvalAttempted=false,revoked=false,primary;
   try{
@@ -38,7 +38,7 @@ async function qualifyIssuedCancellation({gate,fixture,api,agentRowId,renewalFix
    assert.equal(leaf.verify(new crypto.X509Certificate(Buffer.from(authority.certificateB64,"base64")).publicKey),true);assert.equal(leaf.checkHost(item.domain),item.domain);assert.equal(crypto.createHash("sha256").update(leaf.publicKey.export({type:"spki",format:"der"})).digest("hex"),original.journal.csrSpkiSha256);
    const leafThumbprint=leaf.fingerprint.replace(/:/g,"");
    const noAcceptance=()=>assert.equal(ps(`$found=@();foreach($store in @('My','WebHosting')){$location='Cert:\\LocalMachine\\'+$store;if(Test-Path -LiteralPath $location){$found+=@(Get-ChildItem -LiteralPath $location|Where-Object Thumbprint -eq '${leafThumbprint}')}};$found.Count`),"0");noAcceptance();
-   const beforeCancel=await row();assert.equal(beforeCancel.state,"pending_issuance");assert.ok(new Date(beforeCancel.database_now).getTime()<new Date(beforeCancel.next_poll_at).getTime(),"The real normal poll must not already be due");assert.equal(readEnrollmentJournal(configDir,id).journal.state,"pending_issuance");
+   const beforeCancel=await row();assert.equal(beforeCancel.state,"pending_issuance");assert.ok(new Date(beforeCancel.database_now).getTime()<new Date(beforeCancel.next_poll_at).getTime(),"The real normal poll must not already be due");assert.equal(readEnrollmentJournal(configDir,id).journal.state,"pending");
    assert.equal((await fixture.request(`${api}/enrollments/${id}/cancel`,"POST",{})).status,204);
    const dispatched=(await require("../../../apps/api/services/certops/certificateEnrollments").scheduleDueEnrollments({client:fixture.pool})).filter(value=>value.enrollmentId===id);assert.equal(dispatched.length,1);await jobFinished(dispatched[0].jobId);
    const cancelled=await row();assert.equal(cancelled.state,"cancelled");assert.equal(String(cancelled.request_id),String(pending.request_id));assert.equal(cancelled.snapshot_sha256,pending.snapshot_sha256);assert.ok(cancelled.snapshot_bytes.equals(pending.snapshot_bytes));

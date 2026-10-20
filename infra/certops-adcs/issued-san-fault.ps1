@@ -71,7 +71,7 @@ public sealed class TTSanPublicFile : IDisposable {
     $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
     $names=@('RequestID','CommonName','RequesterName','Disposition','RawRequest','CertificateTemplate');$view.SetResultColumnCount($names.Count)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
-    $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[uint32]$RequestId)
+    $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[int]$RequestId)
     $rows=$view.OpenView();if($rows.Next() -eq -1){throw 'Owned pending request absent'}
     $columns=$rows.EnumCertViewColumn();$values=@();while($columns.Next() -ne -1){$values+=,$columns.GetValue($(if($values.Count -eq 4){1}else{0}))}
     if($values.Count -ne 6 -or [long]$values[0] -ne $RequestId -or $values[1] -cne $CommonName -or $values[2] -ine 'TTQUAL\tt-agent$' -or [int]$values[3] -ne 9 -or [string]$values[5] -cne $TemplateOid -or $rows.Next() -ne -1){throw 'Foreign or non-pending request/template'}

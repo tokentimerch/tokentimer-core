@@ -1909,7 +1909,46 @@ describe("removeAbandonedKeyContainer", () => {
     };
     stub.calls=calls;return stub;
   }
-  const cleanup = options => removeAbandonedKeyContainer({keySurvivorHelperPath:__filename,...options});
+  // The machine REQUEST store listing (pending `certreq -new` stubs) is answered
+  // as empty and not counted, so each test observes only its own boundary calls.
+  const withEmptyRequestStore = impl => (file,args,options,callback) => {
+    if(args[0]==="-store" && args.includes("REQUEST")) { process.nextTick(()=>callback(null,"","")); return undefined; }
+    return impl(file,args,options,callback);
+  };
+  const cleanup = options => removeAbandonedKeyContainer({keySurvivorHelperPath:__filename,...options,...(options.execFileImpl?{execFileImpl:withEmptyRequestStore(options.execFileImpl)}:{})});
+
+  it("deletes only pending REQUEST-store stubs that reference the exact container before the survivor probe", async () => {
+    const containerName = buildContainerName("pending-stub");
+    const other = buildContainerName("other-stub");
+    const hashA = "AB".repeat(20), hashB = "CD".repeat(20);
+    const listing = [
+      "================ Certificate 0 ================",
+      "Serial Number: 00",
+      `Cert Hash(sha1): ${hashA}`,
+      `  Key Container = ${containerName}`,
+      "================ Certificate 1 ================",
+      "Serial Number: 01",
+      `Cert Hash(sha1): ${hashB}`,
+      `  Key Container = ${other}`,
+      "",
+    ].join("\r\n");
+    const seen = [];
+    const result = await removeAbandonedKeyContainer({
+      containerName, keySurvivorHelperPath: __filename,
+      execFileImpl(file,args,options,callback){
+        seen.push(args.join(" "));
+        if(args[0]==="-store") return callback(null,listing,"");
+        if(args[0]==="-delstore") return callback(null,"deleted","");
+        if(args[0]==="--key-survivors") return callback(null,JSON.stringify({complete:true,shared:false,storesScanned:2,certificatesScanned:0,matches:0}),"");
+        return callback(null,"deleted","");
+      },
+    });
+    assert.equal(result.ok, true);
+    const delstores = seen.filter(s => s.startsWith("-delstore"));
+    assert.deepEqual(delstores, [`-delstore REQUEST ${hashA}`]);
+    assert.ok(seen.findIndex(s => s.startsWith("-delstore")) < seen.findIndex(s => s.startsWith("--key-survivors")));
+  });
+
   it("invokes certutil -csp <KSP> -delkey <containerName> without a shell", async () => {
     const execFileImpl = guardedStub({});
     const containerName = buildContainerName("job-99");

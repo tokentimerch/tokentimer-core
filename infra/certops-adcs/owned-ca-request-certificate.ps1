@@ -17,7 +17,7 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
     $names=@('RequestID','CommonName','RequesterName','Disposition','RawCertificate')
     $view.SetResultColumnCount($names.Count)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
-    $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[uint32]$RequestId)
+    $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[int]$RequestId)
     $rows=$view.OpenView();if($rows.Next() -eq -1){throw 'Owned issued request absent'}
     $columns=$rows.EnumCertViewColumn();$values=@()
     while($columns.Next() -ne -1){$values+=,$columns.GetValue($(if($values.Count -eq 4){1}else{0}))}

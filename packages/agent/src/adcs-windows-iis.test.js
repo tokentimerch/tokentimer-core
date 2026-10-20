@@ -1308,6 +1308,7 @@ describe("continue-enrollment recovery executor", () => {
         const executionContext = contextFor(seed, {
           windowsExecFileImpl: (file, args, opts, cb) => {
             calls.push(args);
+            if (args[0] === "-store" && args.includes("REQUEST")) { cb(null, "", ""); return { kill() {}, once() {}, pid: 1 }; }
             if (args[0] === "--key-survivors") {
               assert.equal(file,__filename);
               assert.deepEqual(args,["--key-survivors","--container",seed.journalBase.containerName]);
@@ -1374,7 +1375,8 @@ describe("continue-enrollment recovery executor", () => {
       const result=await executorsFor(stateDir).executeWindowsIisContinueEnrollmentJob({job:seed.job,jobId:seed.journalBase.jobId,client:{},log:{},executionContext:contextFor(seed,{
         windowsExecFileImpl(file,args,options,callback){
           if(args.includes("-delkey"))deletes++;
-          if(args.includes("-key"))callback(null,seed.journalBase.containerName+"\n","");
+          if(args[0]==="-store"&&args.includes("REQUEST"))callback(null,"","");
+          else if(args.includes("-key"))callback(null,seed.journalBase.containerName+"\n","");
           else{assert.equal(args[0],"--key-survivors");probes++;callback(null,JSON.stringify({complete,shared:true,storesScanned:3,certificatesScanned:1,matches:1,...(!complete?{reason:"store_open_failed"}:{})}),"");}
           return {kill(){},once(){},pid:1};
         }
