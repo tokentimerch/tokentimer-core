@@ -36,9 +36,12 @@ function Invoke-Command {
 & $env:CERTOPS_OFFICER_SCRIPT -RequestId 5 -Action revoke -CommonName certops-adcs-0123456789-capacity0.example.test
 exit $LASTEXITCODE
 `);
+  const env = { ...process.env, CERTOPS_OFFICER_SCRIPT: probe, CERTOPS_OFFICER_BEHAVIOR: behavior };
+  // A PowerShell 7 parent (CI shell) leaks its module path, so Windows PowerShell cannot load
+  // Microsoft.PowerShell.Security. Dropping it makes powershell.exe use its own defaults.
+  if (process.platform === "win32") delete env.PSModulePath;
   return spawnSync(process.platform === "win32" ? "powershell.exe" : "pwsh", ["-NoProfile", "-NonInteractive", "-File", wrapper], {
-    encoding: "utf8", windowsHide: true, timeout: 30000,
-    env: { ...process.env, CERTOPS_OFFICER_SCRIPT: probe, CERTOPS_OFFICER_BEHAVIOR: behavior },
+    encoding: "utf8", windowsHide: true, timeout: 30000, env,
   });
 }
 
