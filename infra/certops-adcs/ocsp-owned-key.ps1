@@ -81,7 +81,8 @@ function Get-OwnedOcspKeyIdentity([Security.Cryptography.CngKey]$Key){
 
 function Assert-OwnedOcspKeyIdentity([Security.Cryptography.CngKey]$Key,$Expected){
  $actual=Get-OwnedOcspKeyIdentity $Key
- foreach($name in @('container','unique','provider','modulus','exponent')){if($actual[$name] -cne $Expected[$name]){throw 'Native signer key identity changed'}}
+ # Expected is a hashtable when fresh and a JSON object when read from a receipt.
+ foreach($name in @('container','unique','provider','modulus','exponent')){if($actual[$name] -cne $Expected.$name){throw 'Native signer key identity changed'}}
 }
 
 function New-OwnedOcspSignerRequestText([string]$Container,[string]$CommonName) {
