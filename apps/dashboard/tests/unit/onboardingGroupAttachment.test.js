@@ -180,10 +180,20 @@ describe('planSessionItems', () => {
 describe('sentences', () => {
   const sites = [item('1', [])];
   const assets = [item('2', [], 'asset')];
+  const grouped = [item('3', ['a'])];
 
   it('describes what a tick means per kind of item', () => {
     expect(
       describeTicks({ goal: 'monitor_https', items: sites, defaultName: 'Ops' })
+    ).toBe(
+      'Ticked groups receive alerts for the websites you added in this guide. 1 website has no group and uses the workspace default group "Ops".'
+    );
+    expect(
+      describeTicks({
+        goal: 'monitor_https',
+        items: grouped,
+        defaultName: 'Ops',
+      })
     ).toBe(
       'Ticked groups receive alerts for the websites you added in this guide. Anything without a group uses the workspace default group "Ops".'
     );
@@ -201,11 +211,11 @@ describe('sentences', () => {
 
   it('never invents a default group', () => {
     expect(
-      describeTicks({ goal: 'monitor_https', items: sites, defaultName: '' })
+      describeTicks({ goal: 'monitor_https', items: grouped, defaultName: '' })
     ).toMatch(/No default group is set/);
-    expect(describeUngrouped({ count: 2, defaultName: '' })).toMatch(
-      /no recipient until a group is set/
-    );
+    expect(
+      describeUngrouped({ items: [sites[0], sites[0]], defaultName: '' })
+    ).toMatch(/no recipient until a group is set/);
   });
 
   it('words the missing certificate note for one and many', () => {
@@ -219,13 +229,30 @@ describe('sentences', () => {
   });
 
   it('words the ungrouped note for one and many', () => {
-    expect(describeUngrouped({ count: 1, defaultName: 'Ops' })).toBe(
-      '1 item has no group and uses the workspace default group "Ops".'
+    expect(describeUngrouped({ items: sites, defaultName: 'Ops' })).toBe(
+      '1 website has no group and uses the workspace default group "Ops".'
     );
-    expect(describeUngrouped({ count: 3, defaultName: 'Ops' })).toBe(
-      '3 items have no group and use the workspace default group "Ops".'
-    );
-    expect(describeUngrouped({ count: 0, defaultName: 'Ops' })).toBe('');
+    expect(
+      describeUngrouped({
+        items: [...assets, ...assets, ...assets],
+        defaultName: 'Ops',
+      })
+    ).toBe('3 assets have no group and use the workspace default group "Ops".');
+    expect(describeUngrouped({ items: [], defaultName: 'Ops' })).toBe('');
+    expect(
+      describeUngrouped({ items: [...sites, ...assets], defaultName: 'Ops' })
+    ).toBe('2 items have no group and use the workspace default group "Ops".');
+  });
+
+  it('explains websites without a certificate record instead of asking to add something', () => {
+    expect(
+      describeTicks({
+        goal: 'monitor_https',
+        items: [],
+        defaultName: 'Ops',
+        noToken: 2,
+      })
+    ).toMatch(/^2 websites you added have no certificate record yet/);
   });
 
   it('makes no tick claim for goals without attachable items', () => {

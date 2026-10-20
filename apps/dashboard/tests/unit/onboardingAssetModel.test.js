@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAssetPayload,
   categoryOf,
+  changeAssetCategory,
   emptyAsset,
   fieldsFor,
   validateAsset,
@@ -100,6 +101,22 @@ describe('validateAsset', () => {
 });
 
 describe('buildAssetPayload', () => {
+  it('stores a license that does not expire like the main form: 2099-12-31 and no invented vendor', () => {
+    const p = buildAssetPayload(
+      {
+        ...base,
+        name: 'Office suite',
+        category: 'license',
+        type: 'software_license',
+        neverExpires: true,
+      },
+      WS
+    );
+    expect(p.expiresAt).toBe('2099-12-31');
+    expect(p.vendor).toBeNull();
+    expect(p.name).toBe('Office suite');
+  });
+
   it('uses the never-expires date when no expiry is given', () => {
     expect(buildAssetPayload(base, WS).expiresAt).toBe('2099-12-31');
     expect(
@@ -232,5 +249,34 @@ describe('staging several assets', () => {
 
   it('limits a batch', () => {
     expect(MAX_STAGED_ASSETS).toBeGreaterThan(1);
+  });
+});
+
+describe('changeAssetCategory', () => {
+  const typed = {
+    ...base,
+    category: 'cert',
+    type: 'ssl_cert',
+    expiresAt: '2031-05-01',
+    neverExpires: false,
+    contactGroupIds: ['g1'],
+    fields: { issuer: 'Acme CA' },
+  };
+
+  it('keeps the expiry date and groups, which every kind supports, and starts the kind fields over', () => {
+    const next = changeAssetCategory(typed, 'license');
+    expect(next.category).toBe('license');
+    expect(next.type).toBe(categoryOf('license').types[0].value);
+    expect(next.expiresAt).toBe('2031-05-01');
+    expect(next.contactGroupIds).toEqual(['g1']);
+    expect(next.fields).toEqual({});
+    expect(next.name).toBe(typed.name);
+  });
+
+  it('keeps Does not expire as it was', () => {
+    expect(
+      changeAssetCategory({ ...typed, neverExpires: true }, 'license')
+        .neverExpires
+    ).toBe(true);
   });
 });

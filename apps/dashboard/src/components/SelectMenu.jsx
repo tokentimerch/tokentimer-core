@@ -155,6 +155,15 @@ export default function SelectMenu({
             borderColor={buttonBorder}
             px={3}
             type='button'
+            onKeyDown={event => {
+              // Focus stays on the trigger while the list is open (options keep
+              // it there on purpose), so Escape has to be handled here. Stopping
+              // it keeps an enclosing modal open.
+              if (isOpen && event.key === 'Escape') {
+                event.stopPropagation();
+                onClose();
+              }
+            }}
             aria-label={ariaLabel || placeholder}
             aria-expanded={isOpen}
             aria-haspopup='listbox'

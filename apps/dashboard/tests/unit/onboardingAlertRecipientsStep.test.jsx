@@ -315,8 +315,8 @@ describe('RecipientsStep ticks', () => {
       ['billing'],
       {}
     );
-    expect(screen.getByTestId('ungrouped-note').textContent).toBe(
-      '1 item has no group and uses the workspace default group "Ops".'
+    expect(screen.getByTestId('tick-sentence').textContent).toBe(
+      'Ticked groups receive alerts for the websites you added in this guide. 1 website has no group and uses the workspace default group "Ops".'
     );
     expect(ctx.refresh).toHaveBeenCalled();
   });
@@ -325,8 +325,10 @@ describe('RecipientsStep ticks', () => {
     store.settings.default_contact_group_id = null;
     mount(makeCtx());
     fireEvent.click(await box('Ops'));
-    expect(await screen.findByTestId('ungrouped-note')).toHaveTextContent(
-      /no default group is set, so there is no recipient until a group is set/
+    await waitFor(() =>
+      expect(screen.getByTestId('tick-sentence')).toHaveTextContent(
+        /1 website has no group and no default group is set, so there is no recipient until a group is set/
+      )
     );
   });
 
@@ -523,6 +525,16 @@ describe('RecipientsStep sentence', () => {
     expect((await sentence()).textContent).toMatch(
       /receive alerts for the assets you added in this guide\./
     );
+  });
+
+  it('says "assets" and never "websites" for the asset goal when assets have no group', async () => {
+    store.tokens[21].contact_group_ids = [];
+    mount(makeCtx({ goal: 'track_asset', websiteIds: [], assetIds: [21] }));
+    const text = (await sentence()).textContent;
+    expect(text).toBe(
+      'Ticked groups receive alerts for the assets you added in this guide. 1 asset has no group and uses the workspace default group "Ops".'
+    );
+    expect(text).not.toMatch(/website/);
   });
 
   it('names both when the session has both', async () => {

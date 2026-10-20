@@ -98,6 +98,20 @@ export function emptyAsset() {
   };
 }
 
+/**
+ * Switching the kind starts the kind-specific fields over. The expiry date and
+ * the contact groups belong to every kind, so they stay, as in the main form.
+ */
+export function changeAssetCategory(asset, value) {
+  const next = categoryOf(value);
+  return {
+    ...asset,
+    category: value,
+    type: next?.types[0]?.value || '',
+    fields: {},
+  };
+}
+
 /** What the user typed, checked with the product's own limits. */
 export function validateAsset(asset, now = new Date()) {
   const errors = {};

@@ -94,7 +94,13 @@ function quoted(name) {
 }
 
 /** One sentence under the heading that says what the ticks mean. */
-export function describeTicks({ goal, items, defaultName }) {
+export function describeTicks({
+  goal,
+  items,
+  defaultName,
+  noToken = 0,
+  existingIds = null,
+}) {
   const fallback = defaultName
     ? `Anything without a group uses the workspace default group ${quoted(defaultName)}.`
     : 'No default group is set, so anything without a group has no recipient.';
@@ -111,7 +117,9 @@ export function describeTicks({ goal, items, defaultName }) {
   const hasWebsites = items.some(i => i.kind === 'website');
   const hasAssets = items.some(i => i.kind === 'asset');
   if (!hasWebsites && !hasAssets) {
-    return 'Add something first, then choose its groups here.';
+    return noToken
+      ? describeNoToken(noToken)
+      : 'Add something first, then choose its groups here.';
   }
   const what =
     hasWebsites && hasAssets
@@ -119,14 +127,25 @@ export function describeTicks({ goal, items, defaultName }) {
       : hasWebsites
         ? 'the websites'
         : 'the assets';
-  return `Ticked groups receive alerts for ${what} you added in this guide. ${fallback}`;
+  const ungrouped = items.filter(
+    i => !i.groupIds.some(id => !existingIds || existingIds.has(id))
+  );
+  return `Ticked groups receive alerts for ${what} you added in this guide. ${
+    ungrouped.length
+      ? describeUngrouped({ items: ungrouped, defaultName })
+      : fallback
+  }`;
 }
 
 /** Note for items that carry no group, from the live default group. */
-export function describeUngrouped({ count, defaultName }) {
+export function describeUngrouped({ items, defaultName }) {
+  const count = items.length;
   if (!count) return '';
+  const kinds = new Set(items.map(i => i.kind));
+  const noun =
+    kinds.size > 1 ? 'item' : kinds.has('website') ? 'website' : 'asset';
   const [subject, verb] =
-    count === 1 ? ['1 item has', 'uses'] : [`${count} items have`, 'use'];
+    count === 1 ? [`1 ${noun} has`, 'uses'] : [`${count} ${noun}s have`, 'use'];
   return defaultName
     ? `${subject} no group and ${verb} the workspace default group ${quoted(defaultName)}.`
     : `${subject} no group and no default group is set, so there is no recipient until a group is set.`;

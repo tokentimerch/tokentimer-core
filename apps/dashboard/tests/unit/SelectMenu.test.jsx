@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import {
   ChakraProvider,
@@ -35,6 +35,35 @@ function renderMenu(props) {
 }
 
 describe('SelectMenu', () => {
+  it('closes on Escape without closing the modal around it', async () => {
+    const onClose = vi.fn();
+    render(
+      <ChakraProvider>
+        <Modal isOpen onClose={onClose}>
+          <ModalOverlay />
+          <ModalContent>
+            <ModalBody>
+              <SelectMenu
+                options={[{ value: 'a', label: 'Alpha' }]}
+                value={[]}
+                onChange={vi.fn()}
+                placeholder='Pick one'
+              />
+            </ModalBody>
+          </ModalContent>
+        </Modal>
+      </ChakraProvider>
+    );
+    const trigger = screen.getByRole('button', { name: 'Pick one' });
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.keyDown(trigger, { key: 'Escape' });
+    await waitFor(() =>
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('supports arrow navigation and keyboard option activation', async () => {
     const onChange = vi.fn();
     renderMenu({ onChange, placeholder: 'Pick with keyboard' });

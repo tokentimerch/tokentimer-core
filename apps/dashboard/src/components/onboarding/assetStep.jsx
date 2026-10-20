@@ -39,6 +39,7 @@ import {
   assetKey,
   buildAssetPayload,
   categoryOf,
+  changeAssetCategory,
   describeAsset,
   emptyAsset,
   fieldsFor,
@@ -112,10 +113,7 @@ export function AssetStep({ ctx }) {
   const setField = (key, value) =>
     setAsset(a => ({ ...a, fields: { ...a.fields, [key]: value } }));
 
-  const changeCategory = value => {
-    const next = categoryOf(value);
-    set({ category: value, type: next?.types[0]?.value || '', fields: {} });
-  };
+  const changeCategory = value => setAsset(a => changeAssetCategory(a, value));
 
   /** Validates the form and puts the asset on the list. Nothing is created yet. */
   const stageCurrent = () => {
@@ -497,6 +495,7 @@ export function AssetStep({ ctx }) {
             value={asset.contactGroupIds}
             onChange={contactGroupIds => set({ contactGroupIds })}
             isDisabled={busy}
+            defaultContactGroupId={defaultGroupId}
             emptyText='No contact group yet. You choose who gets alerted in the next step.'
             helperText=''
           />

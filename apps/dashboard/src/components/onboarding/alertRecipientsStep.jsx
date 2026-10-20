@@ -35,7 +35,6 @@ import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
   describeNoToken,
   describeTicks,
-  describeUngrouped,
   tickState,
 } from './groupAttachment.js';
 import { useSessionGroupTicks } from './useSessionGroupTicks.js';
@@ -300,23 +299,24 @@ export function RecipientsStep({ ctx }) {
   }
 
   const canTick = ticks.status === 'ready' && ticks.items.length > 0;
-  const groupIds = new Set(groups.map(g => String(g.id)));
-  const ungrouped = ticks.items.filter(
-    i => !i.groupIds.some(id => groupIds.has(id))
-  ).length;
-  const tickGoal = ticks.status !== 'off';
-  const sentence = describeTicks({
-    goal,
-    items: ticks.items,
-    defaultName: defaultGroup?.name,
-  });
+  const existingIds = new Set(groups.map(g => String(g.id)));
+  const sentence =
+    ticks.status === 'blocked'
+      ? ''
+      : describeTicks({
+          goal,
+          items: ticks.items,
+          defaultName: defaultGroup?.name,
+          noToken: ticks.noToken,
+          existingIds,
+        });
 
   return (
     <StepFrame
       kind='ui'
       title='Choose who gets alerted'
       description={
-        tickGoal
+        canTick || ticks.status === 'loading'
           ? 'Alerts go to contact groups. Tick the groups that should receive alerts for what you added.'
           : 'Alerts go to contact groups. Manage the groups in your workspace here.'
       }
@@ -347,11 +347,11 @@ export function RecipientsStep({ ctx }) {
                     Reading the groups of your items
                   </Text>
                 </HStack>
-              ) : (
+              ) : sentence ? (
                 <Text fontSize='xs' color={muted} data-testid='tick-sentence'>
                   {sentence}
                 </Text>
-              )}
+              ) : null}
               <Text fontSize='xs' color={muted}>
                 {CREATE_HELP}
               </Text>
@@ -376,14 +376,6 @@ export function RecipientsStep({ ctx }) {
           ) : null}
           {ticks.notice ? (
             <DashboardErrorAlert>{ticks.notice}</DashboardErrorAlert>
-          ) : null}
-          {canTick && ungrouped > 0 ? (
-            <Text fontSize='xs' color={muted} data-testid='ungrouped-note'>
-              {describeUngrouped({
-                count: ungrouped,
-                defaultName: defaultGroup?.name,
-              })}
-            </Text>
           ) : null}
           {groups.map(g => {
             const id = String(g.id);

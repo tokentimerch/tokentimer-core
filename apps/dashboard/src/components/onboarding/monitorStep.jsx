@@ -568,15 +568,26 @@ export function MonitorStep({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [attempt, setAttempt] = useState(0);
-  // Same shared picker as the asset step; empty means the workspace default.
+  // Same shared picker as the asset step, with the same default: the
+  // workspace default group starts ticked, as in the main Create form.
   const [groups, setGroups] = useState([]);
+  const [defaultGroupId, setDefaultGroupId] = useState('');
   const [contactGroupIds, setContactGroupIds] = useState([]);
   useEffect(() => {
     let live = true;
     Promise.resolve()
       .then(() => onboardingActions.getAlertSettings(ctx.workspaceId))
       .then(alerts => {
-        if (live) setGroups(alerts?.contact_groups || []);
+        if (!live) return;
+        const list = Array.isArray(alerts?.contact_groups)
+          ? alerts.contact_groups
+          : [];
+        setGroups(list);
+        const def = String(alerts?.default_contact_group_id || '');
+        if (def && list.some(g => String(g.id) === def)) {
+          setDefaultGroupId(def);
+          setContactGroupIds(ids => (ids.length ? ids : [def]));
+        }
       })
       .catch(() => {});
     return () => {
@@ -587,6 +598,9 @@ export function MonitorStep({ ctx }) {
   const monitored = (ctx.summary?.monitors?.items || [])
     .map(m => m?.url)
     .filter(Boolean);
+  const defaultGroup = defaultGroupId
+    ? groups.find(g => String(g.id) === defaultGroupId)
+    : null;
 
   const stageInput = () => {
     if (!input.trim()) return;
@@ -882,7 +896,16 @@ export function MonitorStep({ ctx }) {
             value={contactGroupIds}
             onChange={setContactGroupIds}
             isDisabled={busy}
+            defaultContactGroupId={defaultGroupId}
+            helperText=''
           />
+          {groups.length > 0 && contactGroupIds.length === 0 ? (
+            <FormHelperText fontSize='xs' data-testid='no-group-hint'>
+              {defaultGroup
+                ? `No group selected: alerts go to the default group (${defaultGroup.name}).`
+                : 'No group selected: alerts have no recipient until a contact group is set.'}
+            </FormHelperText>
+          ) : null}
         </FormControl>
 
         <DiscoveryPanel
