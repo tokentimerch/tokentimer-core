@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import { Badge, HStack, Spinner, Text, VStack } from '@chakra-ui/react';
 import {
   DashboardActionButton,
@@ -94,6 +95,7 @@ export function VerifyStep({ ctx }) {
       actions={
         <>
           <DashboardActionButton
+            leftIcon={<FiRefreshCw />}
             variant='outline'
             onClick={run}
             isLoading={state.loading}

@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FiArrowLeft,
+  FiArrowRight,
+  FiRepeat,
+  FiRefreshCw,
+} from 'react-icons/fi';
 import { Link as RouterLink } from 'react-router';
 import { Badge, Box, Flex, HStack, Text, VStack } from '@chakra-ui/react';
 import DashboardShell from '../DashboardShell';
@@ -276,7 +282,8 @@ function ReviewBar({ nav, titleOf, onGo, onReturn }) {
     <HStack justify='space-between' flexWrap='wrap' gap={2} mb={3}>
       <DashboardActionButton
         size='sm'
-        variant='ghost'
+        variant='outline'
+        leftIcon={<FiArrowLeft />}
         isDisabled={!nav.previousId}
         onClick={() => onGo(nav.previousId)}
       >
@@ -291,6 +298,7 @@ function ReviewBar({ nav, titleOf, onGo, onReturn }) {
             <DashboardActionButton
               size='sm'
               variant='outline'
+              rightIcon={<FiArrowRight />}
               onClick={() => onGo(nav.nextId)}
             >
               Next
@@ -468,6 +476,7 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                 </DashboardErrorAlert>
                 <Box>
                   <DashboardActionButton
+                    leftIcon={<FiRefreshCw />}
                     variant='outline'
                     onClick={onboarding.reload}
                   >
@@ -503,7 +512,8 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                     <DashboardActionButton
                       mt={3}
                       size='xs'
-                      variant='ghost'
+                      variant='outline'
+                      leftIcon={<FiRepeat />}
                       onClick={changeGoal}
                     >
                       Change what I am setting up

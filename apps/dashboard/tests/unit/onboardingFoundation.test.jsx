@@ -65,6 +65,35 @@ describe('StepFrame', () => {
     );
     expect(screen.queryByText('Missing page')).not.toBeInTheDocument();
   });
+
+  it('opens docs in a new tab safely and says it leaves the app', () => {
+    renderFrame({
+      kind: 'info',
+      docs: [{ label: 'Real page', url: 'https://tokentimer.ch/docs/x#y' }],
+    });
+    const link = screen.getByRole('link', { name: 'Real page' });
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toMatch(/noopener/);
+    // The external-link icon is decoration, not part of the accessible name.
+    expect(link.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('shows no docs row at all when no link resolves', () => {
+    renderFrame({ kind: 'info', docs: [{ label: 'Missing', url: null }] });
+    expect(screen.queryByText('Learn more')).not.toBeInTheDocument();
+  });
+
+  it('labels the docs row once, however many links there are', () => {
+    renderFrame({
+      kind: 'info',
+      docs: [
+        { label: 'One', url: 'https://tokentimer.ch/docs/1' },
+        { label: 'Two', url: 'https://tokentimer.ch/docs/2' },
+      ],
+    });
+    expect(screen.getAllByText('Learn more')).toHaveLength(1);
+    expect(screen.getAllByRole('link')).toHaveLength(2);
+  });
 });
 
 describe('docUrl', () => {

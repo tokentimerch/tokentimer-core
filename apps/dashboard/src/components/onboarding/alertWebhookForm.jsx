@@ -132,7 +132,7 @@ export default function WebhookForm({
         </FormControl>
       ) : null}
       <HStack justify='flex-end'>
-        <DashboardActionButton variant='ghost' size='sm' onClick={onCancel}>
+        <DashboardActionButton variant='outline' size='sm' onClick={onCancel}>
           Cancel
         </DashboardActionButton>
         <PrimaryButton size='sm' onClick={testAndSave} isLoading={busy}>

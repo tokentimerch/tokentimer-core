@@ -100,7 +100,7 @@ export function FileImportStep({ ctx }) {
       actions={
         <>
           <DashboardActionButton
-            variant='ghost'
+            variant='outline'
             onClick={() => ctx.skip('file_import')}
           >
             Skip for now

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import { Badge, HStack, Spinner, Text, VStack } from '@chakra-ui/react';
 import {
   DashboardActionButton,
@@ -81,7 +82,12 @@ export function RecipientsStep({ ctx }) {
     return (
       <StepFrame kind='ui' title='Choose who gets alerted' docs={docs}>
         <DashboardErrorAlert>{state.error}</DashboardErrorAlert>
-        <DashboardActionButton mt={3} variant='outline' onClick={load}>
+        <DashboardActionButton
+          leftIcon={<FiRefreshCw />}
+          mt={3}
+          variant='outline'
+          onClick={load}
+        >
           Try again
         </DashboardActionButton>
       </StepFrame>
@@ -134,7 +140,7 @@ export function RecipientsStep({ ctx }) {
         description='Alerts go to a contact group. Create one with the people and webhooks that should hear about expiring assets.'
         docs={docs}
         actions={
-          <DashboardActionButton variant='ghost' onClick={skip}>
+          <DashboardActionButton variant='outline' onClick={skip}>
             Skip for now
           </DashboardActionButton>
         }
@@ -159,7 +165,7 @@ export function RecipientsStep({ ctx }) {
       docs={docs}
       actions={
         <>
-          <DashboardActionButton variant='ghost' onClick={skip}>
+          <DashboardActionButton variant='outline' onClick={skip}>
             Skip for now
           </DashboardActionButton>
           <PrimaryButton onClick={() => setEditing('new')}>

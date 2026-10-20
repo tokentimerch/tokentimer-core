@@ -272,7 +272,7 @@ export function IntegrationStep({ ctx }) {
       actions={
         <>
           <DashboardActionButton
-            variant='ghost'
+            variant='outline'
             onClick={() => ctx.skip('integration')}
           >
             Skip for now

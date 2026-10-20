@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import {
   Alert,
   AlertDescription,
@@ -39,7 +40,11 @@ export function FirstCertificateStep({ ctx }) {
         ...ctx.docs('certops.discovery', 'How discovery works'),
       ]}
       actions={
-        <DashboardActionButton variant='outline' onClick={() => ctx.refresh()}>
+        <DashboardActionButton
+          leftIcon={<FiRefreshCw />}
+          variant='outline'
+          onClick={() => ctx.refresh()}
+        >
           Check again
         </DashboardActionButton>
       }

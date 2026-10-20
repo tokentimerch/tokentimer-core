@@ -5,7 +5,8 @@ import AdcsStep, {
   adcsStatus,
 } from '../../src/components/onboarding/certopsAdcsStep.jsx';
 
-vi.mock('../../src/hooks/useDashboardTheme', () => ({
+vi.mock('../../src/hooks/useDashboardTheme', async importOriginal => ({
+  ...(await importOriginal()),
   useDashboardTheme: () => ({ muted: 'gray.500' }),
 }));
 
