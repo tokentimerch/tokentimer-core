@@ -1769,15 +1769,25 @@ function Get-OcspResponderAdmission([string]$TemplateName,[string]$ExpectedCaThu
  if(Test-Path -LiteralPath $iisConfig) {
   throw 'Preexisting IIS configuration cannot be adopted'
  }
- # An absent IIS role does not prove that its default physical namespace is
- # disposable. Refuse an existing directory, file or dangling reparse point;
- # feature installation must never overwrite foreign content under inetpub.
- $inetpub=Join-Path $env:SystemDrive 'inetpub'
- $physicalNamespace=@(Get-ChildItem -LiteralPath ($env:SystemDrive+'\') -Force -ErrorAction Stop |
+# An absent IIS role does not prove that its default physical namespace is
+# disposable. Refuse foreign files, directories and reparse points under
+# inetpub. The only tolerated content is the stock Windows Server image's
+# DeviceHealthAttestation tree, which ships without the IIS role.
+$physicalNamespace=@(Get-ChildItem -LiteralPath ($env:SystemDrive+'\') -Force -ErrorAction Stop |
   Where-Object Name -IEQ 'inetpub')
- if($physicalNamespace.Count -ne 0 -or (Test-Path -LiteralPath $inetpub)) {
-  throw 'Preexisting IIS physical namespace cannot be adopted'
- }
+if($physicalNamespace.Count -gt 1) { throw 'Preexisting IIS physical namespace cannot be adopted' }
+if($physicalNamespace.Count -eq 1) {
+  $namespace=$physicalNamespace[0]
+  if(-not $namespace.PSIsContainer -or ($namespace.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw 'Preexisting IIS physical namespace cannot be adopted'
+  }
+  foreach($child in @(Get-ChildItem -LiteralPath $namespace.FullName -Force -ErrorAction Stop)) {
+    if($child.Name -ine 'DeviceHealthAttestation' -or -not $child.PSIsContainer -or
+       ($child.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw 'Preexisting IIS physical namespace cannot be adopted'
+    }
+  }
+}
 
  $configuration='HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration'
  $active=(Get-ItemProperty -LiteralPath $configuration -Name Active -ErrorAction Stop).Active
