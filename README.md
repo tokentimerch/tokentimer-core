@@ -54,7 +54,7 @@ TokenTimer is an open-source platform providing unified visibility, expiration m
 Three complementary pillars organize the platform:
 
 - **NHI Credential Visibility & Ownership:** inventory machine credentials and service accounts, track expiration and review dates, assign owners, and alert responsible teams. Credential rotation remains with your providers and tooling.
-- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, and coordinate cert-manager or external executors with approvals and audit evidence.
+- **Certificate Lifecycle Management:** discover certificates, automate supported ACME workflows, deploy and verify through outbound-only agents, enroll from Microsoft AD CS, share certificates through customer Vault, and coordinate cert-manager or external executors with approvals and audit evidence.
 - **Integrations & Centralized Operations:** aggregate relevant metadata from Vault, AWS, Azure, GCP, GitHub, and GitLab. TokenTimer complements your existing systems; it does not replace their secret-storage responsibilities.
 
 <p align="center">
@@ -65,7 +65,7 @@ Three complementary pillars organize the platform:
 
 ### Certificate Lifecycle Management (CLM)
 
-An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), with approval gates, a kill switch, and renewal-failure alerts keeping humans in control. It also distributes and revokes internal CA trust anchors in machine trust stores on Windows, Debian/Ubuntu, and RHEL/Fedora. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material. [Watch the demo](https://www.youtube.com/watch?v=1BpcL9myKwc).
+An outbound-only agent renews, deploys, reloads, and verifies certificates on your infrastructure (ACME via certbot/acme.sh, DNS-01 across major providers, atomic rollback), enrolls and renews IIS certificates from a Microsoft AD CS enterprise CA on domain-joined Windows hosts, and publishes one certificate version through your own Vault KV v2 to assigned Linux consumers (NGINX, HAProxy) that deploy it locally, whether it is an ordinary, SAN, or wildcard certificate. Keys and Vault or DNS credentials stay on your hosts. Approval gates, a kill switch, and renewal-failure alerts keeping humans in control. It also distributes and revokes internal CA trust anchors in machine trust stores on Windows, Debian/Ubuntu, and RHEL/Fedora. cert-manager and machine-token executors are supported too. The control plane never receives or stores private key material. [Watch the demo](https://www.youtube.com/watch?v=1BpcL9myKwc).
 
 <p align="center">
   <img src="docs/assets/certops-certificates.png" alt="Managed certificate inventory with status, days left, renewal policy, key locality, and source for every certificate" width="888" />
@@ -154,6 +154,8 @@ TokenTimer stores expiration metadata, ownership, and status information without
 | [Agent overview](docs/certops/agent.md) | Installation, policy, and focused operator references |
 | [Install an agent on Linux](docs/certops/agent/install-linux.md) | systemd installation and registration |
 | [Install an agent on Windows](docs/certops/agent/install-windows.md) | Native service installation and registration |
+| [Microsoft AD CS enrollment](docs/certops/agent/adcs.md) | Domain-joined Windows enrollment from an enterprise CA, allowlists, and qualification scope |
+| [Certificate distribution through Vault](docs/certops/wildcard-vault-operations.md) | Shared ordinary, SAN, and wildcard certificates via customer Vault KV v2 and Linux consumers |
 | [docs/certops/executor-api.md](docs/certops/executor-api.md) | Machine API tokens and executor job API for external renewal tooling |
 | [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) | Auth model, admin bootstrap, invitations, RBAC |
 | [deploy/helm/README.md](deploy/helm/README.md) | Helm chart installation and configuration |

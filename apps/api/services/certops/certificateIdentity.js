@@ -20,9 +20,10 @@ const UUID_PATTERN =
 const FRESHNESS_SQL = `GREATEST(INTERVAL '15 minutes',
   COALESCE(ci.scan_interval_seconds * INTERVAL '2 seconds', INTERVAL '24 hours'))`;
 
-function fail(code, message) {
+function fail(code, message, details = undefined) {
   const error = new Error(message);
   error.code = code;
+  if (details !== undefined) error.details = details;
   throw error;
 }
 
@@ -695,7 +696,8 @@ async function retireCertificateIdentity({
                 ci.captured_at,
                 ci.captured_at >= NOW() - ${FRESHNESS_SQL}
                   AND (ci.source NOT IN ('endpoint_monitor', 'domain_checker')
-                    OR ci.domain_monitor_id IS NOT NULL) AS fresh
+                    OR ci.domain_monitor_id IS NOT NULL) AS fresh,
+                ci.domain_monitor_id
            FROM certificate_instances ci
           WHERE ci.workspace_id = $1
             AND certops_normalize_fingerprint(ci.observed_fingerprint_sha256) = $2
@@ -707,7 +709,8 @@ async function retireCertificateIdentity({
                      ELSE 'confirmed_present' END,
                 observed.captured_at,
                 observed.domain_monitor_id IS NOT NULL
-                  AND observed.captured_at >= NOW() - INTERVAL '24 hours'
+                  AND observed.captured_at >= NOW() - INTERVAL '24 hours',
+                observed.domain_monitor_id
            FROM certops_unmanaged_observations observed
           WHERE observed.workspace_id = $1 AND observed.fingerprint_sha256 = $2
          UNION ALL
@@ -718,7 +721,8 @@ async function retireCertificateIdentity({
                 CASE WHEN observed.captured_at >= NOW() - INTERVAL '24 hours'
                      THEN 'confirmed_present' ELSE 'unknown' END,
                 observed.captured_at,
-                observed.captured_at >= NOW() - INTERVAL '24 hours'
+                observed.captured_at >= NOW() - INTERVAL '24 hours',
+                NULL::uuid
            FROM certops_slot_observations observed
           WHERE observed.workspace_id = $1 AND observed.fingerprint_sha256 = $2`,
         [workspaceId, fingerprint],
@@ -735,9 +739,46 @@ async function retireCertificateIdentity({
           .map((row) => String(row.source_ref || row.id).slice(0, 160))
           .join(", ");
       if (serving.length) {
+        // Name the endpoint checkers so the operator can see where the
+        // certificate is served and remove the checker instead of guessing.
+        const monitorIds = [
+          ...new Set(
+            serving.map((row) => row.domain_monitor_id).filter(Boolean),
+          ),
+        ];
+        const monitors = monitorIds.length
+          ? await tx.query(
+              `SELECT id, url FROM domain_monitors
+                WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+              [workspaceId, monitorIds],
+            )
+          : { rows: [] };
+        const urlByMonitor = new Map(
+          monitors.rows.map((row) => [row.id, row.url]),
+        );
+        const locations = serving.slice(0, 50).map((row) => ({
+          id: String(row.id),
+          source: row.source,
+          sourceRef: row.source_ref ? String(row.source_ref).slice(0, 160) : null,
+          domainMonitorId: row.domain_monitor_id || null,
+          url: row.domain_monitor_id
+            ? urlByMonitor.get(row.domain_monitor_id) || null
+            : null,
+        }));
+        const names = serving
+          .slice(0, 5)
+          .map((row) =>
+            String(
+              urlByMonitor.get(row.domain_monitor_id) ||
+                row.source_ref ||
+                row.id,
+            ).slice(0, 160),
+          )
+          .join(", ");
         fail(
           "CERTOPS_CERTIFICATE_STILL_SERVING",
-          `Certificate is still serving at ${serving.length} location(s): ${locationSummary(serving)}`,
+          `Certificate is still serving at ${serving.length} location(s): ${names}`,
+          { locations },
         );
       }
       const uncertain =

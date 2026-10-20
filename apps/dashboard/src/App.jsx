@@ -5917,6 +5917,7 @@ function DashboardView({
         token={retireTarget?.token}
         certificate={retireTarget?.certificate}
         certificates={retireTarget?.certificates}
+        workspaceId={workspaceId}
         onRetire={handleRetireConfirm}
       />
     </Box>
