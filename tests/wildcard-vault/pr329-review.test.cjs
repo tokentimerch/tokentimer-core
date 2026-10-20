@@ -1053,3 +1053,402 @@ test("workspace transfer retains source history and creates no destination issue
     0,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Zero-custody guard on every distribution write route
+// ---------------------------------------------------------------------------
+
+// Throwaway EC keys generated in-process (never printed or reused), plus a
+// structurally valid PKCS12-shaped DER. The detector parses real DER, so the
+// containers must be genuine for the positive cases to mean anything.
+function syntheticKeyVariants() {
+  const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const passphrase = crypto.randomBytes(12).toString("hex");
+  const pkcs8Der = privateKey.export({ type: "pkcs8", format: "der" });
+  const encryptedDer = privateKey.export({ type: "pkcs8", format: "der", cipher: "aes-256-cbc", passphrase });
+  const sec1Der = privateKey.export({ type: "sec1", format: "der" });
+  const pem = (type, extra = {}) => privateKey.export({ type, format: "pem", ...extra });
+  const pkcs12 = Buffer.alloc(94);
+  Buffer.from([0x30, 0x5c, 0x02, 0x01, 0x03]).copy(pkcs12);
+  crypto.randomBytes(16).copy(pkcs12, 60);
+  const variants = {
+    "PKCS8 PEM": pem("pkcs8"),
+    "encrypted PKCS8 PEM": pem("pkcs8", { cipher: "aes-256-cbc", passphrase }),
+    "EC (SEC1) PEM": pem("sec1"),
+    "base64 PKCS8 DER": pkcs8Der.toString("base64"),
+    "base64 encrypted PKCS8 DER": encryptedDer.toString("base64"),
+    "base64 EC DER": sec1Der.toString("base64"),
+    "base64 PKCS12 DER": pkcs12.toString("base64"),
+    "base64 PEM": Buffer.from(pem("pkcs8")).toString("base64"),
+    "base64url PEM": Buffer.from(pem("pkcs8") + "??>>??>>").toString("base64url"),
+    "hex PEM": Buffer.from(pem("pkcs8")).toString("hex"),
+    "gzip base64 PEM": require("node:zlib").gzipSync(pem("pkcs8")).toString("base64"),
+  };
+  // A slice from the middle of each sent value; it must never be echoed back.
+  const needles = Object.fromEntries(Object.entries(variants).map(([name, value]) => {
+    const text = String(value).replace(/-----[A-Z ]+-----|\s/g, "");
+    return [name, text.slice(40, 72)];
+  }));
+  return { variants, needles };
+}
+
+async function distributionTableCounts(workspaceId) {
+  const counts = {};
+  for (const table of ["certificate_jobs", "certops_distribution_rollouts", "certops_consumer_deployments",
+    "certops_consumer_bindings", "certops_outbox", "certops_material_versions"]) {
+    counts[table] = (await pool.query(`SELECT count(*)::int n FROM ${table} WHERE workspace_id=$1`, [workspaceId])).rows[0].n;
+  }
+  counts.bindingRevision = (await pool.query("SELECT sum(authorization_revision)::int n FROM certops_consumer_bindings WHERE workspace_id=$1", [workspaceId])).rows[0].n;
+  counts.nonKeyAudit = (await pool.query("SELECT count(*)::int n FROM audit_events WHERE workspace_id=$1 AND action<>'CERTOPS_KEY_MATERIAL_REJECTED'", [workspaceId])).rows[0].n;
+  return counts;
+}
+
+test("every distribution write route rejects private-key material before any handler runs and persists or logs none of it", async () => {
+  const f = await fixture();
+  const { variants, needles } = syntheticKeyVariants();
+  const handlerCalls = [];
+  const originals = {};
+  for (const [owner, names] of [[operations, ["putBinding", "requestRollout", "setRolloutState", "retryDistributionJob"]]]) {
+    for (const name of names) {
+      originals[name] = owner[name];
+      owner[name] = (...args) => { handlerCalls.push(name); return originals[name](...args); };
+    }
+  }
+  const routes = {
+    "PUT consumer binding": (inject) => request(f.app)
+      .put(`${f.base}/distribution-groups/${f.groupId}/consumers/${f.bindingId}`)
+      .set("X-Test-Session", String(f.manager)).send(inject(f.binding)),
+    "POST rollout": (inject) => request(f.app)
+      .post(`${f.base}/distribution-groups/${f.groupId}/rollouts`)
+      .set("X-Test-Session", String(f.manager)).set("Idempotency-Key", uuid())
+      .send(inject({ materialVersionId: f.materialVersionId })),
+    "POST rollout state": (inject) => request(f.app)
+      .post(`${f.base}/distribution-groups/${f.groupId}/rollouts/${uuid()}/state`)
+      .set("X-Test-Session", String(f.manager)).send(inject({ state: "paused" })),
+    "POST job retry": (inject) => request(f.app)
+      .post(`${f.base}/distribution-jobs/${uuid()}/retry`)
+      .set("X-Test-Session", String(f.manager)).send(inject({})),
+  };
+  // Same value in different body positions, including ones that look benign.
+  const placements = {
+    "innocent top-level field": (body, value) => ({ ...body, note: value }),
+    "nested object": (body, value) => ({ ...body, metadata: { deep: { deeper: { value } } } }),
+    "array element": (body, value) => ({ ...body, labels: ["ok", { value }] }),
+    "replacing a legitimate field": (body, value) => {
+      const [first] = Object.keys(body);
+      return { ...body, [first || "reason"]: value };
+    },
+  };
+  const seen = [];
+  const writes = [];
+  const realStdout = process.stdout.write, realStderr = process.stderr.write;
+  const capture = (chunk) => { seen.push(String(chunk)); return true; };
+  try {
+    // Controls: the same routes reach their handlers for clean bodies.
+    const controls = { "PUT consumer binding": 200, "POST rollout": 201, "POST rollout state": 404, "POST job retry": 404 };
+    for (const [route, status] of Object.entries(controls)) {
+      handlerCalls.length = 0;
+      const res = await routes[route]((body) => body);
+      assert.equal(res.status, status, `${route} control must reach its handler`);
+      assert.equal(handlerCalls.length, 1, `${route} control must call the service`);
+    }
+    handlerCalls.length = 0;
+    const before = await distributionTableCounts(f.workspaceId);
+    const rejectedBefore = (await pool.query("SELECT count(*)::int n FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_KEY_MATERIAL_REJECTED'", [f.workspaceId])).rows[0].n;
+    process.stdout.write = capture; process.stderr.write = capture;
+    let sent = 0;
+    for (const [route, send] of Object.entries(routes)) {
+      for (const [variant, value] of Object.entries(variants)) {
+        for (const [placement, place] of Object.entries(placements)) {
+          // The full placement matrix runs for PEM and PKCS12; other encodings use one position.
+          if (!/^(PKCS8 PEM|base64 PKCS12 DER)$/.test(variant) && placement !== "nested object") continue;
+          const res = await send((body) => place(body, value));
+          sent++;
+          writes.push(JSON.stringify(res.body), JSON.stringify(res.headers));
+          assert.equal(res.status, 422, `${route} / ${variant} / ${placement}`);
+          assert.equal(res.body.code, "PRIVATE_KEY_MATERIAL_REJECTED", `${route} / ${variant} / ${placement}`);
+        }
+      }
+      // Near the scan-depth limit the value is still found, and bodies too deep to
+      // scan are refused instead of being passed through unexamined.
+      const nest = (depth, leaf) => Array.from({ length: depth }).reduce((inner) => ({ n: inner }), leaf);
+      for (const [label, depth, leaf] of [["deep key", 10, variants["PKCS8 PEM"]], ["unscannable depth", 40, "benign"]]) {
+        const res = await send((body) => ({ ...body, extra: nest(depth, leaf) }));
+        sent++;
+        assert.equal(res.status, 422, `${route} / ${label}`);
+        assert.equal(res.body.code, "PRIVATE_KEY_MATERIAL_REJECTED");
+      }
+    }
+    process.stdout.write = realStdout; process.stderr.write = realStderr;
+    assert.deepEqual(handlerCalls, [], "no distribution service may run for a rejected request");
+    assert.deepEqual(await distributionTableCounts(f.workspaceId), before, "rejected requests must persist nothing");
+    const rejected = await pool.query("SELECT metadata,actor_user_id FROM audit_events WHERE workspace_id=$1 AND action='CERTOPS_KEY_MATERIAL_REJECTED'", [f.workspaceId]);
+    assert.equal(rejected.rowCount - rejectedBefore, sent, "every rejection leaves exactly one audit event");
+    for (const row of rejected.rows) {
+      assert.deepEqual(Object.keys(row.metadata).sort(), ["body_type", "code", "method", "path"]);
+      assert.equal(row.metadata.code, "PRIVATE_KEY_MATERIAL_REJECTED");
+    }
+    const everything = [...writes, ...seen].join("\n");
+    for (const [variant, needle] of Object.entries(needles)) {
+      assert.equal(everything.includes(needle), false, `${variant} must not appear in responses or logs`);
+      for (const table of ["audit_events", "certificate_jobs", "certificate_job_log", "certops_outbox"]) {
+        const hit = await pool.query(`SELECT 1 FROM ${table} t WHERE position($1 in t::text) > 0 LIMIT 1`, [needle]);
+        assert.equal(hit.rowCount, 0, `${variant} must not be stored in ${table}`);
+      }
+    }
+  } finally {
+    process.stdout.write = realStdout; process.stderr.write = realStderr;
+    for (const [name, original] of Object.entries(originals)) operations[name] = original;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Multi-wave rollouts: failure isolation and optional destinations
+// ---------------------------------------------------------------------------
+
+const DEPLOY_CAPABILITIES = ["material-store-vault-kv2-v1", "deploy-from-store-v1", "evidence-claim-binding-v1", "signed-payload-b64-v1"];
+let labSigningKey;
+async function labSigning() {
+  if (!labSigningKey) {
+    process.env.CERTOPS_SIGNING_ENCRYPTION_KEY ||= crypto.randomBytes(32).toString("hex");
+    labSigningKey = await apiRequire("./services/certops/jobSigning").ensureActiveSigningKey();
+  }
+  return labSigningKey;
+}
+
+// Builds one rollout over several consumers (name, wave, required) and drives
+// it through the real claim/ingest/advance path: signed envelope, nonce, receipt.
+async function waveLab(f, specs, { maxParallel = 3 } = {}) {
+  const dispatch = apiRequire("./services/certops/agentDispatch");
+  const { verifyJobEnvelope } = require("../../packages/agent/src/signing");
+  await labSigning();
+  const nodes = {};
+  for (const [index, spec] of specs.entries()) {
+    const agentId = index === 0 ? f.consumer : await f.agent();
+    const bindingId = index === 0 ? f.bindingId : uuid();
+    await operations.putBinding({ workspaceId: f.workspaceId, groupId: f.groupId, bindingId, actorUserId: f.actor,
+      binding: { ...f.binding, agentId, wave: spec.wave, required: spec.required !== false } });
+    await pool.query(`UPDATE certops_agents SET declared_target_selectors=$2::jsonb,declared_capabilities=$3::jsonb,
+      capabilities_updated_at=clock_timestamp() WHERE id=$1`, [agentId, JSON.stringify([bindingId]), JSON.stringify(DEPLOY_CAPABILITIES)]);
+    nodes[spec.name] = { name: spec.name, agentId, bindingId };
+  }
+  const job = await operations.requestRollout({ ...f.rolloutRequest, idempotencyKey: uuid(), maxParallel });
+  await approveJob({ workspaceId: f.workspaceId, jobId: job.id, approverUserId: f.approver });
+  const snapshot = await operations.transaction((client) => material.createRolloutSnapshot({ client, ...f, maxParallel,
+    approvalJobId: job.id, approvedIntentHash: material.hashIntent(job.payload.distributionRollout) }));
+  const version = (await pool.query("SELECT * FROM certops_material_versions WHERE id=$1", [f.materialVersionId])).rows[0];
+  const lab = { nodes, rolloutId: snapshot.rolloutId, generation: Number(snapshot.generation) };
+
+  lab.advance = () => operations.transaction((client) => operations.advanceRollout(client, f.workspaceId, f.groupId, lab.rolloutId));
+  lab.claim = async (name) => {
+    const node = nodes[name];
+    const row = (await pool.query("SELECT agent_id FROM certops_agents WHERE id=$1", [node.agentId])).rows[0];
+    const agent = { id: node.agentId, workspaceId: f.workspaceId, agentId: row.agent_id, status: "active", protocolVersion: "1.0.0", agentVersion: "0.17.3" };
+    const claimed = await dispatch.claimJobs({ agent, body: { supportedActions: ["deploy-from-store"], maxJobs: 1 } });
+    if (!claimed.jobs.length) return null;
+    const key = await labSigning();
+    const verified = verifyJobEnvelope({ claimed: claimed.jobs[0], ...key, pinnedSigningKeyId: key.signingKeyId });
+    assert.equal(verified.allowed, true);
+    assert.equal(verified.job.materialDeployment.bindingId, node.bindingId, "an agent only ever receives its own destination");
+    return { agent, intent: verified.job };
+  };
+  lab.report = async (claimed, outcome) => {
+    const base = { jobId: claimed.intent.jobId, claimId: claimed.intent.claimId, nonce: claimed.intent.nonce };
+    const body = outcome === "succeeded"
+      ? { ...base, status: "succeeded", deploymentReceipt: { schemaVersion: 1, workspaceId: f.workspaceId, groupId: f.groupId,
+        bindingId: claimed.intent.materialDeployment.bindingId, materialVersionId: f.materialVersionId, generation: lab.generation,
+        fetched: true, installed: true, bound: true, servedVerified: true, trustValidated: false,
+        fingerprintSha256: version.fingerprint_sha256, validTo: new Date(version.valid_to).toISOString(), observedAt: new Date().toISOString() } }
+      : { ...base, status: "failed", errorMessage: "synthetic_deploy_failure" };
+    const result = await dispatch.ingestResult({ agent: claimed.agent, body });
+    assert.equal(result.ok, true);
+  };
+  // One destination attempt followed by the control-plane advance the outbox would trigger.
+  lab.run = async (name, outcome) => {
+    const claimed = await lab.claim(name);
+    assert.ok(claimed, `${name} must have a deployment job to claim`);
+    await lab.report(claimed, outcome);
+    return lab.advance();
+  };
+  lab.deployments = async () => {
+    const rows = (await pool.query(`SELECT d.binding_id,d.stage,d.failure_code,d.job_id,j.status AS job_status,j.completed_at
+      FROM certops_consumer_deployments d LEFT JOIN certificate_jobs j ON j.id=d.job_id
+      WHERE d.workspace_id=$1 AND d.rollout_id=$2`, [f.workspaceId, lab.rolloutId])).rows;
+    return Object.fromEntries(Object.values(nodes).map((node) => [node.name, rows.find((row) => row.binding_id === node.bindingId)]));
+  };
+  lab.rolloutState = async () => (await pool.query("SELECT state FROM certops_distribution_rollouts WHERE id=$1", [lab.rolloutId])).rows[0].state;
+  // "Current" = the destination's accepted proof is for this generation and version.
+  lab.current = async () => {
+    const rows = (await pool.query("SELECT binding_id,accepted_generation,desired_generation,observed_material_version_id FROM certops_consumer_current_state WHERE workspace_id=$1", [f.workspaceId])).rows;
+    return Object.fromEntries(Object.values(nodes).map((node) => {
+      const row = rows.find((candidate) => candidate.binding_id === node.bindingId);
+      return [node.name, Number(row.accepted_generation) === Number(row.desired_generation) && row.observed_material_version_id === f.materialVersionId];
+    }));
+  };
+  lab.deployJobCount = async () => (await pool.query(`SELECT count(*)::int n FROM certificate_jobs
+    WHERE workspace_id=$1 AND operation='deploy-from-store'`, [f.workspaceId])).rows[0].n;
+  lab.failedJobIds = async () => (await pool.query(`SELECT metadata->>'jobId' AS job_id FROM audit_events
+    WHERE workspace_id=$1 AND action='CERTOPS_JOB_FAILED' ORDER BY id`, [f.workspaceId])).rows.map((row) => row.job_id);
+  lab.snapshotOf = async (names) => {
+    const deployments = await lab.deployments();
+    return Object.fromEntries(await Promise.all(names.map(async (name) => {
+      const state = (await pool.query("SELECT accepted_generation,observed_material_version_id,observed_fingerprint_sha256,observed_at FROM certops_consumer_current_state WHERE binding_id=$1", [nodes[name].bindingId])).rows[0];
+      return [name, { stage: deployments[name].stage, job: deployments[name].job_id, jobStatus: deployments[name].job_status, completedAt: String(deployments[name].completed_at), state: JSON.stringify(state) }];
+    })));
+  };
+  return lab;
+}
+
+test("a required failure in a later wave pauses the rollout, keeps earlier waves current and starts nothing further", async () => {
+  const f = await fixture();
+  const lab = await waveLab(f, [
+    { name: "canary", wave: 0 },
+    { name: "web-a", wave: 1 },
+    { name: "web-b", wave: 1 },
+    { name: "tail", wave: 2 },
+  ]);
+  assert.deepEqual(await lab.advance(), { deferred: true, retryInMs: 15000, reason: "waiting_for_consumers" });
+  let deployments = await lab.deployments();
+  assert.ok(deployments.canary.job_id);
+  for (const later of ["web-a", "web-b", "tail"]) assert.equal(deployments[later].job_id, null, `${later} must wait for wave 0`);
+  assert.equal(await lab.claim("web-a"), null, "wave 1 cannot be claimed before wave 0 is verified");
+
+  await lab.run("canary", "succeeded");
+  deployments = await lab.deployments();
+  assert.ok(deployments["web-a"].job_id && deployments["web-b"].job_id);
+  assert.equal(deployments.tail.job_id, null, "wave 2 must wait for wave 1");
+  await lab.run("web-a", "succeeded");
+  const earlier = await lab.snapshotOf(["canary", "web-a"]);
+  const failedRun = await lab.run("web-b", "failed");
+
+  assert.equal(failedRun.reason, "required_consumer_failed");
+  assert.equal(await lab.rolloutState(), "paused");
+  deployments = await lab.deployments();
+  assert.equal(deployments["web-b"].stage, "failed");
+  assert.equal(deployments["web-b"].failure_code, "agent_result_failed");
+  assert.equal(deployments["web-b"].job_status, "failed");
+  assert.deepEqual(await lab.snapshotOf(["canary", "web-a"]), earlier, "earlier destinations must not change");
+  for (const name of ["canary", "web-a"]) {
+    assert.equal(deployments[name].stage, "served_verified");
+    assert.equal(deployments[name].job_status, "succeeded");
+  }
+  assert.equal(deployments.tail.job_id, null);
+  assert.equal(deployments.tail.stage, "pending", "the later wave is never started");
+  assert.equal(await lab.claim("tail"), null);
+  assert.equal(await lab.deployJobCount(), 3, "no job exists for the unstarted wave and nothing was re-queued");
+  assert.deepEqual(await lab.advance(), { queued: false, reason: "rollout_inactive" }, "a paused rollout does not resume by itself");
+  assert.equal(await lab.deployJobCount(), 3);
+  assert.deepEqual(await lab.current(), { canary: true, "web-a": true, "web-b": false, tail: false });
+  assert.deepEqual(await lab.failedJobIds(), [deployments["web-b"].job_id], "audit names exactly the failed destination's job");
+
+  // Recovery touches only the failed destination, then the later wave runs.
+  await operations.retryDistributionJob({ workspaceId: f.workspaceId, jobId: deployments["web-b"].job_id, actorUserId: f.actor });
+  await operations.setRolloutState({ workspaceId: f.workspaceId, groupId: f.groupId, rolloutId: lab.rolloutId, state: "deploying", actorUserId: f.actor });
+  await lab.advance();
+  await lab.run("web-b", "succeeded");
+  await lab.run("tail", "succeeded");
+  assert.equal(await lab.rolloutState(), "verified");
+  deployments = await lab.deployments();
+  const after = await lab.snapshotOf(["canary", "web-a"]);
+  assert.equal(after.canary.job, earlier.canary.job, "the earlier destinations were never redeployed");
+  assert.equal(after["web-a"].job, earlier["web-a"].job);
+  assert.equal(await lab.deployJobCount(), 4);
+});
+
+test("a required failure inside a wave pauses the rollout without disturbing its verified sibling or later waves", async () => {
+  const f = await fixture();
+  const lab = await waveLab(f, [
+    { name: "canary-a", wave: 0 },
+    { name: "canary-b", wave: 0 },
+    { name: "rest", wave: 1 },
+  ], { maxParallel: 2 });
+  await lab.advance();
+  const claimedA = await lab.claim("canary-a");
+  const claimedB = await lab.claim("canary-b");
+  assert.ok(claimedA && claimedB, "both destinations of the same wave run together");
+  await lab.report(claimedA, "succeeded");
+  await lab.advance();
+  const verified = await lab.snapshotOf(["canary-a"]);
+  await lab.report(claimedB, "failed");
+  const run = await lab.advance();
+
+  assert.equal(run.reason, "required_consumer_failed");
+  assert.equal(await lab.rolloutState(), "paused");
+  const deployments = await lab.deployments();
+  assert.equal(deployments["canary-b"].stage, "failed");
+  assert.equal(deployments["canary-b"].failure_code, "agent_result_failed");
+  assert.equal(deployments["canary-a"].stage, "served_verified");
+  assert.deepEqual(await lab.snapshotOf(["canary-a"]), verified);
+  assert.equal(deployments.rest.job_id, null);
+  assert.equal(await lab.claim("rest"), null);
+  assert.equal(await lab.deployJobCount(), 2);
+  assert.deepEqual(await lab.current(), { "canary-a": true, "canary-b": false, rest: false });
+  assert.deepEqual(await lab.failedJobIds(), [deployments["canary-b"].job_id]);
+});
+
+test("an optional destination failure never blocks the rollout, a required one does", async (t) => {
+  await t.test("optional canary failure: later required waves still deploy and the rollout ends degraded", async () => {
+    const f = await fixture();
+    const lab = await waveLab(f, [
+      { name: "required-w0", wave: 0 },
+      { name: "optional-w0", wave: 0, required: false },
+      { name: "required-w1", wave: 1 },
+    ], { maxParallel: 2 });
+    await lab.advance();
+    await lab.run("required-w0", "succeeded");
+    const run = await lab.run("optional-w0", "failed");
+    assert.notEqual(run.reason, "required_consumer_failed");
+    assert.notEqual(await lab.rolloutState(), "paused", "an optional failure must not pause the rollout");
+    assert.ok((await lab.deployments())["required-w1"].job_id, "the next wave starts despite the optional failure");
+    const before = await lab.snapshotOf(["required-w0"]);
+    await lab.run("required-w1", "succeeded");
+
+    assert.equal(await lab.rolloutState(), "degraded");
+    const deployments = await lab.deployments();
+    assert.equal(deployments["optional-w0"].stage, "failed");
+    assert.equal(deployments["optional-w0"].failure_code, "agent_result_failed");
+    assert.equal(deployments["required-w0"].stage, "served_verified");
+    assert.equal(deployments["required-w1"].stage, "served_verified");
+    assert.deepEqual(await lab.snapshotOf(["required-w0"]), before, "required destinations are not rolled back");
+    assert.deepEqual(await lab.current(), { "required-w0": true, "optional-w0": false, "required-w1": true });
+    assert.deepEqual(await lab.failedJobIds(), [deployments["optional-w0"].job_id]);
+  });
+
+  await t.test("optional failure in the final wave completes the required destinations and reports degraded", async () => {
+    const f = await fixture();
+    const lab = await waveLab(f, [{ name: "required", wave: 0 }, { name: "optional", wave: 1, required: false }]);
+    await lab.advance();
+    await lab.run("required", "succeeded");
+    await lab.run("optional", "failed");
+    assert.equal(await lab.rolloutState(), "degraded");
+    assert.deepEqual(await lab.current(), { required: true, optional: false });
+  });
+
+  await t.test("a required failure still pauses when an optional destination succeeded", async () => {
+    const f = await fixture();
+    const lab = await waveLab(f, [
+      { name: "optional", wave: 0, required: false },
+      { name: "required", wave: 0 },
+      { name: "later", wave: 1 },
+    ], { maxParallel: 2 });
+    await lab.advance();
+    await lab.run("optional", "succeeded");
+    const run = await lab.run("required", "failed");
+    assert.equal(run.reason, "required_consumer_failed");
+    assert.equal(await lab.rolloutState(), "paused");
+    assert.equal((await lab.deployments()).later.job_id, null);
+    assert.deepEqual(await lab.failedJobIds(), [(await lab.deployments()).required.job_id]);
+  });
+
+  await t.test("a required failure after an earlier optional failure pauses rather than degrades", async () => {
+    const f = await fixture();
+    const lab = await waveLab(f, [
+      { name: "optional", wave: 0, required: false },
+      { name: "required", wave: 1 },
+    ]);
+    await lab.advance();
+    await lab.run("optional", "failed");
+    await lab.run("required", "failed");
+    assert.equal(await lab.rolloutState(), "paused");
+  });
+});
