@@ -45,10 +45,14 @@ function measuredEnvironment() {
 }
 
 /** Named runtime evidence. Capability probes must observe the host, not flags. */
-function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = async () => ({}), strict = process.env.CERTOPS_QUALIFICATION_STRICT === "1", reportPath = process.env.CERTOPS_QUALIFICATION_REPORT, candidateSha = process.env.GITHUB_SHA || null, evidenceLevel = "real-host", fixtureSource } = {}) {
+function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = async () => ({}), strict = process.env.CERTOPS_QUALIFICATION_STRICT === "1", reportPath = process.env.CERTOPS_QUALIFICATION_REPORT, candidateSha = process.env.GITHUB_SHA || null, evidenceLevel = "real-host", fixtureSource, continueOnFailure = process.env.CERTOPS_QUALIFICATION_CONTINUE === "1", maxFailures = Number(process.env.CERTOPS_QUALIFICATION_MAX_FAILURES || 8), debugDetail = process.env.CERTOPS_QUALIFICATION_DEBUG === "1" } = {}) {
   if (!suite) throw new Error("A qualification suite name is required");
+  if (!Number.isInteger(maxFailures) || maxFailures < 1 || maxFailures > 1000) throw new Error("Invalid qualification failure budget");
   const report = { schemaVersion: 1, suite, strict, platform: process.platform, architecture: process.arch, nodeVersion: process.version, startedAt: new Date().toISOString(), requiredCapabilities: [...requiredCapabilities], capabilities: {}, scenarios: [], status: "running" };
   let ready = false;
+  // Diagnostic modes are never release evidence: the validator refuses reports carrying these markers.
+  if (continueOnFailure) report.continueOnFailure = true;
+  if (debugDetail) report.debugDetail = true;
   report.candidateSha = candidateSha;
   report.evidenceLevel = evidenceLevel;
   if (fixtureSource !== undefined) {
@@ -66,6 +70,31 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
     const temporary = `${reportPath}.${process.pid}.tmp`;
     await fs.writeFile(temporary, JSON.stringify(report, null, 2) + "\n");
     await fs.rename(temporary, reportPath);
+  }
+  // Failure triage metadata. Release evidence keeps only the error class, a fixed-shape code and the
+  // source location; debug mode adds the (secret-redacted) message and top stack frames.
+  let failureCount = 0;
+  function describeFailure(error) {
+    const detail = {};
+    if (typeof error?.constructor?.name === "string" && /^[A-Za-z0-9_]{1,64}$/.test(error.constructor.name)) detail.errorClass = error.constructor.name;
+    if (typeof error?.code === "string" && /^[A-Z0-9_]{1,64}$/.test(error.code)) detail.errorCode = error.code;
+    const stack = typeof error?.stack === "string" ? error.stack : "";
+    const frame = stack.match(/\(?([A-Za-z0-9_.-]+\.(?:js|cjs)):(\d{1,6}):\d{1,5}\)?/);
+    if (frame) detail.sourceFrame = `${frame[1]}:${frame[2]}`;
+    if (failureCount > 0) detail.afterEarlierFailure = true;
+    if (debugDetail) {
+      detail.debug = { message: bounded(error?.message ?? error).slice(0, 512) };
+      if (stack) detail.debug.stack = stack.split("\n").slice(0, 12).map((line) => bounded(line.trim())).filter(Boolean);
+      if (Array.isArray(error?.errors)) detail.debug.causes = error.errors.slice(0, 4).map((cause) => ({ message: bounded(cause?.message ?? cause), ...(cause?.qualificationCommand ? { command: cause.qualificationCommand } : {}) }));
+    }
+    return detail;
+  }
+  function noteFailure(error) {
+    const detail = describeFailure(error);
+    failureCount += 1;
+    report.status = "failed";
+    if (failureCount > maxFailures) report.failureBudgetExhausted = true;
+    return detail;
   }
   function add(id, status, extra = {}) {
     if (!id || report.scenarios.some((entry) => entry.id === id)) throw new Error(`Invalid or duplicate scenario: ${id}`);
@@ -96,9 +125,28 @@ function createHostGate({ suite, requiredCapabilities = [], probeCapabilities = 
       const entry = report.scenarios.at(-1);
       await save();
       try { await execute(); entry.status = "passed"; }
-      catch (error) { entry.status = "failed"; report.status = "failed"; throw error; }
+      catch (error) {
+        entry.status = "failed"; report.status = "failed";
+        if (!continueOnFailure) throw error;
+        // Keep running so one run reports every independent failure; the suite still ends as failed.
+        entry.failure = noteFailure(error);
+        if (report.failureBudgetExhausted) throw error;
+      }
       finally { entry.finishedAt = new Date().toISOString(); await save(); }
     },
+    /** Record a failure raised outside a named scenario (for example scratch cleanup) and keep going. */
+    async guard(label, execute) {
+      if (!continueOnFailure) return execute();
+      try { return await execute(); }
+      catch (error) {
+        report.guardedFailures ??= [];
+        report.guardedFailures.push({ label: bounded(label).slice(0, 128), ...noteFailure(error) });
+        await save();
+        if (report.failureBudgetExhausted) throw error;
+        return undefined;
+      }
+    },
+    get continueOnFailure() { return continueOnFailure; },
     async skip(id, reason) {
       if (!reason) throw new Error("Skipped scenarios require a reason");
       add(id, "skipped", { reason: bounded(reason) }); await save();

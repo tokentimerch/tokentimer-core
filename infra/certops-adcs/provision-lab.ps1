@@ -8,6 +8,8 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [ValidateSet('2019','2022','2025')][string]$WindowsVersion = '2022',
   [ValidateSet('en-US','de-DE','fr-FR')][string]$Language = 'en-US',
   [ValidateSet('comprehensive','operator-acceptance')][string]$QualificationScope = 'comprehensive',
+  [ValidateSet('0','1')][string]$DebugMode = '0',
+  [ValidateSet('0','1')][string]$ContinueOnFailure = '1',
   [ValidateSet('0','1')][string]$ResponseLossExperiment = '0',
   [ValidateSet('0','1')][string]$PendingElapsedQualification = '0',
   [ValidateSet('0','1')][string]$IssuerReassignment = '0',
@@ -210,7 +212,7 @@ try {
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
-  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
+  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole","ContinueOnFailure=$ContinueOnFailure","DebugDetail=$DebugMode");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
   $nativeExecutionFailure=$null
   try {
     # The focused CA oracle requires an isolated request set. Package acceptance

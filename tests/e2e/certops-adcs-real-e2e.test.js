@@ -14,6 +14,10 @@ const tls = require("node:tls");
 const net = require("node:net");
 const { spawnSync } = require("node:child_process");
 const { createHostGate } = require("../../packages/agent/scripts/host-gate");
+// Journey helpers consult this gate; `qualify*` failures are recorded and the suite keeps running
+// when CERTOPS_QUALIFICATION_CONTINUE=1 (the suite still ends as failed).
+let activeGate;
+require("./helpers/certops-adcs-soft-failures").install(() => activeGate);
 const { createApiFixture } = require("./helpers/certops-api-fixture");
 const { applyRestrictivePermissions } = require("../../packages/agent/src/platform");
 const { hostBinaryName } = require("../../packages/agent/scripts/build-windows-service-host");
@@ -107,6 +111,7 @@ test("Domain-backed AD CS real API agent CNG and IIS", { timeout: process.env.CE
   const excludedHierarchyScenarios=new Set([...pendingCaJourney.REQUIRED_SCENARIOS,...pendingNewKeyJourney.REQUIRED_SCENARIOS,"adcs-real-ca-same-key-renewal-preserves-confirmed-pin","adcs-real-ca-key-change-refuses-installation","adcs-real-ca-revalidation-recovers-confirmed-new-key"]);
   const gate = createHostGate({ suite: issuerSwitch ? issuerSwitchJourney.SUITE : elapsedPending ? "enterprise-adcs-elapsed-pending-real" : hierarchy ? "enterprise-adcs-hierarchy-real" : "enterprise-adcs-real", strict: true, reportPath: process.env.CERTOPS_ADCS_REPORT, requiredCapabilities: ["windows", "elevated", "domain", "api", "qualifiedBuild",...(!elapsedPending && !issuerSwitch ? ["browserRuntime","dashboard"] : [])], probeCapabilities: async () => ({ ...(!elapsedPending && !issuerSwitch ? { browserRuntime: {available:(()=>{try{const browserRuntime=JSON.parse(fs.readFileSync("C:\\ttqualification\\browser-runtime.json","utf8"));if(browserRuntime.candidateSha!==process.env.GITHUB_SHA || browserRuntime.playwrightVersion!==require("../../package.json").devDependencies.playwright || browserRuntime.browserCache!=="C:\\ttqualification\\browser-cache")return false;process.env.PLAYWRIGHT_BROWSERS_PATH=browserRuntime.browserCache;return fs.existsSync(require("playwright").chromium.executablePath());}catch{return false;}})()},dashboard:{available:await (async()=>{try{const response=await fetch(new URL("/login",url),{signal:AbortSignal.timeout(10000)});return response.ok&&(await response.text()).includes('id="root"');}catch{return false;}})()} } : {}), windows: { available: true, evidence: { release: requestedVersion, build: osBuild, uiCulture: ps("(Get-UICulture).Name") } }, elevated: { available: true }, domain: { available: true }, api: { available: (await fetch(new URL("/health",url),{signal:AbortSignal.timeout(10000)})).ok }, qualifiedBuild: { available: require("../../packages/agent/src/capabilities/qualified-capabilities.generated").qualified?.includes("adcs-enroll-v1") || false } }) });
   if(hierarchy){const selectedScenario=gate.scenario;gate.scenario=(id,run)=>excludedHierarchyScenarios.has(id) ? Promise.resolve() : selectedScenario(id,run);}
+  activeGate=gate;
   await gate.preflight();
   gate.report.fixtureSource={file:"tests/e2e/certops-adcs-real-e2e.test.js",sha256:crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex")};
   if(issuerSwitch)gate.report.fixtureSource={file:issuerSwitchJourney.SOURCE,sha256:crypto.createHash("sha256").update(fs.readFileSync(path.resolve(__dirname,"../..",issuerSwitchJourney.SOURCE))).digest("hex")};
