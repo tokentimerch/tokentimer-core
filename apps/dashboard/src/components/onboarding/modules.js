@@ -162,7 +162,6 @@ export const GOALS = {
     requires: ['certops.core', 'certops.vault_distribution'],
     area: 'certops',
     certopsObjective: 'vault',
-    candidate: true,
   },
 };
 

@@ -67,14 +67,36 @@ describe("onboarding capabilities", () => {
     assert.equal(noRole.authorized, UNKNOWN);
   });
 
-  it("keeps gated features visibly gated", () => {
-    const items = evaluateCapabilities({ ...manager, workspaceRole: "admin" });
+  it("treats AD CS and Vault distribution as qualified since 0.18.0", () => {
+    const items = evaluateCapabilities({
+      ...manager,
+      workspaceRole: "admin",
+      certopsEnabled: true,
+    });
     for (const id of ["certops.adcs", "certops.vault_distribution"]) {
       const cap = find(items, id);
+      assert.notEqual(cap.qualified, false);
+      assert.notEqual(cap.state, "candidate");
+      assert.ok(!cap.blockers.some((b) => b.code === "FEATURE_NOT_QUALIFIED"));
+    }
+  });
+
+  it("still keeps a feature visibly gated when an edition marks it unqualified", () => {
+    registerCapabilityOverride("certops.adcs", () => ({ qualified: false }));
+    try {
+      const cap = find(
+        evaluateCapabilities({
+          ...manager,
+          workspaceRole: "admin",
+          certopsEnabled: true,
+        }),
+        "certops.adcs",
+      );
       assert.equal(cap.qualified, false);
       assert.equal(cap.state, "candidate");
       assert.equal(cap.availableActions.length, 0);
-      assert.ok(cap.blockers.some((b) => b.code === "FEATURE_NOT_QUALIFIED"));
+    } finally {
+      resetCapabilityOverrides();
     }
   });
 

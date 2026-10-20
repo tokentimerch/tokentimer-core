@@ -86,7 +86,6 @@ export function nextSteps(goalId) {
     case 'certops_vault':
       return [
         'Run a verified rollout once your agents declare the distribution capabilities.',
-        'Keep this as a candidate feature until it is qualified for production.',
       ];
     default:
       return [thresholds];

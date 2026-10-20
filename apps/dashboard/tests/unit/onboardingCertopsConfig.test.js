@@ -40,10 +40,14 @@ describe('support matrix', () => {
       'linux',
       'windows',
     ]);
-    // Vault distribution exists only on Linux and is a candidate.
+    // Vault distribution exists only on Linux and is qualified since 0.18.0.
     const vault = infrastructuresFor('vault');
     expect(vault.map(i => i.id)).toEqual(['linux']);
-    expect(vault[0].status).toBe('candidate');
+    expect(vault[0].status).toBe('qualified');
+    // The AD CS guide is unverified on a real host, so it stays a candidate.
+    expect(infrastructuresFor('adcs').map(i => [i.id, i.status])).toEqual([
+      ['windows', 'candidate'],
+    ]);
   });
 
   it('never offers unsupported combinations', () => {

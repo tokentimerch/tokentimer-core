@@ -245,7 +245,8 @@ describe("Onboarding sessions", function () {
     const endpoint = asOwner.body.items.find((c) => c.id === "monitoring.endpoint");
     expect(endpoint.state).to.equal("ready");
     const adcs = asOwner.body.items.find((c) => c.id === "certops.adcs");
-    expect(adcs.state).to.equal("candidate");
+    // Qualified in 0.18.0; an edition can still mark it a candidate.
+    expect(adcs.state).to.equal("ready");
 
     const asViewer = await request(BASE)
       .get(path(workspaceId, "/capabilities"))

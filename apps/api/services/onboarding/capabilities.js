@@ -19,8 +19,8 @@ const FACTS = Object.freeze([
 // Features that stay candidates until their real-host release evidence
 // exists. Flip a value only in the release that qualifies it.
 const QUALIFIED_FEATURES = Object.freeze({
-  "certops.adcs": false,
-  "certops.vault_distribution": false,
+  // Qualified in 0.18.0 (agent qualified-capabilities manifest). Add an id here
+  // with false for a feature that ships ahead of its real-host qualification.
 });
 
 const BASE_CAPABILITIES = Object.freeze([
