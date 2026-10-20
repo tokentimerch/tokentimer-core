@@ -21,11 +21,16 @@ param([Parameter(Mandatory)][ValidatePattern('^tt-certops-[0-9]+-[0-9]+$')][stri
   [string]$RetentionCadenceNonce,
   [ValidateSet('none','keygen_intent','prepared','submitting','issued','installing','accepted-before-bind','bound-before-complete')][string]$JournalPhaseExperiment='none',
   [ValidateSet('root','subordinate')][string]$HierarchyRole='root',
+  [ValidateSet('all','issuance','renewals','pending-and-ca','templates-and-uncertain')][string]$Shard='all',
   [ValidateSet('Standard_D2s_v5','Standard_D2as_v5')][string]$VmSize = 'Standard_D2s_v5',
   [Parameter(Mandatory)][ValidatePattern('^[a-z][a-z0-9]{1,49}$')][string]$Location)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'arm-operation.ps1')
 if($QualificationScope -eq 'operator-acceptance' -and ($ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Operator acceptance cannot include fault experiments'}
+# A diagnostic shard runs a subset of the plain comprehensive journeys in its own lab. It is never release evidence.
+if($Shard -ne 'all' -and ($QualificationScope -ne 'comprehensive' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0')){throw 'A diagnostic shard only applies to the plain comprehensive scope'}
+# Production worker and package acceptance are scope-independent; exactly one shard (issuance) carries them.
+$runAcceptance=($Shard -in @('all','issuance'))
 if($JournalPhaseExperiment -notin @('none','submitting','issued','installing') -or $PendingElapsedQualification -ne '0' -or $IssuerReassignment -ne '0' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0'){throw 'Only the core AD CS lab is included; extended campaigns are deferred'}
 if($IssuerReassignment -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $PendingElapsedQualification -ne '0' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $RetentionCadencePrepare -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none')){throw 'Issuer reassignment requires its isolated four-hour two-CA Server2022 en-US profile'}
 if($RetentionCadencePrepare -eq '1' -and ($Hours -ne 4 -or $WindowsVersion -ne '2022' -or $Language -ne 'en-US' -or $HierarchyRole -ne 'root' -or $Retention24hPrepare -ne '0' -or $AdcsTtl24hPrepare -ne '0' -or $PendingElapsedQualification -ne '0' -or $ResponseLossExperiment -ne '0' -or $JournalPhaseExperiment -ne 'none' -or $RetentionCadenceNonce -cnotmatch '^[a-f0-9]{64}$' -or $env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$' -or $ResourceGroup -cne "tt-certops-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")){throw 'Installed retention cadence requires its isolated four-hour Server2022 en-US preparation'}
@@ -212,7 +217,7 @@ try {
   $apiPublic=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $env:RUNNER_TEMP 'certops-api-public.pem')))
   Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'windows-tools.ps1') 'CERTOPS_STAGE=isolated-candidate-windows-tools-built' @("CandidateSha=$candidateSha","ApiPublicPemBase64=$apiPublic","WindowsVersion=$WindowsVersion")
   if($IssuerReassignment -ne '1' -and $PendingElapsedQualification -ne '1' -and $Retention24hPrepare -ne '1' -and $AdcsTtl24hPrepare -ne '1' -and $RetentionCadencePrepare -ne '1'){Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'browser-windows-tools.ps1') 'CERTOPS_STAGE=locked-domain-browser-ready' @("CandidateSha=$candidateSha")}
-  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole","ContinueOnFailure=$ContinueOnFailure","DebugDetail=$DebugMode");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
+  $testParameters=@("DomainPassword=$password","Language=$Language","ResponseLossExperiment=$ResponseLossExperiment","JournalPhaseExperiment=$JournalPhaseExperiment","PendingElapsedQualification=$PendingElapsedQualification","IssuerReassignment=$IssuerReassignment","HierarchyRole=$HierarchyRole","ContinueOnFailure=$ContinueOnFailure","DebugDetail=$DebugMode","Shard=$Shard");if($HierarchyRole -eq 'subordinate'){$testParameters+="RootCertificateBase64=$($publicStageData.CERTOPS_ROOT_CERT)"}
   $nativeExecutionFailure=$null
   try {
     # The focused CA oracle requires an isolated request set. Package acceptance
@@ -221,6 +226,7 @@ try {
       Invoke-Stage 'windows-agent' (Join-Path $PSScriptRoot 'run-windows-tests.ps1') 'CERTOPS_STAGE=real-enterprise-adcs-tests-passed' $testParameters
     }
     $workerExecutionFailure=$null
+    if($runAcceptance){
     try {
       Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-started' @('action=start')
       # Package acceptance always runs without fault injection.
@@ -232,6 +238,7 @@ try {
       try { Invoke-Stage 'control-plane' (Join-Path $PSScriptRoot 'acceptance-worker.sh') 'CERTOPS_STAGE=acceptance-worker-stopped' @('action=stop') }
       catch { if($workerExecutionFailure){Write-Warning 'Production acceptance worker teardown also failed; preserve the original execution failure'}else{throw} }
     }
+    }
   } catch {
     $nativeExecutionFailure=$_
     throw
@@ -239,9 +246,9 @@ try {
     $reportErrors=@();$kinds=@()
     if($QualificationScope -eq 'comprehensive'){
       $kinds=@(if($IssuerReassignment -eq '1'){@('issuer-switch')}elseif($PendingElapsedQualification -eq '1'){@('pending-elapsed')}elseif($HierarchyRole -eq 'subordinate'){@('hierarchy')}else{@('qualification')});if($ResponseLossExperiment -eq '1'){$kinds+='response-loss-experimental'};if($JournalPhaseExperiment -ne 'none'){$kinds+='journal-phase-experimental'}
-      if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
+      if($IssuerReassignment -eq '0' -and $PendingElapsedQualification -eq '0' -and $HierarchyRole -eq 'root' -and $Shard -eq 'all' -and $WindowsVersion -eq '2022' -and $Language -eq 'en-US' -and $ResponseLossExperiment -eq '0' -and $JournalPhaseExperiment -eq 'none'){$kinds+='browser-enrollment';$kinds+='uncertain-abandon'}
     }
-    $kinds+=@('acceptance-worker','package-acceptance')
+    if($runAcceptance){$kinds+=@('acceptance-worker','package-acceptance')}
     foreach($kind in $kinds){try{& (Join-Path $PSScriptRoot 'read-report.ps1') -ResourceGroup $ResourceGroup -ReportKind $kind}catch{$reportErrors+=$kind}}
     if($reportErrors.Count){
       # Missing reports are expected when an earlier mandatory stage never ran.
