@@ -28,8 +28,11 @@ const AMBER = {
 };
 
 /**
- * A slim warning that points to the setup guide. It wraps on narrow screens
- * instead of squeezing the buttons.
+ * A slim warning that points to the setup guide. The banner spans the page
+ * column so it lines up with the cards, but its content stays together on the
+ * left: stretching the text would push the buttons to the far edge of a wide
+ * screen, away from the message they belong to. On narrow screens the actions
+ * wrap under the text.
  */
 export default function SetupBanner({
   title,
@@ -62,13 +65,13 @@ export default function SetupBanner({
         color={text}
       >
         <AlertIcon color={accent} />
-        <AlertDescription fontSize='sm' flex='1 1 260px'>
+        <AlertDescription fontSize='sm' flex='0 1 auto' maxW='60ch'>
           <Box as='span' fontWeight='semibold'>
             {title}
           </Box>{' '}
           {message}
         </AlertDescription>
-        <HStack spacing={2} flexShrink={0}>
+        <HStack spacing={2} flexShrink={0} ml={{ base: 0, md: 2 }}>
           <PrimaryButton size='sm' onClick={onAction}>
             {actionLabel}
           </PrimaryButton>

@@ -20,7 +20,14 @@ export default function CertopsSetupBanner({
   const { workspaceId } = useWorkspace();
   const canManage = useCertOpsCanManage();
   const navigate = useNavigate();
-  const [state, setState] = useState({ session: null, summary: null });
+  // Tied to the workspace it was read for, so a switch never shows (or hides)
+  // the banner using the previous workspace's answer.
+  const [state, setState] = useState({
+    workspaceId: null,
+    session: null,
+    summary: null,
+  });
+  const current = state.workspaceId === workspaceId ? state : null;
   const session = useRef(null);
 
   useEffect(() => {
@@ -35,9 +42,11 @@ export default function CertopsSetupBanner({
         ]);
         if (cancelled) return;
         session.current = s;
-        setState({ session: s, summary });
+        setState({ workspaceId, session: s, summary });
       } catch (_) {
-        if (!cancelled) setState({ session: null, summary: null });
+        if (!cancelled) {
+          setState({ workspaceId, session: null, summary: null });
+        }
       }
     })();
     return () => {
@@ -46,9 +55,10 @@ export default function CertopsSetupBanner({
   }, [workspaceId, enabled, canManage, api]);
 
   const hide = async () => {
-    setState(current => ({
-      ...current,
-      session: { ...current.session, status: 'dismissed' },
+    setState(previous => ({
+      ...previous,
+      workspaceId,
+      session: { ...previous.session, status: 'dismissed' },
     }));
     try {
       await api.putSession(workspaceId, CERTOPS_FLOW, {
@@ -65,8 +75,8 @@ export default function CertopsSetupBanner({
       enabled,
       paused,
       canManage,
-      summary: state.summary,
-      session: state.session,
+      summary: current?.summary ?? null,
+      session: current?.session ?? null,
     })
   ) {
     return null;
