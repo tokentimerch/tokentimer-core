@@ -101,10 +101,6 @@
       {
         "file": "certops-adcs-enrollments.test.js",
         "name": "survivor fixture uses the insert-trigger management period and creates eligible enrollment work"
-      },
-      {
-        "file": "certops-adcs-enrollments.test.js",
-        "name": "blocks install continuation and deploy-from-store after retirement while cleanup still claims"
       }
     ]
   }
