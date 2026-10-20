@@ -4808,6 +4808,21 @@ const migrations = [
     name: "certops_distribution_transfer",
     sql: fs.readFileSync(require("path").join(__dirname, "076-certops-distribution-transfer.sql"), "utf8"),
   },
+  {
+    version: 77,
+    name: "operator_connections",
+    sql: fs.readFileSync(require("path").join(__dirname, "077-operator-connections.sql"), "utf8"),
+  },
+  {
+    version: 78,
+    name: "operator_enrollment_grants",
+    sql: fs.readFileSync(require("path").join(__dirname, "078-operator-enrollment-grants.sql"), "utf8"),
+  },
+  {
+    version: 79,
+    name: "operator_action_requests",
+    sql: fs.readFileSync(require("path").join(__dirname, "079-operator-action-requests.sql"), "utf8"),
+  },
 ];
 
 

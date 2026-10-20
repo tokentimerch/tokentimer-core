@@ -14,6 +14,40 @@ function isCertOpsMachineTokenCsrfExemptPath(requestPath, req = null) {
   );
 }
 
+// Operator routes authenticate with a bearer credential only. A browser cannot
+// attach one cross-site, so CSRF does not apply to a request that carries an
+// operator credential and no cookies. A request that carries cookies keeps the
+// full CSRF check, so a session can never ride this exemption.
+function isOperatorBearerCsrfExemptRequest(requestPath, req = null) {
+  if (!req) return false;
+  const path = String(requestPath || "");
+  const header = req.headers?.authorization;
+  const cookieHeader = req.headers?.cookie;
+  const hasCookieHeader = typeof cookieHeader === "string" && cookieHeader.trim() !== "";
+  const hasParsedCookies =
+    req.cookies && typeof req.cookies === "object" && Object.keys(req.cookies).length > 0;
+  if (hasCookieHeader || hasParsedCookies) return false;
+
+  // Redeeming an enrollment grant: one exact route, a grant bearer, no cookies.
+  if (
+    String(req.method || "").toUpperCase() === "POST" &&
+    (path === "/api/v1/operator/enroll/redeem" || path === "/v1/operator/enroll/redeem")
+  ) {
+    return typeof header === "string" && /^Bearer[ \t]+ttopg_/i.test(header.trim());
+  }
+
+  const remainder = path.startsWith("/api/v1/operator/")
+    ? path.slice("/api/v1/operator/".length)
+    : path.startsWith("/v1/operator/")
+      ? path.slice("/v1/operator/".length)
+      : null;
+  // Plain segments only, matching the early operator guard.
+  if (remainder === null || !/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/i.test(remainder)) {
+    return false;
+  }
+  return typeof header === "string" && /^Bearer[ \t]+ttopc_/i.test(header.trim());
+}
+
 function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
   const allowPath =
     typeof options.allowPath === "function" ? options.allowPath : () => false;
@@ -51,4 +85,5 @@ function createCsrfExemptMiddleware(doubleCsrfProtection, options = {}) {
 module.exports = {
   createCsrfExemptMiddleware,
   isCertOpsMachineTokenCsrfExemptPath,
+  isOperatorBearerCsrfExemptRequest,
 };

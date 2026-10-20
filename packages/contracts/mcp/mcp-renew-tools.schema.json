@@ -1,0 +1,309 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tokentimer.io/contracts/mcp/mcp-renew-tools.schema.json",
+  "title": "MCP renew request tools",
+  "description": "Input and output shapes for requesting a certificate renewal through an operator connection. A request never executes anything by itself: it creates a job that waits for approval from a different person. Inputs are closed, so there is no field for force, skip-approval or acknowledgement.",
+  "definitions": {
+    "uuid": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/uuid"
+    },
+    "timestamp": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/timestamp"
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/timestamp"
+        }
+      ]
+    },
+    "untrustedText": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/untrustedText"
+    },
+    "cursor": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/cursor"
+    },
+    "limit": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/limit"
+    },
+    "completeness": {
+      "$ref": "https://tokentimer.io/contracts/mcp/mcp-common.schema.json#/definitions/completeness"
+    },
+    "planHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "requestState": {
+      "type": "string",
+      "enum": [
+        "pending_approval",
+        "approved",
+        "executing",
+        "succeeded",
+        "failed",
+        "rejected",
+        "expired",
+        "cancelled",
+        "stale"
+      ]
+    },
+    "tt_preview_renew_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityId"
+      ],
+      "properties": {
+        "identityId": {
+          "$ref": "#/definitions/uuid"
+        }
+      }
+    },
+    "tt_preview_renew_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planId",
+        "planHash",
+        "expiresAt",
+        "effect"
+      ],
+      "properties": {
+        "planId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "planHash": {
+          "$ref": "#/definitions/planHash"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/timestamp"
+        },
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "lifecycleEffect",
+            "issuerEffect",
+            "standingRenewal",
+            "approvalAuthority",
+            "warnings",
+            "target"
+          ],
+          "properties": {
+            "operation": {
+              "type": "string",
+              "enum": [
+                "renew"
+              ]
+            },
+            "lifecycleEffect": {
+              "type": "string",
+              "enum": [
+                "renews_certificate"
+              ]
+            },
+            "issuerEffect": {
+              "type": "string",
+              "enum": [
+                "contacts_issuer"
+              ]
+            },
+            "standingRenewal": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "createsAutomaticRenewal",
+                "futureRenewalsNeedApproval"
+              ],
+              "properties": {
+                "createsAutomaticRenewal": {
+                  "type": "boolean"
+                },
+                "futureRenewalsNeedApproval": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "approvalAuthority": {
+              "type": "string",
+              "enum": [
+                "other_manager_or_admin"
+              ]
+            },
+            "warnings": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "maxLength": 300
+              }
+            },
+            "target": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "commonName",
+                "notAfter"
+              ],
+              "properties": {
+                "commonName": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/definitions/untrustedText"
+                    }
+                  ]
+                },
+                "notAfter": {
+                  "$ref": "#/definitions/nullableTimestamp"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tt_request_renew_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planId",
+        "planHash",
+        "requestId"
+      ],
+      "properties": {
+        "planId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "planHash": {
+          "$ref": "#/definitions/planHash"
+        },
+        "requestId": {
+          "$ref": "#/definitions/uuid"
+        }
+      }
+    },
+    "requestRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestRecordId",
+        "requestId",
+        "state",
+        "stateReason",
+        "jobId",
+        "replayed",
+        "approvalExpiresAt"
+      ],
+      "properties": {
+        "requestRecordId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "requestId": {
+          "$ref": "#/definitions/uuid"
+        },
+        "state": {
+          "$ref": "#/definitions/requestState"
+        },
+        "stateReason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,63}$"
+            }
+          ]
+        },
+        "jobId": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/uuid"
+            }
+          ]
+        },
+        "replayed": {
+          "type": "boolean"
+        },
+        "approvalExpiresAt": {
+          "$ref": "#/definitions/nullableTimestamp"
+        }
+      }
+    },
+    "tt_request_renew_output": {
+      "$ref": "#/definitions/requestRecord"
+    },
+    "tt_get_action_request_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestRecordId"
+      ],
+      "properties": {
+        "requestRecordId": {
+          "$ref": "#/definitions/uuid"
+        }
+      }
+    },
+    "tt_get_action_request_output": {
+      "$ref": "#/definitions/requestRecord"
+    },
+    "tt_list_my_requests_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "$ref": "#/definitions/limit"
+        },
+        "cursor": {
+          "$ref": "#/definitions/cursor"
+        }
+      }
+    },
+    "tt_list_my_requests_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "completeness"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/definitions/requestRecord"
+          }
+        },
+        "completeness": {
+          "$ref": "#/definitions/completeness"
+        }
+      }
+    },
+    "tt_cancel_request_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestRecordId"
+      ],
+      "properties": {
+        "requestRecordId": {
+          "$ref": "#/definitions/uuid"
+        }
+      }
+    },
+    "tt_cancel_request_output": {
+      "$ref": "#/definitions/requestRecord"
+    }
+  }
+}

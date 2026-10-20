@@ -208,6 +208,13 @@ DB_SSL: {{ .Values.postgresql.external.sslMode | quote }}
 ALERT_THRESHOLDS: {{ .Values.config.alertThresholds | quote }}
 {{- end }}
 CERTOPS_ENABLED: {{ ternary "true" "false" (not (eq .Values.config.certopsEnabled false)) | quote }}
+{{- /* Both assistant flags fail closed: only an explicit true turns them on. */}}
+{{- if eq .Values.config.mcpOperatorInterfaceEnabled true }}
+MCP_OPERATOR_INTERFACE_ENABLED: "true"
+{{- end }}
+{{- if and (eq .Values.config.mcpOperatorInterfaceEnabled true) (eq .Values.config.mcpOperatorWritesEnabled true) }}
+MCP_OPERATOR_WRITES_ENABLED: "true"
+{{- end }}
 {{- /* Explicit checks, not truthiness: retention 0 means "store nothing".
        Reject values the API would silently replace (retention > 3650, or a
        daily-byte quota above Number.MAX_SAFE_INTEGER which becomes unlimited).

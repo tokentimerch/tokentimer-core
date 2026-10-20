@@ -375,6 +375,33 @@ function getDiagnosticBootstrapLimiter() {
   return diagnosticBootstrapLimiter;
 }
 
+// Redeeming an enrollment grant is reachable without a session, so it is
+// limited per client address. A grant is a 256-bit secret, so this is
+// defense in depth against noise and probing, not the primary protection.
+const operatorEnrollmentLimiter = rateLimit({
+  windowMs: intEnv("OPERATOR_ENROLLMENT_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
+  max: Math.max(
+    1,
+    intEnv("OPERATOR_ENROLLMENT_RATE_LIMIT_MAX", isDevOrTest ? 1000 : 20),
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn("RATE_LIMIT_EXCEEDED", {
+      type: "operator_enrollment",
+      ip: resolveClientIp(req),
+    });
+    res.status(429).json({
+      error: "Too many enrollment attempts. Please wait before trying again.",
+      code: "OPERATOR_ENROLLMENT_RATE_LIMITED",
+    });
+  },
+});
+
+function getOperatorEnrollmentLimiter() {
+  return operatorEnrollmentLimiter;
+}
+
 let resolvedApiLimiter;
 /**
  * Returns the API rate-limit middleware (resolved once per process).
@@ -533,6 +560,7 @@ module.exports = {
   getTwilioWebhookLimiter,
   getDomainCheckerLookupLimiter,
   getDiagnosticBootstrapLimiter,
+  getOperatorEnrollmentLimiter,
   getTestApiLimiter,
   csrfTokenLimiter,
   createCsrfTokenLimiter,

@@ -97,6 +97,10 @@ services:
       # enforces it; 0 stores no lines. Empty = code defaults.
       CERTOPS_AGENT_LOG_RETENTION_DAYS: ${CERTOPS_AGENT_LOG_RETENTION_DAYS:-}
       CERTOPS_AGENT_LOG_DAILY_BYTES: ${CERTOPS_AGENT_LOG_DAILY_BYTES:-}
+      # Assistant (MCP) operator interface. Off by default. Writes need the
+      # second flag plus an admin setting on each workspace.
+      MCP_OPERATOR_INTERFACE_ENABLED: ${MCP_OPERATOR_INTERFACE_ENABLED:-false}
+      MCP_OPERATOR_WRITES_ENABLED: ${MCP_OPERATOR_WRITES_ENABLED:-false}
 
       # Auth
       SESSION_SECRET: ${SESSION_SECRET:?Session secret is required}

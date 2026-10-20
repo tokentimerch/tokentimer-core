@@ -540,6 +540,31 @@ agent_log_null="$(helm template "${RELEASE_NAME}" "${CHART}" \
   --set config.certopsAgentLogRetentionDays=null \
   --show-only templates/configmap.yaml)"
 assert_not_contains "${agent_log_null}" 'CERTOPS_AGENT_LOG_RETENTION_DAYS' "null agent log retention defers to code default"
+
+echo "==> assert assistant interface flags are off by default and writes cannot turn on alone"
+assert_not_contains "$(cat "${proxy_disabled}")" 'MCP_OPERATOR_' "default omit MCP_OPERATOR_*"
+mcp_writes_alone="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorWritesEnabled=true \
+  --show-only templates/configmap.yaml)"
+assert_not_contains "${mcp_writes_alone}" 'MCP_OPERATOR_' "writes flag without the interface flag renders nothing"
+mcp_read_only="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorInterfaceEnabled=true \
+  --show-only templates/configmap.yaml)"
+assert_contains "${mcp_read_only}" 'MCP_OPERATOR_INTERFACE_ENABLED: "true"' "interface flag renders"
+assert_not_contains "${mcp_read_only}" 'MCP_OPERATOR_WRITES_ENABLED' "interface alone leaves writes off"
+mcp_both="$(helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorInterfaceEnabled=true \
+  --set config.mcpOperatorWritesEnabled=true \
+  --show-only templates/configmap.yaml)"
+assert_contains "${mcp_both}" 'MCP_OPERATOR_WRITES_ENABLED: "true"' "both flags render writes"
+if helm template "${RELEASE_NAME}" "${CHART}" \
+  --set config.adminEmail=ci@example.com \
+  --set config.mcpOperatorInterfaceEnabled=maybe >/dev/null 2>&1; then
+  fail "accepted a non-boolean mcpOperatorInterfaceEnabled"
+fi
 for invalid in -1 1.5 garbage 3651; do
   if helm template "${RELEASE_NAME}" "${CHART}" \
     --set config.adminEmail=ci@example.com \

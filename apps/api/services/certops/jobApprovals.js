@@ -69,6 +69,11 @@ const CERTOPS_APPROVAL_APPROVER_REQUIRED =
   "CERTOPS_APPROVAL_APPROVER_REQUIRED";
 const CERTOPS_APPROVAL_REASON_INVALID = "CERTOPS_APPROVAL_REASON_INVALID";
 
+// 409-shaped: the job came from an operator connection that has ended, or its
+// approval window passed. The request is no longer something a person should
+// approve, and nothing about the job is changed by refusing.
+const CERTOPS_APPROVAL_REQUEST_STALE = "CERTOPS_APPROVAL_REQUEST_STALE";
+
 const MAX_APPROVAL_REASON_LENGTH = 1024;
 
 /**
@@ -129,6 +134,36 @@ function approvalFromRow(row) {
     reason: row.reason ?? null,
     createdAt: dateToIso(row.created_at),
   };
+}
+
+/**
+ * A job created through an operator connection may only be approved while the
+ * connection is still good and the approval window is open (ADR-0015 sections
+ * 8 and 9). The connection row is locked, so a revocation and an approval
+ * cannot both succeed: whichever commits first decides, and the other sees it.
+ * Jobs with no connection are untouched.
+ */
+async function assertOperatorRequestStillApprovable(db, job) {
+  if (!job.requestedByConnectionId) return;
+  const conn = await db.query(
+    `SELECT status, expires_at FROM operator_connections WHERE id = $1 FOR SHARE`,
+    [job.requestedByConnectionId],
+  );
+  const row = conn.rows[0];
+  const ended = !row || row.status !== "active" || new Date(row.expires_at) <= new Date();
+  const request = await db.query(
+    `SELECT approval_expires_at, state_override FROM operator_action_requests
+      WHERE job_id = $1 AND workspace_id = $2`,
+    [job.id, job.workspaceId],
+  );
+  const req = request.rows[0];
+  const lapsed = req && (req.state_override || new Date(req.approval_expires_at) <= new Date());
+  if (ended || lapsed) {
+    throw serviceError(
+      "This request came from an assistant connection that has ended or whose approval window passed",
+      CERTOPS_APPROVAL_REQUEST_STALE,
+    );
+  }
 }
 
 /**
@@ -252,7 +287,7 @@ async function loadJobForApproval(db, workspaceId, jobId) {
   const result = await db.query(
     `SELECT id, workspace_id, operation, status, mode, payload,
             subject_type, subject_id,
-            requested_by_user_id, requested_by_api_token_id,
+            requested_by_user_id, requested_by_api_token_id, requested_by_connection_id,
             approved_by_user_id, approved_at, approved_payload_hash,
             approved_canonical_intent_hash
        FROM certificate_jobs
@@ -376,6 +411,7 @@ async function approveJob(options) {
     );
   }
   assertNonRequester(job, approverUserId);
+  await assertOperatorRequestStillApprovable(db, job);
 
   // H6: approval binds against a fully resolved renewal profile snapshot in
   // the job payload, not a mutable certificate_profiles row reference.
@@ -627,6 +663,7 @@ module.exports = {
   CERTOPS_APPROVAL_APPROVER_REQUIRED,
   CERTOPS_APPROVAL_JOB_NOT_PENDING_APPROVAL,
   CERTOPS_APPROVAL_REASON_INVALID,
+  CERTOPS_APPROVAL_REQUEST_STALE,
   CERTOPS_APPROVAL_SELF_APPROVAL_FORBIDDEN,
   MAX_APPROVAL_REASON_LENGTH,
   approveJob,

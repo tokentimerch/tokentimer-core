@@ -535,6 +535,12 @@ config:
   # Bytes of new console lines each workspace may store per UTC day.
   # Empty or 0 = no cap. Counted across API replicas.
   certopsAgentLogDailyBytes: ""
+  # Assistant (MCP) operator interface. Both are off by default. The first
+  # enables the /api/v1/operator namespace and connection management. The
+  # second additionally allows assistant renewal requests, and each workspace
+  # admin must still switch them on for that workspace.
+  mcpOperatorInterfaceEnabled: false
+  mcpOperatorWritesEnabled: false
 
   # CertOps encryption keys. Each must be 64 hex chars (32 bytes).
   # These wrap, at rest, the job-signing private keys and the agent

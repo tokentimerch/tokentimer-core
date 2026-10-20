@@ -2,6 +2,10 @@
 
 const crypto = require("crypto");
 
+const {
+  safeCompareSha256Hex: sharedSafeCompareSha256Hex,
+  sha256Hex: sharedSha256Hex,
+} = require("../credentials/primitives");
 const { pool } = require("../../db/database");
 const { containsPrivateKeyMaterial } = require("../../utils/secretMaterial");
 const { assertSafePublicValue } = require("./jobs");
@@ -281,22 +285,11 @@ function tokenPrefixFor(rawToken) {
 }
 
 function sha256Hex(value) {
-  // High-entropy API token lookup hash, not a password KDF.
-  // codeql[js/insufficient-password-hash]
-  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+  return sharedSha256Hex(value);
 }
 
 function safeCompareSha256Hex(candidateHash, storedHash) {
-  const candidateIsSha256 = /^[a-f0-9]{64}$/.test(candidateHash);
-  const storedIsSha256 = /^[a-f0-9]{64}$/.test(String(storedHash || ""));
-  const candidate = candidateIsSha256
-    ? Buffer.from(candidateHash, "hex")
-    : Buffer.alloc(32);
-  const stored = storedIsSha256
-    ? Buffer.from(storedHash, "hex")
-    : Buffer.alloc(32);
-  const matches = crypto.timingSafeEqual(candidate, stored);
-  return candidateIsSha256 && storedIsSha256 && matches;
+  return sharedSafeCompareSha256Hex(candidateHash, storedHash);
 }
 
 function scopesFromRow(row) {
