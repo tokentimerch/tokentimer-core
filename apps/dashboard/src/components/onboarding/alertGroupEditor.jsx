@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { FiX } from 'react-icons/fi';
 import PrimaryButton from './PrimaryButton.jsx';
 import {
   Badge,
@@ -235,7 +236,8 @@ export default function GroupEditor({
             </Text>
             <DashboardActionButton
               size='xs'
-              variant='ghost'
+              variant='outline'
+              leftIcon={<FiX />}
               onClick={() =>
                 setNewPeople(prev => prev.filter(x => x.email !== p.email))
               }
@@ -357,7 +359,7 @@ export default function GroupEditor({
 
       <HStack justify='flex-end'>
         {onCancel ? (
-          <DashboardActionButton variant='ghost' onClick={onCancel}>
+          <DashboardActionButton variant='outline' onClick={onCancel}>
             Cancel
           </DashboardActionButton>
         ) : null}

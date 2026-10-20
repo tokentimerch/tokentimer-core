@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { FiList } from 'react-icons/fi';
 import { useSearchParams } from 'react-router';
 import {
   Badge,
@@ -130,8 +131,9 @@ export function GoalStep({ ctx }) {
         {areaFilter ? (
           <Box>
             <DashboardActionButton
-              variant='ghost'
+              variant='outline'
               size='sm'
+              leftIcon={<FiList />}
               onClick={() => setParams({}, { replace: true })}
             >
               Show all goals

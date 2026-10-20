@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import { Badge, HStack, Text, VStack } from '@chakra-ui/react';
 import {
   DashboardActionButton,
@@ -110,7 +111,11 @@ export function AgentStep({ ctx }) {
             the API, and run the certificate worker. Workspace managers can then
             install agents.
           </Text>
-          <DashboardActionButton variant='outline' onClick={poll}>
+          <DashboardActionButton
+            leftIcon={<FiRefreshCw />}
+            variant='outline'
+            onClick={poll}
+          >
             Check again
           </DashboardActionButton>
         </VStack>

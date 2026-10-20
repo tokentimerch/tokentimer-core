@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import {
   Alert,
   AlertDescription,
@@ -83,6 +84,7 @@ export default function AdcsStep({ ctx }) {
       docs={ctx.docs('certops.adcs', 'Microsoft AD CS guide')}
       actions={
         <DashboardActionButton
+          leftIcon={<FiRefreshCw />}
           variant='outline'
           onClick={check}
           isLoading={checking}

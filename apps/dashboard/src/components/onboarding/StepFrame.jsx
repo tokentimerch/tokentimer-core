@@ -5,12 +5,14 @@ import {
   Badge,
   Box,
   HStack,
+  Icon,
   Link,
   Text,
   VStack,
 } from '@chakra-ui/react';
+import { FiBookOpen, FiExternalLink } from 'react-icons/fi';
 import { DashboardPanel, DashboardPanelHeader } from '../DashboardPrimitives';
-import { useDashboardTheme } from '../../hooks/useDashboardTheme';
+import { useDashboardThemeColors } from '../../hooks/useDashboardTheme';
 
 export const STEP_KINDS = ['ui', 'runbook', 'handoff', 'verify', 'info'];
 
@@ -30,6 +32,40 @@ const KIND_BADGE = {
 };
 
 /**
+ * A documentation link as a small bordered chip, in the same family as the
+ * guide cards on Alert Preferences: it looks clickable, shows that it leaves
+ * the app, and has a hover and focus state.
+ */
+export function DocsLink({ href, children }) {
+  const { dashboard } = useDashboardThemeColors();
+  const color = dashboard.accent.interactiveForeground;
+  return (
+    <Link
+      href={href}
+      isExternal
+      display='inline-flex'
+      alignItems='center'
+      gap={1.5}
+      px={2.5}
+      py={1}
+      fontSize='xs'
+      fontWeight='semibold'
+      color={color}
+      bg={dashboard.accent.interactiveSurface}
+      borderWidth='1px'
+      borderColor={dashboard.border.subtle}
+      borderRadius='md'
+      transition='border-color 0.15s, background-color 0.15s'
+      _hover={{ textDecoration: 'none', borderColor: color }}
+      _focusVisible={{ boxShadow: 'outline', textDecoration: 'none' }}
+    >
+      {children}
+      <Icon as={FiExternalLink} boxSize={3} aria-hidden='true' />
+    </Link>
+  );
+}
+
+/**
  * One wizard step. The kind decides how the step is framed; the body is the
  * reused form, runbook text or status the caller passes as children. Docs
  * links come from the edition-aware resolver so a missing page is hidden
@@ -44,7 +80,7 @@ export default function StepFrame({
   actions,
   children,
 }) {
-  const { muted } = useDashboardTheme();
+  const { muted } = useDashboardThemeColors();
   assertStepKind(kind);
   const badge = KIND_BADGE[kind];
   const links = docs.filter(link => link && link.url);
@@ -76,20 +112,17 @@ export default function StepFrame({
         ))}
         <Box>{children}</Box>
         {links.length > 0 ? (
-          <HStack spacing={4} flexWrap='wrap' pt={1}>
-            <Text fontSize='xs' color={muted}>
-              Learn more:
-            </Text>
+          <HStack spacing={2} flexWrap='wrap' pt={2} align='center'>
+            <HStack spacing={1.5} color={muted}>
+              <Icon as={FiBookOpen} boxSize={3.5} aria-hidden='true' />
+              <Text fontSize='xs' fontWeight='semibold'>
+                Learn more
+              </Text>
+            </HStack>
             {links.map(link => (
-              <Link
-                key={link.url}
-                href={link.url}
-                isExternal
-                fontSize='xs'
-                color='blue.400'
-              >
+              <DocsLink key={link.url} href={link.url}>
                 {link.label}
-              </Link>
+              </DocsLink>
             ))}
           </HStack>
         ) : null}

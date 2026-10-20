@@ -74,7 +74,7 @@ export function CopyBlock({
           <IconButton
             aria-label={`Copy ${label || 'text'}`}
             size='xs'
-            variant='ghost'
+            variant='outline'
             position='absolute'
             top={1}
             right={1}

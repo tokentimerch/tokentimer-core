@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import {
   Alert,
   AlertDescription,
@@ -169,11 +170,19 @@ export default function IssueStep({ ctx }) {
             Request a staging certificate
           </PrimaryButton>
         ) : view.failed ? (
-          <DashboardActionButton variant='outline' onClick={askAgain}>
+          <DashboardActionButton
+            leftIcon={<FiRefreshCw />}
+            variant='outline'
+            onClick={askAgain}
+          >
             Request again
           </DashboardActionButton>
         ) : (
-          <DashboardActionButton variant='outline' onClick={() => refresh()}>
+          <DashboardActionButton
+            leftIcon={<FiRefreshCw />}
+            variant='outline'
+            onClick={() => refresh()}
+          >
             Check again
           </DashboardActionButton>
         )

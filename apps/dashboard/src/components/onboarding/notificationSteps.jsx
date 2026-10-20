@@ -119,7 +119,7 @@ export function NotificationsStep({ ctx }) {
       actions={
         <>
           <DashboardActionButton
-            variant='ghost'
+            variant='outline'
             onClick={() => ctx.skip('notifications')}
           >
             Keep the defaults
@@ -316,7 +316,7 @@ export function SmtpStep({ ctx }) {
         ]}
         actions={
           <DashboardActionButton
-            variant='ghost'
+            variant='outline'
             onClick={() => ctx.skip('smtp')}
           >
             Continue without it
@@ -365,7 +365,7 @@ export function SmtpStep({ ctx }) {
       actions={
         <>
           <DashboardActionButton
-            variant='ghost'
+            variant='outline'
             onClick={() => ctx.skip('smtp')}
           >
             Skip for now
