@@ -19,7 +19,7 @@ function verifyProof(proof) {
   assert.equal(proof.scope, SCOPE); assert.equal(proof.fixtureOrigin, "operator-created-two-real-system-submissions-of-the-same-public-csr"); assert.equal(proof.resolvedIssuingCaAddress, "10.64.0.4");
   for (const flag of FLAGS) assert.equal(proof[flag], true, flag);
   assert.equal(proof.caRequestsAtFault, 0); for (const field of ["caRequestsAfterOperatorSubmissions", "caRequestsAfterAmbiguousRecovery", "caRequestsAfterExplicitRecovery"]) assert.equal(proof[field], 2);
-  for (const field of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(proof[field]) && proof[field] >= 0 && proof[field] <= 900000);
+  for (const field of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(proof[field]) && proof[field] >= 0 && proof[field] <= require("./certops-adcs-uncertain-abandon").MAX_RECOVERY_WAIT_MS);
   assert.equal(proof.recoveryWaitBudgetMs, proof.leaseRemainingAtFaultMs + 90000); assert.ok(proof.actualLeaseWaitMs + 1000 >= proof.leaseRemainingAtFaultMs + 60000); assert.ok(proof.actualLeaseWaitMs <= proof.recoveryWaitBudgetMs + 1000);
   assert.match(proof.enrollmentId, UUID); assert.match(proof.containerName, /^tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/); assert.equal(proof.containerName, `tokentimer-enr-${proof.enrollmentId}`);
   for (const field of ["csrSpkiSha256", "csrSha256"]) assert.match(proof[field], /^[a-f0-9]{64}$/);

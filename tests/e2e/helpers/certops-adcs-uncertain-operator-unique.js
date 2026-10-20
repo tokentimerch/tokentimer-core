@@ -98,7 +98,8 @@ function verifyProof(p) {
     "actualLeaseWaitMs",
   ])
     assert.ok(
-      Number.isInteger(p[field]) && p[field] >= 0 && p[field] <= 900000,
+      Number.isInteger(p[field]) && p[field] >= 0 &&
+        p[field] <= require("./certops-adcs-uncertain-abandon").MAX_RECOVERY_WAIT_MS,
     );
   assert.equal(p.recoveryWaitBudgetMs, p.leaseRemainingAtFaultMs + 90000);
   assert.ok(p.actualLeaseWaitMs + 1000 >= p.leaseRemainingAtFaultMs + 60000);
