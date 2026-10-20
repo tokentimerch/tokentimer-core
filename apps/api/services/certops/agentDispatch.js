@@ -1213,7 +1213,10 @@ async function claimJobs({
                     cj.operation NOT IN ('renew', 'deploy', 'deploy-from-store', 'reload')
                     AND NOT (
                       cj.operation = 'continue-enrollment'
-                      AND identity.lifecycle_status IN ('revoked', 'decommissioned')
+                      -- A certificate without an identity yet (first issuance) is
+                      -- not retired; a NULL here would make NOT(...) NULL and
+                      -- silently hide its pending continuation from every poll.
+                      AND COALESCE(identity.lifecycle_status, '') IN ('revoked', 'decommissioned')
                       AND EXISTS (
                         SELECT 1 FROM certificate_enrollments continuation
                          WHERE continuation.workspace_id = cj.workspace_id

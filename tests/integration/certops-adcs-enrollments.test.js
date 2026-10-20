@@ -912,6 +912,18 @@ describe("CertOps AD CS enrollments (real database)", function () {
     await pool.query("UPDATE certops_certificate_identities SET lifecycle_status='revoked', retired_at=NOW() WHERE id=$1", [cleanupCert.identityId]);
     expect(await claim()).to.include(cleanupJobId);
 
+    // First issuance has no identity yet, and a missing identity is not retirement.
+    const firstCertificateId = (await pool.query(
+      `INSERT INTO managed_certificates(workspace_id, status, source, source_ref, name, common_name,
+                                        subject_alt_names, key_mode, key_reference, public_metadata)
+       VALUES($1,'provisioning','agent_issuance',$2,'first issuance','first.example',ARRAY['first.example'],
+              'os-store-managed','winstore://My/first:443','{}'::jsonb) RETURNING id`,
+      [workspaceId, crypto.randomUUID()],
+    )).rows[0].id;
+    const firstEnrollment = await insertEnrollment("pending_issuance", { certificateId: firstCertificateId });
+    const firstJobId = await continuation(firstEnrollment, firstCertificateId);
+    expect(await claim(), "continuation of a certificate with no identity").to.include(firstJobId);
+
     for (const state of ["requested", "prepared", "issued", "validated"]) {
       // Orphaned by a crash: the operator-recovery route must not mint a new install-capable job.
       const orphanCert = await retiredCertificate(`orphan ${state}`);
