@@ -543,8 +543,22 @@ async function qualifyHttpOnlyLeafCrl(c) {
             true,
             "Actual deferred CNG key must sign for its issued public leaf",
           );
+          // certreq -new leaves one REQUEST-store placeholder for the key until
+          // -accept consumes it; an unaccepted leaf may be referenced by only that.
+          const placeholders = JSON.parse(
+            ps(
+              `$m=@();foreach($c in Get-ChildItem 'Cert:\\LocalMachine\\REQUEST'){$k=$null;try{$k=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c);if($k -and $k.Key.KeyName -ceq '${q(container)}'){$m+=$c.Thumbprint}}catch{}finally{if($k){$k.Dispose()}}};ConvertTo-Json -Compress -InputObject @($m)`,
+            ),
+          );
+          assert.equal(
+            placeholders.length,
+            1,
+            "Deferred HTTP leaf must hold exactly its pending request",
+          );
           const survivors = await inspectMachineKeySurvivors({
             containerName: container,
+            store: "REQUEST",
+            thumbprint: placeholders[0],
             helperPath: program,
           });
           assert.equal(survivors.ok, true);
