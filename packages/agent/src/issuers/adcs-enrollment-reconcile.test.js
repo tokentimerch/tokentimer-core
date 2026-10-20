@@ -355,6 +355,26 @@ describe("adcs-enrollment-reconcile", () => {
     assert.equal(result.probed, 3);
   });
 
+  it("treats template and key-length policy denials on retrieve as final, not open", async () => {
+    const issuer = {
+      async retrieve(requestId) {
+        const caHresult = { 1: "0x80094012", 2: "0x80094800", 3: "0x80094811" }[requestId];
+        return { outcome: "uncertain", detail: "retrieve of denied row", caHresult };
+      },
+    };
+    const result = await tryReconcileUncertainSubmission({
+      issuer,
+      stateDir,
+      caConfig: "CA\\Lab",
+      csrSpkiSha256: "a".repeat(64),
+      reconcileSearchFrom: 1,
+      windowSize: 3,
+      assertIssuanceOutcome: (v) => v,
+    });
+    assert.equal(result.status, "unresolved");
+    assert.equal(result.nextSearchFrom, 4);
+  });
+
   it("skips E_ACCESSDENIED and denied probes so a later unique match can attach", async (t) => {
     const keyPath = path.join(stateDir, "k-access.pem");
     const certPath = path.join(stateDir, "c-access.pem");
