@@ -18,6 +18,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router';
 import GroupEditor from '../../src/components/onboarding/alertGroupEditor.jsx';
 import ContactGroupCheckboxGroup from '../../src/components/ContactGroupCheckboxGroup.jsx';
+import EndpointSslMonitorModal from '../../src/components/EndpointSslMonitorModal.jsx';
 import { ContactGroupCreationProvider } from '../../src/utils/ContactGroupCreationContext.jsx';
 import { DashboardThemeProvider } from '../../src/hooks/useDashboardTheme.js';
 import apiClient, { workspaceAPI } from '../../src/utils/apiClient';
@@ -39,6 +40,7 @@ vi.mock('../../src/utils/apiClient', () => ({
     updateAlertSettings: vi.fn(),
   },
   alertAPI: {},
+  showSuccessMessage: vi.fn(),
   default: { get: vi.fn(), post: vi.fn() },
 }));
 vi.mock('../../src/utils/toast.js', () => ({
@@ -151,6 +153,65 @@ beforeEach(() => {
 });
 
 describe('Inline contact group creation', () => {
+  it('creates and assigns the first group from the endpoint form without losing its draft', async () => {
+    settings.contact_groups = [];
+    settings.default_contact_group_id = null;
+    apiClient.get.mockImplementation(async url => ({
+      data: {
+        items: url.endsWith('/contacts')
+          ? [{ id: 'person', details: { email: 'ops@example.com' } }]
+          : [],
+      },
+    }));
+    apiClient.post.mockResolvedValue({ data: {} });
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <ContactGroupCreationProvider>
+              <EndpointSslMonitorModal
+                isOpen
+                onClose={parentClosed}
+                contactGroups={[]}
+                TOKEN_CATEGORIES={[]}
+              />
+            </ContactGroupCreationProvider>
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), {
+      target: { value: 'https://keep.example.com' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Optional, comma-separated'), {
+      target: { value: 'Production' },
+    });
+    await openEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Save group' }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /New contact group/ })
+      ).not.toBeInTheDocument()
+    );
+    expect(
+      screen.getByDisplayValue('https://keep.example.com')
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Production')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Contact groups' })
+    ).toHaveTextContent('Security');
+    fireEvent.click(screen.getByRole('button', { name: 'Add', exact: true }));
+    await waitFor(() =>
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/workspaces/workspace-1/domains',
+        expect.objectContaining({
+          url: 'https://keep.example.com',
+          section: 'Production',
+          contact_group_ids: [settings.contact_groups[0].id],
+        })
+      )
+    );
+  });
   it('allows wheel and touch scrolling inside the group above a locked parent form', async () => {
     setup();
     await openEditor();

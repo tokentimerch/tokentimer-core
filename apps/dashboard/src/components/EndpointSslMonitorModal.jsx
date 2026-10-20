@@ -1687,21 +1687,19 @@ const EndpointSslMonitorModal = memo(function EndpointSslMonitorModal({
                   </Select>
                 </FormControl>
               )}
-              {Array.isArray(contactGroups) && contactGroups.length > 0 && (
-                <FormControl as='fieldset' minW={0} flex={1} overflow='hidden'>
-                  <FormLabel as='legend' fontSize='sm'>
-                    Contact groups
-                  </FormLabel>
-                  <ContactGroupCheckboxGroup
-                    contactGroups={contactGroups}
-                    value={domainContactGroupIds}
-                    onChange={setDomainContactGroupIds}
-                    defaultContactGroupId={defaultContactGroupId}
-                    helperText=''
-                    maxH='140px'
-                  />
-                </FormControl>
-              )}
+              <FormControl as='fieldset' minW={0} flex={1} overflow='hidden'>
+                <FormLabel as='legend' fontSize='sm'>
+                  Contact groups
+                </FormLabel>
+                <ContactGroupCheckboxGroup
+                  contactGroups={contactGroups}
+                  value={domainContactGroupIds}
+                  onChange={setDomainContactGroupIds}
+                  defaultContactGroupId={defaultContactGroupId}
+                  helperText=''
+                  maxH='140px'
+                />
+              </FormControl>
               <Button
                 size='sm'
                 colorScheme='blue'
