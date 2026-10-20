@@ -44,9 +44,18 @@ export default function SetupNudge({
   onStart,
   api = onboardingAPI,
 }) {
-  // null | 'modal' | 'banner'
-  const [mode, setMode] = useState(null);
-  const [goalChosen, setGoalChosen] = useState(false);
+  // The answer belongs to the workspace it was computed for. Keeping the id
+  // beside it means a switch can never show the previous workspace's banner,
+  // whether or not the new one needs a fresh check.
+  const [answer, setAnswer] = useState({
+    workspaceId: null,
+    mode: null, // null | 'modal' | 'banner'
+    goalChosen: false,
+  });
+  const mode = answer.workspaceId === workspaceId ? answer.mode : null;
+  const goalChosen = answer.workspaceId === workspaceId && answer.goalChosen;
+  const setMode = next =>
+    setAnswer(current => ({ ...current, workspaceId, mode: next }));
   const session = useRef(null);
   const primaryRef = useRef(null);
   const {
@@ -78,12 +87,15 @@ export default function SetupNudge({
           isViewer,
           modalShown: wasModalShown(workspaceId),
         });
-        setGoalChosen(Boolean(s?.intent?.goal));
         if (kind === 'modal') markModalShown(workspaceId);
         // Only an empty answer is final for this browser session; a banner is
         // checked again on each visit so it disappears once there is content.
         if (!kind) markChecked(workspaceId);
-        setMode(kind);
+        setAnswer({
+          workspaceId,
+          mode: kind,
+          goalChosen: Boolean(s?.intent?.goal),
+        });
       } catch (_) {
         // Advisory only: a failed check must never get in the way.
       }

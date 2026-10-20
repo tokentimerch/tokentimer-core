@@ -141,3 +141,93 @@ describe('SetupNudge', () => {
     expect(api.getSession).not.toHaveBeenCalled();
   });
 });
+
+describe('SetupNudge when the workspace changes', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  const goalSession = {
+    revision: 1,
+    status: 'in_progress',
+    intent: { goal: 'alerting' },
+  };
+
+  // Answers differ per workspace: a is empty, b has content.
+  const apiByWorkspace = () => ({
+    getSession: vi
+      .fn()
+      .mockImplementation(async ws =>
+        ws === 'ws-a'
+          ? goalSession
+          : { revision: 0, status: 'in_progress', intent: {} }
+      ),
+    getSummary: vi
+      .fn()
+      .mockImplementation(async ws =>
+        ws === 'ws-a' ? empty : { assets: { total: 4 }, monitors: { total: 0 } }
+      ),
+    putSession: vi.fn().mockResolvedValue({}),
+  });
+
+  const tree = (workspaceId, api) => (
+    <ChakraProvider>
+      <SetupNudge workspaceId={workspaceId} isViewer={false} api={api} />
+    </ChakraProvider>
+  );
+
+  it('drops the banner at once when the new workspace has content', async () => {
+    const api = apiByWorkspace();
+    const { rerender } = render(tree('ws-a', api));
+    expect(await screen.findByTestId('setup-banner')).toBeTruthy();
+    rerender(tree('ws-b', api));
+    // Not after the fetch: the old answer must not be shown for ws-b at all.
+    expect(screen.queryByTestId('setup-banner')).toBeNull();
+    await waitFor(() =>
+      expect(api.getSession).toHaveBeenCalledWith('ws-b', 'mega')
+    );
+    expect(screen.queryByTestId('setup-banner')).toBeNull();
+  });
+
+  it('drops the banner when the new workspace was already checked this session', async () => {
+    const api = apiByWorkspace();
+    // Nothing to show for ws-b, remembered from earlier in this session.
+    sessionStorage.setItem('tt_setup_nudge_checked:ws-b', '1');
+    const { rerender } = render(tree('ws-a', api));
+    expect(await screen.findByTestId('setup-banner')).toBeTruthy();
+    rerender(tree('ws-b', api));
+    await new Promise(r => setTimeout(r, 30));
+    expect(screen.queryByTestId('setup-banner')).toBeNull();
+    expect(api.getSession).not.toHaveBeenCalledWith('ws-b', 'mega');
+  });
+
+  it('shows the banner again when switching back to the empty workspace', async () => {
+    const api = apiByWorkspace();
+    const { rerender } = render(tree('ws-a', api));
+    await screen.findByTestId('setup-banner');
+    rerender(tree('ws-b', api));
+    await waitFor(() =>
+      expect(api.getSession).toHaveBeenCalledWith('ws-b', 'mega')
+    );
+    rerender(tree('ws-a', api));
+    expect(await screen.findByTestId('setup-banner')).toBeTruthy();
+  });
+
+  it('ignores a slow answer that arrives for the workspace we left', async () => {
+    let resolveA;
+    const api = apiByWorkspace();
+    api.getSummary.mockImplementation(ws =>
+      ws === 'ws-a'
+        ? new Promise(r => {
+            resolveA = () => r(empty);
+          })
+        : Promise.resolve({ assets: { total: 4 }, monitors: { total: 0 } })
+    );
+    const { rerender } = render(tree('ws-a', api));
+    await waitFor(() => expect(resolveA).toBeTypeOf('function'));
+    rerender(tree('ws-b', api));
+    resolveA();
+    await new Promise(r => setTimeout(r, 40));
+    expect(screen.queryByTestId('setup-banner')).toBeNull();
+  });
+});

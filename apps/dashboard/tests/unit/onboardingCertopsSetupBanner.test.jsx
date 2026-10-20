@@ -4,13 +4,16 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CertopsSetupBanner from '../../src/components/onboarding/CertopsSetupBanner.jsx';
 
-const { canManageMock } = vi.hoisted(() => ({ canManageMock: vi.fn() }));
+const { canManageMock, workspaceRef } = vi.hoisted(() => ({
+  canManageMock: vi.fn(),
+  workspaceRef: { id: 'ws-1' },
+}));
 
 vi.mock('../../src/components/certops/useCertOps.js', () => ({
   useCertOpsCanManage: canManageMock,
 }));
 vi.mock('../../src/utils/WorkspaceContext.jsx', () => ({
-  useWorkspace: () => ({ workspaceId: 'ws-1' }),
+  useWorkspace: () => ({ workspaceId: workspaceRef.id }),
 }));
 
 const empty = {
@@ -65,6 +68,7 @@ describe('CertopsSetupBanner', () => {
   beforeEach(() => {
     canManageMock.mockReset();
     canManageMock.mockReturnValue(true);
+    workspaceRef.id = 'ws-1';
   });
 
   it('shows for an empty CertOps workspace and reads the certops flow', async () => {
@@ -137,5 +141,78 @@ describe('CertopsSetupBanner', () => {
     show(api);
     await waitFor(() => expect(api.getSummary).toHaveBeenCalled());
     expect(screen.queryByTestId('certops-setup-banner')).toBeNull();
+  });
+});
+
+describe('CertopsSetupBanner when the workspace changes', () => {
+  beforeEach(() => {
+    canManageMock.mockReset();
+    canManageMock.mockReturnValue(true);
+    workspaceRef.id = 'ws-a';
+  });
+
+  // ws-a is empty, ws-b already has an agent.
+  const apiByWorkspace = () => ({
+    getSession: vi
+      .fn()
+      .mockResolvedValue({ revision: 0, status: 'in_progress', intent: {} }),
+    getSummary: vi
+      .fn()
+      .mockImplementation(async ws =>
+        ws === 'ws-a'
+          ? empty
+          : { certops: { ...empty.certops, agents: { total: 1 } } }
+      ),
+    putSession: vi.fn().mockResolvedValue({}),
+  });
+
+  const tree = api => (
+    <ChakraProvider>
+      <MemoryRouter>
+        <CertopsSetupBanner enabled paused={false} api={api} />
+      </MemoryRouter>
+    </ChakraProvider>
+  );
+
+  it('drops the banner at once for a workspace that is set up', async () => {
+    const api = apiByWorkspace();
+    const { rerender } = render(tree(api));
+    expect(await screen.findByTestId('certops-setup-banner')).toBeTruthy();
+
+    workspaceRef.id = 'ws-b';
+    rerender(tree(api));
+    // Immediately, not after the new workspace's answer arrives.
+    expect(screen.queryByTestId('certops-setup-banner')).toBeNull();
+    await waitFor(() =>
+      expect(api.getSummary).toHaveBeenCalledWith('ws-b', 'certops')
+    );
+    expect(screen.queryByTestId('certops-setup-banner')).toBeNull();
+  });
+
+  it('drops the banner when the new workspace cannot be managed', async () => {
+    const api = apiByWorkspace();
+    const { rerender } = render(tree(api));
+    await screen.findByTestId('certops-setup-banner');
+
+    workspaceRef.id = 'ws-b';
+    canManageMock.mockReturnValue(false);
+    rerender(tree(api));
+    await new Promise(r => setTimeout(r, 30));
+    expect(screen.queryByTestId('certops-setup-banner')).toBeNull();
+  });
+
+  it('shows the banner again when switching back to the empty workspace', async () => {
+    const api = apiByWorkspace();
+    const { rerender } = render(tree(api));
+    await screen.findByTestId('certops-setup-banner');
+
+    workspaceRef.id = 'ws-b';
+    rerender(tree(api));
+    await waitFor(() =>
+      expect(api.getSummary).toHaveBeenCalledWith('ws-b', 'certops')
+    );
+    workspaceRef.id = 'ws-a';
+    rerender(tree(api));
+    expect(await screen.findByTestId('certops-setup-banner')).toBeTruthy();
   });
 });
