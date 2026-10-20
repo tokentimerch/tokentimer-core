@@ -6,6 +6,7 @@ import {
   HStack,
   useColorModeValue,
 } from '@chakra-ui/react';
+import { FiArrowRight } from 'react-icons/fi';
 import { DashboardActionButton } from '../DashboardPrimitives';
 import PrimaryButton from './PrimaryButton.jsx';
 
@@ -18,12 +19,17 @@ const AMBER = {
     border: '#fcd34d',
     accent: '#d97706',
     text: '#78350f',
+    // The quiet button needs a border that clears 3:1 on the amber surface.
+    outline: '#b45309',
+    outlineHover: 'rgba(180, 83, 9, 0.12)',
   },
   dark: {
     bg: '#422006',
     border: '#92400e',
     accent: '#f59e0b',
     text: '#fde68a',
+    outline: '#f59e0b',
+    outlineHover: 'rgba(245, 158, 11, 0.16)',
   },
 };
 
@@ -47,6 +53,11 @@ export default function SetupBanner({
   const border = useColorModeValue(AMBER.light.border, AMBER.dark.border);
   const accent = useColorModeValue(AMBER.light.accent, AMBER.dark.accent);
   const text = useColorModeValue(AMBER.light.text, AMBER.dark.text);
+  const outline = useColorModeValue(AMBER.light.outline, AMBER.dark.outline);
+  const outlineHover = useColorModeValue(
+    AMBER.light.outlineHover,
+    AMBER.dark.outlineHover
+  );
   return (
     <Box mb={4} data-testid={testId}>
       <Alert
@@ -72,11 +83,31 @@ export default function SetupBanner({
           {message}
         </AlertDescription>
         <HStack spacing={2} flexShrink={0} ml={{ base: 0, md: 2 }}>
-          <PrimaryButton size='sm' onClick={onAction}>
+          <PrimaryButton
+            onClick={onAction}
+            rightIcon={<FiArrowRight />}
+            boxShadow='0 1px 2px rgba(0, 0, 0, 0.25)'
+            _hover={{
+              bg: 'blue.700',
+              boxShadow: '0 4px 10px rgba(29, 78, 216, 0.35)',
+              transform: 'translateY(-1px)',
+            }}
+            _active={{ bg: 'blue.800', transform: 'none' }}
+            transition='background-color 0.15s, box-shadow 0.15s, transform 0.15s'
+          >
             {actionLabel}
           </PrimaryButton>
           {onHide ? (
-            <DashboardActionButton variant='ghost' size='sm' onClick={onHide}>
+            <DashboardActionButton
+              variant='outline'
+              onClick={onHide}
+              color={text}
+              borderWidth='1px'
+              borderColor={outline}
+              bg='transparent'
+              _hover={{ bg: outlineHover, borderColor: outline }}
+              _active={{ bg: outlineHover }}
+            >
               {hideLabel}
             </DashboardActionButton>
           ) : null}
