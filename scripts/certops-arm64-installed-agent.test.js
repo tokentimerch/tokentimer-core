@@ -45,6 +45,6 @@ test("PostgreSQL preparation cleanup binds original root and marker before any n
 });
 
 test("post-native API or database cleanup failure invalidates the public report",()=>{
- const dir=fs.mkdtempSync(path.resolve(__dirname,"../.build/arm64-finalize-")),file=path.join(dir,"report.json"),{artifact,candidateSha}=require("./test-support/arm64-installed-artifact.cjs"),{finalizeReport}=require("./certops-arm64-installed-agent");
+ const dir=fs.mkdtempSync(path.join(require("node:os").tmpdir(),"arm64-finalize-")),file=path.join(dir,"report.json"),{artifact,candidateSha}=require("./test-support/arm64-installed-artifact.cjs"),{finalizeReport}=require("./certops-arm64-installed-agent");
  try{fs.writeFileSync(file,JSON.stringify(artifact().report));assert.equal(h.verifyRuntimeReport(finalizeReport(file,true,candidateSha)),true);const failed=finalizeReport(file,false,candidateSha);assert.equal(failed.status,"failed");assert.equal(failed.cleanup.status,"failed");assert.throws(()=>h.verifyRuntimeReport(failed));assert.equal(JSON.parse(fs.readFileSync(file)).status,"failed");}finally{fs.rmSync(dir,{recursive:true});}
 });

@@ -13,7 +13,7 @@ const { supplementalSources } = require("./certops-stack-reporter");
 
 test("installed verification rollback reporter requires actual bounded sidecar for all five profiles",()=>{
  const h=require("../tests/e2e/helpers/certops-windows-installed-verify-rollback"),{fixture}=require("./fixtures/certops-windows-installed-verify-rollback.cjs"),{installedVerifyRollbackProof:read}=require("./certops-stack-reporter");
- const root=fs.mkdtempSync(path.join(path.resolve(__dirname,"../.build"),"verify-rollback-reporter-")),name="real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence";
+ const root=fs.mkdtempSync(path.join(require("node:os").tmpdir(),"verify-rollback-reporter-")),name="real Windows: installed agent claims ACME CNG IIS deployment and persists independently verified certificate evidence";
  try{fs.mkdirSync(path.join(root,"qualification-results"));for(const profile of ["rsa-2048","rsa-3072","rsa-4096","ec-p256","ec-p384"]){const scope="real-agent-windows-acme-iis/"+profile,file=path.join(root,"qualification-results",`windows-installed-verify-rollback-${profile}.json`);assert.throws(()=>read(scope,name,root));fs.writeFileSync(file,JSON.stringify(fixture()));assert.deepEqual(read(scope,name,root),fixture());for(const patch of [{[h.FLAGS[0]]:false},{privateNative:"sentinel"},{transientNewBindingObservationQualified:true}]){fs.writeFileSync(file,JSON.stringify({...fixture(),...patch}));assert.throws(()=>read(scope,name,root));}fs.unlinkSync(file);}
  assert.equal(read("real-agent-acme-filesystem",name,root),undefined);assert.throws(()=>read("real-agent-windows-acme-iis/unknown",name,root));
  }finally{fs.rmSync(root,{recursive:true});}

@@ -10,7 +10,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const h = require("../tests/e2e/helpers/certops-acme-renewal-alert");
 test("original renewal ownership survives missing or same-byte replaced receipts",()=>{
-  const root=fs.mkdtempSync(path.resolve(__dirname,"../.build/native-alert-"));
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"native-alert-"));
   const marker=path.join(root,".native-renewal-alert-active"),saved=path.join(root,"original");
   try{
     const positive=h.registerOperation(root);positive.release();h.assertCleanupSafe(root);
