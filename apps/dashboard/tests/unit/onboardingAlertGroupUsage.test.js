@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  describeSetupUse,
   groupReaches,
   planGroupDelete,
-  usesDefaultOnly,
 } from '../../src/components/onboarding/alertGroupUsage.js';
 
 const ops = { id: 'ops', name: 'Ops', email_contact_ids: ['c1'] };
@@ -35,14 +33,16 @@ describe('planGroupDelete', () => {
     expect(plan.remaining.map(g => g.id)).toEqual(['ops']);
   });
 
-  it('blocks the default group and says to hand it over first', () => {
+  it('blocks the default group and points to Alert Preferences', () => {
     const plan = planGroupDelete({
       group: ops,
       groups: [ops, billing],
       defaultId: 'ops',
     });
     expect(plan.allowed).toBe(false);
-    expect(plan.reason).toMatch(/Make another group the default first/);
+    expect(plan.reason).toBe(
+      'It is the default group. Make another group the default in Alert Preferences first.'
+    );
   });
 
   it('blocks the only group with its own reason', () => {
@@ -53,6 +53,7 @@ describe('planGroupDelete', () => {
     });
     expect(plan.allowed).toBe(false);
     expect(plan.reason).toMatch(/only group/);
+    expect(plan.reason).toMatch(/in Alert Preferences/);
   });
 
   it('compares ids as text', () => {
@@ -62,54 +63,5 @@ describe('planGroupDelete', () => {
       defaultId: '7',
     });
     expect(plan.allowed).toBe(false);
-  });
-});
-
-describe('describeSetupUse', () => {
-  const base = {
-    groups: [ops, billing],
-    defaultId: 'ops',
-    defaultReaches: true,
-  };
-
-  it('uses the default group for websites and marks only it as used', () => {
-    const use = describeSetupUse({ ...base, goal: 'monitor_https' });
-    expect(use.lines[0]).toMatch(
-      /Websites you add here use the default group "Ops"/
-    );
-    expect(use.usedIds).toEqual(['ops']);
-    expect(use.warning).toBe('');
-  });
-
-  it('describes the default group for the agent goals', () => {
-    const use = describeSetupUse({ ...base, goal: 'certops_observe' });
-    expect(use.lines[0]).toMatch(/agents and their certificates/);
-    expect(use.usedIds).toEqual(['ops']);
-  });
-
-  it('never claims a per-asset rule that the wizard cannot see', () => {
-    for (const goal of ['monitor_https', 'alerting', 'certops_observe']) {
-      const text = describeSetupUse({ ...base, goal }).lines.join(' ');
-      expect(text).not.toMatch(/ticked|chosen during the import|Each asset/);
-    }
-  });
-
-  it('warns when there is no default or the default reaches nobody', () => {
-    expect(
-      describeSetupUse({ ...base, defaultId: '', goal: 'alerting' }).warning
-    ).toMatch(/Make one of the groups below the default/);
-    expect(
-      describeSetupUse({ ...base, defaultReaches: false, goal: 'alerting' })
-        .warning
-    ).toMatch(/"Ops" reaches nobody yet/);
-  });
-
-  it('only calls the default the setup group where it governs everything', () => {
-    expect(usesDefaultOnly('monitor_https')).toBe(true);
-    expect(usesDefaultOnly('alerting')).toBe(true);
-    expect(usesDefaultOnly('certops_observe')).toBe(true);
-    expect(usesDefaultOnly('track_asset')).toBe(false);
-    expect(usesDefaultOnly('import_file')).toBe(false);
-    expect(usesDefaultOnly('import_integration')).toBe(false);
   });
 });

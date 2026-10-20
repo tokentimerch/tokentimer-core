@@ -1,4 +1,5 @@
 import apiClient, { handleApiError } from './apiClient';
+import { normalizeContactGroupIds } from './contactGroupAssignment.js';
 
 // Thin calls over existing endpoints used by the first-value journey. They
 // reuse the same server contracts as the existing modals; nothing here adds
@@ -202,6 +203,25 @@ export const onboardingActions = {
   async getToken(tokenId) {
     try {
       const res = await apiClient.get(`/api/tokens/${tokenId}`);
+      return res.data;
+    } catch (e) {
+      return rethrow(e);
+    }
+  },
+
+  /**
+   * Replaces the contact groups of one asset or website certificate.
+   * The token update clears cost and key size when they are left out, so
+   * the values read earlier are sent back to keep them.
+   */
+  async setTokenContactGroups(tokenId, groupIds, keep = {}) {
+    const has = v => v !== undefined && v !== null && v !== '';
+    try {
+      const res = await apiClient.put(`/api/tokens/${tokenId}`, {
+        contact_group_ids: normalizeContactGroupIds(groupIds),
+        ...(has(keep.cost) ? { cost: keep.cost } : {}),
+        ...(has(keep.key_size) ? { key_size: keep.key_size } : {}),
+      });
       return res.data;
     } catch (e) {
       return rethrow(e);

@@ -7,8 +7,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
-  Badge,
-  Box,
   Flex,
   HStack,
   Spinner,
@@ -31,14 +29,18 @@ import {
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import GroupEditor from './alertGroupEditor.jsx';
+import { GroupRow } from './alertGroupRow.jsx';
 import { describeGroup } from './alertGroups.js';
+import { groupReaches, planGroupDelete } from './alertGroupUsage.js';
 import {
-  describeSetupUse,
-  groupReaches,
-  planGroupDelete,
-  usesDefaultOnly,
-} from './alertGroupUsage.js';
+  describeNoToken,
+  describeTicks,
+  describeUngrouped,
+  tickState,
+} from './groupAttachment.js';
+import { useSessionGroupTicks } from './useSessionGroupTicks.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
+import { useContactGroupPluralWrites } from '../../utils/contactGroupPluralWrites.jsx';
 
 const CREATE_HELP =
   'Creating a group does not send alerts to it until it is the default or is selected on an asset.';
@@ -51,37 +53,6 @@ function makeReaches(settings, contacts) {
     (settings.webhook_urls || []).filter(w => w?.name).map(w => w.name)
   );
   return group => groupReaches(group, webhookNames, emailIds);
-}
-
-function UsedForSetup({ use }) {
-  const { muted } = useDashboardTheme();
-  const { dashboard } = useDashboardThemeColors();
-  return (
-    <Box
-      data-testid='used-for-setup'
-      borderWidth='1px'
-      borderColor={dashboard.accent.interactiveBorder}
-      bg={dashboard.accent.interactiveSurface}
-      borderRadius='md'
-      p={3}
-    >
-      <Text as='h3' fontSize='sm' fontWeight='bold' mb={1}>
-        Used for this setup
-      </Text>
-      <VStack align='stretch' spacing={1}>
-        {use.lines.map(line => (
-          <Text key={line} fontSize='sm' color={muted}>
-            {line}
-          </Text>
-        ))}
-        {use.warning ? (
-          <Text fontSize='sm' color={dashboard.callout.warningText}>
-            {use.warning}
-          </Text>
-        ) : null}
-      </VStack>
-    </Box>
-  );
 }
 
 function DeleteDialog({ target, defaultName, busy, onCancel, onConfirm }) {
@@ -167,6 +138,8 @@ export function RecipientsStep({ ctx }) {
   const [error, setError] = useState('');
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const plural = useContactGroupPluralWrites();
+  const ticks = useSessionGroupTicks({ ctx, plural });
   const load = useCallback(async () => {
     try {
       const [settings, contacts] = await Promise.all([
@@ -188,19 +161,8 @@ export function RecipientsStep({ ctx }) {
   const afterSave = async () => {
     setEditing(null);
     await load();
+    ticks.reload();
     await ctx.refresh();
-  };
-
-  const makeDefault = async group => {
-    setError('');
-    try {
-      await onboardingActions.putAlertSettings(ctx.workspaceId, {
-        default_contact_group_id: group.id,
-      });
-      await afterSave();
-    } catch (e) {
-      setError(e.message);
-    }
   };
 
   const confirmDelete = async () => {
@@ -337,22 +299,25 @@ export function RecipientsStep({ ctx }) {
     );
   }
 
-  // Assets and imports pick their own group in a form this step cannot see,
-  // so only the goals that always use the default state a rule.
-  const showUse = usesDefaultOnly(goal);
-  const use = showUse
-    ? describeSetupUse({ goal, groups, defaultId, defaultReaches })
-    : null;
-  const usedIds = new Set(use ? use.usedIds : []);
-  const setupLabel = showUse ? 'Use for this setup' : 'Make default';
+  const canTick = ticks.status === 'ready' && ticks.items.length > 0;
+  const groupIds = new Set(groups.map(g => String(g.id)));
+  const ungrouped = ticks.items.filter(
+    i => !i.groupIds.some(id => groupIds.has(id))
+  ).length;
+  const tickGoal = ticks.status !== 'off';
+  const sentence = describeTicks({
+    goal,
+    items: ticks.items,
+    defaultName: defaultGroup?.name,
+  });
 
   return (
     <StepFrame
       kind='ui'
       title='Choose who gets alerted'
       description={
-        showUse
-          ? 'Alerts go to contact groups. First see which group this setup uses, then manage the groups in your workspace.'
+        tickGoal
+          ? 'Alerts go to contact groups. Tick the groups that should receive alerts for what you added.'
           : 'Alerts go to contact groups. Manage the groups in your workspace here.'
       }
       docs={docs}
@@ -364,7 +329,6 @@ export function RecipientsStep({ ctx }) {
     >
       <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-        {use ? <UsedForSetup use={use} /> : null}
         <VStack align='stretch' spacing={3} as='section'>
           <HStack
             justify='space-between'
@@ -372,10 +336,22 @@ export function RecipientsStep({ ctx }) {
             flexWrap='wrap'
             spacing={3}
           >
-            <VStack align='start' spacing={0} minW={0} flex='1 1 240px'>
+            <VStack align='start' spacing={1} minW={0} flex='1 1 240px'>
               <Text as='h3' fontSize='sm' fontWeight='bold'>
                 Groups in this workspace
               </Text>
+              {ticks.status === 'loading' ? (
+                <HStack spacing={2}>
+                  <Spinner size='xs' />
+                  <Text fontSize='xs' color={muted}>
+                    Reading the groups of your items
+                  </Text>
+                </HStack>
+              ) : (
+                <Text fontSize='xs' color={muted} data-testid='tick-sentence'>
+                  {sentence}
+                </Text>
+              )}
               <Text fontSize='xs' color={muted}>
                 {CREATE_HELP}
               </Text>
@@ -384,84 +360,59 @@ export function RecipientsStep({ ctx }) {
               Create a new group
             </PrimaryButton>
           </HStack>
+          {ticks.status === 'blocked' ? (
+            <Text
+              fontSize='sm'
+              color={dashboard.callout.warningText}
+              role='status'
+            >
+              {ticks.blockedMessage}
+            </Text>
+          ) : null}
+          {canTick && ticks.noToken ? (
+            <Text fontSize='xs' color={muted} data-testid='no-token-note'>
+              {describeNoToken(ticks.noToken)}
+            </Text>
+          ) : null}
+          {ticks.notice ? (
+            <DashboardErrorAlert>{ticks.notice}</DashboardErrorAlert>
+          ) : null}
+          {canTick && ungrouped > 0 ? (
+            <Text fontSize='xs' color={muted} data-testid='ungrouped-note'>
+              {describeUngrouped({
+                count: ungrouped,
+                defaultName: defaultGroup?.name,
+              })}
+            </Text>
+          ) : null}
           {groups.map(g => {
-            const isDefault = String(g.id) === defaultId;
-            const who = describeGroup(g, contacts);
-            const plan = planGroupDelete({ group: g, groups, defaultId });
-            const whyId = `delete-why-${g.id}`;
+            const id = String(g.id);
             return (
-              <VStack
+              <GroupRow
                 key={g.id}
-                data-testid={`group-${g.id}`}
-                align='stretch'
-                spacing={2}
-                borderWidth='1px'
-                borderColor={dashboard.border.subtle}
-                borderRadius='md'
-                p={3}
-              >
-                <HStack
-                  justify='space-between'
-                  align='start'
-                  spacing={3}
-                  flexWrap='wrap'
-                >
-                  <VStack align='start' spacing={0} minW={0}>
-                    <HStack flexWrap='wrap'>
-                      <Text fontSize='sm' fontWeight='semibold'>
-                        {g.name}
-                      </Text>
-                      {isDefault ? (
-                        <Badge colorScheme='blue'>Default</Badge>
-                      ) : null}
-                      {usedIds.has(String(g.id)) ? (
-                        <Badge colorScheme='green'>Used for this setup</Badge>
-                      ) : null}
-                      {!reaches(g) ? (
-                        <Badge colorScheme='orange'>Reaches nobody</Badge>
-                      ) : null}
-                    </HStack>
-                    <Text fontSize='xs' color={muted}>
-                      {who.length ? who.join(', ') : 'No recipients'}
-                    </Text>
-                  </VStack>
-                  <HStack spacing={2} flexWrap='wrap'>
-                    {!isDefault ? (
-                      <DashboardActionButton
-                        size='xs'
-                        variant='outline'
-                        title='Makes this the default group'
-                        onClick={() => makeDefault(g)}
-                      >
-                        {setupLabel}
-                      </DashboardActionButton>
-                    ) : null}
-                    <DashboardActionButton
-                      size='xs'
-                      variant='outline'
-                      onClick={() => setEditing(g)}
-                    >
-                      Edit
-                    </DashboardActionButton>
-                    <DashboardActionButton
-                      size='xs'
-                      variant='outline'
-                      colorScheme='red'
-                      aria-label={`Delete ${g.name}`}
-                      aria-describedby={plan.allowed ? undefined : whyId}
-                      isDisabled={!plan.allowed}
-                      onClick={() => setPendingDelete({ group: g, plan })}
-                    >
-                      Delete
-                    </DashboardActionButton>
-                  </HStack>
-                </HStack>
-                {!plan.allowed ? (
-                  <Text id={whyId} fontSize='xs' color={muted}>
-                    {`You cannot delete this group yet. ${plan.reason}`}
-                  </Text>
-                ) : null}
-              </VStack>
+                group={g}
+                who={describeGroup(g, contacts)}
+                isDefault={id === defaultId}
+                reachesAnyone={reaches(g)}
+                deletePlan={planGroupDelete({ group: g, groups, defaultId })}
+                onEdit={() => setEditing(g)}
+                onDelete={() =>
+                  setPendingDelete({
+                    group: g,
+                    plan: planGroupDelete({ group: g, groups, defaultId }),
+                  })
+                }
+                tick={
+                  canTick
+                    ? {
+                        state: tickState(id, ticks.items),
+                        busy: ticks.saving === id,
+                        disabled: Boolean(ticks.saving),
+                        onToggle: add => ticks.toggle(id, add),
+                      }
+                    : null
+                }
+              />
             );
           })}
         </VStack>
