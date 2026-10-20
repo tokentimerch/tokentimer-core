@@ -753,8 +753,14 @@ function New-OwnedOcspSigningTemplate($Owner) {
  $template.RefreshCache()
  $actualDacl=$template.ObjectSecurity.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
  $expectedDacl=$security.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
- if($actualDacl -cne $expectedDacl -or
-    [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $oid) {
+  # AD marks a stored DACL auto-inherited (AI) even when protected, so compare
+  # the protection flag and the exact ACE list rather than the flag prefix.
+  $aceStart=$actualDacl.IndexOf('(')
+  $expectedAceStart=$expectedDacl.IndexOf('(')
+  if($aceStart -lt 0 -or $expectedAceStart -lt 0 -or
+     $actualDacl.Substring(0,$aceStart) -cnotmatch '^D:[A-Z]*P[A-Z]*$' -or
+     $actualDacl.Substring($aceStart) -cne $expectedDacl.Substring($expectedAceStart) -or
+     [string]$template.Properties['msPKI-Cert-Template-OID'].Value -cne $oid) {
   throw 'Owned signer-only template readback mismatch'
  }
  $facts=@{
