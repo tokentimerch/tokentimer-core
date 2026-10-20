@@ -1707,11 +1707,7 @@ export default function AlertPreferences({
   }, [workspaceId]);
 
   function closeGroupEditor() {
-    if (
-      savingGroup ||
-      (groupCreationOnly && (isAddContactOpen || isWebhookEditorOpen))
-    )
-      return;
+    if (savingGroup || isAddContactOpen || isWebhookEditorOpen) return;
     if (groupCreationOnly) onGroupCreationCancel?.();
     groupThresholdsTouchedRef.current = false;
     setGroupThresholdError('');
@@ -2200,7 +2196,7 @@ export default function AlertPreferences({
     setSavingWebhookEditor(true);
     setWebhookEditorError('');
     try {
-      if (groupCreationOnly) {
+      if (isGroupEditorOpen) {
         const fresh = await workspaceAPI.getAlertSettings(workspaceId);
         const existing = Array.isArray(fresh.webhook_urls)
           ? fresh.webhook_urls
@@ -3862,7 +3858,7 @@ export default function AlertPreferences({
                 Webhook channels (unlimited)
               </GroupEditorSectionLabel>
               <Box data-tour='preferences-contact-groups-webhooks'>
-                {groupCreationOnly && (
+                {
                   <Button
                     size='sm'
                     variant='outline'
@@ -3879,7 +3875,7 @@ export default function AlertPreferences({
                   >
                     Add webhook
                   </Button>
-                )}
+                }
                 <SettingsNestedSurface>
                   <VStack
                     align='stretch'
@@ -4071,7 +4067,7 @@ export default function AlertPreferences({
         onClose={handleCloseWebhookEditor}
         closeOnEsc={!testingWebhookDraft && !savingWebhookEditor}
         closeOnOverlayClick={!testingWebhookDraft && !savingWebhookEditor}
-        finalFocusRef={groupCreationOnly ? addWebhookTriggerRef : undefined}
+        finalFocusRef={isGroupEditorOpen ? addWebhookTriggerRef : undefined}
         isCentered
         scrollBehavior='inside'
       >

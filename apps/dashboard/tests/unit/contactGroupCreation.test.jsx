@@ -610,6 +610,80 @@ describe('onboarding shared group editor', () => {
 });
 
 describe('webhook creation inside the shared group modal', () => {
+  it('creates and selects a webhook from workspace preferences without resetting the edited group', async () => {
+    render(
+      <ChakraProvider>
+        <DashboardThemeProvider>
+          <MemoryRouter>
+            <AlertPreferences />
+          </MemoryRouter>
+        </DashboardThemeProvider>
+      </ChakraProvider>
+    );
+    const edit = await screen.findByRole('button', {
+      name: 'Edit group',
+      exact: true,
+    });
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    const groupDialog = await screen.findByRole('dialog', {
+      name: /Edit contact group/,
+    });
+    fireEvent.change(
+      within(groupDialog).getByPlaceholderText(
+        'Group name (e.g., On-call, Security, Legal)'
+      ),
+      { target: { value: 'Operations draft' } }
+    );
+    fireEvent.click(
+      within(groupDialog).getByRole('checkbox', { name: 'Email', exact: true })
+    );
+    fireEvent.click(
+      within(groupDialog).getByRole('button', {
+        name: 'Add webhook',
+        exact: true,
+      })
+    );
+    const hookDialog = await screen.findByRole('dialog', {
+      name: /^Add webhook/,
+    });
+    fireEvent.change(
+      within(hookDialog).getByPlaceholderText(
+        'Name (required): e.g., On-call Slack, Incident Discord, Primary Teams'
+      ),
+      { target: { value: 'Preferences hook' } }
+    );
+    fireEvent.change(within(hookDialog).getByPlaceholderText('https://...'), {
+      target: { value: 'https://hooks.example.invalid/preferences' },
+    });
+    fireEvent.click(
+      within(hookDialog).getByRole('button', { name: 'Test', exact: true })
+    );
+    await waitFor(() =>
+      expect(
+        within(hookDialog).getByRole('button', { name: 'Save webhook' })
+      ).toBeEnabled()
+    );
+    fireEvent.click(
+      within(hookDialog).getByRole('button', { name: 'Save webhook' })
+    );
+    expect(
+      await screen.findByRole('checkbox', { name: 'Preferences hook' })
+    ).toBeChecked();
+    expect(screen.getByDisplayValue('Operations draft')).toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: 'Email', exact: true })
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Save group' }));
+    await waitFor(() =>
+      expect(settings.contact_groups[0]).toMatchObject({
+        name: 'Operations draft',
+        email_contact_ids: ['person'],
+        webhook_names: ['Preferences hook'],
+      })
+    );
+  });
+
   async function openWebhook() {
     setup();
     await openEditor();
