@@ -1,19 +1,13 @@
-import { useEffect, useState } from 'react';
-import ContactGroupCheckboxGroup from '../ContactGroupCheckboxGroup.jsx';
+import { useState } from 'react';
 import { FiList } from 'react-icons/fi';
 import { useSearchParams } from 'react-router';
 import {
-  Badge,
   Box,
-  FormControl,
-  FormHelperText,
-  FormLabel,
   HStack,
   Radio,
   RadioGroup,
   Stack,
   Text,
-  Input,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -25,8 +19,13 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { availableGoals } from './journeyPlanner.js';
 import { GOAL_AREAS } from './modules.js';
-import { normalizeMonitorUrl, runIdempotent } from './operations.js';
-import { onboardingActions } from '../../utils/onboardingActions.js';
+import { isCandidatePick, pickHint } from './guidedSetupStatus.js';
+import {
+  CANDIDATE_NOTE_ID,
+  CandidateBadge,
+  CandidateNote,
+} from './candidateMarks.jsx';
+import { progressForGoalChange } from './sessionTransitions.js';
 
 export function GoalStep({ ctx }) {
   const { muted } = useDashboardTheme();
@@ -40,6 +39,9 @@ export function GoalStep({ ctx }) {
   const areas = areaFilter
     ? GOAL_AREAS.filter(a => a.id === areaFilter)
     : GOAL_AREAS;
+  const anyCandidate = areas.some(area =>
+    goals.some(g => g.area === area.id && isCandidatePick(g.id, g.candidate))
+  );
   const current = ctx.session.intent?.goal || '';
   const [choice, setChoice] = useState(current);
   const [error, setError] = useState('');
@@ -61,10 +63,7 @@ export function GoalStep({ ctx }) {
           // Keep what was imported or created; only reset flags that were
           // about the old goal's steps.
           progress: changed
-            ? {
-                imported: session.progress?.imported || [],
-                certops: session.progress?.certops || {},
-              }
+            ? progressForGoalChange(session.progress, choice)
             : { ...session.progress, verified: false },
           plannerVersion: ctx.plannerVersion,
         };
@@ -92,6 +91,7 @@ export function GoalStep({ ctx }) {
     >
       <VStack align='stretch' spacing={4}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        {anyCandidate ? <CandidateNote /> : null}
         <RadioGroup value={choice} onChange={setChoice}>
           <VStack align='stretch' spacing={4}>
             {areas.map(area => {
@@ -103,26 +103,59 @@ export function GoalStep({ ctx }) {
                     {area.label.toUpperCase()}
                   </Text>
                   <Stack spacing={3}>
-                    {inArea.map(goal => (
-                      <Box key={goal.id}>
-                        <HStack>
-                          <Radio
-                            value={goal.id}
-                            isDisabled={Boolean(goal.blocker)}
+                    {inArea.map(goal => {
+                      const candidate = isCandidatePick(
+                        goal.id,
+                        goal.candidate
+                      );
+                      const hint = pickHint(goal.id);
+                      const badgeId = `goal-${goal.id}-badge`;
+                      const hintId = `goal-${goal.id}-hint`;
+                      // Screen readers hear the badge and any extra context.
+                      const describedBy = [
+                        `goal-${goal.id}-desc`,
+                        candidate ? badgeId : '',
+                        candidate ? CANDIDATE_NOTE_ID : '',
+                        candidate && hint ? hintId : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ');
+                      return (
+                        <Box key={goal.id}>
+                          <HStack>
+                            <Radio
+                              value={goal.id}
+                              isDisabled={Boolean(goal.blocker)}
+                              aria-describedby={describedBy}
+                            >
+                              <Text fontWeight='semibold' fontSize='sm'>
+                                {goal.label}
+                              </Text>
+                            </Radio>
+                            {candidate ? <CandidateBadge id={badgeId} /> : null}
+                          </HStack>
+                          <Text
+                            id={`goal-${goal.id}-desc`}
+                            fontSize='xs'
+                            color={muted}
+                            ml={6}
                           >
-                            <Text fontWeight='semibold' fontSize='sm'>
-                              {goal.label}
+                            {goal.blocker?.remediation || goal.description}
+                          </Text>
+                          {candidate && hint ? (
+                            <Text
+                              id={hintId}
+                              fontSize='xs'
+                              color={muted}
+                              ml={6}
+                              mt={1}
+                            >
+                              {hint}
                             </Text>
-                          </Radio>
-                          {goal.candidate ? (
-                            <Badge colorScheme='orange'>Candidate</Badge>
                           ) : null}
-                        </HStack>
-                        <Text fontSize='xs' color={muted} ml={6}>
-                          {goal.blocker?.remediation || goal.description}
-                        </Text>
-                      </Box>
-                    ))}
+                        </Box>
+                      );
+                    })}
                   </Stack>
                 </Box>
               );
@@ -145,119 +178,5 @@ export function GoalStep({ ctx }) {
     </StepFrame>
   );
 }
-export function MonitorStep({ ctx }) {
-  const [url, setUrl] = useState(ctx.session.operationRefs?.monitorUrl || '');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [groups, setGroups] = useState([]);
-  const [contactGroupIds, setContactGroupIds] = useState([]);
-  useEffect(() => {
-    let live = true;
-    onboardingActions
-      .getAlertSettings(ctx.workspaceId)
-      .then(settings => {
-        if (live) setGroups(settings.contact_groups || []);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [ctx.workspaceId]);
-  const normalized = normalizeMonitorUrl(url);
-
-  const submit = async () => {
-    if (!normalized) {
-      setError('Enter a valid HTTPS address, for example https://example.com');
-      return;
-    }
-    setBusy(true);
-    setError('');
-    try {
-      await runIdempotent({
-        controller: ctx.controller,
-        kind: 'monitor',
-        identity: { url: normalized },
-        find: async identity => {
-          const monitors = await onboardingActions.listMonitors(
-            ctx.workspaceId
-          );
-          return (
-            monitors.find(
-              m => String(m.url).toLowerCase() === identity.url.toLowerCase()
-            ) || null
-          );
-        },
-        create: identity =>
-          onboardingActions.createMonitor(ctx.workspaceId, {
-            url: identity.url,
-            contactGroupIds,
-          }),
-        record: (refs, created) => ({
-          monitorUrl: normalized,
-          monitorIds: Array.from(
-            new Set([...(refs.monitorIds || []), created.id].filter(Boolean))
-          ),
-          tokenIds: Array.from(
-            new Set(
-              [...(refs.tokenIds || []), created.token_id].filter(Boolean)
-            )
-          ),
-        }),
-      });
-      await ctx.refresh();
-    } catch (e) {
-      setError(e.message || 'Could not add this website.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <StepFrame
-      kind='ui'
-      title='Add the website to monitor'
-      description='TokenTimer reads the certificate over HTTPS and tracks its expiry.'
-      docs={[
-        ...ctx.docs('monitoring.endpoint', 'About endpoint monitoring'),
-        ...ctx.docs('monitoring.network', 'Network requirements'),
-      ]}
-      actions={
-        <PrimaryButton
-          onClick={submit}
-          isLoading={busy}
-          isDisabled={!url.trim()}
-        >
-          Add website
-        </PrimaryButton>
-      }
-    >
-      <VStack align='stretch' spacing={3}>
-        {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
-        <FormControl>
-          <FormLabel fontSize='sm'>Website address</FormLabel>
-          <Input
-            size='sm'
-            placeholder='https://example.com'
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            autoComplete='off'
-          />
-          <FormHelperText fontSize='xs'>
-            The address must be reachable from where TokenTimer runs.
-          </FormHelperText>
-        </FormControl>
-        <FormControl>
-          <FormLabel fontSize='sm'>Who gets alerted</FormLabel>
-          <ContactGroupCheckboxGroup
-            contactGroups={groups}
-            value={contactGroupIds}
-            onChange={setContactGroupIds}
-            isDisabled={busy}
-          />
-        </FormControl>
-      </VStack>
-    </StepFrame>
-  );
-}
-
+export { MonitorStep } from './monitorStep.jsx';
 export { AssetStep } from './assetStep.jsx';

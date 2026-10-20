@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import {
-  Badge,
+  Box,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   Input,
@@ -19,8 +20,14 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { CopyBlock } from './blocks.jsx';
 import { GOALS } from './modules.js';
-import { buildAdcsConfig } from './adcsModel.js';
-import { scopeCertops } from './certopsScope.js';
+import { ADCS_DRY_RUN_NOTE, buildAdcsConfig } from './adcsModel.js';
+import { mergeCertops, scopeCertops } from './certopsScope.js';
+import { isCandidatePick, pickHint, pickKey } from './guidedSetupStatus.js';
+import {
+  CANDIDATE_NOTE_ID,
+  CandidateBadge,
+  CandidateNote,
+} from './candidateMarks.jsx';
 import { INFRASTRUCTURES, infrastructuresFor } from './certopsMatrix.js';
 import {
   DNS_PROVIDERS,
@@ -31,6 +38,19 @@ import {
   buildPreseedSteps,
   mergeInstallerFields,
 } from './certopsConfig.js';
+
+// The agent binds a certificate to an existing TLS listener; it never
+// creates the site, and the binding on that port is replaced.
+const BINDING_NOTE =
+  'Issuing replaces the certificate currently bound to this port. A TLS listener (for example an IIS site) must already exist, because the agent does not create sites.';
+
+function errorLines(messages) {
+  return messages.map(m => (
+    <Text key={m} as='span' display='block'>
+      {m}
+    </Text>
+  ));
+}
 
 export function certopsObjectiveFor(ctx) {
   return GOALS[ctx.session.intent?.goal]?.certopsObjective;
@@ -45,12 +65,9 @@ export async function saveCertops(ctx, patch) {
   await ctx.controller.update(session => ({
     progress: {
       ...session.progress,
-      // Merge onto this objective's progress only, so flags left by another
-      // goal are dropped the first time this one writes.
-      certops: {
-        ...scopeCertops(session.progress?.certops, objective),
-        ...patch,
-      },
+      // Merge onto this objective's progress only. Another goal's flags are
+      // parked, not dropped, so coming back to it restores them.
+      certops: mergeCertops(session.progress?.certops, objective, patch),
     },
   }));
   await ctx.refresh();
@@ -60,7 +77,14 @@ export function ObjectiveStep({ ctx }) {
   const { muted } = useDashboardTheme();
   const goal = GOALS[ctx.session.intent?.goal];
   const objective = goal?.certopsObjective || 'observe';
-  const options = infrastructuresFor(objective);
+  const picks = infrastructuresFor(objective).map(o => {
+    const key = pickKey(ctx.session.intent?.goal, o.id);
+    return {
+      ...o,
+      candidate: isCandidatePick(key, o.status === 'candidate'),
+      hint: pickHint(key),
+    };
+  });
   const saved = certopsProgress(ctx);
   const [infra, setInfra] = useState(saved.infrastructure || '');
   const [error, setError] = useState('');
@@ -87,22 +111,54 @@ export function ObjectiveStep({ ctx }) {
     >
       <VStack align='stretch' spacing={3}>
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
+        {picks.some(o => o.candidate) ? <CandidateNote /> : null}
         <RadioGroup value={infra} onChange={setInfra}>
           <Stack spacing={3}>
-            {options.map(o => (
-              <HStack key={o.id} align='start'>
-                <Radio value={o.id}>
-                  <Text fontSize='sm' fontWeight='semibold'>
-                    {o.label}
+            {picks.map(o => (
+              <Box key={o.id}>
+                <HStack align='start'>
+                  <Radio
+                    value={o.id}
+                    aria-describedby={
+                      o.candidate
+                        ? [
+                            `infra-${o.id}-detail`,
+                            `infra-${o.id}-badge`,
+                            CANDIDATE_NOTE_ID,
+                            o.hint ? `infra-${o.id}-hint` : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')
+                        : undefined
+                    }
+                  >
+                    <Text fontSize='sm' fontWeight='semibold'>
+                      {o.label}
+                    </Text>
+                    <Text
+                      id={`infra-${o.id}-detail`}
+                      fontSize='xs'
+                      color={muted}
+                    >
+                      {o.detail}
+                    </Text>
+                  </Radio>
+                  {o.candidate ? (
+                    <CandidateBadge id={`infra-${o.id}-badge`} />
+                  ) : null}
+                </HStack>
+                {o.candidate && o.hint ? (
+                  <Text
+                    id={`infra-${o.id}-hint`}
+                    fontSize='xs'
+                    color={muted}
+                    ml={6}
+                    mt={1}
+                  >
+                    {o.hint}
                   </Text>
-                  <Text fontSize='xs' color={muted}>
-                    {o.detail}
-                  </Text>
-                </Radio>
-                {o.status === 'candidate' ? (
-                  <Badge colorScheme='orange'>Candidate</Badge>
                 ) : null}
-              </HStack>
+              </Box>
             ))}
           </Stack>
         </RadioGroup>
@@ -135,7 +191,15 @@ export function ConfigStep({ ctx }) {
     directories: saved.directories || '/etc/ssl/certs',
   });
   const [error, setError] = useState('');
-  const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+  // Errors appear only after the operator has typed in, or left, a field.
+  const [touched, setTouched] = useState({});
+  const markTouched = key =>
+    setTouched(t => (t[key] ? t : { ...t, [key]: true }));
+  const set = key => e => {
+    markTouched(key);
+    setForm(f => ({ ...f, [key]: e.target.value }));
+  };
+  const blur = key => () => markTouched(key);
 
   if (infra === 'kubernetes') {
     return (
@@ -177,6 +241,8 @@ export function ConfigStep({ ctx }) {
       reloadService: form.reloadService,
     });
   }
+  const adcsErrors = objective === 'adcs' ? result.fieldErrors || {} : {};
+  const shown = key => (touched[key] ? adcsErrors[key] || [] : []);
   const preseed = result.ok
     ? buildPreseedSteps({
         os,
@@ -219,7 +285,9 @@ export function ConfigStep({ ctx }) {
       description='Created on the server before the agent registers, because command profiles are reported only at registration.'
       docs={[
         ...ctx.docs('certops.agentConfig', 'Agent configuration'),
-        ...ctx.docs('certops.dns', 'DNS providers'),
+        ...(objective === 'adcs'
+          ? []
+          : ctx.docs('certops.dns', 'DNS providers')),
       ]}
       actions={
         <PrimaryButton onClick={confirm} isDisabled={!result.ok}>
@@ -243,52 +311,88 @@ export function ConfigStep({ ctx }) {
           </FormControl>
         ) : objective === 'adcs' ? (
           <>
-            <FormControl isRequired>
+            <FormControl isRequired isInvalid={shown('names').length > 0}>
               <FormLabel fontSize='sm'>Names (comma separated)</FormLabel>
               <Input
                 size='sm'
                 value={form.names}
                 onChange={set('names')}
+                onBlur={blur('names')}
                 placeholder='web.corp.example.com'
               />
+              <FormErrorMessage fontSize='xs'>
+                {errorLines(shown('names'))}
+              </FormErrorMessage>
             </FormControl>
             <HStack align='start' spacing={3} flexWrap='wrap'>
-              <FormControl flex='1 1 240px' isRequired>
+              <FormControl
+                flex='1 1 240px'
+                isRequired
+                isInvalid={shown('caHost').length > 0}
+              >
                 <FormLabel fontSize='sm'>CA server</FormLabel>
                 <Input
                   size='sm'
                   value={form.caHost}
                   onChange={set('caHost')}
+                  onBlur={blur('caHost')}
                   placeholder='ca01.corp.example.com'
                 />
+                <FormErrorMessage fontSize='xs'>
+                  {errorLines(shown('caHost'))}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl flex='1 1 240px' isRequired>
+              <FormControl
+                flex='1 1 240px'
+                isRequired
+                isInvalid={shown('caName').length > 0}
+              >
                 <FormLabel fontSize='sm'>CA name</FormLabel>
                 <Input
                   size='sm'
                   value={form.caName}
                   onChange={set('caName')}
+                  onBlur={blur('caName')}
                   placeholder='Corp Issuing CA'
                 />
+                <FormErrorMessage fontSize='xs'>
+                  {errorLines(shown('caName'))}
+                </FormErrorMessage>
               </FormControl>
             </HStack>
             <HStack align='start' spacing={3} flexWrap='wrap'>
-              <FormControl flex='1 1 200px' isRequired>
-                <FormLabel fontSize='sm'>Template</FormLabel>
+              <FormControl
+                flex='1 1 200px'
+                isRequired
+                isInvalid={shown('template').length > 0}
+              >
+                <FormLabel fontSize='sm'>Template (common name)</FormLabel>
                 <Input
                   size='sm'
                   value={form.template}
                   onChange={set('template')}
+                  onBlur={blur('template')}
                 />
+                <FormErrorMessage fontSize='xs'>
+                  {errorLines(shown('template'))}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl flex='1 1 240px' isRequired>
+              <FormControl
+                flex='1 1 240px'
+                isRequired
+                isInvalid={shown('dnsScopes').length > 0}
+              >
                 <FormLabel fontSize='sm'>Allowed DNS scopes</FormLabel>
                 <Input
                   size='sm'
                   value={form.dnsScopes}
                   onChange={set('dnsScopes')}
+                  onBlur={blur('dnsScopes')}
                   placeholder='corp.example.com'
                 />
+                <FormErrorMessage fontSize='xs'>
+                  {errorLines(shown('dnsScopes'))}
+                </FormErrorMessage>
               </FormControl>
             </HStack>
             <Text fontSize='xs'>
@@ -299,7 +403,7 @@ export function ConfigStep({ ctx }) {
             </Text>
             <HStack align='start' spacing={3} flexWrap='wrap'>
               <FormControl flex='1 1 200px'>
-                <FormLabel fontSize='sm'>IIS site</FormLabel>
+                <FormLabel fontSize='sm'>HTTPS binding (IIS site)</FormLabel>
                 <Input
                   size='sm'
                   value={form.iisSite}
@@ -316,6 +420,9 @@ export function ConfigStep({ ctx }) {
                 />
               </FormControl>
             </HStack>
+            <Text fontSize='xs' data-testid='binding-note'>
+              {BINDING_NOTE}
+            </Text>
           </>
         ) : (
           <>
@@ -373,7 +480,9 @@ export function ConfigStep({ ctx }) {
                 </FormControl>
                 <HStack align='start' spacing={3} flexWrap='wrap'>
                   <FormControl flex='1 1 200px'>
-                    <FormLabel fontSize='sm'>IIS site</FormLabel>
+                    <FormLabel fontSize='sm'>
+                      HTTPS binding (IIS site)
+                    </FormLabel>
                     <Input
                       size='sm'
                       value={form.iisSite}
@@ -398,6 +507,9 @@ export function ConfigStep({ ctx }) {
                     />
                   </FormControl>
                 </HStack>
+                <Text fontSize='xs' data-testid='binding-note'>
+                  {BINDING_NOTE}
+                </Text>
               </>
             ) : null}
             {os === 'linux' ? (
@@ -449,7 +561,7 @@ export function ConfigStep({ ctx }) {
             ) : null}
           </>
         )}
-        {!result.ok
+        {!result.ok && objective !== 'adcs'
           ? (result.problems || []).map(p => (
               <Text key={p} fontSize='xs' color='red.400'>
                 {p}
@@ -468,7 +580,11 @@ export function ConfigStep({ ctx }) {
               text={preseed.json}
               language='json'
             />
-            {objective !== 'observe' ? (
+            {objective === 'adcs' ? (
+              <Text fontSize='xs' data-testid='adcs-dry-run-note'>
+                {ADCS_DRY_RUN_NOTE}
+              </Text>
+            ) : objective !== 'observe' ? (
               <Text fontSize='xs'>
                 The DNS credential stays on the host in a file readable only by
                 the agent. It is never entered here. The CA is the Let&apos;s
