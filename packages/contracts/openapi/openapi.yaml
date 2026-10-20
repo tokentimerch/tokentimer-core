@@ -3733,7 +3733,10 @@ paths:
         Atomic form of stop followed by readd, used when attaching a renewal profile
         to a certificate that may already be managed. Requires manager permission.
         The stop and the new period commit together or not at all, so a refusal
-        leaves the certificate as it was. Admission follows the readd rules.
+        leaves the certificate as it was. Admission follows the readd rules. When the
+        certificate already has an open management period, pass its id as `periodId`;
+        without it (or with an ended one) the request fails with 409
+        CERTOPS_MANAGEMENT_ALREADY_OPEN and the body names the open period.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - in: path
@@ -3757,7 +3760,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: "Quota exceeded, source already managed, or source unavailable" }
+        "409":
+          description: >-
+            Quota exceeded, source unavailable, or the certificate is already managed.
+            CERTOPS_MANAGEMENT_ALREADY_OPEN (reason period_id_required or period_id_stale)
+            and CERTOPS_MANAGEMENT_PERIOD_MISMATCH carry currentPeriod.periodId; retry with it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsManagementConflict" }
         "422": { description: Private key material rejected }
   /api/v1/workspaces/{id}/certops/sources/{managedCertificateId}/readd:
     post:
@@ -3792,7 +3802,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { description: "Quota exceeded, source already managed, or source unavailable" }
+        "409":
+          description: >-
+            Quota exceeded, source unavailable, or already managed
+            (CERTOPS_MANAGEMENT_ALREADY_OPEN with reason already_managed and currentPeriod).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertOpsManagementConflict" }
         "422": { description: Private key material rejected }
   /api/v1/workspaces/{id}/certops/certificates:
     get:
@@ -8787,6 +8803,34 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    CertOpsManagementConflict:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string, description: Operator-readable explanation and next step }
+        code:
+          type: string
+          description: CERTOPS_MANAGEMENT_ALREADY_OPEN, CERTOPS_MANAGEMENT_PERIOD_MISMATCH, or another 409 code such as CERTOPS_MANAGED_CERT_LIMIT
+        reason:
+          type: string
+          enum: [already_managed, period_id_required, period_id_stale, period_id_mismatch]
+        currentPeriod:
+          nullable: true
+          description: The certificate's open management period in this workspace, when one exists. Never contains key material.
+          type: object
+          required: [periodId, startedAt, managementMode, automationEnabled]
+          properties:
+            periodId: { type: string, format: uuid }
+            startedAt: { type: string, format: date-time }
+            managementMode: { type: string, enum: [automatic, tracking] }
+            automationEnabled: { type: boolean }
+            renewalProfile:
+              nullable: true
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string, nullable: true }
+            source: { type: string, nullable: true }
     MaterialDistribution_uuid:
       type: string
       format: uuid
