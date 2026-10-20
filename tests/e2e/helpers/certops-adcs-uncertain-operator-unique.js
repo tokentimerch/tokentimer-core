@@ -102,7 +102,8 @@ function verifyProof(p) {
         p[field] <= require("./certops-adcs-uncertain-abandon").MAX_RECOVERY_WAIT_MS,
     );
   assert.equal(p.recoveryWaitBudgetMs, p.leaseRemainingAtFaultMs + 90000);
-  assert.ok(p.actualLeaseWaitMs + 1000 >= p.leaseRemainingAtFaultMs + 60000);
+  // The hard grace only defers reaping while the agent heartbeats; this one is stopped.
+  assert.ok(p.actualLeaseWaitMs + 1000 >= p.leaseRemainingAtFaultMs);
   assert.ok(p.actualLeaseWaitMs <= p.recoveryWaitBudgetMs + 1000);
   return true;
 }

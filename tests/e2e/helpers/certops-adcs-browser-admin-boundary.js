@@ -151,8 +151,11 @@ async function qualifyAdminRoleBoundary(context, enrollmentId) {
     ).rows.length,
     0,
   );
+  // A workspace holds exactly one admin (the fixture owner), so the controller is a
+  // second manager: membership.change_role needs workspace_manager, and the admin
+  // demotion refusal does not depend on the caller's role.
   await query(
-    "INSERT INTO workspace_memberships(workspace_id,user_id,role,invited_by) VALUES($1,$2,'workspace_manager',$4),($1,$3,'admin',$4)",
+    "INSERT INTO workspace_memberships(workspace_id,user_id,role,invited_by) VALUES($1,$2,'workspace_manager',$4),($1,$3,'workspace_manager',$4)",
     [fixture.workspaceId, actor.userId, controller.userId, fixture.userId],
   );
   const memberships = async () =>

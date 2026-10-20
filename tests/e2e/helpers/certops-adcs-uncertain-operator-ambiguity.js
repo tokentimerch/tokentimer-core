@@ -20,7 +20,7 @@ function verifyProof(proof) {
   for (const flag of FLAGS) assert.equal(proof[flag], true, flag);
   assert.equal(proof.caRequestsAtFault, 0); for (const field of ["caRequestsAfterOperatorSubmissions", "caRequestsAfterAmbiguousRecovery", "caRequestsAfterExplicitRecovery"]) assert.equal(proof[field], 2);
   for (const field of ["leaseRemainingAtFaultMs", "recoveryWaitBudgetMs", "actualLeaseWaitMs"]) assert.ok(Number.isInteger(proof[field]) && proof[field] >= 0 && proof[field] <= require("./certops-adcs-uncertain-abandon").MAX_RECOVERY_WAIT_MS);
-  assert.equal(proof.recoveryWaitBudgetMs, proof.leaseRemainingAtFaultMs + 90000); assert.ok(proof.actualLeaseWaitMs + 1000 >= proof.leaseRemainingAtFaultMs + 60000); assert.ok(proof.actualLeaseWaitMs <= proof.recoveryWaitBudgetMs + 1000);
+  assert.equal(proof.recoveryWaitBudgetMs, proof.leaseRemainingAtFaultMs + 90000); /* The hard grace only defers reaping while the agent heartbeats; this one is stopped. */ assert.ok(proof.actualLeaseWaitMs + 1000 >= proof.leaseRemainingAtFaultMs); assert.ok(proof.actualLeaseWaitMs <= proof.recoveryWaitBudgetMs + 1000);
   assert.match(proof.enrollmentId, UUID); assert.match(proof.containerName, /^tokentimer-enr-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/); assert.equal(proof.containerName, `tokentimer-enr-${proof.enrollmentId}`);
   for (const field of ["csrSpkiSha256", "csrSha256"]) assert.match(proof[field], /^[a-f0-9]{64}$/);
   assert.ok(Number.isInteger(proof.reconcileSearchFrom) && proof.reconcileSearchFrom >= 1 && proof.reconcileSearchFrom <= 0xffffffff); assert.equal(proof.scanWindowSize, 16);
