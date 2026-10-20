@@ -7,17 +7,102 @@ function check(id, status, label, detail) {
   return { id, status, label, detail: detail || null };
 }
 
+export const NO_CERTIFICATE_YET =
+  'No certificate could be read yet. TokenTimer keeps checking it.';
+
+const expiryDay = m => String(m.certificateExpiresAt).slice(0, 10);
+
+// Several websites: one line each. The step passes when at least one has a
+// readable certificate, because a batch can mix reachable and unreachable
+// sites and the reachable ones are already protected. With none readable it
+// fails. A site that is not readable yet is a follow-up, not a failure.
+function websiteChecks(monitors, unlisted) {
+  const checks = [];
+  for (const m of monitors) {
+    if (!m.certificateExpiresAt) {
+      checks.push(
+        check(
+          `certificate:${m.url}`,
+          CHECK_STATUS.WARN,
+          m.url,
+          NO_CERTIFICATE_YET
+        )
+      );
+      continue;
+    }
+    checks.push(
+      check(
+        `certificate:${m.url}`,
+        CHECK_STATUS.PASS,
+        m.url,
+        `Certificate was read from the website. Expires ${expiryDay(m)}`
+      )
+    );
+    if (!m.tokenId) {
+      checks.push(
+        check(
+          `asset:${m.url}`,
+          CHECK_STATUS.FAIL,
+          `${m.url} is tracked as an asset`,
+          'The certificate was read but no asset was created for it, so no alert can be sent. Re-add the website to retry.'
+        )
+      );
+    }
+  }
+  if (!monitors.some(m => m.certificateExpiresAt)) {
+    checks.push(
+      check(
+        'certificate',
+        CHECK_STATUS.FAIL,
+        'Certificate was read from a website',
+        'TokenTimer could not read a certificate from any of these addresses. Check that they are reachable over HTTPS from this deployment.'
+      )
+    );
+  }
+  if (unlisted > 0) {
+    checks.push(
+      check(
+        'unlisted',
+        CHECK_STATUS.WARN,
+        `${unlisted} more ${unlisted === 1 ? 'website is' : 'websites are'} not listed here`,
+        'Open the Monitoring page to see the rest.'
+      )
+    );
+  }
+  return checks;
+}
+
 /**
  * @param {object} input
  * @param {'monitor_https'|'track_asset'} input.goal
  * @param {object|null} input.monitor  summary.monitors item for the URL
+ * @param {object[]} [input.monitors]  every monitor of this session; wins over `monitor`
+ * @param {number} [input.unlistedMonitors] session monitors the summary could not list
  * @param {object|null} input.token    asset incl. alert_state (GET /api/tokens/:id)
  * @param {object|null} input.summary  verified workspace summary
  */
-export function evaluateVerification({ goal, monitor, token, summary }) {
+export function evaluateVerification({
+  goal,
+  monitor: legacyMonitor,
+  monitors,
+  unlistedMonitors = 0,
+  token,
+  summary,
+}) {
   const checks = [];
 
-  if (goal === 'monitor_https') {
+  const sessionMonitors = Array.isArray(monitors)
+    ? monitors
+    : legacyMonitor
+      ? [legacyMonitor]
+      : [];
+  if (
+    goal === 'monitor_https' &&
+    (sessionMonitors.length > 1 || unlistedMonitors > 0)
+  ) {
+    checks.push(...websiteChecks(sessionMonitors, unlistedMonitors));
+  } else if (goal === 'monitor_https') {
+    const monitor = sessionMonitors[0] || null;
     if (!monitor) {
       checks.push(
         check(
@@ -164,7 +249,7 @@ export function evaluateVerification({ goal, monitor, token, summary }) {
             ready
               ? 'Issuer and profile exist, enrollment is not verified'
               : 'The AD CS issuer or profile is missing',
-            'Attach the profile to a certificate and confirm the first enrollment in Certificate Management. This path is a candidate.'
+            'Attach the profile to a certificate and confirm the first enrollment in Certificate Management. This guided setup has not been verified through a real enrollment yet.'
           )
         );
       }

@@ -277,7 +277,9 @@ describe('first-value onboarding journey', () => {
       await screen.findByPlaceholderText('https://example.com'),
       'example.com'
     );
-    await user.click(screen.getByRole('button', { name: 'Add website' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Monitor this website' })
+    );
 
     await openGroup();
     await addRecipient();
@@ -306,7 +308,9 @@ describe('first-value onboarding journey', () => {
       await screen.findByPlaceholderText('https://example.com'),
       'example.com'
     );
-    await user.click(screen.getByRole('button', { name: 'Add website' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Monitor this website' })
+    );
     await screen.findByRole('button', { name: 'Create a new group' });
     first.unmount();
 

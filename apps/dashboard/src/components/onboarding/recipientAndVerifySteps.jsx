@@ -10,6 +10,7 @@ import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 
 import { evaluateVerification, CHECK_STATUS } from './verification.js';
+import { existingAssetStepIds } from './assetRefs.js';
 import { onboardingActions } from '../../utils/onboardingActions.js';
 
 export { RecipientsStep } from './alertRecipientsStep.jsx';
@@ -33,27 +34,60 @@ export function VerifyStep({ ctx }) {
       await ctx.refresh();
       const summary = await ctx.fetchSummary();
       const refs = ctx.session.operationRefs || {};
-      const monitor =
+      // Every website created in this session, not only the last batch's
+      // first address, so one unreadable site cannot hide behind another.
+      const sessionIds = new Set(refs.monitorIds || []);
+      const sessionUrl = refs.monitorUrl
+        ? String(refs.monitorUrl).toLowerCase()
+        : null;
+      const monitors =
         goal === 'monitor_https'
-          ? summary.monitors.items.find(
+          ? summary.monitors.items.filter(
               m =>
-                m.url?.toLowerCase() === String(refs.monitorUrl).toLowerCase()
-            ) || null
-          : null;
+                sessionIds.has(m.id) ||
+                (sessionUrl && m.url?.toLowerCase() === sessionUrl)
+            )
+          : [];
+      // The summary lists a limited number of monitors; say so rather than
+      // silently skipping the rest.
+      const listedIds = new Set(monitors.map(m => m.id));
+      const unlistedMonitors =
+        goal === 'monitor_https'
+          ? (summary.references?.monitorIds?.existing || []).filter(
+              id => !listedIds.has(id)
+            ).length
+          : 0;
       const tokenId =
-        monitor?.tokenId ||
-        (summary.references.tokenIds.existing || [])[0] ||
+        monitors.find(m => m.certificateExpiresAt && m.tokenId)?.tokenId ||
+        monitors.find(m => m.tokenId)?.tokenId ||
+        (goal === 'track_asset'
+          ? existingAssetStepIds(refs, summary.references)
+          : summary.references.tokenIds.existing || [])[0] ||
         null;
       let token = tokenId ? await onboardingActions.getToken(tokenId) : null;
       // Imports and discovery return no ids. Sample the asset closest to
       // expiry, which is the one most likely to alert first, and use the
-      // list row's own alert state so one request is enough.
-      if (!token && (summary.assets?.total || 0) > 0) {
+      // list row's own alert state so one request is enough. The asset goal
+      // checks the asset it created, unless the person skipped that step.
+      const skippedAsset = (ctx.session.progress?.skipped || []).includes(
+        'asset'
+      );
+      if (
+        !token &&
+        (goal !== 'track_asset' || skippedAsset) &&
+        (summary.assets?.total || 0) > 0
+      ) {
         token = await onboardingActions.soonestToken(ctx.workspaceId);
       }
       setState({
         loading: false,
-        result: evaluateVerification({ goal, monitor, token, summary }),
+        result: evaluateVerification({
+          goal,
+          monitors,
+          unlistedMonitors,
+          token,
+          summary,
+        }),
       });
     } catch (e) {
       setState({ loading: false, error: e.message });
