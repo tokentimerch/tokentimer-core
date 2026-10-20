@@ -3005,9 +3005,15 @@ paths:
       summary: Verified onboarding state
       operationId: getOnboardingSummary
       description: >-
-        Recomputes what actually exists (assets, monitors, contact groups,
-        SMTP readiness) and which stored operation references still resolve.
-        Completion is always derived from this, never from stored flags.
+        Recomputes what actually exists in the workspace and which stored
+        operation references still resolve. Completion is always derived from
+        this, never from stored flags. Covers assets and auto-sync
+        configurations, endpoint monitors, alert contact groups and SMTP
+        readiness, and, for workspace managers and admins with CertOps on,
+        agents, the wizard's dry-run and issue jobs, certificate counts,
+        Vault distribution and AD CS issuer facts. `certops` is "unknown" when
+        the caller cannot see it, CertOps is off or the read failed; treat that
+        as not known, never as nothing installed. Responses are not cached.
       parameters:
         - $ref: "#/components/parameters/workspaceIdParam"
         - $ref: "#/components/parameters/onboardingFlowParam"
@@ -3021,7 +3027,231 @@ paths:
                 properties:
                   summary:
                     type: object
+                    description: >-
+                      Documented top-level keys are listed; objects may carry
+                      additional fields.
                     additionalProperties: true
+                    properties:
+                      generatedAt:
+                        type: string
+                        format: date-time
+                      assets:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                            description: Tokens in the workspace.
+                          syncManaged:
+                            type: integer
+                            description: Tokens linked to an auto-sync configuration.
+                        additionalProperties: true
+                      autoSync:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                          items:
+                            type: array
+                            description: Up to 20 configurations, newest first. Credentials are never returned.
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                provider:
+                                  type: string
+                                name:
+                                  type: string
+                                  nullable: true
+                                enabled:
+                                  type: boolean
+                                frequency:
+                                  type: string
+                                  nullable: true
+                                lastSyncAt:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                                lastStatus:
+                                  type: string
+                                  nullable: true
+                                lastItems:
+                                  type: integer
+                                  nullable: true
+                                failures:
+                                  type: integer
+                                running:
+                                  type: boolean
+                              additionalProperties: true
+                        additionalProperties: true
+                      monitors:
+                        type: object
+                        properties:
+                          total:
+                            type: integer
+                            description: Number of items returned (at most 20), not the workspace total.
+                          items:
+                            type: array
+                            description: Newest endpoint monitors first.
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: string
+                                  format: uuid
+                                url:
+                                  type: string
+                                tokenId:
+                                  type: integer
+                                  nullable: true
+                                validated:
+                                  type: boolean
+                                  nullable: true
+                                healthCheckEnabled:
+                                  type: boolean
+                                  nullable: true
+                                lastHealthStatus:
+                                  type: string
+                                  nullable: true
+                                lastHealthCheckAt:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                                certificateExpiresAt:
+                                  type: string
+                                  format: date-time
+                                  nullable: true
+                              additionalProperties: true
+                        additionalProperties: true
+                      certops:
+                        description: >-
+                          The string "unknown", or the CertOps facts below.
+                        oneOf:
+                          - type: string
+                            enum: [unknown]
+                          - type: object
+                            properties:
+                              agents:
+                                type: object
+                                description: >-
+                                  Agents that are not retired or diagnostic.
+                                  `registeredSinceToken` counts agents created
+                                  after the session started.
+                                properties:
+                                  total:
+                                    type: integer
+                                  live:
+                                    type: integer
+                                  registeredSinceToken:
+                                    type: integer
+                                  executionEnabled:
+                                    type: boolean
+                                  items:
+                                    type: array
+                                    description: Up to 10 agents.
+                                    items:
+                                      type: object
+                                      additionalProperties: true
+                                additionalProperties: true
+                              certificates:
+                                type: object
+                                properties:
+                                  total:
+                                    type: integer
+                                  active:
+                                    type: integer
+                                  observed:
+                                    type: integer
+                                additionalProperties: true
+                              distribution:
+                                type: object
+                                description: >-
+                                  Vault distribution. `verified` is true only
+                                  after a rollout reached the verified state
+                                  with consumer evidence.
+                                properties:
+                                  groups:
+                                    type: integer
+                                  bindings:
+                                    type: integer
+                                  verified:
+                                    type: boolean
+                                additionalProperties: true
+                              adcs:
+                                type: object
+                                properties:
+                                  issuers:
+                                    type: array
+                                    description: Up to 20 AD CS issuers, by name and state only.
+                                    items:
+                                      type: object
+                                      properties:
+                                        id:
+                                          type: string
+                                        name:
+                                          type: string
+                                        confirmed:
+                                          type: boolean
+                                        safe:
+                                          type: boolean
+                                      additionalProperties: true
+                                  profiles:
+                                    type: integer
+                                additionalProperties: true
+                              dryRun:
+                                allOf:
+                                  - $ref: "#/components/schemas/OnboardingJobStatus"
+                                nullable: true
+                              issueJob:
+                                allOf:
+                                  - $ref: "#/components/schemas/OnboardingJobStatus"
+                                nullable: true
+                            additionalProperties: true
+                      alerts:
+                        type: object
+                        properties:
+                          smtpConfigured:
+                            description: Boolean, or "unknown" when it could not be read.
+                            oneOf:
+                              - type: boolean
+                              - type: string
+                                enum: [unknown]
+                          contactGroups:
+                            type: object
+                            properties:
+                              count:
+                                type: integer
+                              defaultId:
+                                type: string
+                                nullable: true
+                              defaultHasEmailRecipient:
+                                type: boolean
+                              defaultHasWebhookRecipient:
+                                type: boolean
+                              defaultHasRecipient:
+                                type: boolean
+                              withEmailRecipient:
+                                type: integer
+                              webhookCount:
+                                type: integer
+                              emailAlertsEnabled:
+                                type: boolean
+                                nullable: true
+                            additionalProperties: true
+                        additionalProperties: true
+                      references:
+                        type: object
+                        description: >-
+                          Whether the ids stored in the session still exist in
+                          this workspace. At most 100 ids are checked per list.
+                        properties:
+                          tokenIds:
+                            $ref: "#/components/schemas/OnboardingReferenceCheck"
+                          assetTokenIds:
+                            $ref: "#/components/schemas/OnboardingReferenceCheck"
+                          monitorIds:
+                            $ref: "#/components/schemas/OnboardingReferenceCheck"
+                        additionalProperties: true
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3362,9 +3592,22 @@ paths:
                       maxResults:
                         type: integer
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: The domain is missing or not a valid root domain (INVALID_DOMAIN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: A valid root domain is required
+                code: INVALID_DOMAIN
         "409":
           description: A lookup is already running for this workspace and domain
+          headers:
+            Retry-After:
+              description: Seconds until the caller may retry.
+              schema:
+                type: integer
+                minimum: 1
           content:
             application/json:
               schema:
@@ -3375,8 +3618,21 @@ paths:
                   code:
                     type: string
                     example: DOMAIN_CHECKER_BUSY
+                  retry_after_seconds:
+                    type: integer
+                    minimum: 1
+              example:
+                error: A domain discovery scan is already running for this workspace.
+                code: DOMAIN_CHECKER_BUSY
+                retry_after_seconds: 60
         "429":
           description: Domain checker lookup rate limited
+          headers:
+            Retry-After:
+              description: Seconds until the caller may retry.
+              schema:
+                type: integer
+                minimum: 1
           content:
             application/json:
               schema:
@@ -3387,8 +3643,17 @@ paths:
                   code:
                     type: string
                     example: DOMAIN_CHECKER_RATE_LIMITED
+                  retry_after_seconds:
+                    type: integer
+                    minimum: 1
+              example:
+                error: Domain checker lookup is rate limited. Please wait before trying again.
+                code: DOMAIN_CHECKER_RATE_LIMITED
+                retry_after_seconds: 30
         "502":
-          description: Discovery tool error or invalid response
+          description: >-
+            Unexpected discovery failure that carries no more specific status
+            (DOMAIN_CHECKER_LOOKUP_FAILED).
           content:
             application/json:
               schema:
@@ -3398,8 +3663,12 @@ paths:
                     type: string
                   code:
                     type: string
+                    example: DOMAIN_CHECKER_LOOKUP_FAILED
         "503":
-          description: Discovery tools unavailable or all sources failed
+          description: >-
+            Discovery tools are not installed (DOMAIN_CHECKER_TOOL_MISSING; the
+            subfinder binary is looked up through SUBFINDER_BIN) or every
+            discovery source failed (DOMAIN_CHECKER_FAILED).
           content:
             application/json:
               schema:
@@ -3409,7 +3678,7 @@ paths:
                     type: string
                   code:
                     type: string
-                    example: DOMAIN_CHECKER_FAILED
+                    enum: [DOMAIN_CHECKER_TOOL_MISSING, DOMAIN_CHECKER_FAILED]
                   toolErrors:
                     type: array
                     items:
@@ -9533,6 +9802,46 @@ components:
           type: integer
         offset:
           type: integer
+    OnboardingReferenceCheck:
+      type: object
+      properties:
+        existing:
+          type: array
+          items:
+            oneOf:
+              - type: integer
+              - type: string
+        missing:
+          type: array
+          items:
+            oneOf:
+              - type: integer
+              - type: string
+    OnboardingJobStatus:
+      type: object
+      description: Status of a job the setup guide created, read from the database.
+      properties:
+        id:
+          type: string
+          format: uuid
+        operation:
+          type: string
+        status:
+          type: string
+        mode:
+          type: string
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+          description: Truncated to 300 characters; the full text stays in the job log.
+        certificateStatus:
+          type: string
+          nullable: true
+      additionalProperties: true
     ErrorResponse:
       type: object
       properties:
