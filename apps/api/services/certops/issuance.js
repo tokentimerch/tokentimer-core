@@ -90,7 +90,7 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-/** POSIX, Windows drive, or UNC — mirrors agent isAbsolutePathLike. */
+/** POSIX, Windows drive, or UNC, mirrors agent isAbsolutePathLike. */
 function isAbsoluteHostPath(candidate) {
   return (
     /^\//.test(candidate) ||
@@ -295,7 +295,7 @@ function normalizeIssuanceRequest(options) {
   // it here costs nothing and the agent's own deploy step enforces the same
   // shape. A relative path is equally unusable: the agent resolves it against
   // an unspecified working directory. Absolute means POSIX ("/..."), Windows
-  // drive ("C:\..." / "C:/..."), or UNC ("\\server\share\...") — same rule the
+  // drive ("C:\..." / "C:/..."), or UNC ("\\server\share\...") - same rule the
   // agent already uses for deploy/ACME paths (isAbsolutePathLike).
   if (!isAbsoluteHostPath(trimmedCertPath)) {
     throw issuanceError(
