@@ -1067,6 +1067,23 @@ describe("acquireStoreLock", () => {
     void t2;
   });
 
+  it("assertHeld survives a wall-clock step while the worker is alive", () => {
+    const stateDir = makeTempDir();
+    const lock = acquireStoreLock(stateDir, "My");
+    const realNow = Date.now;
+    try {
+      // VM time sync can step the clock either way; liveness is not wall-clock.
+      Date.now = () => realNow() - 5000;
+      assert.doesNotThrow(() => lock.assertHeld());
+      Date.now = () => realNow() + 60000;
+      assert.doesNotThrow(() => lock.assertHeld());
+      assert.equal(lock.lost, false);
+    } finally {
+      Date.now = realNow;
+      lock.release();
+    }
+  });
+
   it("assertHeld fails after the lock worker dies while the parent still thinks it owns the lock", async () => {
     const stateDir = makeTempDir();
     const lock = acquireStoreLock(stateDir, "My");

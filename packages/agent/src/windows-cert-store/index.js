@@ -1255,6 +1255,8 @@ const EXCLUSIVE_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 const EXCLUSIVE_LOCK_RELEASE_TIMEOUT_MS = 500;
 /** Parent treats a quieter heartbeat as lock loss (worker ticks every 50ms). */
 const EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS = 500;
+/** One-shot wait for a quiet beat to tick before the lock is declared lost. */
+const EXCLUSIVE_LOCK_HEARTBEAT_GRACE_MS = 250;
 /** After lock loss, wait this long for cooperative cancel before dropping IPC. */
 const EXCLUSIVE_LOCK_ABORT_DRAIN_MS = 5_000;
 
@@ -1408,28 +1410,55 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
 
   let released = false;
   let lost = false;
-  const lostError = buildError(
-    `exclusive lock lost for ${lockPath}: lock worker exited unexpectedly`,
-    lockLostCode(busyCode),
-  );
+  let lostReason = "lock worker exited unexpectedly";
+  let lastBeat = 0;
+  let lastBeatChangedAt = process.hrtime.bigint();
 
-  function markLost() {
+  function buildLostError() {
+    return buildError(
+      `exclusive lock lost for ${lockPath}: ${lostReason}`,
+      lockLostCode(busyCode),
+    );
+  }
+
+  function markLost(reason) {
     if (!released) {
+      if (!lost && reason) lostReason = reason;
       lost = true;
     }
   }
 
-  worker.once("exit", () => {
-    markLost();
+  worker.once("exit", (exitCode) => {
+    markLost(`lock worker exited unexpectedly (exit code ${exitCode})`);
   });
 
+  /**
+   * The worker bumps the beat every 50ms. Staleness is judged on a monotonic
+   * clock by "has the beat changed", not by comparing wall-clock stamps, so a
+   * clock step or a VM pause cannot fake a lost lock. A stale-looking beat
+   * gets one short grace wait for a descheduled-but-alive worker to tick; a
+   * dead worker never does.
+   */
   function heartbeatIsFresh() {
     const beat = Atomics.load(state, 1);
     if (beat === 0) return false;
-    const now = Date.now() & 0x7fffffff;
-    // Handle 31-bit wrap by accepting either small forward delta.
-    const delta = (now - beat + 0x80000000) % 0x80000000;
-    return delta <= EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS;
+    const nowMono = process.hrtime.bigint();
+    if (beat !== lastBeat) {
+      lastBeat = beat;
+      lastBeatChangedAt = nowMono;
+      return true;
+    }
+    const quietMs = Number((nowMono - lastBeatChangedAt) / 1_000_000n);
+    if (quietMs <= EXCLUSIVE_LOCK_HEARTBEAT_STALE_MS) return true;
+    Atomics.wait(state, 1, beat, EXCLUSIVE_LOCK_HEARTBEAT_GRACE_MS);
+    const after = Atomics.load(state, 1);
+    if (after !== beat) {
+      lastBeat = after;
+      lastBeatChangedAt = process.hrtime.bigint();
+      return true;
+    }
+    if (!lost) lostReason = `lock worker heartbeat stalled for ${quietMs}ms`;
+    return false;
   }
 
   return {
@@ -1455,7 +1484,7 @@ function acquireExclusiveLockFile(lockPath, busyCode, busyMessage) {
       }
       if (lost || !heartbeatIsFresh()) {
         lost = true;
-        throw lostError;
+        throw buildLostError();
       }
     },
     /**
