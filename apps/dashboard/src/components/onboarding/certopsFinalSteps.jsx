@@ -129,7 +129,7 @@ export function VaultStep({ ctx }) {
     <StepFrame
       kind='runbook'
       title='Share a certificate through Vault'
-      description='Candidate feature. The issuing agent publishes the certificate to your Vault and other agents pull and install it. TokenTimer never connects to Vault.'
+      description='The issuing agent publishes the certificate to your Vault and other agents pull and install it. TokenTimer never connects to Vault.'
       docs={[
         ...ctx.docs('certops.vault', 'Shared certificate runbook'),
         ...ctx.docs('certops.vaultAuth', 'Vault Agent authentication'),
@@ -139,8 +139,8 @@ export function VaultStep({ ctx }) {
         <Alert status='warning' borderRadius='md' variant='left-accent'>
           <AlertIcon />
           <AlertDescription fontSize='sm'>
-            This is not production-qualified yet. Generating files below only
-            prepares the configuration. It does not mean distribution works.
+            Generating files below only prepares the configuration. It does not
+            mean distribution works: a verified rollout does.
           </AlertDescription>
         </Alert>
         <HStack>

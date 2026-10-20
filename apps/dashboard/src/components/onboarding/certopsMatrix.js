@@ -20,7 +20,8 @@ export const OBJECTIVES = {
   },
   vault: {
     label: 'Share one certificate across servers with Vault',
-    description: 'Candidate: not yet production-qualified.',
+    description:
+      'Publish a certificate to your Vault and deploy it to other agents.',
   },
 };
 
@@ -33,7 +34,7 @@ export const INFRASTRUCTURES = {
     objectives: {
       observe: 'qualified',
       automate: 'qualified',
-      vault: 'candidate',
+      vault: 'qualified',
     },
   },
   windows: {

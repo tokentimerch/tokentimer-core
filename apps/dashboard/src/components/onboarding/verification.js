@@ -181,7 +181,7 @@ export function evaluateVerification({ goal, monitor, token, summary }) {
                 'distribution',
                 CHECK_STATUS.WARN,
                 'Distribution is not verified',
-                'Configuration may be prepared, but no rollout has been verified yet. This feature is a candidate.'
+                'Configuration may be prepared, but no rollout has been verified yet.'
               )
         );
       }

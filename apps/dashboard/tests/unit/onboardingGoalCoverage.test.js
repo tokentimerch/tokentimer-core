@@ -37,12 +37,13 @@ describe('goal registry is complete', () => {
     }
   });
 
-  it('only candidate goals depend on a gated capability', () => {
-    for (const [id, goal] of Object.entries(GOALS)) {
-      if (goal.requires.includes('certops.vault_distribution')) {
-        expect(goal.candidate, id).toBe(true);
-      }
-    }
+  it('labels only guides that are unverified on a real host as candidates', () => {
+    const candidates = Object.entries(GOALS)
+      .filter(([, goal]) => goal.candidate)
+      .map(([id]) => id);
+    // The AD CS guide prepares configuration it cannot verify. Vault
+    // distribution is qualified in the product, so its goal is not a candidate.
+    expect(candidates).toEqual(['certops_adcs']);
   });
 });
 
