@@ -206,7 +206,7 @@ attach a different candidate automatically. A pending candidate can be checked
 again after the CA approves it. Change the proposed RequestId or abandon the
 enrollment when the CA cannot produce a valid certificate for it.
 
-The CA database is not readable by the computer account unless you grant CA Read. Leave that right unset. It exposes every request, not only this computer's. Without it, reconciliation is the RequestId you supply, or a retrieve of this computer's own requests.
+The CA database is not readable by the computer account unless you grant CA Read. Leave that right unset. It exposes every request, not only this computer's. Without it, reconciliation is the RequestId you supply, or a retrieve of this computer's own requests. A request the CA issues immediately has no recorded RequestId, because the signed CMC response carries only a pend token for pending requests and the agent does not read localized console text. Find it on the CA by the certificate's serial number or thumbprint. Only pending and uncertain enrollments need a RequestId.
 
 ## Installation recovery
 
