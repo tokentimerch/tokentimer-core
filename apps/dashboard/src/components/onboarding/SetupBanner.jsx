@@ -8,7 +8,6 @@ import {
 } from '@chakra-ui/react';
 import { FiArrowRight } from 'react-icons/fi';
 import { DashboardActionButton } from '../DashboardPrimitives';
-import PrimaryButton from './PrimaryButton.jsx';
 
 // This banner has to be noticed, so it is opaque and clearly outlined in both
 // modes. The shared callout tokens are tuned for quiet in-modal alerts: their
@@ -83,20 +82,14 @@ export default function SetupBanner({
           {message}
         </AlertDescription>
         <HStack spacing={2} flexShrink={0} ml={{ base: 0, md: 2 }}>
-          <PrimaryButton
+          {/* Same theme button as "Create New Token", not the wizard's darker one. */}
+          <DashboardActionButton
+            colorScheme='blue'
             onClick={onAction}
             rightIcon={<FiArrowRight />}
-            boxShadow='0 1px 2px rgba(0, 0, 0, 0.25)'
-            _hover={{
-              bg: 'blue.700',
-              boxShadow: '0 4px 10px rgba(29, 78, 216, 0.35)',
-              transform: 'translateY(-1px)',
-            }}
-            _active={{ bg: 'blue.800', transform: 'none' }}
-            transition='background-color 0.15s, box-shadow 0.15s, transform 0.15s'
           >
             {actionLabel}
-          </PrimaryButton>
+          </DashboardActionButton>
           {onHide ? (
             <DashboardActionButton
               variant='outline'
