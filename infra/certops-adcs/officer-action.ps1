@@ -20,6 +20,7 @@ try {
 Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $RequestId,$Action,$CommonName -ScriptBlock {
   param([long]$RequestId,[string]$Action,[string]$CommonName)
   $ErrorActionPreference='Stop'
+  try {
   $view=New-Object -ComObject CertificateAuthority.View
   $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
   $columnCount=if($Action -in @('revoke','delete-pending')){3}else{2}
@@ -52,6 +53,14 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   }
   if($LASTEXITCODE -ne 0){Write-Output ('CERTOPS_OFFICER_EXIT='+[int]$LASTEXITCODE);throw 'Native officer decision failed'}
   Write-Output "CERTOPS_OFFICER=$Action"
+  } catch {
+    # An unclassified failure (for example a COM error from the CA view) would otherwise surface only as
+    # the generic "remoting" step. Forward the numeric HRESULT alone: no message, request or identity text.
+    if($_.Exception.Message -notmatch 'Owned pending CA request not found|foreign request identity|Ambiguous request identity|Only an exact owned still-pending|lacks a native certificate serial|owned certificate revocation failed|Native officer decision failed'){
+      Write-Output ('CERTOPS_OFFICER_EXIT='+[int]$_.Exception.HResult)
+    }
+    throw
+  }
 }
 } catch {
   Write-Output ('CERTOPS_OFFICER_FAILURE='+(& $step $_.Exception.Message))
