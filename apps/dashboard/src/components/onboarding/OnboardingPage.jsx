@@ -6,7 +6,17 @@ import {
   FiRefreshCw,
 } from 'react-icons/fi';
 import { Link as RouterLink } from 'react-router';
-import { Badge, Box, Flex, HStack, Text, VStack } from '@chakra-ui/react';
+import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  Badge,
+  Box,
+  Flex,
+  HStack,
+  Text,
+  VStack,
+} from '@chakra-ui/react';
 import DashboardShell from '../DashboardShell';
 import { useDashboardShellProps } from '../../hooks/useDashboardShellProps';
 import SEO from '../SEO.jsx';
@@ -510,8 +520,9 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                   />
                   {ctx.session.intent?.goal ? (
                     <DashboardActionButton
-                      mt={3}
-                      size='xs'
+                      mt={4}
+                      w='full'
+                      colorScheme='blue'
                       variant='outline'
                       leftIcon={<FiRepeat />}
                       onClick={changeGoal}
@@ -519,10 +530,13 @@ export default function OnboardingPage({ session, onLogout, onAccountClick }) {
                       Change what I am setting up
                     </DashboardActionButton>
                   ) : null}
-                  <Text fontSize='xs' mt={4} opacity={0.8}>
-                    Progress is saved to your account. Leave any time and
-                    continue on any device.
-                  </Text>
+                  <Alert status='info' size='sm' borderRadius='md' mt={4}>
+                    <AlertIcon />
+                    <AlertDescription fontSize='xs' lineHeight='1.45'>
+                      Progress is saved to your account. Leave any time and
+                      continue on any device.
+                    </AlertDescription>
+                  </Alert>
                 </DashboardPanel>
                 <Box as='main' flex='1' minW={0} w='full'>
                   <ReviewBar
