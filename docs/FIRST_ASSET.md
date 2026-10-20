@@ -3,6 +3,13 @@
 
 After installation, create a harmless sample and check that its reminder reaches your inbox. This workflow verifies both inventory and notification routing.
 
+Start in **Set up TokenTimer** (`/onboarding` on your dashboard), choose the
+workspace and the asset-tracking or alerting goal, and use its SMTP and
+recipient steps for the checks below. If setup already created the sample or
+recipients, inspect those records instead of duplicating them. Continue with
+the inventory and alert-history checks here after saving. For HTTPS monitoring
+and certificate automation, follow [Operator walkthroughs](OPERATOR_WALKTHROUGHS.md).
+
 ## Before you start
 
 - Sign in to your deployment with the administrator account created at first startup. Open your own dashboard URL, not the Cloud sign-in page.

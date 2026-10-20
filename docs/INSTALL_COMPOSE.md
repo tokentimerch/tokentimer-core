@@ -116,6 +116,10 @@ Recommended next steps: invite team members (Workspace Settings, Members), add y
 
 Continue with [First asset and alert check](FIRST_ASSET.md). For settings and restarts, see [Configuration basics](CONFIGURATION_BASICS.md).
 
+Open **Set up TokenTimer** (`/onboarding`) to use the guided first-use flow.
+[Operator walkthroughs](OPERATOR_WALKTHROUGHS.md) covers monitoring, agent
+installation, staging issuance, AD CS/IIS, and failed-job investigation.
+
 ## Private-CA Vault connections
 
 The API forwards `NODE_EXTRA_CA_CERTS`, but the referenced PEM CA file must also

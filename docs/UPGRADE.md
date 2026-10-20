@@ -45,6 +45,11 @@ Check the migration Job and all six worker CronJobs. New CronJob specifications 
 
 Sign in, check the inventory and workspace recipients, run the SMTP test, and inspect discovery/delivery worker results. Follow [First asset and alert check](FIRST_ASSET.md) when verifying the full notification path. If you use CertOps, confirm agent compatibility and renewal state before scheduling real work.
 
+Use the existing setup records when repeating the
+[operator walkthroughs](OPERATOR_WALKTHROUGHS.md). Verify a signed dry run
+after agent upgrades, then inspect an actual renewal and deployment result
+before declaring automation healthy. A green heartbeat alone is insufficient.
+
 ## Recover a failed upgrade
 
 Stop and inspect migration and application logs. Reverting an image or running `helm rollback` does not undo database migrations. Use the release's recovery instructions and a matching database/configuration backup; do not start an older binary against a changed schema unless that transition is explicitly supported.
