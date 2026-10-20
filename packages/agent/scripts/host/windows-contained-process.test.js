@@ -11,7 +11,7 @@ const helper = require("../../../../tests/e2e/helpers/certops-windows-contained-
 const pause = () => new Promise((resolve) => setTimeout(resolve, 50));
 // skip-reason: no-host - requires native Windows file-sharing semantics.
 test("closed gate publication prevents Windows reader sharing failures and refuses clobber", {skip:process.platform!=="win32"},()=>{
-  const root=fs.mkdtempSync(path.resolve(__dirname,"../../../../.build/gate-publication-"));
+  const root=fs.mkdtempSync(path.join(require("node:os").tmpdir(),"gate-publication-"));
   const rootId=fs.lstatSync(root,{bigint:true}).ino;
   const held=path.join(root,"held");let descriptor;
   const read=file=>spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-Command","try{[IO.File]::ReadAllText($env:CERTOPS_PUBLIC_GATE_TEST)|Out-Null;exit 0}catch{$e=$_.Exception;while($e.InnerException){$e=$e.InnerException};[Console]::Write($e.HResult);exit 1}"],{encoding:"utf8",env:{...process.env,CERTOPS_PUBLIC_GATE_TEST:file},timeout:10000,windowsHide:true});
