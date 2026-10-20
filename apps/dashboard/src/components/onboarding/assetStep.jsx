@@ -12,6 +12,7 @@ import {
   FormHelperText,
   FormLabel,
   HStack,
+  IconButton,
   Input,
   Radio,
   RadioGroup,
@@ -21,16 +22,24 @@ import {
   Textarea,
   VStack,
 } from '@chakra-ui/react';
-import { DashboardErrorAlert } from '../DashboardPrimitives';
+import { FiPlus, FiX } from 'react-icons/fi';
+import {
+  DashboardActionButton,
+  DashboardErrorAlert,
+} from '../DashboardPrimitives';
 import { useDashboardTheme } from '../../hooks/useDashboardTheme';
 import StepFrame from './StepFrame.jsx';
 import PrimaryButton from './PrimaryButton.jsx';
 import { runIdempotent } from './operations.js';
+import { withAssetTokenId } from './assetRefs.js';
 import {
   FIELD_LABELS,
+  MAX_STAGED_ASSETS,
   TOKEN_CATEGORIES,
+  assetKey,
   buildAssetPayload,
   categoryOf,
+  describeAsset,
   emptyAsset,
   fieldsFor,
   validateAsset,
@@ -59,7 +68,12 @@ export function AssetStep({ ctx }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [groups, setGroups] = useState([]);
+  const [defaultGroupId, setDefaultGroupId] = useState('');
   const [added, setAdded] = useState([]);
+  const [existing, setExisting] = useState([]);
+  const [staged, setStaged] = useState([]);
+  const [rowErrors, setRowErrors] = useState({});
+  const [progress, setProgress] = useState(null);
 
   useEffect(() => {
     let live = true;
@@ -74,6 +88,7 @@ export function AssetStep({ ctx }) {
         const def = String(settings.default_contact_group_id || '');
         // The main form preselects the default group; so does this.
         if (def && list.some(g => String(g.id) === def)) {
+          setDefaultGroupId(def);
           setAsset(a =>
             a.contactGroupIds.length ? a : { ...a, contactGroupIds: [def] }
           );
@@ -86,6 +101,9 @@ export function AssetStep({ ctx }) {
   }, [ctx.workspaceId]);
 
   const cat = categoryOf(asset.category);
+  const defaultGroup = defaultGroupId
+    ? groups.find(g => String(g.id) === defaultGroupId)
+    : null;
   const extra = useMemo(
     () => fieldsFor(asset.category, asset.type),
     [asset.category, asset.type]
@@ -99,16 +117,50 @@ export function AssetStep({ ctx }) {
     set({ category: value, type: next?.types[0]?.value || '', fields: {} });
   };
 
-  const submit = async () => {
+  /** Validates the form and puts the asset on the list. Nothing is created yet. */
+  const stageCurrent = () => {
     const check = validateAsset(asset);
     setErrors(check.errors);
     if (!check.ok) {
       setError('Fix the highlighted fields.');
-      return;
+      return false;
     }
-    setBusy(true);
+    if (staged.some(s => assetKey(s.asset) === assetKey(asset))) {
+      setError('This asset is already in the list.');
+      return false;
+    }
+    if (staged.length >= MAX_STAGED_ASSETS) {
+      setError(
+        `Add up to ${MAX_STAGED_ASSETS} assets at a time, then create them.`
+      );
+      return false;
+    }
+    setStaged(list => [
+      ...list,
+      { id: `d${Date.now()}-${list.length}`, asset },
+    ]);
+    // Keep the kind and the groups: the next one is usually alike.
+    setAsset(a => ({
+      ...emptyAsset(),
+      category: a.category,
+      type: a.type,
+      contactGroupIds: a.contactGroupIds,
+    }));
+    setErrors({});
     setError('');
-    const payload = buildAssetPayload(asset, ctx.workspaceId);
+    return true;
+  };
+
+  const removeStaged = id => {
+    setStaged(list => list.filter(s => s.id !== id));
+    setRowErrors(errs => {
+      const { [id]: _gone, ...rest } = errs;
+      return rest;
+    });
+  };
+
+  const createOne = async draft => {
+    const payload = buildAssetPayload(draft, ctx.workspaceId);
     // Identity carries no free text beyond what already identifies the asset.
     const identity = {
       name: payload.name,
@@ -117,47 +169,117 @@ export function AssetStep({ ctx }) {
       type: payload.type,
       expiresAt: payload.expiresAt,
     };
+    const { adopted } = await runIdempotent({
+      controller: ctx.controller,
+      kind: 'asset',
+      identity,
+      // Empty locations never conflict server-side, so reconcile by identity.
+      find: async id => {
+        const items = await onboardingActions.findTokens(
+          ctx.workspaceId,
+          id.name
+        );
+        return (
+          items.find(
+            t =>
+              t.name === id.name &&
+              (t.location || '') === id.location &&
+              t.category === id.category &&
+              t.type === id.type &&
+              Math.abs(dayKey(t.expiresAt) - dayKey(id.expiresAt)) <= 1
+          ) || null
+        );
+      },
+      create: () => onboardingActions.createToken(payload),
+      record: (refs, created) => ({
+        tokenIds: Array.from(
+          new Set([...(refs.tokenIds || []), created.id].filter(Boolean))
+        ),
+        assetTokenIds: withAssetTokenId(refs, created.id),
+      }),
+    });
+    return { name: payload.name, adopted };
+  };
+
+  // Keeps the kind and the groups: the next asset is usually alike.
+  const resetForm = () => {
+    setAsset(a => ({
+      ...emptyAsset(),
+      category: a.category,
+      type: a.type,
+      contactGroupIds: a.contactGroupIds,
+    }));
+    setErrors({});
+  };
+
+  const submit = async () => {
+    setError('');
+    // A form that is filled in but not yet listed counts, so the button never
+    // silently ignores what the person typed.
+    let drafts = staged;
+    if (asset.name.trim()) {
+      const check = validateAsset(asset);
+      setErrors(check.errors);
+      if (!check.ok) {
+        setError('Fix the highlighted fields.');
+        return;
+      }
+      if (!staged.some(s => assetKey(s.asset) === assetKey(asset))) {
+        if (staged.length >= MAX_STAGED_ASSETS) {
+          setError(
+            `Add up to ${MAX_STAGED_ASSETS} assets at a time, then create them.`
+          );
+          return;
+        }
+        drafts = [...staged, { id: `d${Date.now()}-last`, asset }];
+      }
+    }
+    if (drafts.length === 0) {
+      setError('Give the asset a name.');
+      setErrors({ name: 'Name is required.' });
+      return;
+    }
+
+    setBusy(true);
+    setRowErrors({});
+    const done = [];
+    const failed = {};
+    for (let i = 0; i < drafts.length; i += 1) {
+      setProgress({ index: i + 1, total: drafts.length });
+      try {
+        done.push(await createOne(drafts[i].asset));
+      } catch (e) {
+        failed[drafts[i].id] = e.message || 'Could not create this asset.';
+      }
+    }
+    setProgress(null);
+
+    const failedIds = Object.keys(failed);
+    const created = done.filter(d => !d.adopted).map(d => d.name);
+    const adoptedNames = done.filter(d => d.adopted).map(d => d.name);
+    if (created.length) setAdded(list => [...list, ...created]);
+    if (adoptedNames.length) setExisting(list => [...list, ...adoptedNames]);
+    // The form was part of the batch, so it now lives in the list (failed) or
+    // was created. Clearing it keeps the button count honest.
+    if (asset.name.trim()) resetForm();
+    if (failedIds.length) {
+      // Only the failures stay, so a retry never repeats what worked.
+      setStaged(drafts.filter(d => failedIds.includes(d.id)));
+      setRowErrors(failed);
+      setError(
+        done.length
+          ? `Created ${done.length} of ${drafts.length}. Fix or remove the others, then try again.`
+          : 'None of the assets could be created.'
+      );
+    } else {
+      setStaged([]);
+      resetForm();
+    }
     try {
-      await runIdempotent({
-        controller: ctx.controller,
-        kind: 'asset',
-        identity,
-        // Empty locations never conflict server-side, so reconcile by identity.
-        find: async id => {
-          const items = await onboardingActions.findTokens(
-            ctx.workspaceId,
-            id.name
-          );
-          return (
-            items.find(
-              t =>
-                t.name === id.name &&
-                (t.location || '') === id.location &&
-                t.category === id.category &&
-                t.type === id.type &&
-                Math.abs(dayKey(t.expiresAt) - dayKey(id.expiresAt)) <= 1
-            ) || null
-          );
-        },
-        create: () => onboardingActions.createToken(payload),
-        record: (refs, created) => ({
-          tokenIds: Array.from(
-            new Set([...(refs.tokenIds || []), created.id].filter(Boolean))
-          ),
-        }),
-      });
-      setAdded(list => [...list, payload.name]);
-      setAsset(a => ({
-        ...emptyAsset(),
-        category: a.category,
-        type: a.type,
-        contactGroupIds: a.contactGroupIds,
-      }));
-      setErrors({});
       await ctx.refresh();
-      ctx.onDone?.();
+      if (!failedIds.length) ctx.onDone?.();
     } catch (e) {
-      setError(e.message || 'Could not create this asset.');
+      setError(e.message || 'Could not refresh your progress.');
     } finally {
       setBusy(false);
     }
@@ -197,15 +319,26 @@ export function AssetStep({ ctx }) {
   return (
     <StepFrame
       kind='ui'
-      title='Add an asset'
+      title='Add your assets'
       description='Record the details of a certificate, key, secret, license or anything else that expires. Never paste the secret value itself.'
       docs={[
         ...ctx.docs('tokens.adding', 'Adding assets'),
         ...ctx.docs('tokens.fields', 'Asset fields'),
       ]}
       actions={
-        <PrimaryButton onClick={submit} isLoading={busy}>
-          Create asset
+        <PrimaryButton
+          onClick={submit}
+          isLoading={busy}
+          loadingText={
+            progress
+              ? `Creating ${progress.index} of ${progress.total}`
+              : 'Creating'
+          }
+          isDisabled={staged.length === 0 && !asset.name.trim()}
+        >
+          {staged.length + (asset.name.trim() ? 1 : 0) > 1
+            ? `Create ${staged.length + (asset.name.trim() ? 1 : 0)} assets`
+            : 'Create asset'}
         </PrimaryButton>
       }
     >
@@ -213,8 +346,64 @@ export function AssetStep({ ctx }) {
         {error ? <DashboardErrorAlert>{error}</DashboardErrorAlert> : null}
         {added.length ? (
           <Text fontSize='sm' color='green.400' data-testid='added-assets'>
-            Added: {added.join(', ')}. You can add another below.
+            Created: {added.join(', ')}. You can add more below.
           </Text>
+        ) : null}
+        {existing.length ? (
+          <Text fontSize='sm' color={muted} data-testid='existing-assets'>
+            Already existed: {existing.join(', ')}. Nothing new was created for{' '}
+            {existing.length === 1 ? 'it' : 'them'}.
+          </Text>
+        ) : null}
+
+        {staged.length > 0 ? (
+          <Box
+            borderWidth='1px'
+            borderRadius='md'
+            role='list'
+            aria-label='Assets to create'
+          >
+            {staged.map((s, index) => {
+              const d = describeAsset(s.asset);
+              return (
+                <HStack
+                  key={s.id}
+                  role='listitem'
+                  justify='space-between'
+                  align='flex-start'
+                  px={3}
+                  py={2}
+                  borderTopWidth={index === 0 ? 0 : '1px'}
+                >
+                  <Box minW={0}>
+                    <Text
+                      fontSize='sm'
+                      fontWeight='semibold'
+                      wordBreak='break-word'
+                    >
+                      {d.title}
+                    </Text>
+                    <Text fontSize='xs' color={muted}>
+                      {d.detail}
+                    </Text>
+                    {rowErrors[s.id] ? (
+                      <Text fontSize='xs' color='red.400'>
+                        {rowErrors[s.id]}
+                      </Text>
+                    ) : null}
+                  </Box>
+                  <IconButton
+                    aria-label={`Remove ${d.title}`}
+                    size='xs'
+                    variant='outline'
+                    icon={<FiX />}
+                    isDisabled={busy}
+                    onClick={() => removeStaged(s.id)}
+                  />
+                </HStack>
+              );
+            })}
+          </Box>
         ) : null}
 
         <FormControl>
@@ -308,7 +497,16 @@ export function AssetStep({ ctx }) {
             value={asset.contactGroupIds}
             onChange={contactGroupIds => set({ contactGroupIds })}
             isDisabled={busy}
+            emptyText='No contact group yet. You choose who gets alerted in the next step.'
+            helperText=''
           />
+          {groups.length > 0 && asset.contactGroupIds.length === 0 ? (
+            <FormHelperText fontSize='xs' data-testid='no-group-hint'>
+              {defaultGroup
+                ? `No group selected: alerts go to the default group (${defaultGroup.name}).`
+                : 'No group selected: alerts have no recipient until a contact group is set.'}
+            </FormHelperText>
+          ) : null}
         </FormControl>
 
         <Accordion allowToggle>
@@ -355,6 +553,17 @@ export function AssetStep({ ctx }) {
             </AccordionPanel>
           </AccordionItem>
         </Accordion>
+
+        <HStack justify='flex-end'>
+          <DashboardActionButton
+            variant='outline'
+            leftIcon={<FiPlus />}
+            onClick={stageCurrent}
+            isDisabled={busy || !asset.name.trim()}
+          >
+            Add to the list
+          </DashboardActionButton>
+        </HStack>
       </VStack>
     </StepFrame>
   );

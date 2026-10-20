@@ -122,11 +122,14 @@ describe('planJourney', () => {
   it('completes only after the verification is confirmed', () => {
     const base = {
       intent: { goal: 'track_asset' },
-      operationRefs: {},
+      operationRefs: { assetTokenIds: [5] },
       capabilities,
       reality: {
         ...emptyReality,
-        references: { tokenIds: { existing: [5] } },
+        references: {
+          tokenIds: { existing: [5] },
+          assetTokenIds: { existing: [5] },
+        },
         alerts: { contactGroups: { defaultHasEmailRecipient: true } },
       },
     };
@@ -182,6 +185,111 @@ describe('goal availability', () => {
       })
     ).toBeNull();
     expect(Object.keys(GOALS).length).toBeGreaterThan(0);
+  });
+});
+
+describe('asset step completion', () => {
+  const asset = (refs, references) =>
+    isStepSatisfied('asset', {
+      reality: { ...emptyReality, references },
+      refs,
+    });
+  const refsOf = (tokens, assets = []) => ({
+    tokenIds: { existing: tokens },
+    assetTokenIds: { existing: assets },
+  });
+
+  it('is not done by certificates that website monitors created', () => {
+    // Website goal finished, then the asset goal is chosen.
+    const refs = {
+      monitorUrl: 'https://example.com',
+      monitorIds: ['m1'],
+      tokenIds: [7],
+    };
+    expect(asset(refs, refsOf([7]))).toBe(false);
+    const plan = planJourney({
+      intent: { goal: 'track_asset' },
+      operationRefs: refs,
+      capabilities,
+      reality: { ...emptyReality, references: refsOf([7]) },
+    });
+    expect(statuses(plan).asset).toBe('current');
+  });
+
+  it('is done by an asset made through the asset step', () => {
+    const refs = {
+      monitorIds: ['m1'],
+      tokenIds: [7, 8],
+      assetTokenIds: [8],
+    };
+    expect(asset(refs, refsOf([7, 8], [8]))).toBe(true);
+  });
+
+  it('reopens when the asset-step asset was deleted', () => {
+    const refs = { tokenIds: [7, 8], assetTokenIds: [8] };
+    expect(asset(refs, refsOf([7], []))).toBe(false);
+  });
+
+  it('keeps an empty assetTokenIds as not done even with other tokens', () => {
+    expect(asset({ tokenIds: [7], assetTokenIds: [] }, refsOf([7], []))).toBe(
+      false
+    );
+  });
+
+  it('keeps old asset-only sessions done (no assetTokenIds, no monitors)', () => {
+    expect(asset({ tokenIds: [5] }, refsOf([5]))).toBe(true);
+    expect(asset({ tokenIds: [5] }, refsOf([]))).toBe(false);
+  });
+
+  it('does not trust old sessions that also created monitors', () => {
+    expect(asset({ monitorIds: ['m1'], tokenIds: [5] }, refsOf([5]))).toBe(
+      false
+    );
+    expect(
+      asset({ monitorUrl: 'https://example.com', tokenIds: [5] }, refsOf([5]))
+    ).toBe(false);
+  });
+
+  it('tolerates a summary without the asset references', () => {
+    expect(asset({ assetTokenIds: [8] }, { tokenIds: { existing: [8] } })).toBe(
+      false
+    );
+    expect(asset({}, undefined)).toBe(false);
+  });
+
+  it('leaves the website step to monitors, never to asset tokens', () => {
+    const reality = {
+      ...emptyReality,
+      references: refsOf([5], [5]),
+    };
+    expect(
+      isStepSatisfied('monitor', {
+        reality,
+        refs: { tokenIds: [5], assetTokenIds: [5] },
+      })
+    ).toBe(false);
+    const plan = planJourney({
+      intent: { goal: 'monitor_https' },
+      operationRefs: { tokenIds: [5], assetTokenIds: [5] },
+      capabilities,
+      reality,
+    });
+    expect(statuses(plan).monitor).toBe('current');
+  });
+
+  it('does not change how import steps complete', () => {
+    const reality = {
+      ...emptyReality,
+      assets: { total: 3 },
+      references: refsOf([], []),
+    };
+    const progress = { imported: [{ step: 'file_import', count: 3 }] };
+    expect(
+      isStepSatisfied('file_import', { reality, progress, refs: {} })
+    ).toBe(true);
+    expect(
+      isStepSatisfied('integration', { reality, progress, refs: {} })
+    ).toBe(false);
   });
 });
 

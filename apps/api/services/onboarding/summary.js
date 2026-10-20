@@ -88,6 +88,9 @@ async function buildSummary(
   { workspaceId, refs = {}, smtpConfigured, certops = null },
 ) {
   const tokenIds = intIds(refs.tokenIds);
+  // Asset-step ids are looked up with the rest in one query.
+  const assetTokenIds = intIds(refs.assetTokenIds);
+  const allTokenIds = Array.from(new Set([...tokenIds, ...assetTokenIds]));
   const monitorIds = uuidIds(refs.monitorIds);
 
   const [
@@ -122,10 +125,10 @@ async function buildSummary(
         "SELECT id, details FROM workspace_contacts WHERE workspace_id = $1",
         [workspaceId],
       ),
-      tokenIds.length
+      allTokenIds.length
         ? pool.query(
             "SELECT id FROM tokens WHERE workspace_id = $1 AND id = ANY($2::int[])",
-            [workspaceId, tokenIds],
+            [workspaceId, allTokenIds],
           )
         : { rows: [] },
       monitorIds.length
@@ -197,6 +200,10 @@ async function buildSummary(
     },
     references: {
       tokenIds: splitExisting(tokenIds, tokenRefs.rows.map((r) => r.id)),
+      assetTokenIds: splitExisting(
+        assetTokenIds,
+        tokenRefs.rows.map((r) => r.id),
+      ),
       monitorIds: splitExisting(monitorIds, monitorRefs.rows.map((r) => r.id)),
     },
   };

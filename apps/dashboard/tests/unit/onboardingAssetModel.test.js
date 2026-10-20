@@ -5,6 +5,9 @@ import {
   emptyAsset,
   fieldsFor,
   validateAsset,
+  MAX_STAGED_ASSETS,
+  assetKey,
+  describeAsset,
 } from '../../src/components/onboarding/assetModel.js';
 
 const base = { ...emptyAsset(), name: 'Payments API key' };
@@ -174,5 +177,60 @@ describe('buildAssetPayload', () => {
     );
     expect(Object.keys(p).join(' ')).not.toMatch(/value|secret_value|password/);
     expect(p.workspace_id).toBe(WS);
+  });
+});
+
+describe('staging several assets', () => {
+  const base = {
+    category: 'key_secret',
+    type: 'api_key',
+    name: 'Payments API key',
+    neverExpires: false,
+    expiresAt: '2030-01-01',
+  };
+
+  it('treats the same name, kind and date as one asset, ignoring case and spaces', () => {
+    expect(assetKey({ ...base, name: '  PAYMENTS api KEY ' })).toBe(
+      assetKey(base)
+    );
+  });
+
+  it('tells apart a different name, kind or expiry date', () => {
+    const key = assetKey(base);
+    expect(assetKey({ ...base, name: 'Billing API key' })).not.toBe(key);
+    expect(assetKey({ ...base, type: 'password' })).not.toBe(key);
+    expect(
+      assetKey({ ...base, category: 'license', type: 'software_license' })
+    ).not.toBe(key);
+    expect(assetKey({ ...base, expiresAt: '2031-01-01' })).not.toBe(key);
+  });
+
+  it('ignores a leftover date when the asset does not expire', () => {
+    expect(
+      assetKey({ ...base, neverExpires: true, expiresAt: '2030-01-01' })
+    ).toBe(assetKey({ ...base, neverExpires: true, expiresAt: '' }));
+  });
+
+  it('describes a draft in plain words', () => {
+    expect(describeAsset(base)).toEqual({
+      title: 'Payments API key',
+      detail: 'Key/Secret, API Key, expires 2030-01-01',
+    });
+    expect(describeAsset({ ...base, neverExpires: true }).detail).toMatch(
+      /no expiry date/
+    );
+    expect(describeAsset({ ...base, expiresAt: '' }).detail).toMatch(
+      /no expiry date/
+    );
+  });
+
+  it('describes an unknown category without throwing', () => {
+    expect(describeAsset({ name: 'X', category: 'nope' }).detail).toBe(
+      'no expiry date'
+    );
+  });
+
+  it('limits a batch', () => {
+    expect(MAX_STAGED_ASSETS).toBeGreaterThan(1);
   });
 });

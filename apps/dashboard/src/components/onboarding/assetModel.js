@@ -22,6 +22,43 @@ export function categoryOf(value) {
   return TOKEN_CATEGORIES.find(c => c.value === value) || null;
 }
 
+/**
+ * Assets are created one by one and each is checked on the way in, so a batch
+ * stays small enough to review and to finish.
+ */
+export const MAX_STAGED_ASSETS = 25;
+
+/**
+ * What makes two drafts the same asset: the identity the wizard already uses
+ * to recognise one it created earlier. Two drafts with the same key would be
+ * collapsed into one, so the list refuses the second.
+ */
+export function assetKey(asset) {
+  return [
+    String(asset?.name || '')
+      .trim()
+      .toLowerCase(),
+    asset?.category || '',
+    asset?.type || '',
+    asset?.neverExpires ? '' : String(asset?.expiresAt || ''),
+  ].join('|');
+}
+
+/** One line for the list: the name, then kind and expiry in plain words. */
+export function describeAsset(asset) {
+  const cat = categoryOf(asset?.category);
+  const type = cat?.types.find(x => x.value === asset?.type);
+  const kind = [cat?.label, type?.label].filter(Boolean).join(', ');
+  const expiry =
+    asset?.neverExpires || !String(asset?.expiresAt || '').trim()
+      ? 'no expiry date'
+      : `expires ${asset.expiresAt}`;
+  return {
+    title: String(asset?.name || '').trim(),
+    detail: [kind, expiry].filter(Boolean).join(', '),
+  };
+}
+
 /** Fields a category shows, including type-specific ones. */
 export function fieldsFor(category, type) {
   const cat = categoryOf(category);

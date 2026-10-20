@@ -3,6 +3,7 @@
 // the deployment allows (capabilities) and what really exists (reality).
 // Adding steps later therefore needs no data migration.
 
+import { existingAssetStepIds } from './assetRefs.js';
 import { commandProfileFor } from './certopsMatrix.js';
 import { GOALS, STEP_DEFS } from './modules.js';
 import { scopeCertops } from './certopsScope.js';
@@ -170,7 +171,8 @@ export function isStepSatisfied(
       );
     }
     case 'asset':
-      return (reality.references?.tokenIds?.existing || []).length > 0;
+      // Only assets made through this step count, not website certificates.
+      return existingAssetStepIds(refs, reality.references || {}).length > 0;
     case 'file_import':
     case 'integration': {
       // Imports hand back no ids, so verify against the server's own count:
