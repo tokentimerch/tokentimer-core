@@ -167,6 +167,19 @@ describe('planSessionItems', () => {
     expect(plan.websites).toEqual(['1', '2']);
     expect(plan.assets).toEqual([]);
   });
+  it('splits a legacy asset-goal session by which tokens a monitor points at', () => {
+    const plan = planSessionItems({
+      goal: 'track_asset',
+      refs: { tokenIds: [1, 2, 3], monitorIds: ['m1'] },
+      summary: {
+        references: { tokenIds: { existing: [1, 2, 3] } },
+        monitors: { items: [{ id: 'm1', tokenId: 1 }] },
+      },
+    });
+    expect(plan.websites).toEqual(['1']);
+    expect(plan.assets).toEqual(['2', '3']);
+  });
+
   it('treats a legacy session without monitors as assets only', () => {
     const plan = planSessionItems({
       goal: 'track_asset',

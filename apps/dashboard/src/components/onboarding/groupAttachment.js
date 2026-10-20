@@ -52,10 +52,22 @@ export function planSessionItems({ goal, refs = {}, summary = null }) {
       id => !own.has(id)
     );
   } else if (sessionMonitors.size > 0 || refs.monitorUrl) {
-    // Saved before assetTokenIds existed: the asset step now always records
-    // its ids, so these tokens are the websites' certificates.
-    websites = unique([...tokenIds, ...monitorTokens]);
-    assets = [];
+    // Saved before assetTokenIds existed. The asset goal could add both kinds
+    // then, so a token no monitor points at is an asset; for the website goal
+    // every token is a website certificate.
+    const monitorOwned = new Set(
+      (summary?.monitors?.items || [])
+        .filter(m => m.tokenId != null)
+        .map(m => text(m.tokenId))
+    );
+    const all = unique([...tokenIds, ...monitorTokens]);
+    if (goal === 'track_asset') {
+      websites = all.filter(id => monitorOwned.has(id));
+      assets = all.filter(id => !monitorOwned.has(id));
+    } else {
+      websites = all;
+      assets = [];
+    }
   } else {
     websites = [];
     assets = unique(existingAssetStepIds(refs, references));
