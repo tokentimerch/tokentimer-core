@@ -5,6 +5,7 @@ import { DASHBOARD_MODAL_HEADING_FONT } from './DashboardModalFrame.jsx';
 export default function DashboardDetailsSection({
   title,
   description,
+  headerAction,
   children,
   mb = 6,
   columns = 1,
@@ -111,7 +112,7 @@ export default function DashboardDetailsSection({
               aria-hidden='true'
             />
           ) : null}
-          <Box minW={0}>
+          <Box minW={0} flex={headerAction ? '1' : undefined}>
             <Heading
               as='h3'
               fontFamily={DASHBOARD_MODAL_HEADING_FONT}
@@ -127,6 +128,7 @@ export default function DashboardDetailsSection({
               </Text>
             ) : null}
           </Box>
+          {headerAction}
         </HStack>
         {detailsGrid}
       </Box>
@@ -135,7 +137,11 @@ export default function DashboardDetailsSection({
 
   return (
     <Box as='section' mb={mb} minW={0}>
-      <Box mb={2}>
+      <Box
+        mb={2}
+        position={headerAction ? 'relative' : undefined}
+        pr={headerAction ? 10 : undefined}
+      >
         <Heading
           as='h3'
           fontFamily={DASHBOARD_MODAL_HEADING_FONT}
@@ -149,6 +155,11 @@ export default function DashboardDetailsSection({
           <Text mt={1} fontSize='xs' color='dashboard.modal.muted'>
             {description}
           </Text>
+        ) : null}
+        {headerAction ? (
+          <Box position='absolute' top={0} right={0}>
+            {headerAction}
+          </Box>
         ) : null}
       </Box>
       {detailsGrid}

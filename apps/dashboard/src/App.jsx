@@ -4495,6 +4495,8 @@ function DashboardView({
               ? {
                   ...token,
                   __certificateLinkAmbiguous: true,
+                  __managedCertificates:
+                    managedByTokenId.get(Number(token.id)) || [],
                   __managedCertificatesRetired: resolution.allRetired,
                 }
               : managedCert
@@ -4959,6 +4961,7 @@ function DashboardView({
         }}
       >
         <AssetInventoryTable
+          workspaceId={workspaceId}
           tokens={paginatedVisibleTokens}
           selectedCategories={selectedCategoryValues}
           sort={assetSort}
@@ -5937,6 +5940,7 @@ function DashboardView({
         token={retireTarget?.token}
         certificate={retireTarget?.certificate}
         certificates={retireTarget?.certificates}
+        workspaceId={workspaceId}
         onRetire={handleRetireConfirm}
       />
     </Box>

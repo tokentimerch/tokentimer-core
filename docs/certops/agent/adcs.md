@@ -47,6 +47,16 @@ Do not install the agent on a domain controller. That placement is not qualified
 
 The transport is DCOM, the `certreq` default. The agent never passes `-rpc` to `certreq`. Enrollment web services (CES and CEP) are not part of this release.
 
+## Qualification scope
+
+Only the Windows Server versions and display languages named as qualified in the release notes are supported. These are not part of the 0.18.0 qualification:
+
+- Agents on a domain controller.
+- Windows Server 2016 and earlier.
+- Two-tier hierarchies with an offline root.
+- Real elapsed 24-hour retention and 14-day pending timers. They are not waited out in qualification.
+- Native crash and lost-response experiments. Recovery is covered by journal, API and PostgreSQL tests.
+
 ## Firewall
 
 The member needs outbound TCP 135 (the RPC endpoint mapper) and the CA's dynamic RPC range, to the CA. Blocking TCP 135 makes the submit fail before the CA records a request. The agent then retries the same request. It does not create a second request for a submit that never arrived. The error is `ADCS_CA_UNREACHABLE`, and the 14-day approval limit has not started.

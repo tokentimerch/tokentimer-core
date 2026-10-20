@@ -10,9 +10,17 @@ $ErrorActionPreference='Stop'
 if((Get-CimInstance Win32_ComputerSystem).Domain -ne 'lab.certops.test'){throw 'Officer action requires isolated qualification forest'}
 if(-not $env:CERTOPS_ADCS_OFFICER_PASSWORD){throw 'Isolated officer credential absent'}
 $credential=[PSCredential]::new('TTQUAL\tt-lab-admin',(ConvertTo-SecureString $env:CERTOPS_ADCS_OFFICER_PASSWORD -AsPlainText -Force))
+# Failures report a fixed step name and numeric certutil exit code only: no request, identity or error text.
+$step = {param([string]$message) switch -Wildcard ($message) {
+    '*Owned pending CA request not found*' {'not-found'} '*foreign request identity*' {'foreign-identity'} '*Ambiguous request identity*' {'ambiguous'}
+    '*Only an exact owned still-pending*' {'not-pending'} '*lacks a native certificate serial*' {'serial'} '*owned certificate revocation failed*' {'revoke'}
+    '*Native officer decision failed*' {'decision'} default {'remoting'}
+  }}
+try {
 Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -ArgumentList $RequestId,$Action,$CommonName -ScriptBlock {
   param([long]$RequestId,[string]$Action,[string]$CommonName)
   $ErrorActionPreference='Stop'
+  try {
   $view=New-Object -ComObject CertificateAuthority.View
   $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
   $columnCount=if($Action -in @('revoke','delete-pending')){3}else{2}
@@ -40,9 +48,21 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
     $serial=([string]$found[2]).Replace(' ','')
     if($serial -notmatch '^[a-fA-F0-9]{2,128}$'){throw 'Owned issued request lacks a native certificate serial'}
     & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -revoke $serial 1 | Out-Null
-    if($LASTEXITCODE -ne 0){throw 'Native owned certificate revocation failed'}
+    if($LASTEXITCODE -ne 0){Write-Output ('CERTOPS_OFFICER_EXIT='+[int]$LASTEXITCODE);throw 'Native owned certificate revocation failed'}
     & certutil.exe -config 'tt-ca.lab.certops.test\TTQualificationRoot' -CRL | Out-Null
   }
-  if($LASTEXITCODE -ne 0){throw 'Native officer decision failed'}
+  if($LASTEXITCODE -ne 0){Write-Output ('CERTOPS_OFFICER_EXIT='+[int]$LASTEXITCODE);throw 'Native officer decision failed'}
   Write-Output "CERTOPS_OFFICER=$Action"
+  } catch {
+    # An unclassified failure (for example a COM error from the CA view) would otherwise surface only as
+    # the generic "remoting" step. Forward the numeric HRESULT alone: no message, request or identity text.
+    if($_.Exception.Message -notmatch 'Owned pending CA request not found|foreign request identity|Ambiguous request identity|Only an exact owned still-pending|lacks a native certificate serial|owned certificate revocation failed|Native officer decision failed'){
+      Write-Output ('CERTOPS_OFFICER_EXIT='+[int]$_.Exception.HResult)
+    }
+    throw
+  }
+}
+} catch {
+  Write-Output ('CERTOPS_OFFICER_FAILURE='+(& $step $_.Exception.Message))
+  exit 1
 }

@@ -1209,7 +1209,19 @@ async function claimJobs({
                 AND (identity.lifecycle_status = 'active'
                   OR (cj.certificate_identity_id IS NULL AND certops_is_initial_provisioning(
                     cj.workspace_id,period.managed_certificate_id,cj.operation,cj.executor_kind,cj.source))
-                  OR cj.operation NOT IN ('renew', 'deploy', 'deploy-from-store', 'reload'))
+                  OR (
+                    cj.operation NOT IN ('renew', 'deploy', 'deploy-from-store', 'reload')
+                    AND NOT (
+                      cj.operation = 'continue-enrollment'
+                      AND identity.lifecycle_status IN ('revoked', 'decommissioned')
+                      AND EXISTS (
+                        SELECT 1 FROM certificate_enrollments continuation
+                         WHERE continuation.workspace_id = cj.workspace_id
+                           AND continuation.id = cj.enrollment_id
+                           AND continuation.state NOT IN ('cancelled', 'expired', 'abandoned')
+                      )
+                    )
+                  ))
             )
           )
           AND (CASE operation WHEN 'issue' THEN 'renew' ELSE operation END) = ANY($2::text[])

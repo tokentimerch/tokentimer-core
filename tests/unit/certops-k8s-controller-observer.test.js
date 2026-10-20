@@ -538,6 +538,51 @@ describe("CertOps cert-manager status observer", () => {
     assert.equal(observer.isReady(), true);
   });
 
+  it("re-lists after a Kubernetes Status Failure event whose code is 410", async () => {
+    const client = createFakeClient();
+    const timers = [];
+    const scheduler = {
+      clearTimeout(timer) {
+        timer.cleared = true;
+      },
+      setTimeout(callback, delay) {
+        const timer = { callback, cleared: false, delay };
+        timers.push(timer);
+        return timer;
+      },
+    };
+    const observer = createCertManagerObserver({
+      client,
+      clusterId: "cluster-a",
+      random: () => 0,
+      restartBaseDelayMs: 250,
+      scheduler,
+      workspaceId: "workspace-a",
+    });
+    await observer.start({ trackWork: (work) => work });
+    const certificateWatch = client.watchCalls.find(
+      (call) => call.resource === "Certificate",
+    );
+
+    certificateWatch.onEvent("ERROR", { status: "Failure", code: 410 });
+    assert.equal(observer.isReady(), false);
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delay, 250);
+    timers[0].callback();
+    await tick();
+    await tick();
+
+    assert.equal(
+      client.listCalls.filter((call) => call.resource === "Certificate").length,
+      2,
+    );
+    assert.equal(
+      client.watchCalls.filter((call) => call.resource === "Certificate").length,
+      2,
+    );
+    assert.equal(observer.isReady(), true);
+  });
+
   it("exponentially backs off 500 ERROR watch events and resets after a live watch event", async () => {
     const client = createFakeClient();
     const timers = [];

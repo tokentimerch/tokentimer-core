@@ -25,7 +25,7 @@ import {
   DashboardModalTitle,
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
-import { formatDate } from './certopsFormat.js';
+import { findListedIssuer, formatDate } from './certopsFormat.js';
 import {
   confirmIssuerKey,
   createIssuer,
@@ -151,6 +151,7 @@ export default function AdcsIssuerWizard({
   const [localError, setLocalError] = useState('');
   const draftIdRef = useRef(null);
   const finishedRef = useRef(false);
+  const expectedPairRef = useRef(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -176,14 +177,22 @@ export default function AdcsIssuerWizard({
     const timer = setInterval(async () => {
       attempts += 1;
       try {
-        const page = await listIssuers(workspaceId, {
-          limit: 100,
-          includeUnconfigured: true,
-        });
+        const current = await findListedIssuer(
+          listIssuers,
+          workspaceId,
+          issuer.id,
+          { includeUnconfigured: true }
+        );
         if (cancelled) return;
-        const current = (page.items || []).find(item => item.id === issuer.id);
         if (current) setIssuer(current);
+        const expected = expectedPairRef.current;
+        const pairMatches =
+          current?.lastPreflight?.caConfig === expected?.caConfig &&
+          current?.lastPreflight?.template === expected?.template &&
+          current?.lastPreflightJobId &&
+          current.lastPreflightJobId !== expected?.previousJobId;
         const safe =
+          pairMatches &&
           current?.lastPreflight?.templateCheck?.verdict === 'safe' &&
           current?.lastPreflight?.caCheck?.verdict === 'safe';
         if (safe || attempts >= 20) {
@@ -239,6 +248,11 @@ export default function AdcsIssuerWizard({
         draftIdRef.current = issuerId;
         setIssuer({ id: issuerId, name: name.trim(), currentVersion: 0 });
       }
+      expectedPairRef.current = {
+        caConfig: caConfig.trim(),
+        template: template.trim(),
+        previousJobId: issuer?.lastPreflightJobId || null,
+      };
       await dispatchIssuerPreflight(workspaceId, issuerId, {
         agentId,
         caConfig: caConfig.trim(),
@@ -259,13 +273,15 @@ export default function AdcsIssuerWizard({
     setBusy(true);
     setLocalError('');
     try {
+      const expected = expectedPairRef.current;
       await confirmIssuerKey(workspaceId, issuer.id, {
         caKeySha256: keySha256,
-        caConfig: issuer.lastPreflight?.caConfig,
-        template: issuer.lastPreflight?.template,
+        caConfig: expected?.caConfig || issuer.lastPreflight?.caConfig,
+        template: expected?.template || issuer.lastPreflight?.template,
       });
       finishedRef.current = true;
       draftIdRef.current = null;
+      expectedPairRef.current = null;
       showSuccess(
         'Issuer created. Enrollment runs only for a CA and template named by an agent enrollment rule.'
       );

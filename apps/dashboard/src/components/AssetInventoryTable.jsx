@@ -44,7 +44,8 @@ import {
   certificateLifecycleDescriptor,
   AMBIGUOUS_CERTIFICATE_LINK_MESSAGE,
 } from './certops/certopsFormat';
-import KeyLocalityBadge from './certops/KeyLocalityBadge.jsx';
+import DeploymentBadge from './certops/DeploymentBadge.jsx';
+import useDistributionSummaries from './certops/useDistributionSummaries.js';
 import { domainValueToUrl } from '../utils/domains.jsx';
 import { formatDate } from '../utils/apiClient';
 import { formatExpirationDate } from '../utils/dateUtils';
@@ -621,12 +622,43 @@ function LocationCell({ token, getTokenLocation, mutedTextColor }) {
   return <TruncatedText text={location} maxLines={2} maxWidth='180px' />;
 }
 
-function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
+function AssetDeploymentIndicator({ token, onOpen }) {
+  if (!token.__linkedCertificateCount) return null;
+  const summary = token.__deploymentSummary;
+  const empty =
+    !token.__deploymentLoading &&
+    !token.__deploymentError &&
+    !token.__distributedCertificateCount;
+  return (
+    <Box flexShrink={0} minW='48px' h='20px'>
+      {!empty ? (
+        <DeploymentBadge
+          summary={summary}
+          loading={token.__deploymentLoading}
+          error={token.__deploymentError}
+          certificateCount={
+            token.__linkedCertificateCount > 1
+              ? token.__distributedCertificateCount
+              : undefined
+          }
+          onClick={() => onOpen?.({ ...token, __focusDeployments: true })}
+        />
+      ) : null}
+    </Box>
+  );
+}
+
+function NameCell({
+  token,
+  mode,
+  getCategoryVisual,
+  mutedTextColor,
+  onOpenTokenModal,
+}) {
   const nameColor = useColorModeValue('gray.900', 'white');
   const visual = getCategoryVisual(token.category);
   const VisualIcon = visual.icon;
   const subtitle = getNameSubtitle(token, mode);
-  const managed = token.__managedCert;
 
   return (
     <HStack spacing={3} minW={0} maxW='340px'>
@@ -640,28 +672,30 @@ function NameCell({ token, mode, getCategoryVisual, mutedTextColor }) {
       >
         <VisualIcon size={16} />
       </Circle>
-      <Box minW={0} maxW='296px'>
+      <Box minW={0} maxW='296px' flex='1'>
         <Text
           color={nameColor}
           fontWeight='medium'
           noOfLines={1}
+          minW={0}
           wordBreak='break-all'
           title={token.name}
         >
           {token.name}
         </Text>
-        {subtitle ? (
-          <Text color={mutedTextColor} fontSize='xs' noOfLines={1}>
-            {subtitle}
-          </Text>
-        ) : null}
-        {managed ? (
-          <Box mt={1}>
-            <KeyLocalityBadge
-              keyMode={managed.keyMode}
-              keyReference={managed.keyReference}
-            />
-          </Box>
+        {subtitle || token.__linkedCertificateCount ? (
+          <HStack spacing={2} justify='space-between' minW={0} h='20px'>
+            <Text
+              minW={0}
+              title={subtitle}
+              color={mutedTextColor}
+              fontSize='xs'
+              noOfLines={1}
+            >
+              {subtitle}
+            </Text>
+            <AssetDeploymentIndicator token={token} onOpen={onOpenTokenModal} />
+          </HStack>
         ) : null}
       </Box>
     </HStack>
@@ -776,6 +810,7 @@ function renderDataCell({ column, token, mode, helpers }) {
           mode={mode}
           getCategoryVisual={helpers.getCategoryVisual}
           mutedTextColor={mutedTextColor}
+          onOpenTokenModal={helpers.onOpenTokenModal}
         />
       );
     case 'type':
@@ -982,18 +1017,25 @@ function AssetInventoryMobileCard({
                 wordBreak='break-word'
                 lineHeight='short'
                 noOfLines={2}
+                minW={0}
               >
                 {token.name}
               </Text>
-              <Text
-                color={helpers.secondaryTextColor}
-                fontSize='sm'
-                lineHeight='short'
-                mt={1}
-                noOfLines={1}
-              >
-                {helpers.getAssetTypeLabel(token)}
-              </Text>
+              <HStack spacing={2} justify='space-between' minW={0}>
+                <Text
+                  color={helpers.secondaryTextColor}
+                  fontSize='sm'
+                  lineHeight='short'
+                  mt={1}
+                  noOfLines={1}
+                >
+                  {helpers.getAssetTypeLabel(token)}
+                </Text>
+                <AssetDeploymentIndicator
+                  token={token}
+                  onOpen={helpers.onOpenTokenModal}
+                />
+              </HStack>
               {nameSubtitle ? (
                 <Text
                   color={helpers.mutedTextColor}
@@ -1101,7 +1143,8 @@ function AssetInventoryMobileCard({
  * Asset inventory table with mode-specific columns (mixed + per-category).
  */
 export default function AssetInventoryTable({
-  tokens = [],
+  tokens: inputTokens = [],
+  workspaceId,
   selectedCategories,
   inventoryMode: inventoryModeProp,
   sort,
@@ -1139,6 +1182,33 @@ export default function AssetInventoryTable({
   fetchTokensForCategory,
   categoryLoading = {},
 }) {
+  const certificateLinks = inputTokens
+    .filter(t => t.category === 'cert')
+    .flatMap(
+      t => t.__managedCertificates || (t.__managedCert ? [t.__managedCert] : [])
+    )
+    .map(certificate => ({ id: certificate.id }));
+  const deployments = useDistributionSummaries(workspaceId, certificateLinks);
+  const tokens = inputTokens.map(token => {
+    if (token.category !== 'cert') return token;
+    const linked =
+      token.__managedCertificates ||
+      (token.__managedCert ? [token.__managedCert] : []);
+    if (!linked.length) return token;
+    const summaries = linked.map(c =>
+      deployments.getSummary({ id: c.id, expectedIdentityId: c.identityId })
+    );
+    return {
+      ...token,
+      __linkedCertificateCount: linked.length,
+      __deploymentSummary: linked.length === 1 ? summaries[0] : null,
+      __distributedCertificateCount: summaries.filter(
+        summary => summary && summary.status !== 'not_distributed'
+      ).length,
+      __deploymentLoading: deployments.loading,
+      __deploymentError: deployments.error,
+    };
+  });
   const { colorMode } = useColorMode();
   const resolveVisual = useCallback(
     category => resolveCategoryVisual(category, colorMode === 'light'),

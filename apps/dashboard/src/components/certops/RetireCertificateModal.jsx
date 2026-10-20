@@ -7,6 +7,7 @@ import {
   Button,
   Checkbox,
   Flex,
+  ListItem,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -19,6 +20,7 @@ import {
   Stack,
   Text,
   Textarea,
+  UnorderedList,
   VStack,
 } from '@chakra-ui/react';
 import {
@@ -28,6 +30,7 @@ import {
   useDashboardModalProps,
 } from '../DashboardModalFrame.jsx';
 import { formatDate, sortCertificatesForToken } from './certopsFormat';
+import { deleteEndpointMonitor } from './certopsApi.js';
 
 const RETIRE_OPTIONS = [
   {
@@ -60,6 +63,7 @@ export default function RetireCertificateModal({
   certificate,
   certificates,
   onRetire,
+  workspaceId,
 }) {
   const {
     overlayProps,
@@ -77,6 +81,9 @@ export default function RetireCertificateModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [selectedCertificateId, setSelectedCertificateId] = useState('');
+  // Locations that currently serve the certificate (409 from the server).
+  const [servingLocations, setServingLocations] = useState([]);
+  const [removingCheckers, setRemovingCheckers] = useState(false);
   const certificateSelectId = useId();
   const choices = useMemo(() => {
     const identities = new Map();
@@ -107,8 +114,22 @@ export default function RetireCertificateModal({
       setSubmitting(false);
       setError('');
       setSelectedCertificateId('');
+      setServingLocations([]);
+      setRemovingCheckers(false);
     }
   }, [isOpen, certificate, certificates]);
+
+  const removableMonitorIds = useMemo(
+    () => [
+      ...new Set(
+        servingLocations.map(item => item.domainMonitorId).filter(Boolean)
+      ),
+    ],
+    [servingLocations]
+  );
+  const otherServingLocations = servingLocations.filter(
+    item => !item.domainMonitorId
+  );
 
   const handleConfirm = async () => {
     if (submitting) return;
@@ -136,6 +157,7 @@ export default function RetireCertificateModal({
     }
     setSubmitting(true);
     setError('');
+    setServingLocations([]);
     try {
       await onRetire({
         certificate: selectedCertificate,
@@ -145,7 +167,17 @@ export default function RetireCertificateModal({
       });
     } catch (err) {
       const code = err?.response?.status;
-      if (code === 404) {
+      if (
+        code === 409 &&
+        err?.response?.data?.code === 'CERTOPS_CERTIFICATE_STILL_SERVING'
+      ) {
+        setServingLocations(
+          Array.isArray(err.response.data.locations)
+            ? err.response.data.locations
+            : []
+        );
+        setError(err.response.data.error || 'Certificate is still serving.');
+      } else if (code === 404) {
         setError(
           'Retiring certificates is not available on this server yet. The backend retire endpoint is still being rolled out.'
         );
@@ -157,6 +189,34 @@ export default function RetireCertificateModal({
       }
       setSubmitting(false);
     }
+  };
+
+  const handleRemoveCheckersAndRetry = async () => {
+    if (removingCheckers || submitting || !workspaceId) return;
+    setRemovingCheckers(true);
+    setError('');
+    try {
+      for (const monitorId of removableMonitorIds) {
+        try {
+          await deleteEndpointMonitor(workspaceId, monitorId);
+        } catch (err) {
+          // Already removed elsewhere: nothing left to unlink.
+          if (err?.response?.status !== 404) throw err;
+        }
+      }
+    } catch (err) {
+      setError(
+        err?.response?.status === 403
+          ? 'Removing an endpoint checker requires the workspace manager role.'
+          : err?.response?.data?.error ||
+              'Could not remove the endpoint checker. Remove it from Endpoint & SSL monitor, then try again.'
+      );
+      setRemovingCheckers(false);
+      return;
+    }
+    setServingLocations([]);
+    setRemovingCheckers(false);
+    await handleConfirm();
   };
 
   const selected = RETIRE_OPTIONS.find(option => option.value === status);
@@ -290,6 +350,62 @@ export default function RetireCertificateModal({
               <Alert status='error' borderRadius='12px'>
                 <AlertIcon />
                 <AlertDescription fontSize='sm'>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+            {servingLocations.length ? (
+              <Alert status='warning' borderRadius='12px' alignItems='start'>
+                <AlertIcon />
+                <AlertDescription fontSize='sm'>
+                  <VStack align='stretch' spacing={2}>
+                    <Text>
+                      This certificate is still served at the following
+                      locations. Decommissioning is blocked until they no longer
+                      serve it.
+                    </Text>
+                    <UnorderedList spacing={1} data-testid='serving-locations'>
+                      {servingLocations.map(item => (
+                        <ListItem key={item.id} wordBreak='break-all'>
+                          {item.url || item.sourceRef || item.id}
+                          {item.domainMonitorId
+                            ? ' (endpoint checker)'
+                            : ` (${item.source || 'observed location'})`}
+                        </ListItem>
+                      ))}
+                    </UnorderedList>
+                    {removableMonitorIds.length && workspaceId ? (
+                      <>
+                        <Text>
+                          You can remove the endpoint checker
+                          {removableMonitorIds.length > 1 ? 's' : ''} and
+                          continue. The monitored URL
+                          {removableMonitorIds.length > 1 ? 's are' : ' is'} no
+                          longer checked and linked monitor data is deleted. The
+                          certificate itself stays on the host.
+                        </Text>
+                        <Button
+                          size='sm'
+                          alignSelf='flex-start'
+                          isLoading={removingCheckers}
+                          onClick={handleRemoveCheckersAndRetry}
+                          {...dangerButtonProps}
+                        >
+                          Remove endpoint checker
+                          {removableMonitorIds.length > 1 ? 's' : ''} and{' '}
+                          {status === 'revoked'
+                            ? 'mark revoked'
+                            : 'decommission'}
+                        </Button>
+                      </>
+                    ) : null}
+                    {otherServingLocations.length ? (
+                      <Text>
+                        Locations that are not endpoint checkers must stop
+                        serving the certificate first (replace or remove it on
+                        the host), then retry after the next scan.
+                      </Text>
+                    ) : null}
+                  </VStack>
+                </AlertDescription>
               </Alert>
             ) : null}
           </VStack>

@@ -44,6 +44,18 @@
       },
       {
         "file": "certops-adcs-enrollments.test.js",
+        "name": "blocks install continuation and deploy-from-store after retirement while cleanup still claims"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "fences recovery and claims of every non-terminal continuation after retirement"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
+        "name": "retirement covers running and queued install-capable work and spares key cleanup"
+      },
+      {
+        "file": "certops-adcs-enrollments.test.js",
         "name": "keeps concurrent preflights inside the hourly limit and stores the agent result"
       },
       {

@@ -1042,6 +1042,7 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     alertData.workspaces.length <= 1;
 
   const statsData = assetStats.data;
+  const statsRevision = assetStats.dataRevision || 0;
   const buckets = statsData?.buckets || EMPTY_BUCKETS;
   const totalAssets = statsData?.totalAssets || 0;
   const sources = statsData?.sources || EMPTY_LIST;
@@ -1050,8 +1051,9 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     () => ({
       items: statsData?.neverExpires || EMPTY_LIST,
       hasMore: Boolean(statsData?.neverExpiresHasMore),
+      refreshToken: statsRevision,
     }),
-    [statsData?.neverExpires, statsData?.neverExpiresHasMore]
+    [statsData?.neverExpires, statsData?.neverExpiresHasMore, statsRevision]
   );
   const neverExpiresPage = useControlCenterListPage(
     API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_NEVER_EXPIRES,
@@ -1062,8 +1064,13 @@ export default function ControlCenter({ session, onLogout, onAccountClick }) {
     () => ({
       items: statsData?.privilegeHighlights || EMPTY_LIST,
       hasMore: Boolean(statsData?.privilegeHighlightsHasMore),
+      refreshToken: statsRevision,
     }),
-    [statsData?.privilegeHighlights, statsData?.privilegeHighlightsHasMore]
+    [
+      statsData?.privilegeHighlights,
+      statsData?.privilegeHighlightsHasMore,
+      statsRevision,
+    ]
   );
   const privilegeHighlightsPage = useControlCenterListPage(
     API_ENDPOINTS.WORKSPACE_CONTROL_CENTER_PRIVILEGE_HIGHLIGHTS,

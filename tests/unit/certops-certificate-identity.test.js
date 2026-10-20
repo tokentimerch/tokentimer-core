@@ -92,3 +92,29 @@ test("revoked lifecycle cannot be downgraded to decommissioned", async () => {
   await assert.rejects(decommission(db, { acknowledgeUncertainty: true }),
     { code: "CERTOPS_LIFECYCLE_DOWNGRADE" });
 });
+
+test("still-serving refusal names the endpoint checker so the dashboard can offer to remove it", async () => {
+  const monitorId = "a399363a-4a6a-4403-84ea-2f25458ee059";
+  const db = dbFor({ observations: [{ id: "obs-1", source: "endpoint_monitor",
+    source_ref: monitorId, presence_state: "confirmed_present",
+    evidence_kind: "service_binding", fresh: true, domain_monitor_id: monitorId }] });
+  const original = db.connect;
+  db.connect = async () => {
+    const client = await original();
+    const query = client.query.bind(client);
+    client.query = async (sql, params) => {
+      if (String(sql).includes("FROM domain_monitors")) {
+        return { rows: [{ id: monitorId, url: "https://app.example" }], rowCount: 1 };
+      }
+      return query(sql, params);
+    };
+    return client;
+  };
+  await assert.rejects(decommission(db), (error) => {
+    assert.equal(error.code, "CERTOPS_CERTIFICATE_STILL_SERVING");
+    assert.match(error.message, /https:\/\/app\.example/);
+    assert.deepEqual(error.details.locations, [{ id: "obs-1", source: "endpoint_monitor",
+      sourceRef: monitorId, domainMonitorId: monitorId, url: "https://app.example" }]);
+    return true;
+  });
+});

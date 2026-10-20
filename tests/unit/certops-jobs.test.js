@@ -3502,3 +3502,54 @@ describe("CertOps jobs service - manualRenewalJobCreator (canonical manual/bulk 
     );
   });
 });
+
+describe("deploy-from-store retirement admission", () => {
+  const CERT_ID = "a4444444-4444-4444-8444-444444444444";
+  function deploymentClient(lifecycleStatus) {
+    return {
+      async query(sql) {
+        const text = sql.replace(/\s+/g, " ");
+        if (text.includes("FROM workspaces") && text.includes("certops_require_approval_always")) {
+          return { rows: [{ certops_require_approval_always: false }] };
+        }
+        if (text.includes("identity.lifecycle_status") && text.includes("FROM managed_certificates")) {
+          return { rows: [{ lifecycle_status: lifecycleStatus }] };
+        }
+        throw new Error(`unexpected query: ${text}`);
+      },
+    };
+  }
+  const payload = {
+    keyMode: "vault-managed",
+    materialDeployment: {
+      groupId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      bindingId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      rolloutId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      materialVersionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      materialStoreRef: "store",
+      providerVersion: 1,
+      fingerprintSha256: "ab".repeat(32),
+      generation: 1,
+      deploymentProfileRef: "profile",
+      profileRevision: 1,
+      authorizationRevision: 1,
+      verificationPolicy: "served",
+    },
+  };
+
+  for (const lifecycleStatus of ["revoked", "decommissioned"]) {
+    it(`refuses deploy-from-store when the identity is ${lifecycleStatus}`, async () => {
+      await assert.rejects(
+        createCertificateJob({
+          client: deploymentClient(lifecycleStatus),
+          workspaceId: WORKSPACE_A,
+          operation: "deploy-from-store",
+          subjectType: "managed_certificate",
+          subjectId: CERT_ID,
+          payload,
+        }),
+        (error) => error.code === "CERTOPS_CERTIFICATE_RETIRED",
+      );
+    });
+  }
+});

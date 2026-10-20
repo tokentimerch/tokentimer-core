@@ -366,8 +366,8 @@ function parseCertificateFile(filePath, fileBuffer) {
     return {
       path: filePath,
       parsed: true,
-      subject: cert.subject,
-      issuer: cert.issuer,
+      subject: cert.subject ?? null,
+      issuer: cert.issuer ?? null,
       validFrom: cert.validFrom,
       validTo: cert.validTo,
       serialNumber: cert.serialNumber,
