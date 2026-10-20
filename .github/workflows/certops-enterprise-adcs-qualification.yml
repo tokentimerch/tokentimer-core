@@ -102,14 +102,17 @@ jobs:
       - name: Verify lost response without release promotion
         if: inputs.fault_profile == 'response-loss'
         run: node scripts/certops-adcs-response-loss-report.js qualification-results/enterprise-adcs-response-loss-experimental.json
+      - name: Mark failed diagnostic run for lab retention
+        # failure() is only valid in step conditions, so the decision is handed to teardown through the job env.
+        if: failure() && inputs.debug_mode
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_ENV -Value 'HOLD_FOR_DIAGNOSIS=1'
       - name: Destroy owned temporary resources
+        # Only a failed diagnostic run keeps its lab; the script verifies the expiry tag so the hourly janitor
+        # still removes it. Every other run is torn down.
         if: always()
         shell: pwsh
-        env:
-          # Only a failed diagnostic run keeps its lab; the script verifies the expiry tag so the hourly janitor
-          # still removes it. Every other run is torn down.
-          HOLD_FOR_DIAGNOSIS: ${{ inputs.debug_mode && failure() && '1' || '0' }}
-        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP -HoldForDiagnosis $env:HOLD_FOR_DIAGNOSIS
+        run: ./infra/certops-adcs/remove-owned-lab.ps1 -ResourceGroup $env:LAB_GROUP -HoldForDiagnosis $(if($env:HOLD_FOR_DIAGNOSIS -eq '1'){'1'}else{'0'})
       - name: Preserve infrastructure scope receipts only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
