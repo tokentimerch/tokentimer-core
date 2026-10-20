@@ -29,7 +29,7 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
   $view.SetResultColumn($view.GetColumnIndex($false,'RequesterName'))
   if($Action -eq 'revoke'){$view.SetResultColumn($view.GetColumnIndex($false,'SerialNumber'))}
   if($Action -eq 'delete-pending'){$view.SetResultColumn($view.GetColumnIndex($false,'Request.Disposition'))}
-  $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[uint32]$RequestId)
+  $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[int]$RequestId)
   $rows=$view.OpenView()
   if($rows.Next() -eq -1){throw 'Owned pending CA request not found'}
   $columns=$rows.EnumCertViewColumn()

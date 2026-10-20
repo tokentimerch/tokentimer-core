@@ -35,7 +35,7 @@ function Get-OwnedOcspHistoricalRequest($Owner,[long]$RequestId,[byte[]]$Expecte
   }
   $view.SetResultColumnCount(5)
   foreach($index in $indices) { $view.SetResultColumn($index) }
-  $view.SetRestriction($indices[0],1,0,[uint32]$RequestId)
+  $view.SetRestriction($indices[0],1,0,[int]$RequestId)
   $rows=$view.OpenView()
   if($rows.Next() -eq -1) { throw 'Owned original request absent' }
   $columns=$rows.EnumCertViewColumn();$values=@();$index=0

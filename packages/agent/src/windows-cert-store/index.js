@@ -1760,6 +1760,47 @@ async function removeCertificateAndKeyContainer({
   return guardReturnValue({ ok: true });
 }
 
+const PENDING_REQUEST_STORE = "REQUEST";
+
+/**
+ * Removes the pending certificate request(s) that `certreq -new -machine`
+ * stored in the machine REQUEST store for exactly this agent-owned container.
+ * Matching is by the exact container name and the SHA-1 hash printed under a
+ * "(sha1)" label, so it does not depend on the Windows display language.
+ * Best effort by design: the metadata-only key survivor scan that follows stays
+ * the authority, so any failure here simply leaves the key preserved.
+ */
+async function removePendingRequestEntries({
+  containerName, certutilPath, execFileImpl, timeoutMs, signal, assertHeld,
+}) {
+  const none = { removed: 0, aborted: false };
+  if (!isAgentOwnedContainerName(containerName)) return none;
+  const listArgv = [certutilPath, "-store", "-silent", PENDING_REQUEST_STORE];
+  assertSafeArgvElements("pendingRequestListArgv", listArgv);
+  const listing = await execWithoutShell(execFileImpl, listArgv, timeoutMs, signal);
+  if (signal?.aborted || (listing.execError && listing.execError.code === "ABORT_ERR")) return { removed: 0, aborted: true };
+  // An empty or absent REQUEST store is a normal non-zero certutil result.
+  if (listing.exitCode !== 0 || listing.execError) return none;
+  const exactContainer = new RegExp(`^\\s*[^\\r\\n=:]*[=:]\\s*${containerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "im");
+  const hashes = new Set();
+  for (const block of String(listing.stdout || "").split(/^=+.*=+\s*$/m)) {
+    if (!exactContainer.test(block)) continue;
+    const hash = /\(sha1\)\s*:\s*([0-9a-f ]{40,59})\s*$/im.exec(block);
+    const normalized = hash ? hash[1].replace(/\s+/g, "").toUpperCase() : "";
+    if (THUMBPRINT_PATTERN.test(normalized)) hashes.add(normalized);
+  }
+  let removed = 0;
+  for (const thumbprint of hashes) {
+    if (typeof assertHeld === "function") assertHeld();
+    const delArgv = [certutilPath, "-delstore", PENDING_REQUEST_STORE, thumbprint];
+    assertSafeArgvElements("pendingRequestDelstoreArgv", delArgv);
+    const deleted = await execWithoutShell(execFileImpl, delArgv, timeoutMs, signal);
+    if (signal?.aborted || (deleted.execError && deleted.execError.code === "ABORT_ERR")) return { removed, aborted: true };
+    if (deleted.exitCode === 0 && !deleted.execError) removed += 1;
+  }
+  return { removed, aborted: false };
+}
+
 /**
  * Deletes a CNG key container that generateCsrViaCng created but that
  * never reached acceptCertificateViaCng (the ACME order consuming its CSR
@@ -1823,6 +1864,15 @@ async function removeAbandonedKeyContainer({
   }
   if (requireAlreadyAbsent) {
     return guardReturnValue({ ok: false, reason: "unproven_container_ownership", exitCode: null });
+  }
+  // `certreq -new -machine` leaves a pending request for this exact container in
+  // the machine REQUEST store; only `certreq -accept` consumes it. A key that was
+  // never accepted would otherwise stay referenced by that placeholder forever.
+  const pendingRequests = await removePendingRequestEntries({
+    containerName, certutilPath, execFileImpl, timeoutMs, signal, assertHeld,
+  });
+  if (pendingRequests.aborted) {
+    return guardReturnValue({ ok: false, reason: "aborted", exitCode: null, stdoutExcerpt: "", stderrExcerpt: "" });
   }
   // A CA/accept failure does not prove no other machine store references the
   // same persisted key. Probe all references again at the destructive boundary.

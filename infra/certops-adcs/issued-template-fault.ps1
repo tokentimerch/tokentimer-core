@@ -21,7 +21,7 @@ Invoke-Command -ComputerName 'tt-ca.lab.certops.test' -Credential $credential -A
     $null=$view.OpenConnection('tt-ca.lab.certops.test\TTQualificationRoot')
     $names=@('CommonName','RequesterName','Disposition');$view.SetResultColumnCount(3)
     foreach($name in $names){$view.SetResultColumn($view.GetColumnIndex($false,$name))}
-    $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[uint32]$RequestId)
+    $view.SetRestriction($view.GetColumnIndex($false,'RequestID'),1,0,[int]$RequestId)
     $rows=$view.OpenView();if($rows.Next() -eq -1){throw 'Owned pending request absent'}
     $columns=$rows.EnumCertViewColumn();$values=@();while($columns.Next() -ne -1){$values+=,$columns.GetValue(0)}
     if($values.Count -ne 3 -or $values[0] -ne $CommonName -or $values[1] -ine 'TTQUAL\tt-agent$' -or [int]$values[2] -ne 9 -or $rows.Next() -ne -1){throw 'Refusing mutation of a foreign or non-pending request'}
